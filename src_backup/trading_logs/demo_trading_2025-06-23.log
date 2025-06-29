@@ -1,0 +1,16 @@
+2025-06-23 16:23:22,083 - ERROR - Error checking existing orders: 'OandaAPI' object has no attribute 'get_pending_orders'
+2025-06-23 16:27:58,146 - INFO - Demo Trading Bot started with Fixed Dollar Risk Management
+2025-06-23 16:28:01,496 - INFO - Starting trading cycle...
+2025-06-23 16:28:01,856 - WARNING - Could not get pending orders - using fallback
+2025-06-23 16:28:02,050 - WARNING - Could not get open positions - using fallback
+2025-06-23 16:28:02,050 - INFO - Status: 0 pending orders, 0 open positions
+2025-06-23 16:28:02,050 - INFO - 🔍 Scanning for trading opportunities with fixed dollar risk...
+2025-06-23 16:28:02,050 - INFO - 📅 Current session: 2025-06-23 16:28:02 EDT - Active: New York - Liquidity: MEDIUM
+2025-06-23 16:28:03,888 - INFO - ⏰ EUR_USD: BUY signal found but skipping - Poor timing: Daily rollover period (OANDA)
+2025-06-23 16:28:05,396 - INFO - ⏰ GBP_USD: BUY signal found but skipping - Poor timing: Daily rollover period (OANDA)
+2025-06-23 16:28:06,846 - INFO - ⏰ USD_JPY: SELL signal found but skipping - Poor timing: Daily rollover period (OANDA)
+2025-06-23 16:28:08,086 - INFO - ⏰ USD_CAD: SELL signal found but skipping - Poor timing: Daily rollover period (OANDA)
+2025-06-23 16:28:09,239 - INFO - ⏰ AUD_USD: BUY signal found but skipping - Poor timing: Daily rollover period (OANDA)
+2025-06-23 16:28:10,466 - INFO - ⏰ NZD_USD: BUY signal found but skipping - Poor timing: Daily rollover period (OANDA)
+2025-06-23 16:28:10,466 - INFO - No trading opportunities found
+2025-06-23 16:28:10,696 - INFO - Trading cycle completed

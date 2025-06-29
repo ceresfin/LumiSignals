@@ -1,0 +1,98 @@
+2025-06-25 09:25:49,768 - INFO - Demo Trading Bot started with Fixed Dollar Risk Management and Enhanced Tracking
+2025-06-25 09:25:52,898 - INFO - Starting trading cycle...
+2025-06-25 09:25:53,639 - INFO - Status: 0 pending orders, 4 open positions
+2025-06-25 09:25:53,639 - INFO - 🔍 Scanning for trading opportunities with fixed dollar risk...
+2025-06-25 09:25:53,643 - INFO - 📅 Current session: 2025-06-25 09:25:53 EDT - Active: London, New York - Liquidity: HIGH
+2025-06-25 09:25:54,746 - INFO - 💰 EUR_USD Risk: $10.00 USD (5.0 micro lots, 20.0 pips)
+2025-06-25 09:25:54,747 - INFO - 🎯 EUR_USD: BUY MARKET @ 1.1602 (Confidence: 100%, Liquidity: 5/5)
+2025-06-25 09:25:55,953 - INFO - 💰 GBP_USD Risk: $10.00 USD (5.0 micro lots, 20.0 pips)
+2025-06-25 09:25:55,953 - INFO - 🎯 GBP_USD: BUY MARKET @ 1.3612 (Confidence: 100%, Liquidity: 5/5)
+2025-06-25 09:25:59,692 - INFO - 💰 AUD_USD Risk: $10.00 USD (5.0 micro lots, 20.0 pips)
+2025-06-25 09:25:59,693 - INFO - 🎯 AUD_USD: BUY LIMIT @ 0.6400 (Confidence: 100%, Liquidity: 4/5)
+2025-06-25 09:26:00,836 - INFO - 💰 NZD_USD Risk: $10.00 USD (5.0 micro lots, 20.0 pips)
+2025-06-25 09:26:00,838 - INFO - 🎯 NZD_USD: BUY MARKET @ 0.6018 (Confidence: 100%, Liquidity: 4/5)
+2025-06-25 09:26:00,838 - INFO - 📈 Placing MARKET BUY for EUR_USD
+2025-06-25 09:26:00,838 - INFO - 📊 Created metadata: Penny_Curve_Momentum_EUR/USD_MARKET_BUY_Weak
+2025-06-25 09:26:00,839 - INFO -    Momentum: 0.250 | Direction: STRONG_BULLISH
+2025-06-25 09:26:00,839 - INFO -    Bias: BUY | Zone: In_Buy_Zone
+2025-06-25 09:26:00,839 - INFO -    Confidence: 100% | Alignment: 1.00
+2025-06-25 09:26:00,995 - INFO - 📝 Stored metadata for order 91
+2025-06-25 09:26:00,998 - INFO - 📝 Stored metadata for trade 92
+2025-06-25 09:26:00,998 - INFO - ✅ Market order filled: EUR_USD BUY @ 1.1602
+2025-06-25 09:26:00,999 - INFO - 📝 Setup: Penny_Curve_Momentum_EUR/USD_MARKET_BUY_Weak
+2025-06-25 09:26:00,999 - INFO - 📊 Setup executed: Penny_Curve_Momentum_EUR/USD_MARKET_BUY_Weak
+2025-06-25 09:26:00,999 - INFO - Trade reasoning for EUR_USD:
+2025-06-25 09:26:00,999 - INFO -    ✅ Momentum sufficient: 0.250%
+2025-06-25 09:26:01,000 - INFO -    📈 Strategy Direction: BUY (momentum-driven)
+2025-06-25 09:26:01,000 - INFO -    🎯 MARKET BUY - IN buy zone of 1.1600 penny
+2025-06-25 09:26:01,000 - INFO -    Buy zone: 1.1600 to 1.1625
+2025-06-25 09:26:01,000 - INFO -    Position: 1.5 pips above penny
+2025-06-25 09:26:01,000 - INFO -    Immediate execution - optimal buy zone entry
+2025-06-25 09:26:01,000 - INFO -    Moderate momentum bonus (+10)
+2025-06-25 09:26:01,001 - INFO -    🎯 OPTIMAL ZONE ENTRY - High confidence (+20)
+2025-06-25 09:26:01,001 - INFO -    💰 Reward/Risk Ratio: 4.92:1
+2025-06-25 09:26:01,001 - INFO -    Market timing: Good timing: Optimal window: 03:00-11:00 ET (Liquidity: 5/5, Confidence: 100%)
+2025-06-25 09:26:01,001 - INFO - 📈 Placing MARKET BUY for GBP_USD
+2025-06-25 09:26:01,001 - INFO - 📊 Created metadata: Penny_Curve_Momentum_GBP/USD_MARKET_BUY_Moderate
+2025-06-25 09:26:01,001 - INFO -    Momentum: 0.339 | Direction: STRONG_BULLISH
+2025-06-25 09:26:01,002 - INFO -    Bias: BUY | Zone: In_Buy_Zone
+2025-06-25 09:26:01,002 - INFO -    Confidence: 100% | Alignment: 1.00
+2025-06-25 09:26:01,173 - INFO - 📝 Stored metadata for order 95
+2025-06-25 09:26:01,174 - INFO - 📝 Stored metadata for trade 96
+2025-06-25 09:26:01,176 - INFO - ✅ Market order filled: GBP_USD BUY @ 1.3612
+2025-06-25 09:26:01,178 - INFO - 📝 Setup: Penny_Curve_Momentum_GBP/USD_MARKET_BUY_Moderate
+2025-06-25 09:26:01,178 - INFO - 📊 Setup executed: Penny_Curve_Momentum_GBP/USD_MARKET_BUY_Moderate
+2025-06-25 09:26:01,178 - INFO - Trade reasoning for GBP_USD:
+2025-06-25 09:26:01,178 - INFO -    ✅ Momentum sufficient: 0.339%
+2025-06-25 09:26:01,178 - INFO -    📈 Strategy Direction: BUY (momentum-driven)
+2025-06-25 09:26:01,178 - INFO -    🎯 MARKET BUY - IN buy zone of 1.3600 penny
+2025-06-25 09:26:01,178 - INFO -    Buy zone: 1.3600 to 1.3625
+2025-06-25 09:26:01,178 - INFO -    Position: 11.7 pips above penny
+2025-06-25 09:26:01,178 - INFO -    Immediate execution - optimal buy zone entry
+2025-06-25 09:26:01,178 - INFO -    Strong momentum bonus (+15)
+2025-06-25 09:26:01,178 - INFO -    🎯 OPTIMAL ZONE ENTRY - High confidence (+20)
+2025-06-25 09:26:01,178 - INFO -    💰 Reward/Risk Ratio: 4.41:1
+2025-06-25 09:26:01,180 - INFO -    Market timing: Good timing: Optimal window: 03:00-11:00 ET (Liquidity: 5/5, Confidence: 100%)
+2025-06-25 09:26:01,180 - INFO - 📋 Placing LIMIT BUY for AUD_USD @ 0.6400
+2025-06-25 09:26:01,180 - INFO - 📊 Created metadata: Penny_Curve_Momentum_AUD/USD_LIMIT_BUY_Moderate
+2025-06-25 09:26:01,180 - INFO -    Momentum: 0.307 | Direction: STRONG_BULLISH
+2025-06-25 09:26:01,180 - INFO -    Bias: BUY | Zone: Above_Buy_Zone
+2025-06-25 09:26:01,180 - INFO -    Confidence: 100% | Alignment: 0.80
+2025-06-25 09:26:01,381 - INFO - 📝 Stored metadata for limit order 99
+2025-06-25 09:26:01,381 - INFO - ✅ Limit order placed: AUD_USD BUY @ 0.6400
+2025-06-25 09:26:01,381 - INFO - 📝 Setup: Penny_Curve_Momentum_AUD/USD_LIMIT_BUY_Moderate
+2025-06-25 09:26:01,381 - INFO - 📊 Setup executed: Penny_Curve_Momentum_AUD/USD_LIMIT_BUY_Moderate
+2025-06-25 09:26:01,381 - INFO - Trade reasoning for AUD_USD:
+2025-06-25 09:26:01,383 - INFO -    ✅ Momentum sufficient: 0.307%
+2025-06-25 09:26:01,383 - INFO -    📈 Strategy Direction: BUY (momentum-driven)
+2025-06-25 09:26:01,383 - INFO -    🎯 LIMIT BUY - Above buy zones
+2025-06-25 09:26:01,383 - INFO -    Entry at penny below: 0.6400
+2025-06-25 09:26:01,383 - INFO -    Current: 0.64943
+2025-06-25 09:26:01,383 - INFO -    Distance to entry: 94.3 pips
+2025-06-25 09:26:01,383 - INFO -    Better entry price with bullish momentum
+2025-06-25 09:26:01,383 - INFO -    Strong momentum bonus (+15)
+2025-06-25 09:26:01,383 - INFO -    📋 Strategic limit order - Good confidence (+10)
+2025-06-25 09:26:01,383 - INFO -    💰 Reward/Risk Ratio: 5.00:1
+2025-06-25 09:26:01,383 - INFO -    Market timing: Good timing: Optimal window: 19:00-11:00 ET (Liquidity: 4/5, Confidence: 100%)
+2025-06-25 09:26:01,383 - INFO - 📈 Placing MARKET BUY for NZD_USD
+2025-06-25 09:26:01,389 - INFO - 📊 Created metadata: Penny_Curve_Momentum_NZD/USD_MARKET_BUY_Moderate
+2025-06-25 09:26:01,389 - INFO -    Momentum: 0.402 | Direction: STRONG_BULLISH
+2025-06-25 09:26:01,389 - INFO -    Bias: BUY | Zone: In_Buy_Zone
+2025-06-25 09:26:01,390 - INFO -    Confidence: 100% | Alignment: 1.00
+2025-06-25 09:26:01,664 - INFO - 📝 Stored metadata for order 100
+2025-06-25 09:26:01,664 - INFO - 📝 Stored metadata for trade 101
+2025-06-25 09:26:01,664 - INFO - ✅ Market order filled: NZD_USD BUY @ 0.6018
+2025-06-25 09:26:01,667 - INFO - 📝 Setup: Penny_Curve_Momentum_NZD/USD_MARKET_BUY_Moderate
+2025-06-25 09:26:01,668 - INFO - 📊 Setup executed: Penny_Curve_Momentum_NZD/USD_MARKET_BUY_Moderate
+2025-06-25 09:26:01,668 - INFO - Trade reasoning for NZD_USD:
+2025-06-25 09:26:01,668 - INFO -    ✅ Momentum sufficient: 0.402%
+2025-06-25 09:26:01,668 - INFO -    📈 Strategy Direction: BUY (momentum-driven)
+2025-06-25 09:26:01,670 - INFO -    🎯 MARKET BUY - IN buy zone of 0.6000 penny
+2025-06-25 09:26:01,670 - INFO -    Buy zone: 0.6000 to 0.6025
+2025-06-25 09:26:01,670 - INFO -    Position: 18.3 pips above penny
+2025-06-25 09:26:01,670 - INFO -    Immediate execution - optimal buy zone entry
+2025-06-25 09:26:01,670 - INFO -    Very strong momentum bonus (+20)
+2025-06-25 09:26:01,670 - INFO -    🎯 OPTIMAL ZONE ENTRY - High confidence (+20)
+2025-06-25 09:26:01,672 - INFO -    💰 Reward/Risk Ratio: 4.08:1
+2025-06-25 09:26:01,672 - INFO -    Market timing: Good timing: Optimal window: 18:00-10:00 ET (Liquidity: 4/5, Confidence: 100%)
+2025-06-25 09:26:01,825 - INFO - Trading cycle completed

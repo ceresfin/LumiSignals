@@ -1,0 +1,256 @@
+2025-06-24 10:08:43,140 - INFO - Demo Trading Bot started with Fixed Dollar Risk Management
+2025-06-24 10:08:46,245 - INFO - Starting trading cycle...
+2025-06-24 10:08:46,500 - WARNING - Could not get pending orders - using fallback
+2025-06-24 10:08:46,600 - WARNING - Could not get open positions - using fallback
+2025-06-24 10:08:46,600 - INFO - Status: 0 pending orders, 0 open positions
+2025-06-24 10:08:46,600 - INFO - 🔍 Scanning for trading opportunities with fixed dollar risk...
+2025-06-24 10:08:46,600 - INFO - 📅 Current session: 2025-06-24 10:08:46 EDT - Active: London, New York - Liquidity: HIGH
+2025-06-24 10:08:47,553 - WARNING - Risk too high for EUR_USD: $10.00
+2025-06-24 10:08:47,553 - INFO - 🎯 EUR_USD: BUY MARKET @ 1.1602 (Confidence: 100%, Liquidity: 5/5)
+2025-06-24 10:08:48,827 - WARNING - Risk too high for GBP_USD: $10.00
+2025-06-24 10:08:48,827 - INFO - 🎯 GBP_USD: BUY MARKET @ 1.3615 (Confidence: 100%, Liquidity: 5/5)
+2025-06-24 10:08:50,264 - INFO - 💰 USD_JPY Risk: $9.67 USD (7.0 micro lots, 20.0 pips)
+2025-06-24 10:08:50,264 - INFO - 🎯 USD_JPY: SELL MARKET @ 144.7610 (Confidence: 100%, Liquidity: 4/5)
+2025-06-24 10:08:52,306 - WARNING - Risk too high for AUD_USD: $10.00
+2025-06-24 10:08:52,306 - INFO - 🎯 AUD_USD: BUY LIMIT @ 0.6400 (Confidence: 100%, Liquidity: 4/5)
+2025-06-24 10:08:53,285 - INFO - ⏰ NZD_USD: BUY signal found but skipping - Poor timing: Outside optimal window: 18:00-10:00 ET
+2025-06-24 10:08:53,289 - INFO - 📈 Placing MARKET BUY for EUR_USD
+2025-06-24 10:08:53,289 - ERROR - Error placing market order: 'OandaAPI' object has no attribute 'place_order'
+2025-06-24 10:08:53,289 - INFO - 📈 Placing MARKET BUY for GBP_USD
+2025-06-24 10:08:53,289 - ERROR - Error placing market order: 'OandaAPI' object has no attribute 'place_order'
+2025-06-24 10:08:53,289 - INFO - 📈 Placing MARKET SELL for USD_JPY
+2025-06-24 10:08:53,289 - ERROR - Error placing market order: 'OandaAPI' object has no attribute 'place_order'
+2025-06-24 10:08:53,289 - INFO - 📋 Placing LIMIT BUY for AUD_USD @ 0.6400
+2025-06-24 10:08:53,289 - ERROR - Error placing limit order: 'OandaAPI' object has no attribute 'place_order'
+2025-06-24 10:08:53,369 - INFO - Trading cycle completed
+2025-06-24 10:31:27,877 - INFO - Demo Trading Bot started with Fixed Dollar Risk Management
+2025-06-24 10:31:31,319 - INFO - Starting trading cycle...
+2025-06-24 10:31:31,592 - WARNING - Could not get pending orders - using fallback
+2025-06-24 10:31:31,704 - WARNING - Could not get open positions - using fallback
+2025-06-24 10:31:31,704 - INFO - Status: 0 pending orders, 0 open positions
+2025-06-24 10:31:31,705 - INFO - 🔍 Scanning for trading opportunities with fixed dollar risk...
+2025-06-24 10:31:31,705 - INFO - 📅 Current session: 2025-06-24 10:31:31 EDT - Active: London, New York - Liquidity: HIGH
+2025-06-24 10:31:32,535 - WARNING - Risk too high for EUR_USD: $10.00
+2025-06-24 10:31:32,536 - INFO - 🎯 EUR_USD: BUY LIMIT @ 1.1600 (Confidence: 100%, Liquidity: 5/5)
+2025-06-24 10:31:33,423 - WARNING - Risk too high for GBP_USD: $10.00
+2025-06-24 10:31:33,424 - INFO - 🎯 GBP_USD: BUY LIMIT @ 1.3600 (Confidence: 100%, Liquidity: 5/5)
+2025-06-24 10:31:35,078 - INFO - 💰 USD_JPY Risk: $9.68 USD (7.0 micro lots, 20.0 pips)
+2025-06-24 10:31:35,078 - INFO - 🎯 USD_JPY: SELL LIMIT @ 145.0000 (Confidence: 100%, Liquidity: 4/5)
+2025-06-24 10:31:36,343 - WARNING - Risk too high for USD_CAD: $10.23
+2025-06-24 10:31:36,344 - INFO - 🎯 USD_CAD: SELL MARKET @ 1.3687 (Confidence: 100%, Liquidity: 4/5)
+2025-06-24 10:31:37,112 - WARNING - Risk too high for AUD_USD: $10.00
+2025-06-24 10:31:37,113 - INFO - 🎯 AUD_USD: BUY MARKET @ 0.6515 (Confidence: 100%, Liquidity: 4/5)
+2025-06-24 10:31:38,196 - INFO - ⏰ NZD_USD: BUY signal found but skipping - Poor timing: Outside optimal window: 18:00-10:00 ET
+2025-06-24 10:31:38,196 - INFO - 📋 Placing LIMIT BUY for EUR_USD @ 1.1600
+2025-06-24 10:31:38,343 - INFO - ✅ Limit order placed: EUR_USD BUY @ 1.1600
+2025-06-24 10:31:38,343 - INFO - Trade reasoning for EUR_USD:
+2025-06-24 10:31:38,344 - INFO -    ✅ Momentum sufficient: 0.520%
+2025-06-24 10:31:38,345 - INFO -    📈 Strategy Direction: BUY (momentum-driven)
+2025-06-24 10:31:38,345 - INFO -    🎯 LIMIT BUY - Above buy zones
+2025-06-24 10:31:38,346 - INFO -    Entry at penny below: 1.1600
+2025-06-24 10:31:38,346 - INFO -    Current: 1.16291
+2025-06-24 10:31:38,347 - INFO -    Distance to entry: 29.2 pips
+2025-06-24 10:31:38,347 - INFO -    Better entry price with bullish momentum
+2025-06-24 10:31:38,348 - INFO -    Very strong momentum bonus (+20)
+2025-06-24 10:31:38,349 - INFO -    📋 Strategic limit order - Good confidence (+10)
+2025-06-24 10:31:38,350 - INFO -    💰 Reward/Risk Ratio: 5.00:1
+2025-06-24 10:31:38,350 - INFO -    Market timing: Good timing: Optimal window: 03:00-11:00 ET (Liquidity: 5/5, Confidence: 100%)
+2025-06-24 10:31:38,350 - INFO - 📋 Placing LIMIT BUY for GBP_USD @ 1.3600
+2025-06-24 10:31:38,474 - INFO - ✅ Limit order placed: GBP_USD BUY @ 1.3600
+2025-06-24 10:31:38,475 - INFO - Trade reasoning for GBP_USD:
+2025-06-24 10:31:38,475 - INFO -    ✅ Momentum sufficient: 0.561%
+2025-06-24 10:31:38,476 - INFO -    📈 Strategy Direction: BUY (momentum-driven)
+2025-06-24 10:31:38,477 - INFO -    🎯 LIMIT BUY - Above buy zones
+2025-06-24 10:31:38,477 - INFO -    Entry at penny below: 1.3600
+2025-06-24 10:31:38,477 - INFO -    Current: 1.36302
+2025-06-24 10:31:38,478 - INFO -    Distance to entry: 30.2 pips
+2025-06-24 10:31:38,479 - INFO -    Better entry price with bullish momentum
+2025-06-24 10:31:38,480 - INFO -    Very strong momentum bonus (+20)
+2025-06-24 10:31:38,480 - INFO -    📋 Strategic limit order - Good confidence (+10)
+2025-06-24 10:31:38,481 - INFO -    💰 Reward/Risk Ratio: 5.00:1
+2025-06-24 10:31:38,481 - INFO -    Market timing: Good timing: Optimal window: 03:00-11:00 ET (Liquidity: 5/5, Confidence: 100%)
+2025-06-24 10:31:38,482 - INFO - 📋 Placing LIMIT SELL for USD_JPY @ 145.0000
+2025-06-24 10:31:38,622 - INFO - ✅ Limit order placed: USD_JPY SELL @ 145.0000
+2025-06-24 10:31:38,622 - INFO - Trade reasoning for USD_JPY:
+2025-06-24 10:31:38,622 - INFO -    ✅ Momentum sufficient: -0.584%
+2025-06-24 10:31:38,622 - INFO -    📈 Strategy Direction: SELL (momentum-driven)
+2025-06-24 10:31:38,623 - INFO -    🎯 LIMIT SELL - Below sell zones
+2025-06-24 10:31:38,623 - INFO -    Entry at penny above: 145.0000
+2025-06-24 10:31:38,624 - INFO -    Current: 144.60200
+2025-06-24 10:31:38,624 - INFO -    Distance to entry: 39.8 pips
+2025-06-24 10:31:38,625 - INFO -    Better entry price with bearish momentum
+2025-06-24 10:31:38,625 - INFO -    Very strong momentum bonus (+20)
+2025-06-24 10:31:38,626 - INFO -    📋 Strategic limit order - Good confidence (+10)
+2025-06-24 10:31:38,626 - INFO -    💰 Reward/Risk Ratio: 5.00:1
+2025-06-24 10:31:38,627 - INFO -    Market timing: Good timing: Optimal window: 19:00-11:00 ET (Liquidity: 4/5, Confidence: 100%)
+2025-06-24 10:31:38,627 - INFO - 📈 Placing MARKET SELL for USD_CAD
+2025-06-24 10:31:38,721 - ERROR - ❌ Market order failed: {'error': "Order placement failed: Oanda API Error: The Stop Loss on fill specifies a price with more precision than is allowed by the Order's instrument", 'errorMessage': "Oanda API Error: The Stop Loss on fill specifies a price with more precision than is allowed by the Order's instrument"}
+2025-06-24 10:31:38,721 - INFO - 📈 Placing MARKET BUY for AUD_USD
+2025-06-24 10:31:38,838 - ERROR - ❌ Market order failed: {'error': "Order placement failed: Oanda API Error: The Stop Loss on fill specifies a price with more precision than is allowed by the Order's instrument", 'errorMessage': "Oanda API Error: The Stop Loss on fill specifies a price with more precision than is allowed by the Order's instrument"}
+2025-06-24 10:31:38,948 - INFO - Trading cycle completed
+2025-06-24 10:35:16,593 - INFO - Demo Trading Bot started with Fixed Dollar Risk Management
+2025-06-24 10:35:19,222 - INFO - Starting trading cycle...
+2025-06-24 10:35:19,475 - WARNING - Could not get pending orders - using fallback
+2025-06-24 10:35:19,683 - WARNING - Could not get open positions - using fallback
+2025-06-24 10:35:19,684 - INFO - Status: 0 pending orders, 0 open positions
+2025-06-24 10:35:19,684 - INFO - 🔍 Scanning for trading opportunities with fixed dollar risk...
+2025-06-24 10:35:19,685 - INFO - 📅 Current session: 2025-06-24 10:35:19 EDT - Active: London, New York - Liquidity: HIGH
+2025-06-24 10:35:20,628 - WARNING - Risk too high for EUR_USD: $10.00
+2025-06-24 10:35:20,628 - INFO - 🎯 EUR_USD: BUY LIMIT @ 1.1600 (Confidence: 100%, Liquidity: 5/5)
+2025-06-24 10:35:21,740 - WARNING - Risk too high for GBP_USD: $10.00
+2025-06-24 10:35:21,741 - INFO - 🎯 GBP_USD: BUY LIMIT @ 1.3600 (Confidence: 100%, Liquidity: 5/5)
+2025-06-24 10:35:23,197 - INFO - 💰 USD_JPY Risk: $9.69 USD (7.0 micro lots, 20.0 pips)
+2025-06-24 10:35:23,198 - INFO - 🎯 USD_JPY: SELL LIMIT @ 145.0000 (Confidence: 100%, Liquidity: 4/5)
+2025-06-24 10:35:24,598 - WARNING - Risk too high for USD_CAD: $10.23
+2025-06-24 10:35:24,599 - INFO - 🎯 USD_CAD: SELL MARKET @ 1.3688 (Confidence: 100%, Liquidity: 4/5)
+2025-06-24 10:35:25,350 - WARNING - Risk too high for AUD_USD: $10.00
+2025-06-24 10:35:25,351 - INFO - 🎯 AUD_USD: BUY MARKET @ 0.6518 (Confidence: 100%, Liquidity: 4/5)
+2025-06-24 10:35:26,241 - INFO - ⏰ NZD_USD: BUY signal found but skipping - Poor timing: Outside optimal window: 18:00-10:00 ET
+2025-06-24 10:35:26,243 - INFO - 📋 Placing LIMIT BUY for EUR_USD @ 1.1600
+2025-06-24 10:35:26,351 - INFO - ✅ Limit order placed: EUR_USD BUY @ 1.1600
+2025-06-24 10:35:26,352 - INFO - Trade reasoning for EUR_USD:
+2025-06-24 10:35:26,352 - INFO -    ✅ Momentum sufficient: 0.550%
+2025-06-24 10:35:26,353 - INFO -    📈 Strategy Direction: BUY (momentum-driven)
+2025-06-24 10:35:26,353 - INFO -    🎯 LIMIT BUY - Above buy zones
+2025-06-24 10:35:26,354 - INFO -    Entry at penny below: 1.1600
+2025-06-24 10:35:26,355 - INFO -    Current: 1.16345
+2025-06-24 10:35:26,355 - INFO -    Distance to entry: 34.5 pips
+2025-06-24 10:35:26,356 - INFO -    Better entry price with bullish momentum
+2025-06-24 10:35:26,356 - INFO -    Very strong momentum bonus (+20)
+2025-06-24 10:35:26,357 - INFO -    📋 Strategic limit order - Good confidence (+10)
+2025-06-24 10:35:26,358 - INFO -    💰 Reward/Risk Ratio: 5.00:1
+2025-06-24 10:35:26,358 - INFO -    Market timing: Good timing: Optimal window: 03:00-11:00 ET (Liquidity: 5/5, Confidence: 100%)
+2025-06-24 10:35:26,358 - INFO - 📋 Placing LIMIT BUY for GBP_USD @ 1.3600
+2025-06-24 10:35:26,494 - INFO - ✅ Limit order placed: GBP_USD BUY @ 1.3600
+2025-06-24 10:35:26,494 - INFO - Trade reasoning for GBP_USD:
+2025-06-24 10:35:26,494 - INFO -    ✅ Momentum sufficient: 0.602%
+2025-06-24 10:35:26,494 - INFO -    📈 Strategy Direction: BUY (momentum-driven)
+2025-06-24 10:35:26,495 - INFO -    🎯 LIMIT BUY - Above buy zones
+2025-06-24 10:35:26,495 - INFO -    Entry at penny below: 1.3600
+2025-06-24 10:35:26,495 - INFO -    Current: 1.36374
+2025-06-24 10:35:26,495 - INFO -    Distance to entry: 37.4 pips
+2025-06-24 10:35:26,496 - INFO -    Better entry price with bullish momentum
+2025-06-24 10:35:26,496 - INFO -    Very strong momentum bonus (+20)
+2025-06-24 10:35:26,496 - INFO -    📋 Strategic limit order - Good confidence (+10)
+2025-06-24 10:35:26,497 - INFO -    💰 Reward/Risk Ratio: 5.00:1
+2025-06-24 10:35:26,497 - INFO -    Market timing: Good timing: Optimal window: 03:00-11:00 ET (Liquidity: 5/5, Confidence: 100%)
+2025-06-24 10:35:26,497 - INFO - 📋 Placing LIMIT SELL for USD_JPY @ 145.0000
+2025-06-24 10:35:26,609 - INFO - ✅ Limit order placed: USD_JPY SELL @ 145.0000
+2025-06-24 10:35:26,610 - INFO - Trade reasoning for USD_JPY:
+2025-06-24 10:35:26,610 - INFO -    ✅ Momentum sufficient: -0.626%
+2025-06-24 10:35:26,611 - INFO -    📈 Strategy Direction: SELL (momentum-driven)
+2025-06-24 10:35:26,611 - INFO -    🎯 LIMIT SELL - Below sell zones
+2025-06-24 10:35:26,612 - INFO -    Entry at penny above: 145.0000
+2025-06-24 10:35:26,613 - INFO -    Current: 144.53200
+2025-06-24 10:35:26,613 - INFO -    Distance to entry: 46.8 pips
+2025-06-24 10:35:26,614 - INFO -    Better entry price with bearish momentum
+2025-06-24 10:35:26,614 - INFO -    Very strong momentum bonus (+20)
+2025-06-24 10:35:26,614 - INFO -    📋 Strategic limit order - Good confidence (+10)
+2025-06-24 10:35:26,615 - INFO -    💰 Reward/Risk Ratio: 5.00:1
+2025-06-24 10:35:26,615 - INFO -    Market timing: Good timing: Optimal window: 19:00-11:00 ET (Liquidity: 4/5, Confidence: 100%)
+2025-06-24 10:35:26,615 - INFO - 📈 Placing MARKET SELL for USD_CAD
+2025-06-24 10:35:26,728 - INFO - ✅ Market order filled: USD_CAD SELL @ 1.3688
+2025-06-24 10:35:26,729 - INFO - Trade reasoning for USD_CAD:
+2025-06-24 10:35:26,729 - INFO -    ✅ Momentum sufficient: -0.288%
+2025-06-24 10:35:26,730 - INFO -    📈 Strategy Direction: SELL (momentum-driven)
+2025-06-24 10:35:26,731 - INFO -    🎯 MARKET SELL - IN sell zone of 1.3700 penny
+2025-06-24 10:35:26,731 - INFO -    Sell zone: 1.3675 to 1.3700
+2025-06-24 10:35:26,732 - INFO -    Position: 12.1 pips below penny
+2025-06-24 10:35:26,732 - INFO -    Immediate execution - optimal sell zone entry
+2025-06-24 10:35:26,733 - INFO -    Strong momentum bonus (+15)
+2025-06-24 10:35:26,733 - INFO -    🎯 OPTIMAL ZONE ENTRY - High confidence (+20)
+2025-06-24 10:35:26,734 - INFO -    💰 Reward/Risk Ratio: 4.39:1
+2025-06-24 10:35:26,734 - INFO -    Market timing: Good timing: Optimal window: 08:00-14:00 ET (Liquidity: 4/5, Confidence: 100%)
+2025-06-24 10:35:26,735 - INFO - 📈 Placing MARKET BUY for AUD_USD
+2025-06-24 10:35:26,822 - INFO - ✅ Market order filled: AUD_USD BUY @ 0.6518
+2025-06-24 10:35:26,822 - INFO - Trade reasoning for AUD_USD:
+2025-06-24 10:35:26,823 - INFO -    ✅ Momentum sufficient: 0.614%
+2025-06-24 10:35:26,823 - INFO -    📈 Strategy Direction: BUY (momentum-driven)
+2025-06-24 10:35:26,824 - INFO -    🎯 MARKET BUY - IN buy zone of 0.6500 penny
+2025-06-24 10:35:26,824 - INFO -    Buy zone: 0.6500 to 0.6525
+2025-06-24 10:35:26,824 - INFO -    Position: 17.5 pips above penny
+2025-06-24 10:35:26,825 - INFO -    Immediate execution - optimal buy zone entry
+2025-06-24 10:35:26,825 - INFO -    Very strong momentum bonus (+20)
+2025-06-24 10:35:26,826 - INFO -    🎯 OPTIMAL ZONE ENTRY - High confidence (+20)
+2025-06-24 10:35:26,826 - INFO -    💰 Reward/Risk Ratio: 4.12:1
+2025-06-24 10:35:26,826 - INFO -    Market timing: Good timing: Optimal window: 19:00-11:00 ET (Liquidity: 4/5, Confidence: 100%)
+2025-06-24 10:35:26,914 - INFO - Trading cycle completed
+2025-06-24 11:08:12,440 - INFO - Demo Trading Bot started with Fixed Dollar Risk Management and Enhanced Tracking
+2025-06-24 11:08:14,288 - INFO - Starting trading cycle...
+2025-06-24 11:08:14,680 - INFO - Status: 0 pending orders, 4 open positions
+2025-06-24 11:08:14,681 - INFO - 🔍 Scanning for trading opportunities with fixed dollar risk...
+2025-06-24 11:08:14,681 - INFO - 📅 Current session: 2025-06-24 11:08:14 EDT - Active: London, New York - Liquidity: HIGH
+2025-06-24 11:08:15,677 - INFO - ⏰ EUR_USD: BUY signal found but skipping - Poor timing: Outside optimal window: 03:00-11:00 ET
+2025-06-24 11:08:16,684 - INFO - ⏰ GBP_USD: BUY signal found but skipping - Poor timing: Outside optimal window: 03:00-11:00 ET
+2025-06-24 11:08:17,814 - INFO - ⏰ USD_JPY: SELL signal found but skipping - Poor timing: Outside optimal window: 19:00-11:00 ET
+2025-06-24 11:08:19,380 - INFO - 💰 USD_CAD Risk: $10.22 USD (7.0 micro lots, 20.0 pips)
+2025-06-24 11:08:19,380 - INFO - 🎯 USD_CAD: SELL MARKET @ 1.3697 (Confidence: 100%, Liquidity: 4/5)
+2025-06-24 11:08:20,428 - INFO - ⏰ AUD_USD: BUY signal found but skipping - Poor timing: Outside optimal window: 19:00-11:00 ET
+2025-06-24 11:08:21,275 - INFO - ⏰ NZD_USD: BUY signal found but skipping - Poor timing: Outside optimal window: 18:00-10:00 ET
+2025-06-24 11:08:21,276 - INFO - 📈 Placing MARKET SELL for USD_CAD
+2025-06-24 11:08:21,388 - INFO - ✅ Market order filled: USD_CAD SELL @ 1.3697
+2025-06-24 11:08:21,389 - INFO - 📊 Setup: Penny_Curve_Momentum_USD/CAD_MARKET_SELL_Weak
+2025-06-24 11:08:21,389 - INFO - Trade reasoning for USD_CAD:
+2025-06-24 11:08:21,390 - INFO -    ✅ Momentum sufficient: -0.207%
+2025-06-24 11:08:21,390 - INFO -    📈 Strategy Direction: SELL (momentum-driven)
+2025-06-24 11:08:21,391 - INFO -    🎯 MARKET SELL - IN sell zone of 1.3700 penny
+2025-06-24 11:08:21,391 - INFO -    Sell zone: 1.3675 to 1.3700
+2025-06-24 11:08:21,391 - INFO -    Position: 3.3 pips below penny
+2025-06-24 11:08:21,391 - INFO -    Immediate execution - optimal sell zone entry
+2025-06-24 11:08:21,392 - INFO -    Moderate momentum bonus (+10)
+2025-06-24 11:08:21,392 - INFO -    🎯 OPTIMAL ZONE ENTRY - High confidence (+20)
+2025-06-24 11:08:21,393 - INFO -    💰 Reward/Risk Ratio: 4.84:1
+2025-06-24 11:08:21,393 - INFO -    Market timing: Good timing: Optimal window: 08:00-14:00 ET (Liquidity: 4/5, Confidence: 100%)
+2025-06-24 11:08:21,499 - INFO - Trading cycle completed
+2025-06-24 11:23:31,279 - INFO - Demo Trading Bot started with Fixed Dollar Risk Management and Enhanced Tracking
+2025-06-24 11:23:33,338 - INFO - Starting trading cycle...
+2025-06-24 11:23:33,851 - INFO - Status: 0 pending orders, 4 open positions
+2025-06-24 11:23:33,852 - INFO - 🔍 Scanning for trading opportunities with fixed dollar risk...
+2025-06-24 11:23:33,852 - INFO - 📅 Current session: 2025-06-24 11:23:33 EDT - Active: London, New York - Liquidity: HIGH
+2025-06-24 11:23:35,017 - INFO - ⏰ EUR_USD: BUY signal found but skipping - Poor timing: Outside optimal window: 03:00-11:00 ET
+2025-06-24 11:23:35,733 - INFO - ⏰ GBP_USD: BUY signal found but skipping - Poor timing: Outside optimal window: 03:00-11:00 ET
+2025-06-24 11:23:36,628 - INFO - ⏰ USD_JPY: SELL signal found but skipping - Poor timing: Outside optimal window: 19:00-11:00 ET
+2025-06-24 11:23:37,895 - INFO - 💰 USD_CAD Risk: $10.22 USD (7.0 micro lots, 20.0 pips)
+2025-06-24 11:23:37,895 - INFO - 🎯 USD_CAD: SELL MARKET @ 1.3696 (Confidence: 100%, Liquidity: 4/5)
+2025-06-24 11:23:38,678 - INFO - ⏰ AUD_USD: BUY signal found but skipping - Poor timing: Outside optimal window: 19:00-11:00 ET
+2025-06-24 11:23:39,588 - INFO - ⏰ NZD_USD: BUY signal found but skipping - Poor timing: Outside optimal window: 18:00-10:00 ET
+2025-06-24 11:23:39,588 - INFO - 📈 Placing MARKET SELL for USD_CAD
+2025-06-24 11:23:39,718 - ERROR - ❌ Market order failed: {'orderCreateTransaction': {'id': '63', 'accountID': '101-001-21245555-001', 'userID': 21245555, 'batchID': '63', 'requestID': '79400891813217926', 'time': '2025-06-24T15:23:41.224988646Z', 'type': 'MARKET_ORDER', 'instrument': 'USD_CAD', 'units': '-7000', 'timeInForce': 'FOK', 'positionFill': 'DEFAULT', 'takeProfitOnFill': {'price': '1.36000', 'timeInForce': 'GTC'}, 'stopLossOnFill': {'price': '1.37156', 'timeInForce': 'GTC', 'triggerMode': 'TOP_OF_BOOK'}, 'reason': 'CLIENT_ORDER'}, 'orderCancelTransaction': {'id': '64', 'accountID': '101-001-21245555-001', 'userID': 21245555, 'batchID': '63', 'requestID': '79400891813217926', 'time': '2025-06-24T15:23:41.224988646Z', 'type': 'ORDER_CANCEL', 'orderID': '63', 'reason': 'FIFO_VIOLATION_SAFEGUARD_VIOLATION'}, 'relatedTransactionIDs': ['63', '64'], 'lastTransactionID': '64'}
+2025-06-24 11:23:39,919 - INFO - Trading cycle completed
+2025-06-24 11:51:51,848 - INFO - Demo Trading Bot started with Fixed Dollar Risk Management and Enhanced Tracking
+2025-06-24 11:51:53,535 - INFO - Starting trading cycle...
+2025-06-24 11:51:53,962 - INFO - Status: 0 pending orders, 4 open positions
+2025-06-24 11:51:53,962 - INFO - 🔍 Scanning for trading opportunities with fixed dollar risk...
+2025-06-24 11:51:53,962 - INFO - 📅 Current session: 2025-06-24 11:51:53 EDT - Active: London, New York - Liquidity: HIGH
+2025-06-24 11:51:54,960 - INFO - ⏰ EUR_USD: BUY signal found but skipping - Poor timing: Outside optimal window: 03:00-11:00 ET
+2025-06-24 11:51:56,114 - INFO - ⏰ GBP_USD: BUY signal found but skipping - Poor timing: Outside optimal window: 03:00-11:00 ET
+2025-06-24 11:51:57,078 - INFO - ⏰ USD_JPY: SELL signal found but skipping - Poor timing: Outside optimal window: 19:00-11:00 ET
+2025-06-24 11:51:59,308 - INFO - ⏰ AUD_USD: BUY signal found but skipping - Poor timing: Outside optimal window: 19:00-11:00 ET
+2025-06-24 11:52:00,164 - INFO - ⏰ NZD_USD: BUY signal found but skipping - Poor timing: Outside optimal window: 18:00-10:00 ET
+2025-06-24 11:52:00,164 - INFO - No trading opportunities found
+2025-06-24 11:52:00,302 - INFO - Trading cycle completed
+2025-06-24 12:51:36,733 - INFO - Demo Trading Bot started with Fixed Dollar Risk Management and Enhanced Tracking
+2025-06-24 12:51:38,444 - INFO - Starting trading cycle...
+2025-06-24 12:52:20,589 - ERROR - Error getting account info: HTTPSConnectionPool(host='api-fxpractice.oanda.com', port=443): Max retries exceeded with url: /v3/accounts/101-001-21245555-001/summary (Caused by ConnectTimeoutError(<urllib3.connection.HTTPSConnection object at 0x0000026A22216A50>, 'Connection to api-fxpractice.oanda.com timed out. (connect timeout=None)'))
+2025-06-24 12:52:44,952 - INFO - Status: 0 pending orders, 2 open positions
+2025-06-24 12:52:44,952 - INFO - 🔍 Scanning for trading opportunities with fixed dollar risk...
+2025-06-24 12:52:44,953 - INFO - 📅 Current session: 2025-06-24 12:52:44 EDT - Active: New York - Liquidity: MEDIUM
+2025-06-24 12:52:46,094 - INFO - ⏰ EUR_USD: BUY signal found but skipping - Poor timing: Outside optimal window: 03:00-11:00 ET
+2025-06-24 12:52:47,359 - INFO - ⏰ GBP_USD: BUY signal found but skipping - Poor timing: Outside optimal window: 03:00-11:00 ET
+2025-06-24 12:52:48,642 - INFO - ⏰ USD_JPY: SELL signal found but skipping - Poor timing: Outside optimal window: 19:00-11:00 ET
+2025-06-24 12:52:50,890 - INFO - ⏰ AUD_USD: BUY signal found but skipping - Poor timing: Outside optimal window: 19:00-11:00 ET
+2025-06-24 12:52:52,055 - INFO - ⏰ NZD_USD: BUY signal found but skipping - Poor timing: Outside optimal window: 18:00-10:00 ET
+2025-06-24 12:52:52,055 - INFO - No trading opportunities found
+2025-06-24 12:52:52,204 - INFO - Trading cycle completed
+2025-06-24 14:12:21,496 - INFO - Demo Trading Bot started with Fixed Dollar Risk Management and Enhanced Tracking
+2025-06-24 14:12:26,019 - INFO - Starting trading cycle...
+2025-06-24 14:12:26,549 - INFO - Status: 0 pending orders, 2 open positions
+2025-06-24 14:12:26,549 - INFO - 🔍 Scanning for trading opportunities with fixed dollar risk...
+2025-06-24 14:12:26,549 - INFO - 📅 Current session: 2025-06-24 14:12:26 EDT - Active: New York - Liquidity: MEDIUM
+2025-06-24 14:12:27,459 - INFO - ⏰ EUR_USD: BUY signal found but skipping - Poor timing: Midday liquidity lull
+2025-06-24 14:12:28,431 - INFO - ⏰ GBP_USD: BUY signal found but skipping - Poor timing: Midday liquidity lull
+2025-06-24 14:12:29,389 - INFO - ⏰ USD_JPY: SELL signal found but skipping - Poor timing: Midday liquidity lull
+2025-06-24 14:12:31,780 - INFO - ⏰ AUD_USD: BUY signal found but skipping - Poor timing: Midday liquidity lull
+2025-06-24 14:12:32,824 - INFO - ⏰ NZD_USD: BUY signal found but skipping - Poor timing: Midday liquidity lull
+2025-06-24 14:12:32,824 - INFO - No trading opportunities found
+2025-06-24 14:12:32,958 - INFO - Trading cycle completed

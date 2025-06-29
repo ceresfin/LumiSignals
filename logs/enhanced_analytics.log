@@ -1,0 +1,729 @@
+2025-06-26 15:28:23,284 [INFO] Starting Enhanced Trading Analytics Calculator...
+2025-06-26 15:28:25,124 [INFO] Retrieved 54 records for enhanced analysis
+2025-06-26 15:28:25,124 [INFO] Processing record 21 (ID: rec2eh0wnklFg557H)
+2025-06-26 15:28:25,124 [WARNING] Record 21 has data issues: Missing Account Balance Before
+2025-06-26 15:28:25,398 [INFO] ✅ Updated record 21 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 15:28:25,398 [INFO] Processing record 171 (ID: rec39MG83rKgxxyj3)
+2025-06-26 15:28:25,398 [WARNING] Record 171 has data issues: Missing Account Balance Before
+2025-06-26 15:28:25,638 [INFO] ✅ Updated record 171 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 15:28:25,638 [INFO] Processing record 44 (ID: rec3UW2aTrHqMZ12E)
+2025-06-26 15:28:25,877 [ERROR] ❌ Error processing record rec3UW2aTrHqMZ12E: ('422 Client Error: Unprocessable Entity for url: https://api.airtable.com/v0/appuiViKgTeYs6phe/OANDA%20Orders%20%26%20Executions/rec3UW2aTrHqMZ12E', '{\'type\': \'INVALID_VALUE_FOR_COLUMN\', \'message\': \'Field "Time to Fill" cannot accept a value because the field is computed\'}')
+2025-06-26 15:28:25,877 [INFO] Processing record 49 (ID: rec3cEj77ZV2CsfvV)
+2025-06-26 15:28:25,877 [WARNING] Record 49 has data issues: Missing Account Balance Before
+2025-06-26 15:28:26,133 [INFO] ✅ Updated record 49 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 15:28:26,133 [INFO] Processing record 43 (ID: rec4NBxrnLtzVxpFU)
+2025-06-26 15:28:26,326 [ERROR] ❌ Error processing record rec4NBxrnLtzVxpFU: ('422 Client Error: Unprocessable Entity for url: https://api.airtable.com/v0/appuiViKgTeYs6phe/OANDA%20Orders%20%26%20Executions/rec4NBxrnLtzVxpFU', '{\'type\': \'INVALID_VALUE_FOR_COLUMN\', \'message\': \'Field "Time to Fill" cannot accept a value because the field is computed\'}')
+2025-06-26 15:28:26,326 [INFO] Processing record 155 (ID: rec4oXvWbBsyJgl6S)
+2025-06-26 15:28:26,326 [WARNING] Record 155 has data issues: Missing Account Balance Before
+2025-06-26 15:28:26,565 [INFO] ✅ Updated record 155 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 15:28:26,565 [INFO] Processing record 182 (ID: rec5VAEDecwocOHWO)
+2025-06-26 15:28:26,565 [WARNING] Record 182 has data issues: Missing Account Balance Before
+2025-06-26 15:28:26,789 [INFO] ✅ Updated record 182 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 15:28:26,789 [INFO] Processing record 154 (ID: rec5fwQwTph0JQkch)
+2025-06-26 15:28:26,789 [WARNING] Record 154 has data issues: Missing Account Balance Before
+2025-06-26 15:28:27,001 [INFO] ✅ Updated record 154 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 15:28:27,001 [INFO] Processing record 73 (ID: rec5mGRzrSZ073X2r)
+2025-06-26 15:28:27,001 [WARNING] Record 73 has data issues: Missing Account Balance Before
+2025-06-26 15:28:27,204 [INFO] ✅ Updated record 73 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 15:28:27,204 [INFO] Processing record 120 (ID: rec6T1XT83VKdPqbU)
+2025-06-26 15:28:27,204 [WARNING] Record 120 has data issues: Missing Account Balance Before
+2025-06-26 15:28:27,428 [INFO] ✅ Updated record 120 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 15:28:27,428 [INFO] Processing record 117 (ID: rec7XEwNXRSpBLnk5)
+2025-06-26 15:28:27,428 [WARNING] Record 117 has data issues: Missing Account Balance Before
+2025-06-26 15:28:27,668 [INFO] ✅ Updated record 117 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 15:28:27,668 [INFO] Processing record 25 (ID: rec8PFwHDjT7V331j)
+2025-06-26 15:28:27,864 [ERROR] ❌ Error processing record rec8PFwHDjT7V331j: ('422 Client Error: Unprocessable Entity for url: https://api.airtable.com/v0/appuiViKgTeYs6phe/OANDA%20Orders%20%26%20Executions/rec8PFwHDjT7V331j', '{\'type\': \'INVALID_VALUE_FOR_COLUMN\', \'message\': \'Field "Time to Fill" cannot accept a value because the field is computed\'}')
+2025-06-26 15:28:27,864 [INFO] Processing record 4 (ID: rec8dR5yIHSf7X0lZ)
+2025-06-26 15:28:28,050 [ERROR] ❌ Error processing record rec8dR5yIHSf7X0lZ: ('422 Client Error: Unprocessable Entity for url: https://api.airtable.com/v0/appuiViKgTeYs6phe/OANDA%20Orders%20%26%20Executions/rec8dR5yIHSf7X0lZ', '{\'type\': \'INVALID_VALUE_FOR_COLUMN\', \'message\': \'Field "Time to Fill" cannot accept a value because the field is computed\'}')
+2025-06-26 15:28:28,050 [INFO] Processing record 157 (ID: rec9ti5DwQKva2VGA)
+2025-06-26 15:28:28,050 [WARNING] Record 157 has data issues: Missing Account Balance Before
+2025-06-26 15:28:28,330 [INFO] ✅ Updated record 157 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 15:28:28,330 [INFO] Processing record 123 (ID: recErPp277vgYUgRS)
+2025-06-26 15:28:28,330 [WARNING] Record 123 has data issues: Missing Account Balance Before
+2025-06-26 15:28:28,578 [INFO] ✅ Updated record 123 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 15:28:28,578 [INFO] Processing record 99 (ID: recGw5siKFNRMlleN)
+2025-06-26 15:28:28,578 [WARNING] Record 99 has data issues: Missing Account Balance Before
+2025-06-26 15:28:28,786 [INFO] ✅ Updated record 99 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 15:28:28,786 [INFO] Processing record 113 (ID: recJVO7uKXdAmgF6h)
+2025-06-26 15:28:28,967 [ERROR] ❌ Error processing record recJVO7uKXdAmgF6h: ('422 Client Error: Unprocessable Entity for url: https://api.airtable.com/v0/appuiViKgTeYs6phe/OANDA%20Orders%20%26%20Executions/recJVO7uKXdAmgF6h', '{\'type\': \'INVALID_VALUE_FOR_COLUMN\', \'message\': \'Field "Time to Fill" cannot accept a value because the field is computed\'}')
+2025-06-26 15:28:28,967 [INFO] Processing record 75 (ID: recK7yc73Lb9a2Uxk)
+2025-06-26 15:28:28,967 [WARNING] Record 75 has data issues: Missing Account Balance Before
+2025-06-26 15:28:29,186 [INFO] ✅ Updated record 75 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 15:28:29,186 [INFO] Processing record 59 (ID: recKeKBuHZqMqbry1)
+2025-06-26 15:28:29,361 [ERROR] ❌ Error processing record recKeKBuHZqMqbry1: ('422 Client Error: Unprocessable Entity for url: https://api.airtable.com/v0/appuiViKgTeYs6phe/OANDA%20Orders%20%26%20Executions/recKeKBuHZqMqbry1', '{\'type\': \'INVALID_VALUE_FOR_COLUMN\', \'message\': \'Field "Time to Fill" cannot accept a value because the field is computed\'}')
+2025-06-26 15:28:29,361 [INFO] Processing record 183 (ID: recKyjB2F0NWulZP6)
+2025-06-26 15:28:29,377 [WARNING] Record 183 has data issues: Missing Account Balance Before
+2025-06-26 15:28:29,634 [INFO] ✅ Updated record 183 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 15:28:29,634 [INFO] Processing record 13 (ID: recMIZkuJscu59YZk)
+2025-06-26 15:28:29,634 [WARNING] Record 13 has data issues: Missing Account Balance Before
+2025-06-26 15:28:29,812 [INFO] ✅ Updated record 13 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 15:28:29,826 [INFO] Processing record 130 (ID: recMNcYextI4sbzxp)
+2025-06-26 15:28:29,826 [WARNING] Record 130 has data issues: Missing Account Balance Before
+2025-06-26 15:28:30,017 [INFO] ✅ Updated record 130 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 15:28:30,017 [INFO] Processing record 164 (ID: recMaiEdUV26FF3yE)
+2025-06-26 15:28:30,177 [ERROR] ❌ Error processing record recMaiEdUV26FF3yE: ('422 Client Error: Unprocessable Entity for url: https://api.airtable.com/v0/appuiViKgTeYs6phe/OANDA%20Orders%20%26%20Executions/recMaiEdUV26FF3yE', '{\'type\': \'INVALID_VALUE_FOR_COLUMN\', \'message\': \'Field "Time to Fill" cannot accept a value because the field is computed\'}')
+2025-06-26 15:28:30,194 [INFO] Processing record 152 (ID: recMmpMVQcW5thQus)
+2025-06-26 15:28:30,194 [WARNING] Record 152 has data issues: Missing Account Balance Before
+2025-06-26 15:28:30,403 [INFO] ✅ Updated record 152 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 15:28:30,403 [INFO] Processing record 181 (ID: recMn4Yzvv1bzVSw7)
+2025-06-26 15:28:30,403 [WARNING] Record 181 has data issues: Missing Account Balance Before
+2025-06-26 15:28:30,626 [INFO] ✅ Updated record 181 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 15:28:30,626 [INFO] Processing record 161 (ID: recSfhEhGjmUB1e9w)
+2025-06-26 15:28:30,626 [WARNING] Record 161 has data issues: Missing Account Balance Before
+2025-06-26 15:28:30,802 [INFO] ✅ Updated record 161 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 15:28:30,802 [INFO] Processing record 27 (ID: recTklRkJs59VpBbz)
+2025-06-26 15:28:30,964 [ERROR] ❌ Error processing record recTklRkJs59VpBbz: ('422 Client Error: Unprocessable Entity for url: https://api.airtable.com/v0/appuiViKgTeYs6phe/OANDA%20Orders%20%26%20Executions/recTklRkJs59VpBbz', '{\'type\': \'INVALID_VALUE_FOR_COLUMN\', \'message\': \'Field "Time to Fill" cannot accept a value because the field is computed\'}')
+2025-06-26 15:28:30,978 [INFO] Processing record 160 (ID: recUNcYQHrCQfzsE6)
+2025-06-26 15:28:30,978 [WARNING] Record 160 has data issues: Missing Account Balance Before
+2025-06-26 15:28:31,186 [INFO] ✅ Updated record 160 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 15:28:31,186 [INFO] Processing record 19 (ID: recVVegK7d5IG01wk)
+2025-06-26 15:28:31,186 [WARNING] Record 19 has data issues: Missing Account Balance Before
+2025-06-26 15:28:31,401 [INFO] ✅ Updated record 19 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 15:28:31,402 [INFO] Processing record 15 (ID: recWVnNmTTliaiPut)
+2025-06-26 15:28:31,576 [ERROR] ❌ Error processing record recWVnNmTTliaiPut: ('422 Client Error: Unprocessable Entity for url: https://api.airtable.com/v0/appuiViKgTeYs6phe/OANDA%20Orders%20%26%20Executions/recWVnNmTTliaiPut', '{\'type\': \'INVALID_VALUE_FOR_COLUMN\', \'message\': \'Field "Time to Fill" cannot accept a value because the field is computed\'}')
+2025-06-26 15:28:31,576 [INFO] Processing record 149 (ID: recX6Fu2aTHV29OLn)
+2025-06-26 15:28:31,576 [WARNING] Record 149 has data issues: Missing Account Balance Before
+2025-06-26 15:28:31,818 [INFO] ✅ Updated record 149 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 15:28:31,818 [INFO] Processing record 119 (ID: recXW3WjEB3tFxKHy)
+2025-06-26 15:28:31,818 [WARNING] Record 119 has data issues: Missing Account Balance Before
+2025-06-26 15:28:32,008 [INFO] ✅ Updated record 119 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 15:28:32,008 [INFO] Processing record 177 (ID: recYyr2ZYLoTn2qhZ)
+2025-06-26 15:28:32,183 [ERROR] ❌ Error processing record recYyr2ZYLoTn2qhZ: ('422 Client Error: Unprocessable Entity for url: https://api.airtable.com/v0/appuiViKgTeYs6phe/OANDA%20Orders%20%26%20Executions/recYyr2ZYLoTn2qhZ', '{\'type\': \'INVALID_VALUE_FOR_COLUMN\', \'message\': \'Field "Time to Fill" cannot accept a value because the field is computed\'}')
+2025-06-26 15:28:32,183 [INFO] Processing record 48 (ID: recZ2iALpva9O4VpI)
+2025-06-26 15:28:32,183 [WARNING] Record 48 has data issues: Missing Account Balance Before
+2025-06-26 15:28:32,422 [INFO] ✅ Updated record 48 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 15:28:32,422 [INFO] Processing record 163 (ID: recZmsCsrfxSdKQpV)
+2025-06-26 15:28:32,422 [WARNING] Record 163 has data issues: Missing Account Balance Before
+2025-06-26 15:28:32,646 [INFO] ✅ Updated record 163 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 15:28:32,646 [INFO] Processing record 50 (ID: recbDdof3DUeHoyet)
+2025-06-26 15:28:32,646 [WARNING] Record 50 has data issues: Missing Account Balance Before
+2025-06-26 15:28:32,854 [INFO] ✅ Updated record 50 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 15:28:32,854 [INFO] Processing record 125 (ID: reccivucn972rvnHV)
+2025-06-26 15:28:32,854 [WARNING] Record 125 has data issues: Missing Account Balance Before
+2025-06-26 15:28:33,087 [INFO] ✅ Updated record 125 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 15:28:33,087 [INFO] Processing record 158 (ID: recfHaeX3vVy9TJ71)
+2025-06-26 15:28:33,087 [WARNING] Record 158 has data issues: Missing Account Balance Before
+2025-06-26 15:28:33,334 [INFO] ✅ Updated record 158 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 15:28:33,334 [INFO] Processing record 23 (ID: recfeXzGu1MC96dZp)
+2025-06-26 15:28:33,334 [WARNING] Record 23 has data issues: Missing Account Balance Before
+2025-06-26 15:28:33,521 [INFO] ✅ Updated record 23 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 15:28:33,521 [INFO] Processing record 126 (ID: recft44vWUfoAAmcU)
+2025-06-26 15:28:33,685 [ERROR] ❌ Error processing record recft44vWUfoAAmcU: ('422 Client Error: Unprocessable Entity for url: https://api.airtable.com/v0/appuiViKgTeYs6phe/OANDA%20Orders%20%26%20Executions/recft44vWUfoAAmcU', '{\'type\': \'INVALID_VALUE_FOR_COLUMN\', \'message\': \'Field "Time to Fill" cannot accept a value because the field is computed\'}')
+2025-06-26 15:28:33,685 [INFO] Processing record 55 (ID: rechYONAuv6Ukv1ZH)
+2025-06-26 15:28:33,909 [ERROR] ❌ Error processing record rechYONAuv6Ukv1ZH: ('422 Client Error: Unprocessable Entity for url: https://api.airtable.com/v0/appuiViKgTeYs6phe/OANDA%20Orders%20%26%20Executions/rechYONAuv6Ukv1ZH', '{\'type\': \'INVALID_VALUE_FOR_COLUMN\', \'message\': \'Field "Time to Fill" cannot accept a value because the field is computed\'}')
+2025-06-26 15:28:33,909 [INFO] Processing record 45 (ID: reci5Cps24Q1nQHp8)
+2025-06-26 15:28:34,117 [ERROR] ❌ Error processing record reci5Cps24Q1nQHp8: ('422 Client Error: Unprocessable Entity for url: https://api.airtable.com/v0/appuiViKgTeYs6phe/OANDA%20Orders%20%26%20Executions/reci5Cps24Q1nQHp8', '{\'type\': \'INVALID_VALUE_FOR_COLUMN\', \'message\': \'Field "Time to Fill" cannot accept a value because the field is computed\'}')
+2025-06-26 15:28:34,117 [INFO] Processing record 151 (ID: reciimKQ0Y5PwdtBn)
+2025-06-26 15:28:34,133 [WARNING] Record 151 has data issues: Missing Account Balance Before
+2025-06-26 15:28:34,346 [INFO] ✅ Updated record 151 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 15:28:34,346 [INFO] Processing record 24 (ID: recj8aIwpMlz2hajt)
+2025-06-26 15:28:34,346 [WARNING] Record 24 has data issues: Missing Account Balance Before
+2025-06-26 15:28:34,517 [INFO] ✅ Updated record 24 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 15:28:34,517 [INFO] Processing record 65 (ID: recl0gutDQIdZZCvJ)
+2025-06-26 15:28:34,517 [WARNING] Record 65 has data issues: Missing Account Balance Before
+2025-06-26 15:28:34,705 [INFO] ✅ Updated record 65 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 15:28:34,705 [INFO] Processing record 26 (ID: recqSCAqx4gBw9IQa)
+2025-06-26 15:28:34,705 [WARNING] Record 26 has data issues: Missing Account Balance Before
+2025-06-26 15:28:34,918 [INFO] ✅ Updated record 26 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 15:28:34,918 [INFO] Processing record 173 (ID: recr42yH2w6K9zljr)
+2025-06-26 15:28:35,090 [ERROR] ❌ Error processing record recr42yH2w6K9zljr: ('422 Client Error: Unprocessable Entity for url: https://api.airtable.com/v0/appuiViKgTeYs6phe/OANDA%20Orders%20%26%20Executions/recr42yH2w6K9zljr', '{\'type\': \'INVALID_VALUE_FOR_COLUMN\', \'message\': \'Field "Time to Fill" cannot accept a value because the field is computed\'}')
+2025-06-26 15:28:35,090 [INFO] Processing record 100 (ID: recsllLuOUq6jOgjv)
+2025-06-26 15:28:35,316 [ERROR] ❌ Error processing record recsllLuOUq6jOgjv: ('422 Client Error: Unprocessable Entity for url: https://api.airtable.com/v0/appuiViKgTeYs6phe/OANDA%20Orders%20%26%20Executions/recsllLuOUq6jOgjv', '{\'type\': \'INVALID_VALUE_FOR_COLUMN\', \'message\': \'Field "Time to Fill" cannot accept a value because the field is computed\'}')
+2025-06-26 15:28:35,316 [INFO] Processing record 12 (ID: rectOyZ5VfXU4nZh1)
+2025-06-26 15:28:35,316 [WARNING] Record 12 has data issues: Missing Account Balance Before
+2025-06-26 15:28:35,555 [INFO] ✅ Updated record 12 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 15:28:35,555 [INFO] Processing record 118 (ID: recuccdnsOdAex4OE)
+2025-06-26 15:28:35,555 [WARNING] Record 118 has data issues: Missing Account Balance Before
+2025-06-26 15:28:35,759 [INFO] ✅ Updated record 118 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 15:28:35,759 [INFO] Processing record 51 (ID: recvT2PY4wYIkytgR)
+2025-06-26 15:28:35,940 [ERROR] ❌ Error processing record recvT2PY4wYIkytgR: ('422 Client Error: Unprocessable Entity for url: https://api.airtable.com/v0/appuiViKgTeYs6phe/OANDA%20Orders%20%26%20Executions/recvT2PY4wYIkytgR', '{\'type\': \'INVALID_VALUE_FOR_COLUMN\', \'message\': \'Field "Time to Fill" cannot accept a value because the field is computed\'}')
+2025-06-26 15:28:35,940 [INFO] Processing record 95 (ID: recwifohyNauleaKE)
+2025-06-26 15:28:36,131 [ERROR] ❌ Error processing record recwifohyNauleaKE: ('422 Client Error: Unprocessable Entity for url: https://api.airtable.com/v0/appuiViKgTeYs6phe/OANDA%20Orders%20%26%20Executions/recwifohyNauleaKE', '{\'type\': \'INVALID_VALUE_FOR_COLUMN\', \'message\': \'Field "Time to Fill" cannot accept a value because the field is computed\'}')
+2025-06-26 15:28:36,131 [INFO] Processing record 91 (ID: recxggc5XsqeTQagq)
+2025-06-26 15:28:36,339 [ERROR] ❌ Error processing record recxggc5XsqeTQagq: ('422 Client Error: Unprocessable Entity for url: https://api.airtable.com/v0/appuiViKgTeYs6phe/OANDA%20Orders%20%26%20Executions/recxggc5XsqeTQagq', '{\'type\': \'INVALID_VALUE_FOR_COLUMN\', \'message\': \'Field "Time to Fill" cannot accept a value because the field is computed\'}')
+2025-06-26 15:28:36,339 [INFO] Processing record 168 (ID: reczwGw4ft7MioaGn)
+2025-06-26 15:28:36,339 [WARNING] Record 168 has data issues: Missing Account Balance Before
+2025-06-26 15:28:36,548 [INFO] ✅ Updated record 168 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 15:28:36,548 [INFO] ============================================================
+2025-06-26 15:28:36,548 [INFO] ENHANCED ANALYTICS SUMMARY
+2025-06-26 15:28:36,548 [INFO] ============================================================
+2025-06-26 15:28:36,548 [INFO] Total Records: 54
+2025-06-26 15:28:36,548 [INFO] Successfully Updated: 36
+2025-06-26 15:28:36,548 [INFO] Records with Data Issues: 36
+2025-06-26 15:28:36,548 [INFO] Errors: 18
+2025-06-26 15:28:36,548 [INFO] ============================================================
+2025-06-26 15:28:36,548 [WARNING] 💡 Consider reviewing 36 records with data issues
+2025-06-26 15:28:36,548 [WARNING]    Common fixes:
+2025-06-26 15:28:36,548 [WARNING]    - Ensure Account Balance Before is populated
+2025-06-26 15:28:36,548 [WARNING]    - Verify Order Time and Execution Time formats
+2025-06-26 15:28:36,548 [WARNING]    - Check Entry Price and Units are present
+2025-06-26 16:03:21,267 [INFO] Starting Enhanced Trading Analytics Calculator...
+2025-06-26 16:03:23,832 [INFO] Retrieved 54 records for enhanced analysis
+2025-06-26 16:03:23,833 [INFO] Processing record 21 (ID: rec2eh0wnklFg557H)
+2025-06-26 16:03:24,187 [INFO] ✅ Updated record 21 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 16:03:24,187 [INFO] Processing record 171 (ID: rec39MG83rKgxxyj3)
+2025-06-26 16:03:24,464 [INFO] ✅ Updated record 171 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 16:03:24,464 [INFO] Processing record 44 (ID: rec3UW2aTrHqMZ12E)
+2025-06-26 16:03:24,773 [INFO] ✅ Updated record 44 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-26 16:03:24,773 [INFO] Processing record 49 (ID: rec3cEj77ZV2CsfvV)
+2025-06-26 16:03:25,010 [INFO] ✅ Updated record 49 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 16:03:25,010 [INFO] Processing record 43 (ID: rec4NBxrnLtzVxpFU)
+2025-06-26 16:03:25,266 [INFO] ✅ Updated record 43 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-26 16:03:25,266 [INFO] Processing record 155 (ID: rec4oXvWbBsyJgl6S)
+2025-06-26 16:03:25,502 [INFO] ✅ Updated record 155 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 16:03:25,502 [INFO] Processing record 182 (ID: rec5VAEDecwocOHWO)
+2025-06-26 16:03:25,728 [INFO] ✅ Updated record 182 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 16:03:25,728 [INFO] Processing record 154 (ID: rec5fwQwTph0JQkch)
+2025-06-26 16:03:25,948 [INFO] ✅ Updated record 154 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 16:03:25,948 [INFO] Processing record 73 (ID: rec5mGRzrSZ073X2r)
+2025-06-26 16:03:26,189 [INFO] ✅ Updated record 73 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 16:03:26,189 [INFO] Processing record 120 (ID: rec6T1XT83VKdPqbU)
+2025-06-26 16:03:26,413 [INFO] ✅ Updated record 120 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 16:03:26,413 [INFO] Processing record 117 (ID: rec7XEwNXRSpBLnk5)
+2025-06-26 16:03:26,637 [INFO] ✅ Updated record 117 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 16:03:26,637 [INFO] Processing record 25 (ID: rec8PFwHDjT7V331j)
+2025-06-26 16:03:26,930 [INFO] ✅ Updated record 25 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-26 16:03:26,930 [INFO] Processing record 4 (ID: rec8dR5yIHSf7X0lZ)
+2025-06-26 16:03:27,181 [INFO] ✅ Updated record 4 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-26 16:03:27,181 [INFO] Processing record 157 (ID: rec9ti5DwQKva2VGA)
+2025-06-26 16:03:27,392 [INFO] ✅ Updated record 157 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 16:03:27,394 [INFO] Processing record 123 (ID: recErPp277vgYUgRS)
+2025-06-26 16:03:27,600 [INFO] ✅ Updated record 123 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 16:03:27,600 [INFO] Processing record 99 (ID: recGw5siKFNRMlleN)
+2025-06-26 16:03:27,804 [INFO] ✅ Updated record 99 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 16:03:27,804 [INFO] Processing record 113 (ID: recJVO7uKXdAmgF6h)
+2025-06-26 16:03:28,093 [INFO] ✅ Updated record 113 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-26 16:03:28,093 [INFO] Processing record 75 (ID: recK7yc73Lb9a2Uxk)
+2025-06-26 16:03:28,317 [INFO] ✅ Updated record 75 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 16:03:28,317 [INFO] Processing record 59 (ID: recKeKBuHZqMqbry1)
+2025-06-26 16:03:28,558 [INFO] ✅ Updated record 59 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-26 16:03:28,558 [INFO] Processing record 183 (ID: recKyjB2F0NWulZP6)
+2025-06-26 16:03:28,797 [INFO] ✅ Updated record 183 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 16:03:28,797 [INFO] Processing record 13 (ID: recMIZkuJscu59YZk)
+2025-06-26 16:03:29,034 [INFO] ✅ Updated record 13 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 16:03:29,034 [INFO] Processing record 130 (ID: recMNcYextI4sbzxp)
+2025-06-26 16:03:29,243 [INFO] ✅ Updated record 130 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 16:03:29,243 [INFO] Processing record 164 (ID: recMaiEdUV26FF3yE)
+2025-06-26 16:03:29,562 [INFO] ✅ Updated record 164 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-26 16:03:29,562 [INFO] Processing record 152 (ID: recMmpMVQcW5thQus)
+2025-06-26 16:03:29,770 [INFO] ✅ Updated record 152 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 16:03:29,770 [INFO] Processing record 181 (ID: recMn4Yzvv1bzVSw7)
+2025-06-26 16:03:29,979 [INFO] ✅ Updated record 181 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 16:03:29,979 [INFO] Processing record 161 (ID: recSfhEhGjmUB1e9w)
+2025-06-26 16:03:30,186 [INFO] ✅ Updated record 161 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 16:03:30,186 [INFO] Processing record 27 (ID: recTklRkJs59VpBbz)
+2025-06-26 16:03:30,445 [INFO] ✅ Updated record 27 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-26 16:03:30,445 [INFO] Processing record 160 (ID: recUNcYQHrCQfzsE6)
+2025-06-26 16:03:30,635 [INFO] ✅ Updated record 160 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 16:03:30,635 [INFO] Processing record 19 (ID: recVVegK7d5IG01wk)
+2025-06-26 16:03:30,846 [INFO] ✅ Updated record 19 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 16:03:30,846 [INFO] Processing record 15 (ID: recWVnNmTTliaiPut)
+2025-06-26 16:03:31,083 [INFO] ✅ Updated record 15 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-26 16:03:31,083 [INFO] Processing record 149 (ID: recX6Fu2aTHV29OLn)
+2025-06-26 16:03:31,356 [INFO] ✅ Updated record 149 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 16:03:31,372 [INFO] Processing record 119 (ID: recXW3WjEB3tFxKHy)
+2025-06-26 16:03:31,644 [INFO] ✅ Updated record 119 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 16:03:31,644 [INFO] Processing record 177 (ID: recYyr2ZYLoTn2qhZ)
+2025-06-26 16:03:31,868 [INFO] ✅ Updated record 177 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-26 16:03:31,868 [INFO] Processing record 48 (ID: recZ2iALpva9O4VpI)
+2025-06-26 16:03:32,080 [INFO] ✅ Updated record 48 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 16:03:32,080 [INFO] Processing record 163 (ID: recZmsCsrfxSdKQpV)
+2025-06-26 16:03:32,314 [INFO] ✅ Updated record 163 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 16:03:32,314 [INFO] Processing record 50 (ID: recbDdof3DUeHoyet)
+2025-06-26 16:03:32,524 [INFO] ✅ Updated record 50 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 16:03:32,524 [INFO] Processing record 125 (ID: reccivucn972rvnHV)
+2025-06-26 16:03:32,753 [INFO] ✅ Updated record 125 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 16:03:32,753 [INFO] Processing record 158 (ID: recfHaeX3vVy9TJ71)
+2025-06-26 16:03:32,947 [INFO] ✅ Updated record 158 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 16:03:32,947 [INFO] Processing record 23 (ID: recfeXzGu1MC96dZp)
+2025-06-26 16:03:33,114 [INFO] ✅ Updated record 23 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 16:03:33,130 [INFO] Processing record 126 (ID: recft44vWUfoAAmcU)
+2025-06-26 16:03:33,388 [INFO] ✅ Updated record 126 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-26 16:03:33,388 [INFO] Processing record 55 (ID: rechYONAuv6Ukv1ZH)
+2025-06-26 16:03:33,627 [INFO] ✅ Updated record 55 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-26 16:03:33,627 [INFO] Processing record 45 (ID: reci5Cps24Q1nQHp8)
+2025-06-26 16:03:33,848 [INFO] ✅ Updated record 45 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-26 16:03:33,848 [INFO] Processing record 151 (ID: reciimKQ0Y5PwdtBn)
+2025-06-26 16:03:34,060 [INFO] ✅ Updated record 151 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 16:03:34,060 [INFO] Processing record 24 (ID: recj8aIwpMlz2hajt)
+2025-06-26 16:03:34,308 [INFO] ✅ Updated record 24 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 16:03:34,308 [INFO] Processing record 65 (ID: recl0gutDQIdZZCvJ)
+2025-06-26 16:03:34,519 [INFO] ✅ Updated record 65 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 16:03:34,519 [INFO] Processing record 26 (ID: recqSCAqx4gBw9IQa)
+2025-06-26 16:03:34,808 [INFO] ✅ Updated record 26 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 16:03:34,808 [INFO] Processing record 173 (ID: recr42yH2w6K9zljr)
+2025-06-26 16:03:35,063 [INFO] ✅ Updated record 173 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-26 16:03:35,063 [INFO] Processing record 100 (ID: recsllLuOUq6jOgjv)
+2025-06-26 16:03:35,339 [INFO] ✅ Updated record 100 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-26 16:03:35,339 [INFO] Processing record 12 (ID: rectOyZ5VfXU4nZh1)
+2025-06-26 16:03:35,528 [INFO] ✅ Updated record 12 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 16:03:35,528 [INFO] Processing record 118 (ID: recuccdnsOdAex4OE)
+2025-06-26 16:03:35,736 [INFO] ✅ Updated record 118 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 16:03:35,736 [INFO] Processing record 51 (ID: recvT2PY4wYIkytgR)
+2025-06-26 16:03:35,997 [INFO] ✅ Updated record 51 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-26 16:03:35,997 [INFO] Processing record 95 (ID: recwifohyNauleaKE)
+2025-06-26 16:03:36,232 [INFO] ✅ Updated record 95 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-26 16:03:36,232 [INFO] Processing record 91 (ID: recxggc5XsqeTQagq)
+2025-06-26 16:03:36,456 [INFO] ✅ Updated record 91 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-26 16:03:36,456 [INFO] Processing record 168 (ID: reczwGw4ft7MioaGn)
+2025-06-26 16:03:36,647 [INFO] ✅ Updated record 168 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-26 16:03:36,663 [INFO] ============================================================
+2025-06-26 16:03:36,663 [INFO] ENHANCED ANALYTICS SUMMARY
+2025-06-26 16:03:36,663 [INFO] ============================================================
+2025-06-26 16:03:36,663 [INFO] Total Records: 54
+2025-06-26 16:03:36,663 [INFO] Successfully Updated: 54
+2025-06-26 16:03:36,663 [INFO] Records with Data Issues: 0
+2025-06-26 16:03:36,663 [INFO] Errors: 0
+2025-06-26 16:03:36,663 [INFO] ============================================================
+2025-06-26 16:03:36,663 [INFO] ✨ Note: Position Size % calculated using fallback method for pending orders
+2025-06-26 16:03:36,663 [INFO] ✨ Time to Fill now populates for filled orders
+2025-06-27 12:01:02,689 [INFO] Starting Enhanced Trading Analytics Calculator...
+2025-06-27 12:01:03,361 [INFO] Retrieved 57 records for enhanced analysis
+2025-06-27 12:01:03,361 [INFO] Processing record 21 (ID: rec2eh0wnklFg557H)
+2025-06-27 12:01:03,713 [INFO] ✅ Updated record 21 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 12:01:03,713 [INFO] Processing record 202 (ID: rec2wZYlQMRmhFzJp)
+2025-06-27 12:01:04,081 [INFO] ✅ Updated record 202 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-27 12:01:04,081 [INFO] Processing record 171 (ID: rec39MG83rKgxxyj3)
+2025-06-27 12:01:04,334 [INFO] ✅ Updated record 171 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 12:01:04,334 [INFO] Processing record 44 (ID: rec3UW2aTrHqMZ12E)
+2025-06-27 12:01:04,622 [INFO] ✅ Updated record 44 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-27 12:01:04,622 [INFO] Processing record 49 (ID: rec3cEj77ZV2CsfvV)
+2025-06-27 12:01:04,913 [INFO] ✅ Updated record 49 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 12:01:04,913 [INFO] Processing record 43 (ID: rec4NBxrnLtzVxpFU)
+2025-06-27 12:01:05,165 [INFO] ✅ Updated record 43 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-27 12:01:05,165 [INFO] Processing record 155 (ID: rec4oXvWbBsyJgl6S)
+2025-06-27 12:01:05,440 [INFO] ✅ Updated record 155 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 12:01:05,440 [INFO] Processing record 182 (ID: rec5VAEDecwocOHWO)
+2025-06-27 12:01:05,791 [INFO] ✅ Updated record 182 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 12:01:05,791 [INFO] Processing record 154 (ID: rec5fwQwTph0JQkch)
+2025-06-27 12:01:06,111 [INFO] ✅ Updated record 154 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 12:01:06,111 [INFO] Processing record 73 (ID: rec5mGRzrSZ073X2r)
+2025-06-27 12:01:06,319 [INFO] ✅ Updated record 73 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 12:01:06,319 [INFO] Processing record 120 (ID: rec6T1XT83VKdPqbU)
+2025-06-27 12:01:06,654 [INFO] ✅ Updated record 120 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 12:01:06,654 [INFO] Processing record 201 (ID: rec72LqoY6W400oJ4)
+2025-06-27 12:01:07,009 [INFO] ✅ Updated record 201 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 12:01:07,009 [INFO] Processing record 117 (ID: rec7XEwNXRSpBLnk5)
+2025-06-27 12:01:07,267 [INFO] ✅ Updated record 117 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 12:01:07,267 [INFO] Processing record 25 (ID: rec8PFwHDjT7V331j)
+2025-06-27 12:01:07,528 [INFO] ✅ Updated record 25 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-27 12:01:07,528 [INFO] Processing record 4 (ID: rec8dR5yIHSf7X0lZ)
+2025-06-27 12:01:07,810 [INFO] ✅ Updated record 4 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-27 12:01:07,810 [INFO] Processing record 157 (ID: rec9ti5DwQKva2VGA)
+2025-06-27 12:01:08,034 [INFO] ✅ Updated record 157 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 12:01:08,034 [INFO] Processing record 123 (ID: recErPp277vgYUgRS)
+2025-06-27 12:01:08,322 [INFO] ✅ Updated record 123 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 12:01:08,322 [INFO] Processing record 99 (ID: recGw5siKFNRMlleN)
+2025-06-27 12:01:08,642 [INFO] ✅ Updated record 99 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 12:01:08,642 [INFO] Processing record 113 (ID: recJVO7uKXdAmgF6h)
+2025-06-27 12:01:08,963 [INFO] ✅ Updated record 113 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-27 12:01:08,963 [INFO] Processing record 75 (ID: recK7yc73Lb9a2Uxk)
+2025-06-27 12:01:09,152 [INFO] ✅ Updated record 75 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 12:01:09,152 [INFO] Processing record 59 (ID: recKeKBuHZqMqbry1)
+2025-06-27 12:01:09,361 [INFO] ✅ Updated record 59 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-27 12:01:09,361 [INFO] Processing record 183 (ID: recKyjB2F0NWulZP6)
+2025-06-27 12:01:09,643 [INFO] ✅ Updated record 183 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 12:01:09,643 [INFO] Processing record 13 (ID: recMIZkuJscu59YZk)
+2025-06-27 12:01:10,002 [INFO] ✅ Updated record 13 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 12:01:10,002 [INFO] Processing record 130 (ID: recMNcYextI4sbzxp)
+2025-06-27 12:01:10,222 [INFO] ✅ Updated record 130 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 12:01:10,222 [INFO] Processing record 164 (ID: recMaiEdUV26FF3yE)
+2025-06-27 12:01:10,471 [INFO] ✅ Updated record 164 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-27 12:01:10,471 [INFO] Processing record 152 (ID: recMmpMVQcW5thQus)
+2025-06-27 12:01:10,664 [INFO] ✅ Updated record 152 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 12:01:10,664 [INFO] Processing record 181 (ID: recMn4Yzvv1bzVSw7)
+2025-06-27 12:01:10,902 [INFO] ✅ Updated record 181 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 12:01:10,902 [INFO] Processing record 161 (ID: recSfhEhGjmUB1e9w)
+2025-06-27 12:01:11,210 [INFO] ✅ Updated record 161 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 12:01:11,210 [INFO] Processing record 27 (ID: recTklRkJs59VpBbz)
+2025-06-27 12:01:11,431 [INFO] ✅ Updated record 27 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-27 12:01:11,431 [INFO] Processing record 160 (ID: recUNcYQHrCQfzsE6)
+2025-06-27 12:01:11,687 [INFO] ✅ Updated record 160 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 12:01:11,687 [INFO] Processing record 19 (ID: recVVegK7d5IG01wk)
+2025-06-27 12:01:12,007 [INFO] ✅ Updated record 19 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 12:01:12,007 [INFO] Processing record 15 (ID: recWVnNmTTliaiPut)
+2025-06-27 12:01:12,263 [INFO] ✅ Updated record 15 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-27 12:01:12,263 [INFO] Processing record 149 (ID: recX6Fu2aTHV29OLn)
+2025-06-27 12:01:12,504 [INFO] ✅ Updated record 149 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 12:01:12,504 [INFO] Processing record 119 (ID: recXW3WjEB3tFxKHy)
+2025-06-27 12:01:12,857 [INFO] ✅ Updated record 119 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 12:01:12,857 [INFO] Processing record 177 (ID: recYyr2ZYLoTn2qhZ)
+2025-06-27 12:01:13,063 [INFO] ✅ Updated record 177 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-27 12:01:13,063 [INFO] Processing record 48 (ID: recZ2iALpva9O4VpI)
+2025-06-27 12:01:13,344 [INFO] ✅ Updated record 48 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 12:01:13,344 [INFO] Processing record 163 (ID: recZmsCsrfxSdKQpV)
+2025-06-27 12:01:13,543 [INFO] ✅ Updated record 163 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 12:01:13,543 [INFO] Processing record 50 (ID: recbDdof3DUeHoyet)
+2025-06-27 12:01:13,786 [INFO] ✅ Updated record 50 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 12:01:13,786 [INFO] Processing record 125 (ID: reccivucn972rvnHV)
+2025-06-27 12:01:14,025 [INFO] ✅ Updated record 125 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 12:01:14,025 [INFO] Processing record 206 (ID: recdBQE9g1Cwe91pB)
+2025-06-27 12:01:14,264 [INFO] ✅ Updated record 206 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-27 12:01:14,265 [INFO] Processing record 158 (ID: recfHaeX3vVy9TJ71)
+2025-06-27 12:01:14,509 [INFO] ✅ Updated record 158 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 12:01:14,509 [INFO] Processing record 23 (ID: recfeXzGu1MC96dZp)
+2025-06-27 12:01:14,719 [INFO] ✅ Updated record 23 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 12:01:14,719 [INFO] Processing record 126 (ID: recft44vWUfoAAmcU)
+2025-06-27 12:01:14,989 [INFO] ✅ Updated record 126 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-27 12:01:14,989 [INFO] Processing record 55 (ID: rechYONAuv6Ukv1ZH)
+2025-06-27 12:01:15,210 [INFO] ✅ Updated record 55 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-27 12:01:15,210 [INFO] Processing record 45 (ID: reci5Cps24Q1nQHp8)
+2025-06-27 12:01:15,402 [INFO] ✅ Updated record 45 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-27 12:01:15,402 [INFO] Processing record 151 (ID: reciimKQ0Y5PwdtBn)
+2025-06-27 12:01:15,643 [INFO] ✅ Updated record 151 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 12:01:15,643 [INFO] Processing record 24 (ID: recj8aIwpMlz2hajt)
+2025-06-27 12:01:15,916 [INFO] ✅ Updated record 24 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 12:01:15,916 [INFO] Processing record 65 (ID: recl0gutDQIdZZCvJ)
+2025-06-27 12:01:16,126 [INFO] ✅ Updated record 65 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 12:01:16,126 [INFO] Processing record 26 (ID: recqSCAqx4gBw9IQa)
+2025-06-27 12:01:16,347 [INFO] ✅ Updated record 26 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 12:01:16,347 [INFO] Processing record 173 (ID: recr42yH2w6K9zljr)
+2025-06-27 12:01:16,576 [INFO] ✅ Updated record 173 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-27 12:01:16,576 [INFO] Processing record 100 (ID: recsllLuOUq6jOgjv)
+2025-06-27 12:01:16,795 [INFO] ✅ Updated record 100 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-27 12:01:16,795 [INFO] Processing record 12 (ID: rectOyZ5VfXU4nZh1)
+2025-06-27 12:01:16,990 [INFO] ✅ Updated record 12 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 12:01:16,990 [INFO] Processing record 118 (ID: recuccdnsOdAex4OE)
+2025-06-27 12:01:17,237 [INFO] ✅ Updated record 118 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 12:01:17,237 [INFO] Processing record 51 (ID: recvT2PY4wYIkytgR)
+2025-06-27 12:01:17,635 [INFO] ✅ Updated record 51 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-27 12:01:17,635 [INFO] Processing record 95 (ID: recwifohyNauleaKE)
+2025-06-27 12:01:17,898 [INFO] ✅ Updated record 95 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-27 12:01:17,898 [INFO] Processing record 91 (ID: recxggc5XsqeTQagq)
+2025-06-27 12:01:18,144 [INFO] ✅ Updated record 91 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-27 12:01:18,144 [INFO] Processing record 168 (ID: reczwGw4ft7MioaGn)
+2025-06-27 12:01:18,383 [INFO] ✅ Updated record 168 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 12:01:18,384 [INFO] ============================================================
+2025-06-27 12:01:18,384 [INFO] ENHANCED ANALYTICS SUMMARY
+2025-06-27 12:01:18,384 [INFO] ============================================================
+2025-06-27 12:01:18,384 [INFO] Total Records: 57
+2025-06-27 12:01:18,384 [INFO] Successfully Updated: 57
+2025-06-27 12:01:18,384 [INFO] Records with Data Issues: 0
+2025-06-27 12:01:18,384 [INFO] Errors: 0
+2025-06-27 12:01:18,384 [INFO] ============================================================
+2025-06-27 12:01:18,384 [INFO] ✨ Note: Position Size % calculated using fallback method for pending orders
+2025-06-27 12:01:18,384 [INFO] ✨ Time to Fill now populates for filled orders
+2025-06-27 13:47:10,016 [INFO] Starting Enhanced Trading Analytics Calculator...
+2025-06-27 13:47:10,352 [INFO] Retrieved 64 records for enhanced analysis
+2025-06-27 13:47:10,352 [INFO] Processing record 245 (ID: rec1OfhytVb4PdoKL)
+2025-06-27 13:47:10,575 [INFO] ✅ Updated record 245 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 13:47:10,575 [INFO] Processing record 21 (ID: rec2eh0wnklFg557H)
+2025-06-27 13:47:10,799 [INFO] ✅ Updated record 21 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 13:47:10,799 [INFO] Processing record 202 (ID: rec2wZYlQMRmhFzJp)
+2025-06-27 13:47:11,010 [INFO] ✅ Updated record 202 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-27 13:47:11,010 [INFO] Processing record 171 (ID: rec39MG83rKgxxyj3)
+2025-06-27 13:47:11,200 [INFO] ✅ Updated record 171 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 13:47:11,216 [INFO] Processing record 44 (ID: rec3UW2aTrHqMZ12E)
+2025-06-27 13:47:11,455 [INFO] ✅ Updated record 44 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-27 13:47:11,459 [INFO] Processing record 49 (ID: rec3cEj77ZV2CsfvV)
+2025-06-27 13:47:11,646 [INFO] ✅ Updated record 49 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 13:47:11,646 [INFO] Processing record 43 (ID: rec4NBxrnLtzVxpFU)
+2025-06-27 13:47:11,858 [INFO] ✅ Updated record 43 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-27 13:47:11,858 [INFO] Processing record 155 (ID: rec4oXvWbBsyJgl6S)
+2025-06-27 13:47:12,062 [INFO] ✅ Updated record 155 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 13:47:12,062 [INFO] Processing record 182 (ID: rec5VAEDecwocOHWO)
+2025-06-27 13:47:12,287 [INFO] ✅ Updated record 182 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 13:47:12,287 [INFO] Processing record 154 (ID: rec5fwQwTph0JQkch)
+2025-06-27 13:47:12,510 [INFO] ✅ Updated record 154 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 13:47:12,510 [INFO] Processing record 73 (ID: rec5mGRzrSZ073X2r)
+2025-06-27 13:47:12,711 [INFO] ✅ Updated record 73 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 13:47:12,713 [INFO] Processing record 120 (ID: rec6T1XT83VKdPqbU)
+2025-06-27 13:47:12,907 [INFO] ✅ Updated record 120 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 13:47:12,907 [INFO] Processing record 201 (ID: rec72LqoY6W400oJ4)
+2025-06-27 13:47:13,130 [INFO] ✅ Updated record 201 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 13:47:13,134 [INFO] Processing record 117 (ID: rec7XEwNXRSpBLnk5)
+2025-06-27 13:47:13,379 [INFO] ✅ Updated record 117 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-27 13:47:13,379 [INFO] Processing record 229 (ID: rec84Qplr72R5PsA2)
+2025-06-27 13:47:13,596 [INFO] ✅ Updated record 229 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 13:47:13,596 [INFO] Processing record 25 (ID: rec8PFwHDjT7V331j)
+2025-06-27 13:47:13,827 [INFO] ✅ Updated record 25 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-27 13:47:13,827 [INFO] Processing record 4 (ID: rec8dR5yIHSf7X0lZ)
+2025-06-27 13:47:14,027 [INFO] ✅ Updated record 4 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-27 13:47:14,027 [INFO] Processing record 157 (ID: rec9ti5DwQKva2VGA)
+2025-06-27 13:47:14,220 [INFO] ✅ Updated record 157 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 13:47:14,220 [INFO] Processing record 123 (ID: recErPp277vgYUgRS)
+2025-06-27 13:47:14,428 [INFO] ✅ Updated record 123 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 13:47:14,428 [INFO] Processing record 99 (ID: recGw5siKFNRMlleN)
+2025-06-27 13:47:14,635 [INFO] ✅ Updated record 99 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 13:47:14,637 [INFO] Processing record 113 (ID: recJVO7uKXdAmgF6h)
+2025-06-27 13:47:14,863 [INFO] ✅ Updated record 113 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-27 13:47:14,863 [INFO] Processing record 75 (ID: recK7yc73Lb9a2Uxk)
+2025-06-27 13:47:15,055 [INFO] ✅ Updated record 75 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 13:47:15,055 [INFO] Processing record 59 (ID: recKeKBuHZqMqbry1)
+2025-06-27 13:47:15,268 [INFO] ✅ Updated record 59 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-27 13:47:15,268 [INFO] Processing record 183 (ID: recKyjB2F0NWulZP6)
+2025-06-27 13:47:15,452 [INFO] ✅ Updated record 183 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 13:47:15,452 [INFO] Processing record 13 (ID: recMIZkuJscu59YZk)
+2025-06-27 13:47:15,643 [INFO] ✅ Updated record 13 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 13:47:15,643 [INFO] Processing record 130 (ID: recMNcYextI4sbzxp)
+2025-06-27 13:47:15,874 [INFO] ✅ Updated record 130 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-27 13:47:15,874 [INFO] Processing record 164 (ID: recMaiEdUV26FF3yE)
+2025-06-27 13:47:16,121 [INFO] ✅ Updated record 164 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-27 13:47:16,121 [INFO] Processing record 152 (ID: recMmpMVQcW5thQus)
+2025-06-27 13:47:16,348 [INFO] ✅ Updated record 152 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 13:47:16,364 [INFO] Processing record 181 (ID: recMn4Yzvv1bzVSw7)
+2025-06-27 13:47:16,540 [INFO] ✅ Updated record 181 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 13:47:16,540 [INFO] Processing record 161 (ID: recSfhEhGjmUB1e9w)
+2025-06-27 13:47:16,748 [INFO] ✅ Updated record 161 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 13:47:16,748 [INFO] Processing record 27 (ID: recTklRkJs59VpBbz)
+2025-06-27 13:47:16,939 [INFO] ✅ Updated record 27 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-27 13:47:16,939 [INFO] Processing record 230 (ID: recTuco51aqJhji2N)
+2025-06-27 13:47:17,155 [INFO] ✅ Updated record 230 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 13:47:17,155 [INFO] Processing record 160 (ID: recUNcYQHrCQfzsE6)
+2025-06-27 13:47:17,343 [INFO] ✅ Updated record 160 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 13:47:17,343 [INFO] Processing record 19 (ID: recVVegK7d5IG01wk)
+2025-06-27 13:47:17,531 [INFO] ✅ Updated record 19 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 13:47:17,531 [INFO] Processing record 15 (ID: recWVnNmTTliaiPut)
+2025-06-27 13:47:17,742 [INFO] ✅ Updated record 15 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-27 13:47:17,742 [INFO] Processing record 149 (ID: recX6Fu2aTHV29OLn)
+2025-06-27 13:47:17,931 [INFO] ✅ Updated record 149 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 13:47:17,931 [INFO] Processing record 119 (ID: recXW3WjEB3tFxKHy)
+2025-06-27 13:47:18,122 [INFO] ✅ Updated record 119 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 13:47:18,122 [INFO] Processing record 177 (ID: recYyr2ZYLoTn2qhZ)
+2025-06-27 13:47:18,335 [INFO] ✅ Updated record 177 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-27 13:47:18,335 [INFO] Processing record 48 (ID: recZ2iALpva9O4VpI)
+2025-06-27 13:47:18,535 [INFO] ✅ Updated record 48 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 13:47:18,535 [INFO] Processing record 163 (ID: recZmsCsrfxSdKQpV)
+2025-06-27 13:47:18,809 [INFO] ✅ Updated record 163 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 13:47:18,811 [INFO] Processing record 247 (ID: recapbQTUtQqJVJAA)
+2025-06-27 13:47:19,044 [INFO] ✅ Updated record 247 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 13:47:19,045 [INFO] Processing record 50 (ID: recbDdof3DUeHoyet)
+2025-06-27 13:47:19,253 [INFO] ✅ Updated record 50 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 13:47:19,254 [INFO] Processing record 125 (ID: reccivucn972rvnHV)
+2025-06-27 13:47:19,470 [INFO] ✅ Updated record 125 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-27 13:47:19,470 [INFO] Processing record 206 (ID: recdBQE9g1Cwe91pB)
+2025-06-27 13:47:19,689 [INFO] ✅ Updated record 206 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-27 13:47:19,691 [INFO] Processing record 158 (ID: recfHaeX3vVy9TJ71)
+2025-06-27 13:47:19,955 [INFO] ✅ Updated record 158 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 13:47:19,955 [INFO] Processing record 23 (ID: recfeXzGu1MC96dZp)
+2025-06-27 13:47:20,194 [INFO] ✅ Updated record 23 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 13:47:20,194 [INFO] Processing record 126 (ID: recft44vWUfoAAmcU)
+2025-06-27 13:47:20,409 [INFO] ✅ Updated record 126 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-27 13:47:20,409 [INFO] Processing record 55 (ID: rechYONAuv6Ukv1ZH)
+2025-06-27 13:47:20,594 [INFO] ✅ Updated record 55 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-27 13:47:20,594 [INFO] Processing record 45 (ID: reci5Cps24Q1nQHp8)
+2025-06-27 13:47:20,820 [INFO] ✅ Updated record 45 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-27 13:47:20,820 [INFO] Processing record 240 (ID: recifdQkCYBUl2Ste)
+2025-06-27 13:47:21,059 [INFO] ✅ Updated record 240 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-27 13:47:21,059 [INFO] Processing record 151 (ID: reciimKQ0Y5PwdtBn)
+2025-06-27 13:47:21,269 [INFO] ✅ Updated record 151 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 13:47:21,283 [INFO] Processing record 24 (ID: recj8aIwpMlz2hajt)
+2025-06-27 13:47:21,490 [INFO] ✅ Updated record 24 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 13:47:21,490 [INFO] Processing record 65 (ID: recl0gutDQIdZZCvJ)
+2025-06-27 13:47:21,698 [INFO] ✅ Updated record 65 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 13:47:21,698 [INFO] Processing record 26 (ID: recqSCAqx4gBw9IQa)
+2025-06-27 13:47:21,907 [INFO] ✅ Updated record 26 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 13:47:21,907 [INFO] Processing record 173 (ID: recr42yH2w6K9zljr)
+2025-06-27 13:47:22,097 [INFO] ✅ Updated record 173 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-27 13:47:22,113 [INFO] Processing record 246 (ID: recrV9yCIX5nLKIDC)
+2025-06-27 13:47:22,352 [INFO] ✅ Updated record 246 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 13:47:22,352 [INFO] Processing record 100 (ID: recsllLuOUq6jOgjv)
+2025-06-27 13:47:22,561 [INFO] ✅ Updated record 100 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-27 13:47:22,561 [INFO] Processing record 12 (ID: rectOyZ5VfXU4nZh1)
+2025-06-27 13:47:22,759 [INFO] ✅ Updated record 12 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 13:47:22,759 [INFO] Processing record 244 (ID: recuLpTU5kGu3bsw0)
+2025-06-27 13:47:22,978 [INFO] ✅ Updated record 244 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 13:47:22,978 [INFO] Processing record 118 (ID: recuccdnsOdAex4OE)
+2025-06-27 13:47:23,181 [INFO] ✅ Updated record 118 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 13:47:23,181 [INFO] Processing record 51 (ID: recvT2PY4wYIkytgR)
+2025-06-27 13:47:23,377 [INFO] ✅ Updated record 51 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-27 13:47:23,377 [INFO] Processing record 95 (ID: recwifohyNauleaKE)
+2025-06-27 13:47:23,585 [INFO] ✅ Updated record 95 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-27 13:47:23,585 [INFO] Processing record 91 (ID: recxggc5XsqeTQagq)
+2025-06-27 13:47:23,830 [INFO] ✅ Updated record 91 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-27 13:47:23,830 [INFO] Processing record 168 (ID: reczwGw4ft7MioaGn)
+2025-06-27 13:47:24,018 [INFO] ✅ Updated record 168 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-27 13:47:24,018 [INFO] ============================================================
+2025-06-27 13:47:24,018 [INFO] ENHANCED ANALYTICS SUMMARY
+2025-06-27 13:47:24,018 [INFO] ============================================================
+2025-06-27 13:47:24,018 [INFO] Total Records: 64
+2025-06-27 13:47:24,018 [INFO] Successfully Updated: 64
+2025-06-27 13:47:24,018 [INFO] Records with Data Issues: 0
+2025-06-27 13:47:24,018 [INFO] Errors: 0
+2025-06-27 13:47:24,018 [INFO] ============================================================
+2025-06-27 13:47:24,018 [INFO] ✨ Note: Position Size % calculated using fallback method for pending orders
+2025-06-27 13:47:24,018 [INFO] ✨ Time to Fill now populates for filled orders
+2025-06-28 01:22:35,563 [INFO] Starting Enhanced Trading Analytics Calculator...
+2025-06-28 01:22:41,442 [INFO] Retrieved 86 records for enhanced analysis
+2025-06-28 01:22:41,442 [INFO] Processing record 245 (ID: rec1OfhytVb4PdoKL)
+2025-06-28 01:22:41,702 [INFO] ✅ Updated record 245 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:41,704 [INFO] Processing record 148 (ID: rec1jw0MHmJFRMrTz)
+2025-06-28 01:22:41,975 [INFO] ✅ Updated record 148 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:41,975 [INFO] Processing record 21 (ID: rec2eh0wnklFg557H)
+2025-06-28 01:22:42,146 [INFO] ✅ Updated record 21 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:42,146 [INFO] Processing record 202 (ID: rec2wZYlQMRmhFzJp)
+2025-06-28 01:22:42,393 [INFO] ✅ Updated record 202 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-28 01:22:42,393 [INFO] Processing record 171 (ID: rec39MG83rKgxxyj3)
+2025-06-28 01:22:42,567 [INFO] ✅ Updated record 171 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:42,567 [INFO] Processing record 44 (ID: rec3UW2aTrHqMZ12E)
+2025-06-28 01:22:42,793 [INFO] ✅ Updated record 44 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-28 01:22:42,793 [INFO] Processing record 49 (ID: rec3cEj77ZV2CsfvV)
+2025-06-28 01:22:42,965 [INFO] ✅ Updated record 49 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:42,965 [INFO] Processing record 43 (ID: rec4NBxrnLtzVxpFU)
+2025-06-28 01:22:43,215 [INFO] ✅ Updated record 43 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-28 01:22:43,215 [INFO] Processing record 155 (ID: rec4oXvWbBsyJgl6S)
+2025-06-28 01:22:43,385 [INFO] ✅ Updated record 155 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:43,387 [INFO] Processing record 133 (ID: rec5HAf7GOBD5wTSu)
+2025-06-28 01:22:43,584 [INFO] ✅ Updated record 133 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:43,585 [INFO] Processing record 182 (ID: rec5VAEDecwocOHWO)
+2025-06-28 01:22:43,774 [INFO] ✅ Updated record 182 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-28 01:22:43,774 [INFO] Processing record 154 (ID: rec5fwQwTph0JQkch)
+2025-06-28 01:22:43,946 [INFO] ✅ Updated record 154 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:43,946 [INFO] Processing record 73 (ID: rec5mGRzrSZ073X2r)
+2025-06-28 01:22:44,108 [INFO] ✅ Updated record 73 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:44,108 [INFO] Processing record 257 (ID: rec5sk24zWMTCNxZV)
+2025-06-28 01:22:44,315 [INFO] ✅ Updated record 257 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-28 01:22:44,315 [INFO] Processing record 120 (ID: rec6T1XT83VKdPqbU)
+2025-06-28 01:22:44,524 [INFO] ✅ Updated record 120 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:44,524 [INFO] Processing record 201 (ID: rec72LqoY6W400oJ4)
+2025-06-28 01:22:44,713 [INFO] ✅ Updated record 201 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-28 01:22:44,713 [INFO] Processing record 117 (ID: rec7XEwNXRSpBLnk5)
+2025-06-28 01:22:44,928 [INFO] ✅ Updated record 117 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-28 01:22:44,928 [INFO] Processing record 229 (ID: rec84Qplr72R5PsA2)
+2025-06-28 01:22:45,113 [INFO] ✅ Updated record 229 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:45,113 [INFO] Processing record 25 (ID: rec8PFwHDjT7V331j)
+2025-06-28 01:22:45,318 [INFO] ✅ Updated record 25 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-28 01:22:45,318 [INFO] Processing record 4 (ID: rec8dR5yIHSf7X0lZ)
+2025-06-28 01:22:45,493 [INFO] ✅ Updated record 4 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-28 01:22:45,493 [INFO] Processing record 157 (ID: rec9ti5DwQKva2VGA)
+2025-06-28 01:22:45,698 [INFO] ✅ Updated record 157 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:45,698 [INFO] Processing record 145 (ID: recESsYZAqnGZvSNC)
+2025-06-28 01:22:45,890 [INFO] ✅ Updated record 145 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:45,890 [INFO] Processing record 135 (ID: recEqLxh9QcDVTTnq)
+2025-06-28 01:22:46,080 [INFO] ✅ Updated record 135 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:46,080 [INFO] Processing record 123 (ID: recErPp277vgYUgRS)
+2025-06-28 01:22:46,273 [INFO] ✅ Updated record 123 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:46,273 [INFO] Processing record 72 (ID: recGa21uEyZ7Cc3wM)
+2025-06-28 01:22:46,450 [INFO] ✅ Updated record 72 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:46,450 [INFO] Processing record 99 (ID: recGw5siKFNRMlleN)
+2025-06-28 01:22:46,621 [INFO] ✅ Updated record 99 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:46,621 [INFO] Processing record 113 (ID: recJVO7uKXdAmgF6h)
+2025-06-28 01:22:46,796 [INFO] ✅ Updated record 113 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-28 01:22:46,796 [INFO] Processing record 75 (ID: recK7yc73Lb9a2Uxk)
+2025-06-28 01:22:46,952 [INFO] ✅ Updated record 75 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:46,952 [INFO] Processing record 59 (ID: recKeKBuHZqMqbry1)
+2025-06-28 01:22:47,137 [INFO] ✅ Updated record 59 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-28 01:22:47,137 [INFO] Processing record 183 (ID: recKyjB2F0NWulZP6)
+2025-06-28 01:22:47,293 [INFO] ✅ Updated record 183 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:47,293 [INFO] Processing record 255 (ID: recLrsKxkmX26TxUd)
+2025-06-28 01:22:47,493 [INFO] ✅ Updated record 255 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:47,493 [INFO] Processing record 13 (ID: recMIZkuJscu59YZk)
+2025-06-28 01:22:47,637 [INFO] ✅ Updated record 13 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:47,637 [INFO] Processing record 130 (ID: recMNcYextI4sbzxp)
+2025-06-28 01:22:47,892 [INFO] ✅ Updated record 130 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-28 01:22:47,892 [INFO] Processing record 164 (ID: recMaiEdUV26FF3yE)
+2025-06-28 01:22:48,045 [INFO] ✅ Updated record 164 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-28 01:22:48,046 [INFO] Processing record 152 (ID: recMmpMVQcW5thQus)
+2025-06-28 01:22:48,270 [INFO] ✅ Updated record 152 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:48,270 [INFO] Processing record 181 (ID: recMn4Yzvv1bzVSw7)
+2025-06-28 01:22:48,496 [INFO] ✅ Updated record 181 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-28 01:22:48,496 [INFO] Processing record 303 (ID: recQK1bahNJVjuxRu)
+2025-06-28 01:22:48,655 [INFO] ✅ Updated record 303 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:48,655 [INFO] Processing record 146 (ID: recRJ7DopExdQko2C)
+2025-06-28 01:22:48,849 [INFO] ✅ Updated record 146 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:48,849 [INFO] Processing record 161 (ID: recSfhEhGjmUB1e9w)
+2025-06-28 01:22:49,007 [INFO] ✅ Updated record 161 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:49,007 [INFO] Processing record 302 (ID: recSg6KOoVY4QoaVP)
+2025-06-28 01:22:49,200 [INFO] ✅ Updated record 302 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:49,200 [INFO] Processing record 27 (ID: recTklRkJs59VpBbz)
+2025-06-28 01:22:49,367 [INFO] ✅ Updated record 27 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-28 01:22:49,383 [INFO] Processing record 230 (ID: recTuco51aqJhji2N)
+2025-06-28 01:22:49,566 [INFO] ✅ Updated record 230 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:49,566 [INFO] Processing record 160 (ID: recUNcYQHrCQfzsE6)
+2025-06-28 01:22:49,700 [INFO] ✅ Updated record 160 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:49,700 [INFO] Processing record 19 (ID: recVVegK7d5IG01wk)
+2025-06-28 01:22:49,874 [INFO] ✅ Updated record 19 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:49,874 [INFO] Processing record 15 (ID: recWVnNmTTliaiPut)
+2025-06-28 01:22:50,025 [INFO] ✅ Updated record 15 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-28 01:22:50,030 [INFO] Processing record 149 (ID: recX6Fu2aTHV29OLn)
+2025-06-28 01:22:50,209 [INFO] ✅ Updated record 149 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:50,209 [INFO] Processing record 119 (ID: recXW3WjEB3tFxKHy)
+2025-06-28 01:22:50,369 [INFO] ✅ Updated record 119 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:50,369 [INFO] Processing record 136 (ID: recY8Ct9sSQkXo2wM)
+2025-06-28 01:22:50,576 [INFO] ✅ Updated record 136 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-28 01:22:50,576 [INFO] Processing record 177 (ID: recYyr2ZYLoTn2qhZ)
+2025-06-28 01:22:50,766 [INFO] ✅ Updated record 177 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-28 01:22:50,766 [INFO] Processing record 48 (ID: recZ2iALpva9O4VpI)
+2025-06-28 01:22:50,925 [INFO] ✅ Updated record 48 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:50,925 [INFO] Processing record 163 (ID: recZmsCsrfxSdKQpV)
+2025-06-28 01:22:51,118 [INFO] ✅ Updated record 163 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:51,120 [INFO] Processing record 247 (ID: recapbQTUtQqJVJAA)
+2025-06-28 01:22:51,291 [INFO] ✅ Updated record 247 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:51,291 [INFO] Processing record 50 (ID: recbDdof3DUeHoyet)
+2025-06-28 01:22:51,464 [INFO] ✅ Updated record 50 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:51,464 [INFO] Processing record 125 (ID: reccivucn972rvnHV)
+2025-06-28 01:22:51,672 [INFO] ✅ Updated record 125 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-28 01:22:51,672 [INFO] Processing record 206 (ID: recdBQE9g1Cwe91pB)
+2025-06-28 01:22:51,871 [INFO] ✅ Updated record 206 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-28 01:22:51,871 [INFO] Processing record 269 (ID: recdH0S0WKOLlMQOO)
+2025-06-28 01:22:52,073 [INFO] ✅ Updated record 269 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:52,073 [INFO] Processing record 158 (ID: recfHaeX3vVy9TJ71)
+2025-06-28 01:22:52,229 [INFO] ✅ Updated record 158 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:52,229 [INFO] Processing record 23 (ID: recfeXzGu1MC96dZp)
+2025-06-28 01:22:52,377 [INFO] ✅ Updated record 23 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:52,377 [INFO] Processing record 126 (ID: recft44vWUfoAAmcU)
+2025-06-28 01:22:52,568 [INFO] ✅ Updated record 126 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-28 01:22:52,569 [INFO] Processing record 304 (ID: recgfyM1q3ImnBuFH)
+2025-06-28 01:22:52,738 [INFO] ✅ Updated record 304 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:52,738 [INFO] Processing record 253 (ID: rechH5FQh0NfmmhWz)
+2025-06-28 01:22:52,938 [INFO] ✅ Updated record 253 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:52,938 [INFO] Processing record 55 (ID: rechYONAuv6Ukv1ZH)
+2025-06-28 01:22:53,129 [INFO] ✅ Updated record 55 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-28 01:22:53,129 [INFO] Processing record 271 (ID: rechqu7wTEf9ZEdKX)
+2025-06-28 01:22:53,320 [INFO] ✅ Updated record 271 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:53,320 [INFO] Processing record 45 (ID: reci5Cps24Q1nQHp8)
+2025-06-28 01:22:53,526 [INFO] ✅ Updated record 45 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-28 01:22:53,526 [INFO] Processing record 240 (ID: recifdQkCYBUl2Ste)
+2025-06-28 01:22:53,762 [INFO] ✅ Updated record 240 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-28 01:22:53,762 [INFO] Processing record 151 (ID: reciimKQ0Y5PwdtBn)
+2025-06-28 01:22:53,924 [INFO] ✅ Updated record 151 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:53,924 [INFO] Processing record 24 (ID: recj8aIwpMlz2hajt)
+2025-06-28 01:22:54,066 [INFO] ✅ Updated record 24 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:54,066 [INFO] Processing record 263 (ID: recjvk3oc2KoTbax9)
+2025-06-28 01:22:54,239 [INFO] ✅ Updated record 263 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:54,239 [INFO] Processing record 65 (ID: recl0gutDQIdZZCvJ)
+2025-06-28 01:22:54,430 [INFO] ✅ Updated record 65 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:54,432 [INFO] Processing record 140 (ID: recnpmzsI8Z0F4Ae3)
+2025-06-28 01:22:54,624 [INFO] ✅ Updated record 140 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:54,624 [INFO] Processing record 143 (ID: recoykxBXZOo9YGcf)
+2025-06-28 01:22:54,812 [INFO] ✅ Updated record 143 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:54,812 [INFO] Processing record 26 (ID: recqSCAqx4gBw9IQa)
+2025-06-28 01:22:54,979 [INFO] ✅ Updated record 26 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:54,979 [INFO] Processing record 173 (ID: recr42yH2w6K9zljr)
+2025-06-28 01:22:55,198 [INFO] ✅ Updated record 173 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-28 01:22:55,198 [INFO] Processing record 265 (ID: recrKmcBiOE53AY11)
+2025-06-28 01:22:55,408 [INFO] ✅ Updated record 265 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:55,411 [INFO] Processing record 74 (ID: recrMzhls1FXtfgTq)
+2025-06-28 01:22:55,582 [INFO] ✅ Updated record 74 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:55,582 [INFO] Processing record 246 (ID: recrV9yCIX5nLKIDC)
+2025-06-28 01:22:55,755 [INFO] ✅ Updated record 246 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:55,755 [INFO] Processing record 100 (ID: recsllLuOUq6jOgjv)
+2025-06-28 01:22:55,964 [INFO] ✅ Updated record 100 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-28 01:22:55,964 [INFO] Processing record 261 (ID: rect5sJpyIYuCYmt5)
+2025-06-28 01:22:56,146 [INFO] ✅ Updated record 261 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:56,146 [INFO] Processing record 12 (ID: rectOyZ5VfXU4nZh1)
+2025-06-28 01:22:56,293 [INFO] ✅ Updated record 12 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:56,293 [INFO] Processing record 273 (ID: rectdwE7YINnAP4M6)
+2025-06-28 01:22:56,478 [INFO] ✅ Updated record 273 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-28 01:22:56,478 [INFO] Processing record 244 (ID: recuLpTU5kGu3bsw0)
+2025-06-28 01:22:56,658 [INFO] ✅ Updated record 244 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:56,658 [INFO] Processing record 118 (ID: recuccdnsOdAex4OE)
+2025-06-28 01:22:56,821 [INFO] ✅ Updated record 118 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:56,821 [INFO] Processing record 51 (ID: recvT2PY4wYIkytgR)
+2025-06-28 01:22:56,991 [INFO] ✅ Updated record 51 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-28 01:22:56,991 [INFO] Processing record 95 (ID: recwifohyNauleaKE)
+2025-06-28 01:22:57,148 [INFO] ✅ Updated record 95 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-28 01:22:57,150 [INFO] Processing record 91 (ID: recxggc5XsqeTQagq)
+2025-06-28 01:22:57,336 [INFO] ✅ Updated record 91 with: ['R:R Ratio Calculated', 'Risk Amount Calculated', 'Position Size % Calculated', 'Risk Per Trade % Calculated', 'ROI Calculated', 'Pips Gained/Lost Calculated', 'Days Held Calculated', 'Days Pending', 'Fill Rate Calculated', 'Time to Fill', 'Trade Result Calculated']
+2025-06-28 01:22:57,351 [INFO] Processing record 168 (ID: reczwGw4ft7MioaGn)
+2025-06-28 01:22:57,511 [INFO] ✅ Updated record 168 with: ['Days Held Calculated', 'Fill Rate Calculated', 'Trade Result Calculated']
+2025-06-28 01:22:57,512 [INFO] ============================================================
+2025-06-28 01:22:57,512 [INFO] ENHANCED ANALYTICS SUMMARY
+2025-06-28 01:22:57,512 [INFO] ============================================================
+2025-06-28 01:22:57,513 [INFO] Total Records: 86
+2025-06-28 01:22:57,513 [INFO] Successfully Updated: 86
+2025-06-28 01:22:57,513 [INFO] Records with Data Issues: 0
+2025-06-28 01:22:57,514 [INFO] Errors: 0
+2025-06-28 01:22:57,514 [INFO] ============================================================
+2025-06-28 01:22:57,514 [INFO] ✨ Note: Position Size % calculated using fallback method for pending orders
+2025-06-28 01:22:57,514 [INFO] ✨ Time to Fill now populates for filled orders

@@ -1,0 +1,1519 @@
+# Import with error handling for missing dependencies
+import os
+import sys
+import json
+import logging
+import time
+from datetime import datetime, timedelta
+from typing import Dict, List, Tuple, Optional
+import traceback
+from dataclasses import dataclass
+
+# Handle optional dependencies
+try:
+    import schedule
+    SCHEDULE_AVAILABLE = True
+except ImportError:
+    print("⚠️ Warning: 'schedule' module not found. Install with: pip install schedule")
+    SCHEDULE_AVAILABLE = False
+
+try:
+    import pytz
+    PYTZ_AVAILABLE = True
+except ImportError:
+    print("⚠️ Warning: 'pytz' module not found. Install with: pip install pytz")
+    PYTZ_AVAILABLE = False
+
+# Setup paths
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.abspath(os.path.join(current_dir, ".."))
+sys.path.append(parent_dir)
+
+# Import existing classes with error handling
+try:
+    from momentum_calculator import MarketAwareMomentumCalculator, ForexMarketSchedule
+    print("✅ Successfully imported momentum_calculator")
+except ImportError as e:
+    print(f"❌ Failed to import momentum_calculator: {e}")
+    sys.exit(1)
+
+try:
+    from oanda_api import OandaAPI
+    print("✅ Successfully imported oanda_api")
+except ImportError as e:
+    print(f"❌ Failed to import oanda_api: {e}")
+    sys.exit(1)
+
+try:
+    from psychological_levels_trader import EnhancedPennyCurveStrategy, PsychologicalLevelsDetector
+    print("✅ Successfully imported psychological_levels_trader")
+except ImportError as e:
+    print(f"❌ Failed to import psychological_levels_trader: {e}")
+    sys.exit(1)
+
+# Import the metadata storage (now available)
+try:
+    from metadata_storage import TradeMetadataStore, TradeMetadata
+    print("✅ Successfully imported metadata_storage")
+except ImportError as e:
+    print(f"❌ Failed to import metadata_storage: {e}")
+    sys.exit(1)
+
+# Config imports
+try:
+    from config.oanda_config import API_KEY, ACCOUNT_ID
+    print("✅ Successfully imported Oanda config")
+except ImportError as e:
+    print(f"❌ Failed to import Oanda config: {e}")
+    print("Please ensure config/oanda_config.py exists with API_KEY and ACCOUNT_ID")
+    sys.exit(1)
+
+@dataclass
+class TradeOrder:
+    """Data class to represent a trade order"""
+    instrument: str
+    action: str  # 'BUY' or 'SELL'
+    order_type: str  # 'MARKET' or 'LIMIT'
+    entry_price: float
+    stop_loss: float
+    take_profit: float
+    units: int
+    confidence: int
+    reasoning: List[str]
+    timestamp: str
+    expiration: Optional[str] = None
+    order_id: Optional[str] = None
+    status: str = 'PENDING'
+    # Enhanced metadata fields
+    momentum_analysis: Optional[Dict] = None
+    zone_data: Optional[Dict] = None
+
+class FixedDollarRiskManager:
+    """
+    Position sizing based on fixed dollar risk amount
+    
+    Key Features:
+    - Fixed maximum risk per trade (default $10 USD)
+    - Accurate pip value calculations for all currency pairs
+    - Account currency conversion handling
+    - Minimum position size enforcement
+    - Real-time exchange rate support
+    """
+    
+    def __init__(self, oanda_api, max_risk_usd: float = 10.0, account_currency: str = 'USD'):
+        self.api = oanda_api
+        self.max_risk_usd = max_risk_usd
+        self.account_currency = account_currency
+        self.logger = logging.getLogger(__name__)
+        
+        # Cache for exchange rates (refresh every calculation for accuracy)
+        self.exchange_rates = {}
+        
+        # Pip value definitions for different instrument types
+        self.pip_definitions = {
+            'JPY_PAIRS': {
+                'pip_decimal_place': 2,  # 123.45 (2 decimal places)
+                'pip_value': 0.01        # 1 pip = 0.01
+            },
+            'STANDARD_PAIRS': {
+                'pip_decimal_place': 4,  # 1.2345 (4 decimal places) 
+                'pip_value': 0.0001      # 1 pip = 0.0001
+            }
+        }
+    
+    def get_pip_info(self, instrument: str) -> Dict:
+        """Get pip information for any currency pair"""
+        if 'JPY' in instrument:
+            return self.pip_definitions['JPY_PAIRS'].copy()
+        else:
+            return self.pip_definitions['STANDARD_PAIRS'].copy()
+    
+    def get_current_exchange_rate(self, from_currency: str, to_currency: str) -> Optional[float]:
+        """Get current exchange rate between two currencies"""
+        if from_currency == to_currency:
+            return 1.0
+        
+        # Try direct rate first
+        direct_pair = f"{from_currency}_{to_currency}"
+        try:
+            price_data = self.api.get_current_prices([direct_pair])
+            if 'prices' in price_data and price_data['prices']:
+                price_info = price_data['prices'][0]
+                if 'closeoutBid' in price_info and 'closeoutAsk' in price_info:
+                    rate = (float(price_info['closeoutBid']) + float(price_info['closeoutAsk'])) / 2
+                    self.logger.debug(f"Direct rate {direct_pair}: {rate}")
+                    return rate
+        except Exception as e:
+            self.logger.debug(f"Could not get direct rate for {direct_pair}: {e}")
+        
+        # Try inverse rate
+        inverse_pair = f"{to_currency}_{from_currency}"
+        try:
+            price_data = self.api.get_current_prices([inverse_pair])
+            if 'prices' in price_data and price_data['prices']:
+                price_info = price_data['prices'][0]
+                if 'closeoutBid' in price_info and 'closeoutAsk' in price_info:
+                    inverse_rate = (float(price_info['closeoutBid']) + float(price_info['closeoutAsk'])) / 2
+                    rate = 1.0 / inverse_rate
+                    self.logger.debug(f"Inverse rate {inverse_pair}: {inverse_rate} -> {rate}")
+                    return rate
+        except Exception as e:
+            self.logger.debug(f"Could not get inverse rate for {inverse_pair}: {e}")
+        
+        # Try cross rate via USD
+        if from_currency != 'USD' and to_currency != 'USD':
+            try:
+                from_to_usd = self.get_current_exchange_rate(from_currency, 'USD')
+                usd_to_target = self.get_current_exchange_rate('USD', to_currency)
+                
+                if from_to_usd and usd_to_target:
+                    rate = from_to_usd * usd_to_target
+                    self.logger.debug(f"Cross rate {from_currency}->{to_currency} via USD: {rate}")
+                    return rate
+            except Exception as e:
+                self.logger.debug(f"Could not get cross rate: {e}")
+        
+        self.logger.warning(f"Could not get exchange rate for {from_currency}/{to_currency}")
+        return None
+    
+    def calculate_pip_value_usd(self, instrument: str, position_size: int) -> Optional[float]:
+        """Calculate the USD value of 1 pip for given position size"""
+        try:
+            base_currency, quote_currency = instrument.split('_')
+            pip_info = self.get_pip_info(instrument)
+            pip_value = pip_info['pip_value']
+            
+            # Calculate pip value in quote currency
+            pip_value_quote = pip_value * position_size
+            
+            # Convert to USD if quote currency is not USD
+            if quote_currency == 'USD':
+                pip_value_usd = pip_value_quote
+                self.logger.debug(f"{instrument}: Pip value = {pip_value_usd:.4f} USD (direct)")
+            else:
+                # Need to convert quote currency to USD
+                quote_to_usd_rate = self.get_current_exchange_rate(quote_currency, 'USD')
+                if quote_to_usd_rate:
+                    pip_value_usd = pip_value_quote * quote_to_usd_rate
+                    self.logger.debug(f"{instrument}: Pip value = {pip_value_quote:.4f} {quote_currency} "
+                                    f"* {quote_to_usd_rate:.4f} = {pip_value_usd:.4f} USD")
+                else:
+                    return None
+            
+            return pip_value_usd
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating pip value for {instrument}: {e}")
+            return None
+    
+    def calculate_position_size(self, instrument: str, entry_price: float, 
+                              stop_loss_price: float, confidence: int = 80) -> Dict:
+        """Calculate position size based on fixed dollar risk"""
+        try:
+            # Calculate stop loss distance in pips
+            pip_info = self.get_pip_info(instrument)
+            pip_value = pip_info['pip_value']
+            
+            stop_loss_distance = abs(entry_price - stop_loss_price)
+            stop_loss_pips = stop_loss_distance / pip_value
+            
+            self.logger.debug(f"{instrument}: Entry={entry_price}, SL={stop_loss_price}")
+            self.logger.debug(f"Stop loss distance: {stop_loss_distance:.5f} = {stop_loss_pips:.1f} pips")
+            
+            # Check if stop loss distance is reasonable
+            if stop_loss_pips < 5:
+                self.logger.warning(f"{instrument}: Stop loss too tight ({stop_loss_pips:.1f} pips), minimum 5 pips")
+                # Adjust stop loss to minimum 5 pips
+                min_stop_distance = 5 * pip_value
+                if entry_price > stop_loss_price:  # Long position
+                    stop_loss_price = entry_price - min_stop_distance
+                else:  # Short position
+                    stop_loss_price = entry_price + min_stop_distance
+                
+                stop_loss_distance = abs(entry_price - stop_loss_price)
+                stop_loss_pips = stop_loss_distance / pip_value
+                self.logger.info(f"{instrument}: Adjusted SL to {stop_loss_price:.4f} ({stop_loss_pips:.1f} pips)")
+            
+            # Confidence-based risk adjustment
+            if confidence >= 90:
+                risk_multiplier = 1.0  # Full risk for very high confidence
+            elif confidence >= 80:
+                risk_multiplier = 0.9  # 90% of max risk
+            elif confidence >= 70:
+                risk_multiplier = 0.8  # 80% of max risk
+            else:
+                risk_multiplier = 0.7  # 70% of max risk for lower confidence
+            
+            adjusted_max_risk_usd = self.max_risk_usd * risk_multiplier
+            
+            # Start with a test position size to calculate pip value
+            test_position_size = 1000  # 1 micro lot
+            pip_value_usd = self.calculate_pip_value_usd(instrument, test_position_size)
+            
+            if not pip_value_usd:
+                return {
+                    'error': f'Could not calculate pip value for {instrument}',
+                    'position_size': 1000,  # Fallback to minimum
+                    'risk_usd': 0,
+                    'stop_loss_price': stop_loss_price  # Return adjusted stop loss
+                }
+            
+            # Calculate position size
+            pip_value_per_unit = pip_value_usd / test_position_size
+            max_position_size = adjusted_max_risk_usd / (stop_loss_pips * pip_value_per_unit)
+            
+            # Round to nearest 1000 (micro lot)
+            position_size = max(1000, int(round(max_position_size / 1000) * 1000))
+            
+            # Maximum position size check (safety)
+            max_allowed_position = 100000  # 1 standard lot maximum
+            if position_size > max_allowed_position:
+                position_size = max_allowed_position
+                self.logger.warning(f"{instrument}: Position size above maximum, using {max_allowed_position}")
+            
+            # Calculate actual risk with final position size
+            actual_pip_value_usd = self.calculate_pip_value_usd(instrument, position_size)
+            actual_risk_usd = stop_loss_pips * (actual_pip_value_usd / position_size) * position_size if actual_pip_value_usd else 0
+            
+            # Convert position size to lots for display
+            lots = position_size / 100000  # 100,000 = 1 standard lot
+            micro_lots = position_size / 1000  # 1,000 = 1 micro lot
+            
+            result = {
+                'position_size': position_size,
+                'position_size_lots': round(lots, 2),
+                'position_size_micro_lots': micro_lots,
+                'stop_loss_pips': round(stop_loss_pips, 1),
+                'pip_value_usd': round(pip_value_per_unit, 4),
+                'risk_usd': round(actual_risk_usd, 2),
+                'max_risk_usd': adjusted_max_risk_usd,
+                'risk_multiplier': risk_multiplier,
+                'confidence': confidence,
+                'is_risk_acceptable': actual_risk_usd <= self.max_risk_usd * 1.1,  # Allow 10% tolerance
+                'stop_loss_price': stop_loss_price,  # Return potentially adjusted stop loss
+                'calculation_details': {
+                    'entry_price': entry_price,
+                    'original_stop_loss': stop_loss_price,
+                    'stop_loss_distance': round(stop_loss_distance, 5),
+                    'pip_definition': pip_info
+                }
+            }
+            
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating position size for {instrument}: {e}")
+            return {
+                'error': str(e),
+                'position_size': 1000,  # Fallback minimum
+                'risk_usd': 0,
+                'stop_loss_price': stop_loss_price
+            }
+
+class DemoTradingBot:
+    """
+    Demo Trading Bot for Penny Curve Strategy with Fixed Dollar Risk Management
+    
+    Features:
+    - Runs every 15 minutes
+    - Places real orders in practice account
+    - Fixed dollar risk per trade (default $10 USD max)
+    - Tracks open positions and orders
+    - Market timing optimization
+    - Liquidity-based execution
+    - Enhanced setup naming and momentum tracking
+    - LOCAL METADATA STORAGE for reliable trade journaling
+    """
+    
+    def __init__(self, max_risk_usd: float = 10.0, max_open_trades: int = 5):
+        # Initialize components with error handling
+        try:
+            self.api = OandaAPI(API_KEY, ACCOUNT_ID, "practice")
+            self.momentum_calc = MarketAwareMomentumCalculator(self.api)
+            self.levels_detector = PsychologicalLevelsDetector()
+            self.strategy = EnhancedPennyCurveStrategy(self.momentum_calc, self.levels_detector)
+            
+            # Initialize fixed dollar risk manager
+            self.risk_manager = FixedDollarRiskManager(self.api, max_risk_usd)
+            self.max_risk_usd = max_risk_usd
+            self.max_open_trades = max_open_trades
+            self.account_balance = None
+            
+            # Initialize metadata store for reliable journaling
+            self.metadata_store = TradeMetadataStore()
+            
+            # Clean up old metadata on startup
+            cleaned_count = self.metadata_store.cleanup_old_metadata()
+            if cleaned_count > 0:
+                print(f"🧹 Cleaned up {cleaned_count} old metadata entries")
+            
+        except Exception as e:
+            print(f"❌ Error initializing trading bot: {e}")
+            sys.exit(1)
+        
+        # Trading instruments - All 21 currency pairs
+        self.instruments = [
+            # Major USD pairs
+            'EUR_USD', 'GBP_USD', 'USD_JPY', 'USD_CAD', 'AUD_USD', 'NZD_USD',
+            # Cross pairs (EUR)
+            'EUR_GBP', 'EUR_JPY', 'EUR_CAD', 'EUR_AUD', 'EUR_NZD',
+            # Cross pairs (GBP)
+            'GBP_JPY', 'GBP_CAD', 'GBP_AUD', 'GBP_NZD',
+            # Cross pairs (AUD)
+            'AUD_JPY', 'AUD_CAD', 'AUD_NZD',
+            # Cross pairs (NZD)
+            'NZD_JPY', 'NZD_CAD',
+            # JPY cross
+            'CAD_JPY'
+        ]
+        
+        # Optimal trading windows (ET/EDT) - when spreads are tightest and liquidity highest
+        self.trading_windows = {
+            # Major USD pairs
+            'EUR_USD': {'start': 3, 'end': 11},   # 03:00 – 11:00 ET (London + NY overlap)
+            'GBP_USD': {'start': 3, 'end': 11},   # 03:00 – 11:00 ET (London + NY overlap)
+            'USD_JPY': {'start': 19, 'end': 11},  # 19:00 – 11:00 ET (Tokyo + overlap)
+            'USD_CAD': {'start': 8, 'end': 14},   # 08:00 – 14:00 ET (NY session)
+            'AUD_USD': {'start': 19, 'end': 11},  # 19:00 – 11:00 ET (crosses midnight)
+            'NZD_USD': {'start': 18, 'end': 10},  # 18:00 – 10:00 ET (crosses midnight)
+            
+            # EUR cross pairs
+            'EUR_GBP': {'start': 3, 'end': 11},   # London session for EUR/GBP cross
+            'EUR_JPY': {'start': 2, 'end': 10},   # 02:00 – 10:00 ET (London + Tokyo)
+            'EUR_CAD': {'start': 7, 'end': 12},   # London + early NY for EUR/CAD
+            'EUR_AUD': {'start': 20, 'end': 10},  # Sydney + London overlap
+            'EUR_NZD': {'start': 19, 'end': 9},   # Wellington + London overlap
+            
+            # GBP cross pairs
+            'GBP_JPY': {'start': 2, 'end': 10},   # 02:00 – 10:00 ET (London + Tokyo)
+            'GBP_CAD': {'start': 7, 'end': 12},   # London + early NY for GBP/CAD
+            'GBP_AUD': {'start': 20, 'end': 10},  # Sydney + London overlap
+            'GBP_NZD': {'start': 19, 'end': 9},   # Wellington + London overlap
+            
+            # AUD cross pairs
+            'AUD_JPY': {'start': 19, 'end': 11},  # 19:00 – 11:00 ET (crosses midnight)
+            'AUD_CAD': {'start': 20, 'end': 11},  # Sydney + North America
+            'AUD_NZD': {'start': 17, 'end': 6},   # 17:00 – 06:00 ET (Oceania session)
+            
+            # NZD cross pairs
+            'NZD_JPY': {'start': 18, 'end': 10},  # 18:00 – 10:00 ET (crosses midnight)
+            'NZD_CAD': {'start': 19, 'end': 10},  # Wellington + North America overlap
+            
+            # Additional JPY cross
+            'CAD_JPY': {'start': 19, 'end': 10},  # 19:00 – 10:00 ET (crosses midnight)
+        }
+        
+        # Times to AVOID trading (poor liquidity/wide spreads)
+        self.avoid_periods = [
+            {'start': 15, 'end': 17, 'reason': 'Daily rollover period (OANDA)'},
+            {'start': 13, 'end': 15, 'reason': 'Midday liquidity lull'},
+        ]
+        
+        # Friday cutoff (lower institutional volume)
+        self.friday_cutoff_hour = 12  # Noon ET on Friday
+        
+        # Trade tracking
+        self.pending_orders = []
+        self.open_positions = []
+        self.trade_history = []
+        
+        # Market schedule
+        try:
+            self.market_schedule = ForexMarketSchedule()
+        except Exception as e:
+            print(f"⚠️ Warning: Could not initialize market schedule: {e}")
+            self.market_schedule = None
+        
+        # Logging setup
+        self.setup_logging()
+        
+        print("🤖 Demo Trading Bot Initialized with Fixed Dollar Risk and Enhanced Tracking!")
+        print(f"   💰 Max risk per trade: ${self.max_risk_usd:.2f} USD")
+        print(f"   📊 Max open trades: {self.max_open_trades}")
+        print(f"   🎯 Monitoring {len(self.instruments)} pairs: {', '.join(self.instruments[:6])}...")
+        print(f"   📝 Local metadata storage enabled for reliable trade journaling")
+    
+    def setup_logging(self):
+        """Setup comprehensive logging for trading activities"""
+        try:
+            log_dir = os.path.join(current_dir, 'trading_logs')
+            os.makedirs(log_dir, exist_ok=True)
+            
+            # Daily log file
+            today = datetime.now().strftime('%Y-%m-%d')
+            log_file = os.path.join(log_dir, f'demo_trading_{today}.log')
+            
+            # Create file handler with UTF-8 encoding
+            file_handler = logging.FileHandler(log_file, encoding='utf-8')
+            file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+            
+            # Create console handler
+            console_handler = logging.StreamHandler()
+            console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+            
+            # Configure logger
+            self.logger = logging.getLogger(__name__)
+            self.logger.setLevel(logging.INFO)
+            
+            # Clear existing handlers
+            self.logger.handlers.clear()
+            
+            self.logger.addHandler(file_handler)
+            self.logger.addHandler(console_handler)
+            
+            self.logger.info("Demo Trading Bot started with Fixed Dollar Risk Management and Enhanced Tracking")
+            
+        except Exception as e:
+            print(f"⚠️ Warning: Could not setup logging: {e}")
+            # Create a basic logger
+            self.logger = logging.getLogger(__name__)
+            self.logger.setLevel(logging.INFO)
+    
+    def create_setup_name(self, trade_order: TradeOrder, momentum_analysis: Dict) -> str:
+        """Create a more standardized setup name"""
+        try:
+            # Base strategy name - more standardized
+            strategy_name = "PCM"  # Penny Curve Momentum abbreviation
+            
+            # Extract instrument (replace underscore with slash for readability)
+            instrument = trade_order.instrument.replace('_', '/')
+            
+            # Order type and action
+            order_type = trade_order.order_type  # MARKET or LIMIT
+            action = trade_order.action  # BUY or SELL
+            
+            # Momentum strength classification with more granular levels
+            momentum_strength = abs(momentum_analysis.get('momentum_strength', 0))
+            if momentum_strength > 0.7:
+                strength_label = "VeryStrong"
+            elif momentum_strength > 0.5:
+                strength_label = "Strong"
+            elif momentum_strength > 0.3:
+                strength_label = "Moderate"
+            elif momentum_strength > 0.1:
+                strength_label = "Weak"
+            else:
+                strength_label = "VeryWeak"
+            
+            # Add session context for better categorization
+            session_info = self.get_trading_session_info()
+            session_context = ""
+            if session_info.get('overlaps'):
+                session_context = f"_{session_info['overlaps'][0].replace('-', '')}"
+            elif session_info.get('active_sessions'):
+                session_context = f"_{session_info['active_sessions'][0]}"
+            
+            # Create standardized setup name
+            # Format: PCM_EUR/USD_MARKET_BUY_Strong_LondonNY
+            setup_name = f"{strategy_name}_{instrument}_{order_type}_{action}_{strength_label}{session_context}"
+            
+            return setup_name
+            
+        except Exception as e:
+            self.logger.error(f"Error creating setup name: {e}")
+            return f"PCM_{trade_order.instrument}_{trade_order.action}"
+    
+    def create_trade_metadata(self, trade_order: TradeOrder, momentum_analysis: Dict, zone_data: Dict) -> TradeMetadata:
+        """Create comprehensive metadata object for local storage - ENHANCED VERSION"""
+        try:
+            # Create setup name with more standardized format
+            setup_name = self.create_setup_name(trade_order, momentum_analysis)
+            
+            # Get current session info for better tracking
+            session_info = self.get_trading_session_info()
+            current_session = session_info.get('active_sessions', ['Unknown'])[0] if session_info.get('active_sessions') else 'Unknown'
+            
+            # Enhanced metadata with more complete information
+            metadata = TradeMetadata(
+                setup_name=setup_name,
+                strategy_tag="PennyCurveMomentum",  # Standardized tag
+                momentum_strength=momentum_analysis.get('momentum_strength'),
+                momentum_direction=momentum_analysis.get('direction'),
+                strategy_bias=momentum_analysis.get('strategy_bias'),
+                zone_position=self._determine_zone_position(trade_order, zone_data),
+                distance_to_entry_pips=self._calculate_distance_pips(trade_order, zone_data),
+                signal_confidence=trade_order.confidence,
+                momentum_alignment=momentum_analysis.get('alignment', 0),
+                
+                # ENHANCED: Add session and market context
+                session_info={
+                    'current_session': current_session,
+                    'liquidity_level': session_info.get('liquidity_level', 'Unknown'),
+                    'overlaps': session_info.get('overlaps', []),
+                    'market_time': session_info.get('current_time_et', 'Unknown')
+                },
+                
+                # ENHANCED: Add more trading context
+                notes=f"Reasoning: {'; '.join(trade_order.reasoning)}"
+            )
+            
+            self.logger.info(f"📊 Created enhanced metadata: {setup_name}")
+            self.logger.info(f"   Momentum: {metadata.momentum_strength:.3f} | Direction: {metadata.momentum_direction}")
+            self.logger.info(f"   Session: {current_session} | Confidence: {metadata.signal_confidence}%")
+            
+            return metadata
+            
+        except Exception as e:
+            self.logger.error(f"Error creating trade metadata: {e}")
+            # Return minimal metadata as fallback
+            return TradeMetadata(
+                setup_name=f"Fallback_{trade_order.instrument}_{trade_order.action}",
+                signal_confidence=trade_order.confidence
+            )
+    
+    def validate_metadata(self, metadata: TradeMetadata) -> bool:
+        """Validate metadata meets quality standards"""
+        try:
+            # Check required fields
+            required_fields = ['setup_name', 'strategy_tag', 'signal_confidence']
+            for field in required_fields:
+                if not hasattr(metadata, field) or getattr(metadata, field) is None:
+                    self.logger.warning(f"Missing required field: {field}")
+                    return False
+            
+            # Validate confidence range
+            if not (0 <= metadata.signal_confidence <= 100):
+                self.logger.warning(f"Invalid confidence: {metadata.signal_confidence}")
+                return False
+            
+            # Validate momentum strength if present
+            if metadata.momentum_strength is not None:
+                if not (-1.0 <= metadata.momentum_strength <= 1.0):
+                    self.logger.warning(f"Invalid momentum strength: {metadata.momentum_strength}")
+                    return False
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error validating metadata: {e}")
+            return False
+    
+    def _determine_zone_position(self, trade_order: TradeOrder, zone_data: Dict) -> str:
+        """Determine zone position for metadata"""
+        try:
+            if trade_order.order_type == "MARKET":
+                return "In_Buy_Zone" if trade_order.action == "BUY" else "In_Sell_Zone"
+            else:  # LIMIT
+                return "Above_Buy_Zone" if trade_order.action == "BUY" else "Below_Sell_Zone"
+        except:
+            return "Unknown_Zone"
+    
+    def _calculate_distance_pips(self, trade_order: TradeOrder, zone_data: Dict) -> float:
+        """Calculate distance to entry in pips"""
+        try:
+            if trade_order.order_type == "MARKET":
+                return 0.0
+            
+            current_price = zone_data.get('current_price', 0)
+            is_jpy = zone_data.get('is_jpy', False)
+            pip_value = 0.01 if is_jpy else 0.0001
+            
+            return abs(current_price - trade_order.entry_price) / pip_value
+        except:
+            return 0.0
+    
+    def get_account_info(self) -> Dict:
+        """Get current account information"""
+        try:
+            account_info = self.api.get_account_summary()
+            if account_info and 'account' in account_info:
+                self.account_balance = float(account_info['account']['balance'])
+                
+                return {
+                    'balance': self.account_balance,
+                    'currency': account_info['account']['currency'],
+                    'margin_used': float(account_info['account']['marginUsed']),
+                    'margin_available': float(account_info['account']['marginAvailable']),
+                    'open_trades': int(account_info['account']['openTradeCount']),
+                    'open_positions': int(account_info['account']['openPositionCount'])
+                }
+        except Exception as e:
+            self.logger.error(f"Error getting account info: {e}")
+        
+        return {}
+    
+    def calculate_position_size(self, instrument: str, entry_price: float, 
+                              stop_loss_price: float, confidence: int) -> int:
+        """Calculate position size based on fixed dollar risk"""
+        try:
+            result = self.risk_manager.calculate_position_size(
+                instrument, entry_price, stop_loss_price, confidence
+            )
+            
+            if 'error' in result:
+                self.logger.error(f"Position sizing error for {instrument}: {result['error']}")
+                return 1000  # Minimum position size as fallback
+            
+            if not result['is_risk_acceptable']:
+                self.logger.warning(f"Risk too high for {instrument}: ${result['risk_usd']:.2f}")
+                return 1000  # Use minimum size if risk too high
+            
+            # Log the risk calculation
+            self.logger.info(f"💰 {instrument} Risk: ${result['risk_usd']:.2f} USD "
+                           f"({result['position_size_micro_lots']} micro lots, "
+                           f"{result['stop_loss_pips']:.1f} pips)")
+            
+            return result['position_size']
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating position size: {e}")
+            return 1000
+    
+    def get_market_time_et(self) -> datetime:
+        """Get current time in ET/EDT (Eastern Time)"""
+        if PYTZ_AVAILABLE:
+            try:
+                et_tz = pytz.timezone('US/Eastern')
+                return datetime.now(et_tz)
+            except:
+                pass
+        
+        # Fallback: assume UTC-5 (EST) or UTC-4 (EDT)
+        utc_now = datetime.utcnow()
+        est_offset = timedelta(hours=-5)
+        return utc_now + est_offset
+    
+    def is_market_open(self) -> bool:
+        """Check if forex market is currently open"""
+        try:
+            if self.market_schedule:
+                current_market_time = self.market_schedule.get_market_time()
+                return self.market_schedule.is_market_open(current_market_time)
+            else:
+                # Simple fallback - assume market is always open except weekends
+                current_time = self.get_market_time_et()
+                return current_time.weekday() < 5  # Monday=0, Sunday=6
+        except Exception as e:
+            self.logger.error(f"Error checking market open status: {e}")
+            return True  # Default to open if check fails
+    
+    def is_optimal_trading_time(self, instrument: str) -> Tuple[bool, str]:
+        """Check if current time is optimal for trading specific instrument"""
+        try:
+            current_et = self.get_market_time_et()
+            current_hour = current_et.hour
+            current_weekday = current_et.weekday()  # 0=Monday, 6=Sunday
+            
+            # Check if it's Friday after cutoff
+            if current_weekday == 4 and current_hour >= self.friday_cutoff_hour:  # Friday
+                return False, f"Friday after {self.friday_cutoff_hour}:00 ET - Lower institutional volume"
+            
+            # Check avoid periods
+            for avoid_period in self.avoid_periods:
+                start_hour = avoid_period['start']
+                end_hour = avoid_period['end']
+                
+                if start_hour <= current_hour < end_hour:
+                    return False, avoid_period['reason']
+            
+            # Check instrument-specific optimal window
+            if instrument in self.trading_windows:
+                window = self.trading_windows[instrument]
+                start_hour = window['start']
+                end_hour = window['end']
+                
+                # Handle windows that cross midnight
+                if start_hour > end_hour:  # e.g., 19:00 - 11:00
+                    if current_hour >= start_hour or current_hour < end_hour:
+                        return True, f"Optimal window: {start_hour:02d}:00-{end_hour:02d}:00 ET"
+                    else:
+                        return False, f"Outside optimal window: {start_hour:02d}:00-{end_hour:02d}:00 ET"
+                else:  # Normal window e.g., 03:00 - 11:00
+                    if start_hour <= current_hour < end_hour:
+                        return True, f"Optimal window: {start_hour:02d}:00-{end_hour:02d}:00 ET"
+                    else:
+                        return False, f"Outside optimal window: {start_hour:02d}:00-{end_hour:02d}:00 ET"
+            
+            # Default to trading if no specific window defined
+            return True, "No specific window restriction"
+            
+        except Exception as e:
+            self.logger.error(f"Error checking optimal trading time: {e}")
+            return True, "Unknown timing status"
+    
+    def get_liquidity_score(self, instrument: str) -> int:
+        """Get liquidity score for instrument at current time (1-5, 5 = highest liquidity)"""
+        try:
+            is_optimal, reason = self.is_optimal_trading_time(instrument)
+            current_et = self.get_market_time_et()
+            current_hour = current_et.hour
+            
+            if not is_optimal:
+                return 1  # Poor liquidity
+            
+            # Major pairs during London/NY overlap (highest liquidity)
+            if instrument in ['EUR_USD', 'GBP_USD'] and 8 <= current_hour < 11:
+                return 5
+            
+            # USD/JPY during Tokyo/NY overlap
+            if instrument == 'USD_JPY' and (19 <= current_hour or current_hour < 3):
+                return 5
+            
+            # Cross pairs during their optimal windows
+            if instrument.startswith('EUR_') and 3 <= current_hour < 11:  # London session
+                return 4
+            
+            if instrument.startswith('GBP_') and 3 <= current_hour < 11:  # London session
+                return 4
+            
+            if 'JPY' in instrument and (19 <= current_hour or current_hour < 10):  # Tokyo overlap
+                return 4
+            
+            # Within optimal window but not peak overlap
+            if is_optimal:
+                return 3
+            
+            return 2  # Moderate liquidity
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating liquidity score: {e}")
+            return 3  # Default moderate liquidity
+    
+    def should_trade_instrument(self, instrument: str, signal_confidence: int) -> Tuple[bool, str]:
+        """Determine if we should trade an instrument based on timing and confidence"""
+        try:
+            # Check basic market timing
+            is_optimal, timing_reason = self.is_optimal_trading_time(instrument)
+            
+            if not is_optimal:
+                return False, f"Poor timing: {timing_reason}"
+            
+            # Get liquidity score
+            liquidity_score = self.get_liquidity_score(instrument)
+            
+            # Enhanced confidence requirements based on liquidity
+            if liquidity_score >= 4:
+                min_confidence = 70  # Lower threshold during high liquidity
+            elif liquidity_score >= 3:
+                min_confidence = 80  # Standard threshold
+            else:
+                min_confidence = 90  # Higher threshold during lower liquidity
+            
+            if signal_confidence < min_confidence:
+                return False, f"Confidence {signal_confidence}% < required {min_confidence}% for liquidity level {liquidity_score}"
+            
+            return True, f"Good timing: {timing_reason} (Liquidity: {liquidity_score}/5, Confidence: {signal_confidence}%)"
+            
+        except Exception as e:
+            self.logger.error(f"Error checking should trade instrument: {e}")
+            return False, f"Error checking timing: {e}"
+    
+    def get_trading_session_info(self) -> Dict:
+        """Get enhanced session information with overlap detection"""
+        try:
+            current_et = self.get_market_time_et()
+            current_hour = current_et.hour
+            
+            # Define major trading sessions (ET/EDT)
+            sessions = {
+                'Tokyo': {'start': 19, 'end': 4},      # 7 PM - 4 AM ET
+                'London': {'start': 3, 'end': 12},     # 3 AM - 12 PM ET  
+                'New York': {'start': 8, 'end': 17}    # 8 AM - 5 PM ET
+            }
+            
+            active_sessions = []
+            overlaps = []
+            
+            for session_name, times in sessions.items():
+                start, end = times['start'], times['end']
+                
+                # Handle sessions that cross midnight
+                if start > end:  # e.g., Tokyo 19-4
+                    if current_hour >= start or current_hour < end:
+                        active_sessions.append(session_name)
+                else:  # Normal sessions
+                    if start <= current_hour < end:
+                        active_sessions.append(session_name)
+            
+            # Detect overlaps
+            if 'Tokyo' in active_sessions and 'London' in active_sessions:
+                overlaps.append('Tokyo-London')
+            if 'London' in active_sessions and 'New York' in active_sessions:
+                overlaps.append('London-NY')
+            
+            # Determine overall liquidity
+            if len(overlaps) > 0:
+                liquidity_level = 'HIGH'
+            elif len(active_sessions) >= 2:
+                liquidity_level = 'MEDIUM'
+            elif len(active_sessions) == 1:
+                liquidity_level = 'MEDIUM'
+            else:
+                liquidity_level = 'LOW'
+            
+            return {
+                'current_time_et': current_et.strftime('%Y-%m-%d %H:%M:%S %Z'),
+                'active_sessions': active_sessions,
+                'overlaps': overlaps,
+                'liquidity_level': liquidity_level
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error getting session info: {e}")
+            return {
+                'current_time_et': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'active_sessions': [],
+                'overlaps': [],
+                'liquidity_level': 'UNKNOWN'
+            }
+    
+    def scan_for_opportunities(self) -> List[TradeOrder]:
+        """Scan all instruments for trading opportunities with timing optimization"""
+        opportunities = []
+        
+        self.logger.info("🔍 Scanning for trading opportunities with fixed dollar risk...")
+        
+        # Get current session info
+        session_info = self.get_trading_session_info()
+        self.logger.info(f"📅 Current session: {session_info['current_time_et']} - "
+                        f"Active: {', '.join(session_info['active_sessions'])} - "
+                        f"Liquidity: {session_info['liquidity_level']}")
+        
+        for instrument in self.instruments:
+            try:
+                # Analyze with momentum-first strategy
+                analysis = self.strategy.analyze_penny_curve_setup(instrument)
+                
+                if 'error' in analysis:
+                    self.logger.warning(f"❌ {instrument}: {analysis['error']}")
+                    continue
+                
+                signals = analysis['signals']
+                
+                if signals['action'] != 'WAIT':
+                    # Check if timing is optimal for this instrument
+                    should_trade, timing_reason = self.should_trade_instrument(
+                        instrument, signals['confidence']
+                    )
+                    
+                    if not should_trade:
+                        self.logger.info(f"⏰ {instrument}: {signals['action']} signal found but "
+                                       f"skipping - {timing_reason}")
+                        continue
+                    
+                    # Calculate position size using fixed dollar risk
+                    position_size = self.calculate_position_size(
+                        instrument,
+                        signals['entry_price'],
+                        signals['stop_loss'],
+                        signals['confidence']
+                    )
+                    
+                    # Create trade order with timing info and enhanced metadata
+                    trade_order = TradeOrder(
+                        instrument=instrument,
+                        action=signals['action'],
+                        order_type=signals['order_type'],
+                        entry_price=signals['entry_price'],
+                        stop_loss=signals['stop_loss'],
+                        take_profit=signals['take_profit'],
+                        units=position_size if signals['action'] == 'BUY' else -position_size,
+                        confidence=signals['confidence'],
+                        reasoning=signals['reasoning'] + [f"Market timing: {timing_reason}"],
+                        timestamp=datetime.now().isoformat(),
+                        expiration=signals.get('expiration'),
+                        # Attach analysis data for metadata
+                        momentum_analysis=analysis.get('momentum_analysis', {}),
+                        zone_data=analysis.get('zone_data', {})
+                    )
+                    
+                    opportunities.append(trade_order)
+                    
+                    liquidity_score = self.get_liquidity_score(instrument)
+                    self.logger.info(f"🎯 {instrument}: {signals['action']} {signals['order_type']} "
+                                   f"@ {signals['entry_price']:.4f} (Confidence: {signals['confidence']}%, "
+                                   f"Liquidity: {liquidity_score}/5)")
+                else:
+                    # Still log timing info for monitoring
+                    is_optimal, timing_reason = self.is_optimal_trading_time(instrument)
+                    timing_status = "✅" if is_optimal else "⏰"
+                    self.logger.debug(f"{timing_status} {instrument}: No signal - {timing_reason}")
+                
+            except Exception as e:
+                self.logger.error(f"Error analyzing {instrument}: {e}")
+                continue
+        
+        return opportunities
+    
+    def place_market_order(self, trade_order: TradeOrder) -> bool:
+        """Enhanced market order placement with metadata validation"""
+        try:
+            self.logger.info(f"📈 Placing MARKET {trade_order.action} for {trade_order.instrument}")
+            
+            # Get analysis data
+            momentum_analysis = getattr(trade_order, 'momentum_analysis', {})
+            zone_data = getattr(trade_order, 'zone_data', {})
+            
+            # Create and validate metadata BEFORE placing order
+            metadata = self.create_trade_metadata(trade_order, momentum_analysis, zone_data)
+            
+            # ENHANCED: Validate metadata quality
+            if not self.validate_metadata(metadata):
+                self.logger.warning(f"Metadata validation failed for {trade_order.instrument}")
+                # Continue anyway but log the issue
+            
+            # Create order payload
+            order_data = {
+                "order": {
+                    "type": "MARKET",
+                    "instrument": trade_order.instrument,
+                    "units": str(trade_order.units),
+                    "stopLossOnFill": {
+                        "price": str(trade_order.stop_loss)
+                    },
+                    "takeProfitOnFill": {
+                        "price": str(trade_order.take_profit)
+                    }
+                }
+            }
+            
+            # Add clientExtensions with more comprehensive info
+            try:
+                setup_name = metadata.setup_name
+                order_data["order"]["clientExtensions"] = {
+                    "id": setup_name.replace('/', '_').replace(' ', '_')[:50],
+                    "tag": "PCM",  # Standardized tag
+                    "comment": f"Setup:{setup_name}|Conf:{trade_order.confidence}|Mom:{momentum_analysis.get('momentum_strength', 0):.2f}"[:500]
+                }
+            except Exception as e:
+                self.logger.warning(f"Could not add client extensions: {e}")
+            
+            # Place order
+            response = self.api.place_order(order_data)
+            
+            if response and 'orderFillTransaction' in response:
+                fill_transaction = response['orderFillTransaction']
+                order_id = fill_transaction.get('orderID')
+                trade_id = fill_transaction.get('id')
+                
+                # Store metadata with both order_id and trade_id for reliable lookup
+                if order_id:
+                    self.metadata_store.store_order_metadata(order_id, metadata)
+                    self.logger.info(f"📝 Stored metadata for order {order_id}")
+                if trade_id and trade_id != order_id:
+                    self.metadata_store.store_order_metadata(trade_id, metadata)
+                    self.logger.info(f"📝 Stored metadata for trade {trade_id}")
+                
+                trade_order.order_id = trade_id
+                trade_order.status = 'FILLED'
+                self.open_positions.append(trade_order)
+                
+                self.logger.info(f"✅ Market order filled: {trade_order.instrument} "
+                               f"{trade_order.action} @ {trade_order.entry_price:.4f}")
+                self.logger.info(f"📝 Setup: {metadata.setup_name}")
+                return True
+            else:
+                self.logger.error(f"❌ Market order failed: {response}")
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"Error placing market order: {e}")
+            self.logger.error(traceback.format_exc())
+            return False
+    
+    def place_limit_order(self, trade_order: TradeOrder) -> bool:
+        """Enhanced limit order placement with metadata validation"""
+        try:
+            self.logger.info(f"📋 Placing LIMIT {trade_order.action} for {trade_order.instrument} @ {trade_order.entry_price:.4f}")
+            
+            # Get analysis data
+            momentum_analysis = getattr(trade_order, 'momentum_analysis', {})
+            zone_data = getattr(trade_order, 'zone_data', {})
+            
+            # Create and validate metadata BEFORE placing order
+            metadata = self.create_trade_metadata(trade_order, momentum_analysis, zone_data)
+            
+            # ENHANCED: Validate metadata quality
+            if not self.validate_metadata(metadata):
+                self.logger.warning(f"Metadata validation failed for {trade_order.instrument}")
+                # Continue anyway but log the issue
+            
+            # Create order payload
+            order_data = {
+                "order": {
+                    "type": "LIMIT",
+                    "instrument": trade_order.instrument,
+                    "units": str(trade_order.units),
+                    "price": str(trade_order.entry_price),
+                    "stopLossOnFill": {
+                        "price": str(trade_order.stop_loss)
+                    },
+                    "takeProfitOnFill": {
+                        "price": str(trade_order.take_profit)
+                    }
+                }
+            }
+            
+            # Add expiration if specified
+            if trade_order.expiration == 'END_OF_DAY':
+                eod_time = datetime.now().replace(hour=17, minute=0, second=0, microsecond=0)
+                if datetime.now() > eod_time:
+                    eod_time += timedelta(days=1)
+                order_data["order"]["timeInForce"] = "GTD"
+                order_data["order"]["gtdTime"] = eod_time.strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+            
+            # Add clientExtensions with more comprehensive info
+            try:
+                setup_name = metadata.setup_name
+                order_data["order"]["clientExtensions"] = {
+                    "id": setup_name.replace('/', '_').replace(' ', '_')[:50],
+                    "tag": "PCM",  # Standardized tag
+                    "comment": f"Setup:{setup_name}|Conf:{trade_order.confidence}|Mom:{momentum_analysis.get('momentum_strength', 0):.2f}"[:500]
+                }
+            except Exception as e:
+                self.logger.warning(f"Could not add client extensions: {e}")
+            
+            # Place order
+            response = self.api.place_order(order_data)
+            
+            if response and 'orderCreateTransaction' in response:
+                order_id = response['orderCreateTransaction']['id']
+                
+                # Store metadata with order_id for reliable lookup during sync
+                self.metadata_store.store_order_metadata(order_id, metadata)
+                self.logger.info(f"📝 Stored metadata for limit order {order_id}")
+                
+                trade_order.order_id = order_id
+                trade_order.status = 'PENDING'
+                self.pending_orders.append(trade_order)
+                
+                self.logger.info(f"✅ Limit order placed: {trade_order.instrument} "
+                               f"{trade_order.action} @ {trade_order.entry_price:.4f}")
+                self.logger.info(f"📝 Setup: {metadata.setup_name}")
+                return True
+            else:
+                self.logger.error(f"❌ Limit order failed: {response}")
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"Error placing limit order: {e}")
+            self.logger.error(traceback.format_exc())
+            return False
+    
+    def check_existing_orders(self) -> None:
+        """Check status of existing orders and positions"""
+        try:
+            # Get pending orders
+            try:
+                pending_orders = self.api.get_open_orders()
+                active_order_ids = [order['id'] for order in pending_orders.get('orders', [])]
+            except Exception as e:
+                self.logger.warning(f"Could not get pending orders: {e}")
+                active_order_ids = []
+            
+            # Update our tracking
+            self.pending_orders = [order for order in self.pending_orders 
+                                 if order.order_id in active_order_ids]
+            
+            # Get open positions
+            try:
+                open_positions = self.api.get_open_positions()
+                num_positions = len(open_positions) if open_positions else 0
+            except Exception as e:
+                self.logger.warning(f"Could not get open positions: {e}")
+                num_positions = 0
+            
+            self.logger.info(f"Status: {len(active_order_ids)} pending orders, {num_positions} open positions")
+            
+        except Exception as e:
+            self.logger.error(f"Error checking existing orders: {e}")
+    
+    def execute_trades(self, opportunities: List[TradeOrder]) -> None:
+        """Execute trading opportunities with enhanced metadata"""
+        if not opportunities:
+            self.logger.info("No trading opportunities found")
+            return
+        
+        # Check if we're at max positions
+        current_positions = len(self.open_positions) + len(self.pending_orders)
+        if current_positions >= self.max_open_trades:
+            self.logger.warning(f"Max trades reached ({self.max_open_trades}). Skipping new orders.")
+            return
+        
+        # Sort by confidence (highest first)
+        opportunities.sort(key=lambda x: x.confidence, reverse=True)
+        
+        for trade_order in opportunities[:self.max_open_trades - current_positions]:
+            try:
+                # Check if we already have a position in this instrument
+                existing_instruments = [pos.instrument for pos in self.open_positions + self.pending_orders]
+                if trade_order.instrument in existing_instruments:
+                    self.logger.info(f"Skipping {trade_order.instrument} - already have position")
+                    continue
+                
+                # Execute based on order type
+                if trade_order.order_type == 'MARKET':
+                    success = self.place_market_order(trade_order)
+                else:  # LIMIT
+                    success = self.place_limit_order(trade_order)
+                
+                if success:
+                    self.trade_history.append(trade_order)
+                    
+                    # Log enhanced trade details
+                    momentum_analysis = getattr(trade_order, 'momentum_analysis', {})
+                    setup_name = self.create_setup_name(trade_order, momentum_analysis)
+                    self.logger.info(f"📊 Setup executed: {setup_name}")
+                    self.logger.info(f"Trade reasoning for {trade_order.instrument}:")
+                    for reason in trade_order.reasoning:
+                        self.logger.info(f"   {reason}")
+                
+            except Exception as e:
+                self.logger.error(f"Error executing trade for {trade_order.instrument}: {e}")
+    
+    def get_strategy_analytics(self) -> Dict:
+        """Get Penny Curve strategy-specific analytics"""
+        try:
+            all_metadata = self.metadata_store.get_all_metadata()
+            
+            if not all_metadata:
+                return {"message": "No metadata available"}
+            
+            # Analyze penny curve specific metrics
+            momentum_strengths = []
+            confidence_levels = []
+            session_performance = {}
+            setup_types = {}
+            
+            for order_id, metadata in all_metadata.items():
+                if metadata.momentum_strength is not None:
+                    momentum_strengths.append(metadata.momentum_strength)
+                
+                if metadata.signal_confidence is not None:
+                    confidence_levels.append(metadata.signal_confidence)
+                
+                # Session analysis
+                if hasattr(metadata, 'session_info') and metadata.session_info:
+                    session = metadata.session_info.get('current_session', 'Unknown')
+                    if session not in session_performance:
+                        session_performance[session] = {'count': 0, 'total_confidence': 0}
+                    session_performance[session]['count'] += 1
+                    session_performance[session]['total_confidence'] += metadata.signal_confidence or 0
+                
+                # Setup type analysis
+                setup_name = metadata.setup_name or 'Unknown'
+                setup_key = setup_name.split('_')[4] if len(setup_name.split('_')) > 4 else 'Unknown'  # Strength level
+                setup_types[setup_key] = setup_types.get(setup_key, 0) + 1
+            
+            # Calculate session averages
+            for session in session_performance:
+                count = session_performance[session]['count']
+                if count > 0:
+                    session_performance[session]['avg_confidence'] = session_performance[session]['total_confidence'] / count
+            
+            return {
+                'total_trades': len(all_metadata),
+                'avg_momentum_strength': sum(momentum_strengths) / len(momentum_strengths) if momentum_strengths else 0,
+                'avg_confidence': sum(confidence_levels) / len(confidence_levels) if confidence_levels else 0,
+                'min_confidence': min(confidence_levels) if confidence_levels else 0,
+                'max_confidence': max(confidence_levels) if confidence_levels else 0,
+                'session_performance': session_performance,
+                'setup_type_distribution': setup_types,
+                'momentum_distribution': {
+                    'very_strong': len([m for m in momentum_strengths if m > 0.7]),
+                    'strong': len([m for m in momentum_strengths if 0.5 < m <= 0.7]),
+                    'moderate': len([m for m in momentum_strengths if 0.3 < m <= 0.5]),
+                    'weak': len([m for m in momentum_strengths if m <= 0.3])
+                }
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error generating strategy analytics: {e}")
+            return {"error": str(e)}
+    
+    def generate_trading_report(self) -> str:
+        """Generate enhanced trading report with strategy analytics"""
+        try:
+            account_info = self.get_account_info()
+            session_info = self.get_trading_session_info()
+            
+            report = []
+            report.append("="*80)
+            report.append("DEMO TRADING BOT - STATUS REPORT (Fixed Dollar Risk + Enhanced Tracking)")
+            report.append("="*80)
+            report.append(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            report.append(f"Market Open: {'✅ Yes' if self.is_market_open() else '❌ No'}")
+            report.append("")
+            
+            # Risk management information
+            report.append("💰 RISK MANAGEMENT:")
+            report.append(f"   Max Risk per Trade: ${self.max_risk_usd:.2f} USD")
+            report.append(f"   Max Open Trades: {self.max_open_trades}")
+            
+            # Calculate total current risk
+            total_current_risk = len(self.open_positions + self.pending_orders) * self.max_risk_usd
+            report.append(f"   Current Total Risk: ${total_current_risk:.2f} USD")
+            report.append("")
+            
+            # ENHANCED: Add strategy-specific analytics
+            report.append("📊 PENNY CURVE STRATEGY ANALYTICS:")
+            try:
+                strategy_analytics = self.get_strategy_analytics()
+                
+                if 'error' not in strategy_analytics and 'message' not in strategy_analytics:
+                    report.append(f"   Total PCM Trades: {strategy_analytics.get('total_trades', 0)}")
+                    report.append(f"   Avg Momentum Strength: {strategy_analytics.get('avg_momentum_strength', 0):.3f}")
+                    report.append(f"   Avg Confidence: {strategy_analytics.get('avg_confidence', 0):.1f}%")
+                    report.append(f"   Confidence Range: {strategy_analytics.get('min_confidence', 0):.0f}% - {strategy_analytics.get('max_confidence', 0):.0f}%")
+                    
+                    # Session performance
+                    session_perf = strategy_analytics.get('session_performance', {})
+                    if session_perf:
+                        report.append("   Session Performance:")
+                        for session, data in session_perf.items():
+                            report.append(f"      {session}: {data['count']} trades, {data.get('avg_confidence', 0):.1f}% avg confidence")
+                    
+                    # Setup distribution
+                    setup_dist = strategy_analytics.get('setup_type_distribution', {})
+                    if setup_dist:
+                        report.append("   Setup Strength Distribution:")
+                        for strength, count in sorted(setup_dist.items()):
+                            report.append(f"      {strength}: {count} trades")
+                    
+                    # Momentum distribution
+                    momentum_dist = strategy_analytics.get('momentum_distribution', {})
+                    if momentum_dist:
+                        report.append("   Momentum Strength Distribution:")
+                        report.append(f"      Very Strong (>0.7): {momentum_dist.get('very_strong', 0)} trades")
+                        report.append(f"      Strong (0.5-0.7): {momentum_dist.get('strong', 0)} trades")
+                        report.append(f"      Moderate (0.3-0.5): {momentum_dist.get('moderate', 0)} trades")
+                        report.append(f"      Weak (≤0.3): {momentum_dist.get('weak', 0)} trades")
+                else:
+                    report.append(f"   {strategy_analytics.get('message', strategy_analytics.get('error', 'No analytics available'))}")
+            except Exception as e:
+                report.append(f"   Analytics Error: {e}")
+            report.append("")
+            
+            # Market timing information
+            report.append("🌍 MARKET TIMING & LIQUIDITY:")
+            report.append(f"   Current Time: {session_info['current_time_et']}")
+            report.append(f"   Active Sessions: {', '.join(session_info['active_sessions'])}")
+            if session_info['overlaps']:
+                report.append(f"   Session Overlaps: {', '.join(session_info['overlaps'])} 🔥")
+            report.append(f"   Overall Liquidity: {session_info['liquidity_level']}")
+            report.append("")
+            
+            # Instrument-specific timing - show subset for readability
+            report.append("📊 INSTRUMENT TIMING STATUS (Top 12):")
+            main_instruments = ['EUR_USD', 'GBP_USD', 'USD_JPY', 'USD_CAD', 'AUD_USD', 'NZD_USD', 
+                               'EUR_GBP', 'EUR_JPY', 'GBP_JPY', 'AUD_JPY', 'NZD_JPY', 'CAD_JPY']
+            
+            for instrument in main_instruments:
+                try:
+                    is_optimal, reason = self.is_optimal_trading_time(instrument)
+                    liquidity = self.get_liquidity_score(instrument)
+                    status = "✅ OPTIMAL" if is_optimal else "⏰ SUBOPTIMAL"
+                    report.append(f"   {instrument}: {status} (Liquidity: {liquidity}/5)")
+                except Exception as e:
+                    report.append(f"   {instrument}: ❌ Error checking timing")
+            
+            if len(self.instruments) > 12:
+                report.append(f"   ... and {len(self.instruments) - 12} more pairs")
+            report.append("")
+            
+            # Account information
+            if account_info:
+                report.append("💰 ACCOUNT INFORMATION:")
+                report.append(f"   Balance: ${account_info['balance']:,.2f} {account_info['currency']}")
+                report.append(f"   Margin Used: ${account_info['margin_used']:,.2f}")
+                report.append(f"   Open Trades: {account_info['open_trades']}")
+                report.append("")
+            
+            # Current positions
+            report.append(f"📈 CURRENT POSITIONS ({len(self.open_positions)}):")
+            if self.open_positions:
+                for pos in self.open_positions:
+                    # Create setup name for display
+                    momentum_analysis = getattr(pos, 'momentum_analysis', {})
+                    setup_name = self.create_setup_name(pos, momentum_analysis)
+                    report.append(f"   {pos.instrument}: {pos.action} @ {pos.entry_price:.4f}")
+                    report.append(f"      Setup: {setup_name}")
+                    report.append(f"      Target: {pos.take_profit:.4f} | Stop: {pos.stop_loss:.4f}")
+                    report.append(f"      Risk: ${self.max_risk_usd:.2f} USD max")
+            else:
+                report.append("   No open positions")
+            report.append("")
+            
+            # Pending orders
+            report.append(f"📋 PENDING ORDERS ({len(self.pending_orders)}):")
+            if self.pending_orders:
+                for order in self.pending_orders:
+                    # Create setup name for display
+                    momentum_analysis = getattr(order, 'momentum_analysis', {})
+                    setup_name = self.create_setup_name(order, momentum_analysis)
+                    report.append(f"   {order.instrument}: {order.action} LIMIT @ {order.entry_price:.4f}")
+                    report.append(f"      Setup: {setup_name}")
+                    report.append(f"      Target: {order.take_profit:.4f} | Stop: {order.stop_loss:.4f}")
+                    report.append(f"      Risk: ${self.max_risk_usd:.2f} USD max")
+            else:
+                report.append("   No pending orders")
+            report.append("")
+            
+            # Recent trade history
+            recent_trades = self.trade_history[-5:] if self.trade_history else []
+            report.append(f"📜 RECENT TRADES ({len(recent_trades)}):")
+            if recent_trades:
+                for trade in recent_trades:
+                    momentum_analysis = getattr(trade, 'momentum_analysis', {})
+                    setup_name = self.create_setup_name(trade, momentum_analysis)
+                    report.append(f"   {trade.timestamp[:16]} - {trade.instrument}: {trade.action} @ {trade.entry_price:.4f}")
+                    report.append(f"      Setup: {setup_name}")
+            else:
+                report.append("   No recent trades")
+            
+            # Trading tips based on current time
+            report.append("")
+            report.append("💡 CURRENT MARKET CONDITIONS:")
+            if session_info['liquidity_level'] == 'HIGH':
+                report.append("   🔥 HIGH LIQUIDITY - Excellent time for trading major pairs")
+            elif session_info['liquidity_level'] == 'MEDIUM':
+                report.append("   📊 MEDIUM LIQUIDITY - Good for established trends")
+            else:
+                report.append("   ⏰ LOW LIQUIDITY - Consider avoiding new positions")
+            
+            if 'London-NY' in session_info['overlaps']:
+                report.append("   🚀 London-NY overlap - Best time for EUR/USD, GBP/USD")
+            elif 'Tokyo-London' in session_info['overlaps']:
+                report.append("   🌅 Tokyo-London overlap - Good for JPY crosses")
+            
+            report.append("="*80)
+            
+            return "\n".join(report)
+            
+        except Exception as e:
+            self.logger.error(f"Error generating trading report: {e}")
+            return f"Error generating report: {e}"
+    
+    def trading_cycle(self) -> None:
+        """Main trading cycle - runs every 15 minutes"""
+        try:
+            self.logger.info("🔄 Starting trading cycle...")
+            
+            # Check if market is open
+            if not self.is_market_open():
+                self.logger.info("🏁 Market closed - skipping cycle")
+                return
+            
+            # Update account info
+            self.get_account_info()
+            
+            # Check existing orders
+            self.check_existing_orders()
+            
+            # Scan for new opportunities
+            opportunities = self.scan_for_opportunities()
+            
+            # Execute trades
+            self.execute_trades(opportunities)
+            
+            # Generate and log report
+            report = self.generate_trading_report()
+            print(report)
+            
+            self.logger.info("✅ Trading cycle completed")
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error in trading cycle: {e}")
+            self.logger.error(traceback.format_exc())
+    
+    def start_trading(self) -> None:
+        """Start the automated trading bot"""
+        if not SCHEDULE_AVAILABLE:
+            print("❌ Cannot start automated trading: 'schedule' module not installed")
+            print("📥 Install with: pip install schedule")
+            print("🧪 Running single test cycle instead...")
+            self.run_single_cycle()
+            return
+        
+        print("🚀 Starting Demo Trading Bot with Fixed Dollar Risk and Enhanced Tracking!")
+        print("⏰ Trading every 15 minutes during market hours")
+        print("⏹️  Press Ctrl+C to stop")
+        
+        # Schedule trading every 15 minutes
+        schedule.every(15).minutes.do(self.trading_cycle)
+        
+        # Run initial cycle
+        self.trading_cycle()
+        
+        # Main loop
+        try:
+            while True:
+                schedule.run_pending()
+                time.sleep(60)  # Check every minute
+                
+        except KeyboardInterrupt:
+            self.logger.info("🛑 Trading bot stopped by user")
+            print("\n🛑 Demo Trading Bot stopped")
+    
+    def run_single_cycle(self) -> None:
+        """Run a single trading cycle for testing"""
+        print("🧪 Running single trading cycle with fixed dollar risk and enhanced tracking...")
+        self.trading_cycle()
+
+def main():
+    """Main function to run the demo trading bot"""
+    print("🤖 Demo Trading Bot for Penny Curve Strategy with Fixed Dollar Risk & Enhanced Tracking")
+    print("="*80)
+    
+    # Configuration options
+    print("\n💰 Risk Management Options:")
+    print("1. Conservative: $5 USD max risk per trade")
+    print("2. Standard: $10 USD max risk per trade (recommended)")
+    print("3. Aggressive: $20 USD max risk per trade")
+    print("4. Custom: Enter your own amount")
+    
+    try:
+        risk_choice = input("\nEnter choice (1-4) or press Enter for standard: ").strip()
+        
+        if risk_choice == "1":
+            max_risk_usd = 5.0
+            print("Selected: Conservative ($5 USD max risk)")
+        elif risk_choice == "3":
+            max_risk_usd = 20.0
+            print("Selected: Aggressive ($20 USD max risk)")
+        elif risk_choice == "4":
+            try:
+                max_risk_usd = float(input("Enter max risk per trade (USD): $"))
+                print(f"Selected: Custom (${max_risk_usd:.2f} USD max risk)")
+            except ValueError:
+                max_risk_usd = 10.0
+                print("Invalid input, using $10 default")
+        else:
+            max_risk_usd = 10.0
+            print("Selected: Standard ($10 USD max risk)")
+        
+        print(f"\n🎯 Initializing bot with ${max_risk_usd:.2f} USD max risk per trade...")
+        
+        # Initialize bot
+        bot = DemoTradingBot(
+            max_risk_usd=max_risk_usd,
+            max_open_trades=5
+        )
+        
+        # Ask user for mode
+        print("\n🚀 Select trading mode:")
+        print("1. Run single test cycle")
+        print("2. Start automated trading (every 15 minutes)")
+        
+        choice = input("\nEnter choice (1 or 2): ").strip()
+        
+        if choice == "1":
+            print("\n🧪 Running single test cycle...")
+            bot.run_single_cycle()
+        elif choice == "2":
+            print("\n⚡ Starting automated trading...")
+            bot.start_trading()
+        else:
+            print("\nInvalid choice. Running single test cycle...")
+            bot.run_single_cycle()
+            
+    except KeyboardInterrupt:
+        print("\n\n🛑 Bot stopped by user")
+    except Exception as e:
+        print(f"\n❌ Error running bot: {e}")
+        import traceback
+        traceback.print_exc()
+
+if __name__ == "__main__":
+    print("🚀 Starting main function...")
+    main()

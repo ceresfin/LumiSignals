@@ -1,0 +1,153 @@
+2025-06-28 11:05:41,492 - INFO - Demo Trading Bot started with ALL CRITICAL FIXES APPLIED
+2025-06-28 11:05:45,022 - INFO - 🔄 Starting trading cycle...
+2025-06-28 11:05:45,022 - INFO - 🏁 Market closed - skipping cycle
+2025-06-28 11:14:40,299 - INFO - Demo Trading Bot started with ALL CRITICAL FIXES APPLIED
+2025-06-28 11:14:42,482 - INFO - 🔄 Starting trading cycle...
+2025-06-28 11:14:42,484 - INFO - 🏁 Market closed - skipping cycle
+2025-06-28 11:14:59,278 - INFO - Demo Trading Bot started with ENHANCED AIRTABLE METADATA INTEGRATION - FIXED VERSION
+2025-06-28 11:15:02,247 - INFO - 🔄 Starting trading cycle...
+2025-06-28 11:15:02,260 - INFO - 🏁 Market closed - skipping cycle
+2025-06-28 14:57:52,918 - INFO - Demo Trading Bot started with ENHANCED AIRTABLE METADATA INTEGRATION - FIXED VERSION
+2025-06-28 14:57:55,750 - INFO - 🔄 Starting trading cycle...
+2025-06-28 14:57:55,750 - INFO - 🏁 Market closed - skipping cycle
+2025-06-28 16:04:37,947 - INFO - Demo Trading Bot started with ENHANCED AIRTABLE METADATA INTEGRATION - WEEKEND TESTING MODE
+2025-06-28 16:04:37,947 - INFO - 🧪 Weekend testing session set: LONDON at 08:00 ET
+2025-06-28 16:04:37,947 - INFO -    Simulated time: 2025-07-02 08:00:00
+2025-06-28 16:04:37,947 - INFO -    Simulated session: London-NY Overlap
+2025-06-28 16:04:40,516 - INFO - 🔄 Starting trading cycle (🧪 WEEKEND TESTING)...
+2025-06-28 16:04:40,977 - INFO - Status: 31 pending orders, 5 open positions
+2025-06-28 16:04:40,977 - INFO - 🔍 Scanning for trading opportunities (🧪 WEEKEND TESTING) with fixed dollar risk...
+2025-06-28 16:04:40,977 - INFO - 📅 Current session: 2025-07-02 08:00:00 EDT (SIMULATED) - Active: London-NY Overlap - Liquidity: HIGH
+2025-06-28 16:04:41,959 - INFO - 💰 EUR_USD Risk: $10.00 USD (5.0 micro lots, 20.0 pips)
+2025-06-28 16:04:41,959 - INFO - 🎯 EUR_USD: BUY MARKET @ 1.1719 (Confidence: 100%, Liquidity: 4/5)
+2025-06-28 16:05:01,901 - INFO - 📈 Placing MARKET BUY for EUR_USD
+2025-06-28 16:05:01,901 - INFO - 📊 Enhanced Airtable metadata created: PCM_EUR/USD_MARKET_BUY_Weak_LondonNY
+2025-06-28 16:05:01,901 - INFO -    Momentum: Weak (0.169) | Direction: Weak Bullish
+2025-06-28 16:05:01,901 - INFO -    Bias: BULLISH | Zone: In_Buy_Zone | Distance: 0.0 pips
+2025-06-28 16:05:01,901 - INFO -    Confidence: 100% | Alignment: 1.0
+2025-06-28 16:05:01,901 - INFO -    🧪 Weekend Testing: London-NY Overlap
+2025-06-28 16:05:01,901 - INFO - 📝 Added enhanced clientExtensions with Airtable fields
+2025-06-28 16:05:02,047 - ERROR - ❌ Market order failed: {'orderCreateTransaction': {'id': '305', 'accountID': '101-001-21245555-001', 'userID': 21245555, 'batchID': '305', 'requestID': '79402412165392740', 'time': '2025-06-28T20:05:01.840526304Z', 'type': 'MARKET_ORDER', 'instrument': 'EUR_USD', 'units': '5000', 'timeInForce': 'FOK', 'positionFill': 'DEFAULT', 'takeProfitOnFill': {'price': '1.18000', 'timeInForce': 'GTC'}, 'stopLossOnFill': {'price': '1.16985', 'timeInForce': 'GTC', 'triggerMode': 'TOP_OF_BOOK'}, 'reason': 'CLIENT_ORDER'}, 'orderCancelTransaction': {'id': '306', 'accountID': '101-001-21245555-001', 'userID': 21245555, 'batchID': '305', 'requestID': '79402412165392740', 'time': '2025-06-28T20:05:01.840526304Z', 'type': 'ORDER_CANCEL', 'orderID': '305', 'reason': 'MARKET_HALTED'}, 'relatedTransactionIDs': ['305', '306'], 'lastTransactionID': '306'}
+2025-06-28 16:05:02,159 - ERROR - Error generating trading report: 'datetime.datetime' object has no attribute 'tz_name'
+2025-06-28 16:05:02,159 - INFO - ✅ Trading cycle completed (🧪 WEEKEND TESTING)
+2025-06-28 16:14:55,050 - INFO - Demo Trading Bot started with ENHANCED AIRTABLE METADATA INTEGRATION - WEEKEND TESTING MODE
+2025-06-28 16:14:55,050 - INFO - 🧪 Weekend testing session set: LONDON at 08:00 ET
+2025-06-28 16:14:55,050 - INFO -    Simulated time: 2025-07-02 08:00:00
+2025-06-28 16:14:55,050 - INFO -    Simulated session: London-NY Overlap
+2025-06-28 16:14:59,525 - INFO - 🔄 Starting trading cycle (🧪 WEEKEND TESTING)...
+2025-06-28 16:14:59,931 - INFO - Status: 31 pending orders, 5 open positions
+2025-06-28 16:14:59,931 - INFO - 🔍 Scanning for trading opportunities (🧪 WEEKEND TESTING) with fixed dollar risk...
+2025-06-28 16:14:59,931 - INFO - 📅 Current session: 2025-07-02 08:00:00 EDT (SIMULATED) - Active: London-NY Overlap - Liquidity: HIGH
+2025-06-28 16:15:00,942 - INFO - 💰 EUR_USD Risk: $10.00 USD (5.0 micro lots, 20.0 pips)
+2025-06-28 16:15:00,942 - INFO - 🎯 EUR_USD: BUY MARKET @ 1.1719 (Confidence: 100%, Liquidity: 4/5)
+2025-06-28 16:15:20,716 - INFO - 📈 Placing MARKET BUY for EUR_USD
+2025-06-28 16:15:20,716 - INFO - 📊 Enhanced Airtable metadata created: PCM_EUR/USD_MARKET_BUY_Weak_LondonNY
+2025-06-28 16:15:20,716 - INFO -    Momentum: Weak (0.169) | Direction: Weak Bullish
+2025-06-28 16:15:20,716 - INFO -    Bias: BULLISH | Zone: In_Buy_Zone | Distance: 0.0 pips
+2025-06-28 16:15:20,716 - INFO -    Confidence: 100% | Alignment: 1.0
+2025-06-28 16:15:20,716 - INFO -    🧪 Weekend Testing: London-NY Overlap
+2025-06-28 16:15:20,716 - INFO - 📝 Added enhanced clientExtensions with Airtable fields
+2025-06-28 16:15:20,838 - ERROR - ❌ Market order failed: {'orderCreateTransaction': {'id': '307', 'accountID': '101-001-21245555-001', 'userID': 21245555, 'batchID': '307', 'requestID': '79402414761813702', 'time': '2025-06-28T20:15:20.652150262Z', 'type': 'MARKET_ORDER', 'instrument': 'EUR_USD', 'units': '5000', 'timeInForce': 'FOK', 'positionFill': 'DEFAULT', 'takeProfitOnFill': {'price': '1.18000', 'timeInForce': 'GTC'}, 'stopLossOnFill': {'price': '1.16985', 'timeInForce': 'GTC', 'triggerMode': 'TOP_OF_BOOK'}, 'reason': 'CLIENT_ORDER'}, 'orderCancelTransaction': {'id': '308', 'accountID': '101-001-21245555-001', 'userID': 21245555, 'batchID': '307', 'requestID': '79402414761813702', 'time': '2025-06-28T20:15:20.652150262Z', 'type': 'ORDER_CANCEL', 'orderID': '307', 'reason': 'MARKET_HALTED'}, 'relatedTransactionIDs': ['307', '308'], 'lastTransactionID': '308'}
+2025-06-28 16:15:20,973 - ERROR - Error generating trading report: 'datetime.datetime' object has no attribute 'tz_name'
+2025-06-28 16:15:20,973 - INFO - ✅ Trading cycle completed (🧪 WEEKEND TESTING)
+2025-06-28 16:31:13,697 - INFO - Demo Trading Bot started with ENHANCED AIRTABLE METADATA INTEGRATION - WEEKEND TESTING MODE
+2025-06-28 16:31:13,697 - INFO - 🧪 Weekend testing session set: LONDON at 08:00 ET
+2025-06-28 16:31:13,697 - INFO -    Simulated time: 2025-07-02 08:00:00
+2025-06-28 16:31:13,697 - INFO -    Simulated session: London-NY Overlap
+2025-06-28 16:31:15,781 - INFO - 🔄 Starting trading cycle (🧪 WEEKEND TESTING)...
+2025-06-28 16:31:16,238 - INFO - Status: 31 pending orders, 5 open positions
+2025-06-28 16:31:16,238 - INFO - 🔍 Scanning for trading opportunities (🧪 WEEKEND TESTING) with fixed dollar risk...
+2025-06-28 16:31:16,238 - INFO - 📅 Current session: 2025-07-02 08:00:00 EDT (SIMULATED) - Active: London-NY Overlap - Liquidity: HIGH
+2025-06-28 16:31:17,142 - INFO - 💰 EUR_USD Risk: $10.00 USD (5.0 micro lots, 20.0 pips)
+2025-06-28 16:31:17,142 - INFO - 🎯 EUR_USD: BUY MARKET @ 1.1719 (Confidence: 100%, Liquidity: 4/5)
+2025-06-28 16:31:39,089 - INFO - 📈 Placing MARKET BUY for EUR_USD
+2025-06-28 16:31:39,089 - INFO - 📊 Enhanced Airtable metadata created: PCM_EUR/USD_MARKET_BUY_Weak_LondonNY
+2025-06-28 16:31:39,089 - INFO -    Momentum: Weak (0.195) | Direction: Weak Bullish
+2025-06-28 16:31:39,089 - INFO -    Bias: BULLISH | Zone: In_Buy_Zone | Distance: 0.0 pips
+2025-06-28 16:31:39,089 - INFO -    Confidence: 100% | Alignment: 1.0
+2025-06-28 16:31:39,089 - INFO -    🧪 Weekend Testing: London-NY Overlap
+2025-06-28 16:31:39,089 - INFO - 📝 Added enhanced clientExtensions with Airtable fields
+2025-06-28 16:31:39,216 - ERROR - ❌ Market order failed: {'orderCreateTransaction': {'id': '309', 'accountID': '101-001-21245555-001', 'userID': 21245555, 'batchID': '309', 'requestID': '115431215887904361', 'time': '2025-06-28T20:31:39.050124697Z', 'type': 'MARKET_ORDER', 'instrument': 'EUR_USD', 'units': '5000', 'timeInForce': 'FOK', 'positionFill': 'DEFAULT', 'takeProfitOnFill': {'price': '1.18000', 'timeInForce': 'GTC'}, 'stopLossOnFill': {'price': '1.16985', 'timeInForce': 'GTC', 'triggerMode': 'TOP_OF_BOOK'}, 'reason': 'CLIENT_ORDER'}, 'orderCancelTransaction': {'id': '310', 'accountID': '101-001-21245555-001', 'userID': 21245555, 'batchID': '309', 'requestID': '115431215887904361', 'time': '2025-06-28T20:31:39.050124697Z', 'type': 'ORDER_CANCEL', 'orderID': '309', 'reason': 'MARKET_HALTED'}, 'relatedTransactionIDs': ['309', '310'], 'lastTransactionID': '310'}
+2025-06-28 16:31:39,350 - ERROR - Error generating trading report: 'datetime.datetime' object has no attribute 'tz_name'
+2025-06-28 16:31:39,350 - INFO - ✅ Trading cycle completed (🧪 WEEKEND TESTING)
+2025-06-28 17:06:25,730 - INFO - Demo Trading Bot started with ENHANCED AIRTABLE METADATA INTEGRATION - WEEKEND TESTING MODE
+2025-06-28 17:06:25,730 - INFO - 🧪 Weekend testing session set: LONDON at 08:00 ET
+2025-06-28 17:06:25,730 - INFO -    Simulated time: 2025-07-02 08:00:00
+2025-06-28 17:06:25,730 - INFO -    Simulated session: London-NY Overlap
+2025-06-28 17:06:27,971 - INFO - 🔄 Starting trading cycle (🧪 WEEKEND TESTING)...
+2025-06-28 17:06:28,476 - INFO - Status: 31 pending orders, 5 open positions
+2025-06-28 17:06:28,476 - INFO - 🔍 Scanning for trading opportunities (🧪 WEEKEND TESTING) with fixed dollar risk...
+2025-06-28 17:06:28,476 - INFO - 📅 Current session: 2025-07-02 08:00:00 EDT (SIMULATED) - Active: London-NY Overlap - Liquidity: HIGH
+2025-06-28 17:06:29,629 - INFO - 💰 EUR_USD Risk: $10.00 USD (5.0 micro lots, 20.0 pips)
+2025-06-28 17:06:29,629 - INFO - 🎯 EUR_USD: BUY MARKET @ 1.1719 (Confidence: 100%, Liquidity: 4/5)
+2025-06-28 17:06:49,637 - INFO - 📈 Placing MARKET BUY for EUR_USD
+2025-06-28 17:06:49,637 - INFO - 📊 Enhanced Airtable metadata created: PCM_EUR/USD_MARKET_BUY_Weak_LondonNY
+2025-06-28 17:06:49,637 - INFO -    Momentum: Weak (0.169) | Direction: Weak Bullish
+2025-06-28 17:06:49,637 - INFO -    Bias: BULLISH | Zone: In_Buy_Zone | Distance: 0.0 pips
+2025-06-28 17:06:49,637 - INFO -    Confidence: 100% | Alignment: 1.0
+2025-06-28 17:06:49,639 - INFO -    🧪 Weekend Testing: London-NY Overlap
+2025-06-28 17:06:49,639 - INFO - 📝 Added enhanced clientExtensions with Airtable fields
+2025-06-28 17:06:49,762 - ERROR - ❌ Market order failed: {'orderCreateTransaction': {'id': '312', 'accountID': '101-001-21245555-001', 'userID': 21245555, 'batchID': '312', 'requestID': '97416826224388513', 'time': '2025-06-28T21:06:49.627453158Z', 'type': 'MARKET_ORDER', 'instrument': 'EUR_USD', 'units': '5000', 'timeInForce': 'FOK', 'positionFill': 'DEFAULT', 'takeProfitOnFill': {'price': '1.18000', 'timeInForce': 'GTC'}, 'stopLossOnFill': {'price': '1.16985', 'timeInForce': 'GTC', 'triggerMode': 'TOP_OF_BOOK'}, 'reason': 'CLIENT_ORDER'}, 'orderCancelTransaction': {'id': '313', 'accountID': '101-001-21245555-001', 'userID': 21245555, 'batchID': '312', 'requestID': '97416826224388513', 'time': '2025-06-28T21:06:49.627453158Z', 'type': 'ORDER_CANCEL', 'orderID': '312', 'reason': 'MARKET_HALTED'}, 'relatedTransactionIDs': ['312', '313'], 'lastTransactionID': '313'}
+2025-06-28 17:06:49,905 - ERROR - Error generating trading report: 'datetime.datetime' object has no attribute 'tz_name'
+2025-06-28 17:06:49,905 - INFO - ✅ Trading cycle completed (🧪 WEEKEND TESTING)
+2025-06-28 18:14:43,790 - INFO - Demo Trading Bot started with ENHANCED AIRTABLE METADATA INTEGRATION - WEEKEND TESTING MODE
+2025-06-28 18:14:43,790 - INFO - 🧪 Weekend testing session set: LONDON at 08:00 ET
+2025-06-28 18:14:43,790 - INFO -    Simulated time: 2025-07-02 08:00:00
+2025-06-28 18:14:43,790 - INFO -    Simulated session: London-NY Overlap
+2025-06-28 18:14:45,969 - INFO - 🔄 Starting trading cycle (🧪 WEEKEND TESTING)...
+2025-06-28 18:14:46,498 - INFO - Status: 31 pending orders, 5 open positions
+2025-06-28 18:14:46,498 - INFO - 🔍 Scanning for trading opportunities (🧪 WEEKEND TESTING) with fixed dollar risk...
+2025-06-28 18:14:46,498 - INFO - 📅 Current session: 2025-07-02 08:00:00 EDT (SIMULATED) - Active: London-NY Overlap - Liquidity: HIGH
+2025-06-28 18:14:47,391 - INFO - 💰 EUR_USD Risk: $10.00 USD (5.0 micro lots, 20.0 pips)
+2025-06-28 18:14:47,391 - INFO - 🎯 EUR_USD: BUY MARKET @ 1.1719 (Confidence: 100%, Liquidity: 4/5)
+2025-06-28 18:15:07,358 - INFO - 📈 Placing MARKET BUY for EUR_USD
+2025-06-28 18:15:07,358 - INFO - 📊 Enhanced Airtable metadata created: PCM_EUR/USD_MARKET_BUY_Weak_LondonNY
+2025-06-28 18:15:07,358 - INFO -    Momentum: Weak (0.169) | Direction: Weak Bullish
+2025-06-28 18:15:07,358 - INFO -    Bias: BULLISH | Zone: In_Buy_Zone | Distance: 0.0 pips
+2025-06-28 18:15:07,358 - INFO -    Confidence: 100% | Alignment: 1.0
+2025-06-28 18:15:07,358 - INFO -    🧪 Weekend Testing: London-NY Overlap
+2025-06-28 18:15:07,358 - INFO - 📝 Added enhanced clientExtensions with Airtable fields
+2025-06-28 18:15:07,494 - ERROR - ❌ Market order failed: {'orderCreateTransaction': {'id': '314', 'accountID': '101-001-21245555-001', 'userID': 21245555, 'batchID': '314', 'requestID': '79402444903890523', 'time': '2025-06-28T22:15:07.426787108Z', 'type': 'MARKET_ORDER', 'instrument': 'EUR_USD', 'units': '5000', 'timeInForce': 'FOK', 'positionFill': 'DEFAULT', 'takeProfitOnFill': {'price': '1.18000', 'timeInForce': 'GTC'}, 'stopLossOnFill': {'price': '1.16985', 'timeInForce': 'GTC', 'triggerMode': 'TOP_OF_BOOK'}, 'reason': 'CLIENT_ORDER'}, 'orderCancelTransaction': {'id': '315', 'accountID': '101-001-21245555-001', 'userID': 21245555, 'batchID': '314', 'requestID': '79402444903890523', 'time': '2025-06-28T22:15:07.426787108Z', 'type': 'ORDER_CANCEL', 'orderID': '314', 'reason': 'MARKET_HALTED'}, 'relatedTransactionIDs': ['314', '315'], 'lastTransactionID': '315'}
+2025-06-28 18:15:07,628 - ERROR - Error generating trading report: 'datetime.datetime' object has no attribute 'tz_name'
+2025-06-28 18:15:07,628 - INFO - ✅ Trading cycle completed (🧪 WEEKEND TESTING)
+2025-06-28 18:17:10,610 - INFO - Demo Trading Bot started with ENHANCED AIRTABLE METADATA INTEGRATION - WEEKEND TESTING MODE
+2025-06-28 18:17:10,610 - INFO - 🧪 Weekend testing session set: LONDON at 08:00 ET
+2025-06-28 18:17:10,610 - INFO -    Simulated time: 2025-07-02 08:00:00
+2025-06-28 18:17:10,610 - INFO -    Simulated session: London-NY Overlap
+2025-06-28 18:17:13,411 - INFO - 🔄 Starting trading cycle (🧪 WEEKEND TESTING)...
+2025-06-28 18:17:13,903 - INFO - Status: 31 pending orders, 5 open positions
+2025-06-28 18:17:13,903 - INFO - 🔍 Scanning for trading opportunities (🧪 WEEKEND TESTING) with fixed dollar risk...
+2025-06-28 18:17:13,903 - INFO - 📅 Current session: 2025-07-02 08:00:00 EDT (SIMULATED) - Active: London-NY Overlap - Liquidity: HIGH
+2025-06-28 18:17:15,049 - INFO - 💰 EUR_USD Risk: $10.00 USD (5.0 micro lots, 20.0 pips)
+2025-06-28 18:17:15,049 - INFO - 🎯 EUR_USD: BUY MARKET @ 1.1719 (Confidence: 100%, Liquidity: 4/5)
+2025-06-28 18:17:35,336 - INFO - 📈 Placing MARKET BUY for EUR_USD
+2025-06-28 18:17:35,336 - INFO - 📊 Enhanced Airtable metadata created: PCM_EUR/USD_MARKET_BUY_Weak_LondonNY
+2025-06-28 18:17:35,336 - INFO -    Momentum: Weak (0.169) | Direction: Weak Bullish
+2025-06-28 18:17:35,336 - INFO -    Bias: BULLISH | Zone: In_Buy_Zone | Distance: 0.0 pips
+2025-06-28 18:17:35,336 - INFO -    Confidence: 100% | Alignment: 1.0
+2025-06-28 18:17:35,336 - INFO -    🧪 Weekend Testing: London-NY Overlap
+2025-06-28 18:17:35,336 - INFO - 📝 Added enhanced clientExtensions with Airtable fields
+2025-06-28 18:17:35,462 - ERROR - ❌ Market order failed: {'orderCreateTransaction': {'id': '316', 'accountID': '101-001-21245555-001', 'userID': 21245555, 'batchID': '316', 'requestID': '79402445524683248', 'time': '2025-06-28T22:17:35.398310108Z', 'type': 'MARKET_ORDER', 'instrument': 'EUR_USD', 'units': '5000', 'timeInForce': 'FOK', 'positionFill': 'DEFAULT', 'takeProfitOnFill': {'price': '1.18000', 'timeInForce': 'GTC'}, 'stopLossOnFill': {'price': '1.16985', 'timeInForce': 'GTC', 'triggerMode': 'TOP_OF_BOOK'}, 'reason': 'CLIENT_ORDER'}, 'orderCancelTransaction': {'id': '317', 'accountID': '101-001-21245555-001', 'userID': 21245555, 'batchID': '316', 'requestID': '79402445524683248', 'time': '2025-06-28T22:17:35.398310108Z', 'type': 'ORDER_CANCEL', 'orderID': '316', 'reason': 'MARKET_HALTED'}, 'relatedTransactionIDs': ['316', '317'], 'lastTransactionID': '317'}
+2025-06-28 18:17:35,596 - ERROR - Error generating trading report: 'datetime.datetime' object has no attribute 'tz_name'
+2025-06-28 18:17:35,596 - INFO - ✅ Trading cycle completed (🧪 WEEKEND TESTING)
+2025-06-28 18:49:06,965 - INFO - Demo Trading Bot started with ENHANCED AIRTABLE METADATA INTEGRATION - WEEKEND TESTING MODE
+2025-06-28 18:49:06,981 - INFO - 🧪 Weekend testing session set: LONDON at 08:00 ET
+2025-06-28 18:49:06,981 - INFO -    Simulated time: 2025-07-02 08:00:00
+2025-06-28 18:49:06,981 - INFO -    Simulated session: London-NY Overlap
+2025-06-28 18:49:08,841 - INFO - 🔄 Starting trading cycle (🧪 WEEKEND TESTING)...
+2025-06-28 18:49:09,384 - INFO - Status: 31 pending orders, 5 open positions
+2025-06-28 18:49:09,384 - INFO - 🔍 Scanning for trading opportunities (🧪 WEEKEND TESTING) with fixed dollar risk...
+2025-06-28 18:49:09,384 - INFO - 📅 Current session: 2025-07-02 08:00:00 EDT (SIMULATED) - Active: London-NY Overlap - Liquidity: HIGH
+2025-06-28 18:49:10,355 - INFO - 💰 EUR_USD Risk: $10.00 USD (5.0 micro lots, 20.0 pips)
+2025-06-28 18:49:10,355 - INFO - 🎯 EUR_USD: BUY MARKET @ 1.1719 (Confidence: 100%, Liquidity: 4/5)
+2025-06-28 18:49:32,510 - INFO - 📈 Placing MARKET BUY for EUR_USD
+2025-06-28 18:49:32,510 - INFO - 📊 Enhanced Airtable metadata created: PCM_EUR/USD_MARKET_BUY_Weak_LondonNY
+2025-06-28 18:49:32,510 - INFO -    Momentum: Weak (0.195) | Direction: Weak Bullish
+2025-06-28 18:49:32,510 - INFO -    Bias: BULLISH | Zone: In_Buy_Zone | Distance: 0.0 pips
+2025-06-28 18:49:32,510 - INFO -    Confidence: 100% | Alignment: 1.0
+2025-06-28 18:49:32,510 - INFO -    🧪 Weekend Testing: London-NY Overlap
+2025-06-28 18:49:32,510 - INFO - 📝 Added enhanced clientExtensions with Airtable fields
+2025-06-28 18:49:32,715 - ERROR - ❌ Market order failed: {'orderCreateTransaction': {'id': '318', 'accountID': '101-001-21245555-001', 'userID': 21245555, 'batchID': '318', 'requestID': '61388055056633659', 'time': '2025-06-28T22:49:32.678152196Z', 'type': 'MARKET_ORDER', 'instrument': 'EUR_USD', 'units': '5000', 'timeInForce': 'FOK', 'positionFill': 'DEFAULT', 'takeProfitOnFill': {'price': '1.18000', 'timeInForce': 'GTC'}, 'stopLossOnFill': {'price': '1.16985', 'timeInForce': 'GTC', 'triggerMode': 'TOP_OF_BOOK'}, 'reason': 'CLIENT_ORDER'}, 'orderCancelTransaction': {'id': '319', 'accountID': '101-001-21245555-001', 'userID': 21245555, 'batchID': '318', 'requestID': '61388055056633659', 'time': '2025-06-28T22:49:32.678152196Z', 'type': 'ORDER_CANCEL', 'orderID': '318', 'reason': 'MARKET_HALTED'}, 'relatedTransactionIDs': ['318', '319'], 'lastTransactionID': '319'}
+2025-06-28 18:49:32,842 - ERROR - Error in get_market_time_et: 'datetime.datetime' object has no attribute 'tz_name'
+2025-06-28 18:49:32,842 - ERROR - Error generating trading report: 'datetime.datetime' object has no attribute 'tz_name'
+2025-06-28 18:49:32,842 - INFO - ✅ Trading cycle completed (🧪 WEEKEND TESTING)

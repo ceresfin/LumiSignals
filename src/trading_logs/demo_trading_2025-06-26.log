@@ -1,0 +1,148 @@
+2025-06-26 06:46:51,130 - INFO - Demo Trading Bot started with Fixed Dollar Risk Management and Enhanced Tracking
+2025-06-26 06:46:55,088 - INFO - Starting trading cycle...
+2025-06-26 06:46:55,754 - INFO - Status: 0 pending orders, 3 open positions
+2025-06-26 06:46:55,754 - INFO - 🔍 Scanning for trading opportunities with fixed dollar risk...
+2025-06-26 06:46:55,754 - INFO - 📅 Current session: 2025-06-26 06:46:55 EDT - Active: London - Liquidity: MEDIUM
+2025-06-26 06:46:57,301 - INFO - 💰 EUR_USD Risk: $10.00 USD (5.0 micro lots, 20.0 pips)
+2025-06-26 06:46:57,301 - INFO - 🎯 EUR_USD: BUY MARKET @ 1.1720 (Confidence: 100%, Liquidity: 4/5)
+2025-06-26 06:46:58,371 - INFO - 💰 GBP_USD Risk: $10.00 USD (5.0 micro lots, 20.0 pips)
+2025-06-26 06:46:58,371 - INFO - 🎯 GBP_USD: BUY LIMIT @ 1.3700 (Confidence: 100%, Liquidity: 4/5)
+2025-06-26 06:46:59,903 - INFO - 💰 USD_JPY Risk: $9.71 USD (7.0 micro lots, 20.0 pips)
+2025-06-26 06:46:59,903 - INFO - 🎯 USD_JPY: SELL LIMIT @ 145.0000 (Confidence: 100%, Liquidity: 4/5)
+2025-06-26 06:47:00,967 - INFO - ⏰ USD_CAD: SELL signal found but skipping - Poor timing: Outside optimal window: 08:00-14:00 ET
+2025-06-26 06:47:01,986 - INFO - 💰 AUD_USD Risk: $10.00 USD (5.0 micro lots, 20.0 pips)
+2025-06-26 06:47:01,986 - INFO - 🎯 AUD_USD: BUY LIMIT @ 0.6500 (Confidence: 100%, Liquidity: 4/5)
+2025-06-26 06:47:03,197 - INFO - 💰 NZD_USD Risk: $10.00 USD (5.0 micro lots, 20.0 pips)
+2025-06-26 06:47:03,197 - INFO - 🎯 NZD_USD: BUY LIMIT @ 0.6000 (Confidence: 100%, Liquidity: 4/5)
+2025-06-26 06:47:03,197 - INFO - 📈 Placing MARKET BUY for EUR_USD
+2025-06-26 06:47:03,197 - INFO - 📊 Created metadata: Penny_Curve_Momentum_EUR/USD_MARKET_BUY_Moderate
+2025-06-26 06:47:03,197 - INFO -    Momentum: 0.413 | Direction: STRONG_BULLISH
+2025-06-26 06:47:03,197 - INFO -    Bias: BUY | Zone: In_Buy_Zone
+2025-06-26 06:47:03,197 - INFO -    Confidence: 100% | Alignment: 0.60
+2025-06-26 06:47:03,341 - INFO - 📝 Stored metadata for order 113
+2025-06-26 06:47:03,341 - INFO - 📝 Stored metadata for trade 114
+2025-06-26 06:47:03,341 - INFO - ✅ Market order filled: EUR_USD BUY @ 1.1720
+2025-06-26 06:47:03,341 - INFO - 📝 Setup: Penny_Curve_Momentum_EUR/USD_MARKET_BUY_Moderate
+2025-06-26 06:47:03,341 - INFO - 📊 Setup executed: Penny_Curve_Momentum_EUR/USD_MARKET_BUY_Moderate
+2025-06-26 06:47:03,341 - INFO - Trade reasoning for EUR_USD:
+2025-06-26 06:47:03,341 - INFO -    ✅ Momentum sufficient: 0.413%
+2025-06-26 06:47:03,341 - INFO -    📈 Strategy Direction: BUY (momentum-driven)
+2025-06-26 06:47:03,341 - INFO -    🎯 MARKET BUY - IN buy zone of 1.1700 penny
+2025-06-26 06:47:03,341 - INFO -    Buy zone: 1.1700 to 1.1725
+2025-06-26 06:47:03,341 - INFO -    Position: 19.8 pips above penny
+2025-06-26 06:47:03,341 - INFO -    Immediate execution - optimal buy zone entry
+2025-06-26 06:47:03,341 - INFO -    Very strong momentum bonus (+20)
+2025-06-26 06:47:03,341 - INFO -    🎯 OPTIMAL ZONE ENTRY - High confidence (+20)
+2025-06-26 06:47:03,341 - INFO -    💰 Reward/Risk Ratio: 4.01:1
+2025-06-26 06:47:03,341 - INFO -    Market timing: Good timing: Optimal window: 03:00-11:00 ET (Liquidity: 4/5, Confidence: 100%)
+2025-06-26 06:47:03,341 - INFO - 📋 Placing LIMIT BUY for GBP_USD @ 1.3700
+2025-06-26 06:47:03,341 - INFO - 📊 Created metadata: Penny_Curve_Momentum_GBP/USD_LIMIT_BUY_Moderate
+2025-06-26 06:47:03,341 - INFO -    Momentum: 0.416 | Direction: STRONG_BULLISH
+2025-06-26 06:47:03,341 - INFO -    Bias: BUY | Zone: Above_Buy_Zone
+2025-06-26 06:47:03,341 - INFO -    Confidence: 100% | Alignment: 0.60
+2025-06-26 06:47:03,472 - INFO - 📝 Stored metadata for limit order 117
+2025-06-26 06:47:03,472 - INFO - ✅ Limit order placed: GBP_USD BUY @ 1.3700
+2025-06-26 06:47:03,472 - INFO - 📝 Setup: Penny_Curve_Momentum_GBP/USD_LIMIT_BUY_Moderate
+2025-06-26 06:47:03,472 - INFO - 📊 Setup executed: Penny_Curve_Momentum_GBP/USD_LIMIT_BUY_Moderate
+2025-06-26 06:47:03,472 - INFO - Trade reasoning for GBP_USD:
+2025-06-26 06:47:03,472 - INFO -    ✅ Momentum sufficient: 0.416%
+2025-06-26 06:47:03,472 - INFO -    📈 Strategy Direction: BUY (momentum-driven)
+2025-06-26 06:47:03,484 - INFO -    🎯 LIMIT BUY - Above buy zones
+2025-06-26 06:47:03,484 - INFO -    Entry at penny below: 1.3700
+2025-06-26 06:47:03,484 - INFO -    Current: 1.37440
+2025-06-26 06:47:03,484 - INFO -    Distance to entry: 44.0 pips
+2025-06-26 06:47:03,484 - INFO -    Better entry price with bullish momentum
+2025-06-26 06:47:03,484 - INFO -    Very strong momentum bonus (+20)
+2025-06-26 06:47:03,484 - INFO -    📋 Strategic limit order - Good confidence (+10)
+2025-06-26 06:47:03,484 - INFO -    💰 Reward/Risk Ratio: 5.00:1
+2025-06-26 06:47:03,484 - INFO -    Market timing: Good timing: Optimal window: 03:00-11:00 ET (Liquidity: 4/5, Confidence: 100%)
+2025-06-26 06:47:03,484 - INFO - 📋 Placing LIMIT SELL for USD_JPY @ 145.0000
+2025-06-26 06:47:03,484 - INFO - 📊 Created metadata: Penny_Curve_Momentum_USD/JPY_LIMIT_SELL_Moderate
+2025-06-26 06:47:03,484 - INFO -    Momentum: -0.333 | Direction: STRONG_BEARISH
+2025-06-26 06:47:03,484 - INFO -    Bias: SELL | Zone: Below_Sell_Zone
+2025-06-26 06:47:03,484 - INFO -    Confidence: 100% | Alignment: 0.40
+2025-06-26 06:47:03,628 - INFO - 📝 Stored metadata for limit order 118
+2025-06-26 06:47:03,628 - INFO - ✅ Limit order placed: USD_JPY SELL @ 145.0000
+2025-06-26 06:47:03,628 - INFO - 📝 Setup: Penny_Curve_Momentum_USD/JPY_LIMIT_SELL_Moderate
+2025-06-26 06:47:03,628 - INFO - 📊 Setup executed: Penny_Curve_Momentum_USD/JPY_LIMIT_SELL_Moderate
+2025-06-26 06:47:03,628 - INFO - Trade reasoning for USD_JPY:
+2025-06-26 06:47:03,628 - INFO -    ✅ Momentum sufficient: -0.333%
+2025-06-26 06:47:03,628 - INFO -    📈 Strategy Direction: SELL (momentum-driven)
+2025-06-26 06:47:03,628 - INFO -    🎯 LIMIT SELL - Below sell zones
+2025-06-26 06:47:03,628 - INFO -    Entry at penny above: 145.0000
+2025-06-26 06:47:03,628 - INFO -    Current: 144.12950
+2025-06-26 06:47:03,628 - INFO -    Distance to entry: 87.0 pips
+2025-06-26 06:47:03,628 - INFO -    Better entry price with bearish momentum
+2025-06-26 06:47:03,628 - INFO -    Strong momentum bonus (+15)
+2025-06-26 06:47:03,628 - INFO -    📋 Strategic limit order - Good confidence (+10)
+2025-06-26 06:47:03,628 - INFO -    💰 Reward/Risk Ratio: 5.00:1
+2025-06-26 06:47:03,628 - INFO -    Market timing: Good timing: Optimal window: 19:00-11:00 ET (Liquidity: 4/5, Confidence: 100%)
+2025-06-26 06:47:03,628 - INFO - 📋 Placing LIMIT BUY for AUD_USD @ 0.6500
+2025-06-26 06:47:03,628 - INFO - 📊 Created metadata: Penny_Curve_Momentum_AUD/USD_LIMIT_BUY_Weak
+2025-06-26 06:47:03,628 - INFO -    Momentum: 0.275 | Direction: STRONG_BULLISH
+2025-06-26 06:47:03,628 - INFO -    Bias: BUY | Zone: Above_Buy_Zone
+2025-06-26 06:47:03,628 - INFO -    Confidence: 100% | Alignment: 1.00
+2025-06-26 06:47:03,755 - INFO - 📝 Stored metadata for limit order 119
+2025-06-26 06:47:03,755 - INFO - ✅ Limit order placed: AUD_USD BUY @ 0.6500
+2025-06-26 06:47:03,755 - INFO - 📝 Setup: Penny_Curve_Momentum_AUD/USD_LIMIT_BUY_Weak
+2025-06-26 06:47:03,755 - INFO - 📊 Setup executed: Penny_Curve_Momentum_AUD/USD_LIMIT_BUY_Weak
+2025-06-26 06:47:03,755 - INFO - Trade reasoning for AUD_USD:
+2025-06-26 06:47:03,755 - INFO -    ✅ Momentum sufficient: 0.275%
+2025-06-26 06:47:03,755 - INFO -    📈 Strategy Direction: BUY (momentum-driven)
+2025-06-26 06:47:03,755 - INFO -    🎯 LIMIT BUY - Above buy zones
+2025-06-26 06:47:03,755 - INFO -    Entry at penny below: 0.6500
+2025-06-26 06:47:03,755 - INFO -    Current: 0.65419
+2025-06-26 06:47:03,755 - INFO -    Distance to entry: 41.9 pips
+2025-06-26 06:47:03,755 - INFO -    Better entry price with bullish momentum
+2025-06-26 06:47:03,755 - INFO -    Strong momentum bonus (+15)
+2025-06-26 06:47:03,755 - INFO -    📋 Strategic limit order - Good confidence (+10)
+2025-06-26 06:47:03,755 - INFO -    💰 Reward/Risk Ratio: 5.00:1
+2025-06-26 06:47:03,755 - INFO -    Market timing: Good timing: Optimal window: 19:00-11:00 ET (Liquidity: 4/5, Confidence: 100%)
+2025-06-26 06:47:03,755 - INFO - 📋 Placing LIMIT BUY for NZD_USD @ 0.6000
+2025-06-26 06:47:03,755 - INFO - 📊 Created metadata: Penny_Curve_Momentum_NZD/USD_LIMIT_BUY_Weak
+2025-06-26 06:47:03,755 - INFO -    Momentum: 0.287 | Direction: STRONG_BULLISH
+2025-06-26 06:47:03,755 - INFO -    Bias: BUY | Zone: Above_Buy_Zone
+2025-06-26 06:47:03,755 - INFO -    Confidence: 100% | Alignment: 0.60
+2025-06-26 06:47:03,899 - INFO - 📝 Stored metadata for limit order 120
+2025-06-26 06:47:03,899 - INFO - ✅ Limit order placed: NZD_USD BUY @ 0.6000
+2025-06-26 06:47:03,899 - INFO - 📝 Setup: Penny_Curve_Momentum_NZD/USD_LIMIT_BUY_Weak
+2025-06-26 06:47:03,899 - INFO - 📊 Setup executed: Penny_Curve_Momentum_NZD/USD_LIMIT_BUY_Weak
+2025-06-26 06:47:03,899 - INFO - Trade reasoning for NZD_USD:
+2025-06-26 06:47:03,899 - INFO -    ✅ Momentum sufficient: 0.287%
+2025-06-26 06:47:03,899 - INFO -    📈 Strategy Direction: BUY (momentum-driven)
+2025-06-26 06:47:03,899 - INFO -    🎯 LIMIT BUY - Above buy zones
+2025-06-26 06:47:03,899 - INFO -    Entry at penny below: 0.6000
+2025-06-26 06:47:03,899 - INFO -    Current: 0.60637
+2025-06-26 06:47:03,899 - INFO -    Distance to entry: 63.7 pips
+2025-06-26 06:47:03,899 - INFO -    Better entry price with bullish momentum
+2025-06-26 06:47:03,899 - INFO -    Strong momentum bonus (+15)
+2025-06-26 06:47:03,899 - INFO -    📋 Strategic limit order - Good confidence (+10)
+2025-06-26 06:47:03,899 - INFO -    💰 Reward/Risk Ratio: 5.00:1
+2025-06-26 06:47:03,899 - INFO -    Market timing: Good timing: Optimal window: 18:00-10:00 ET (Liquidity: 4/5, Confidence: 100%)
+2025-06-26 06:47:04,040 - INFO - Trading cycle completed
+2025-06-26 14:04:57,957 - INFO - Demo Trading Bot started with Fixed Dollar Risk Management and Enhanced Tracking
+2025-06-26 14:05:00,415 - INFO - Starting trading cycle...
+2025-06-26 14:05:00,862 - INFO - Status: 0 pending orders, 4 open positions
+2025-06-26 14:05:00,862 - INFO - 🔍 Scanning for trading opportunities with fixed dollar risk...
+2025-06-26 14:05:00,862 - INFO - 📅 Current session: 2025-06-26 14:05:00 EDT - Active: New York - Liquidity: MEDIUM
+2025-06-26 14:05:01,751 - INFO - ⏰ EUR_USD: BUY signal found but skipping - Poor timing: Midday liquidity lull
+2025-06-26 14:05:02,760 - INFO - ⏰ GBP_USD: BUY signal found but skipping - Poor timing: Midday liquidity lull
+2025-06-26 14:05:03,482 - INFO - ⏰ USD_JPY: SELL signal found but skipping - Poor timing: Midday liquidity lull
+2025-06-26 14:05:04,373 - INFO - ⏰ USD_CAD: SELL signal found but skipping - Poor timing: Midday liquidity lull
+2025-06-26 14:05:05,136 - INFO - ⏰ AUD_USD: BUY signal found but skipping - Poor timing: Midday liquidity lull
+2025-06-26 14:05:06,077 - INFO - ⏰ NZD_USD: BUY signal found but skipping - Poor timing: Midday liquidity lull
+2025-06-26 14:05:20,866 - INFO - No trading opportunities found
+2025-06-26 14:05:20,966 - INFO - Trading cycle completed
+2025-06-26 14:05:30,975 - INFO - Demo Trading Bot started with Fixed Dollar Risk Management and Enhanced Tracking
+2025-06-26 14:05:40,110 - INFO - Starting trading cycle...
+2025-06-26 14:05:40,484 - INFO - Status: 0 pending orders, 4 open positions
+2025-06-26 14:05:40,485 - INFO - 🔍 Scanning for trading opportunities with fixed dollar risk...
+2025-06-26 14:05:40,485 - INFO - 📅 Current session: 2025-06-26 14:05:40 EDT - Active: New York - Liquidity: MEDIUM
+2025-06-26 14:05:41,337 - INFO - ⏰ EUR_USD: BUY signal found but skipping - Poor timing: Midday liquidity lull
+2025-06-26 14:05:42,199 - INFO - ⏰ GBP_USD: BUY signal found but skipping - Poor timing: Midday liquidity lull
+2025-06-26 14:05:42,994 - INFO - ⏰ USD_JPY: SELL signal found but skipping - Poor timing: Midday liquidity lull
+2025-06-26 14:05:44,048 - INFO - ⏰ USD_CAD: SELL signal found but skipping - Poor timing: Midday liquidity lull
+2025-06-26 14:05:44,973 - INFO - ⏰ AUD_USD: BUY signal found but skipping - Poor timing: Midday liquidity lull
+2025-06-26 14:05:45,932 - INFO - ⏰ NZD_USD: BUY signal found but skipping - Poor timing: Midday liquidity lull
+2025-06-26 14:05:58,626 - INFO - No trading opportunities found
+2025-06-26 14:05:58,732 - INFO - Trading cycle completed

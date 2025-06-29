@@ -1,0 +1,8 @@
+Quick Trading Bot Diagnostic - 2025-06-27 14:08:52.267706
+==================================================
+Current directory: C:\Users\sonia\oanda-trading-project\src
+
+Python files: airtable_debugger.py, airtable_utils.py, batch_orders.py, calculate_analytics.py, check_last_sync.py, check_table.py, Demo_Trading_Penny_Curve_Strategy.py, Demo_Trading_Penny_Curve_Strategy_backup.py, Demo_Trading_Penny_Curve_Strategy_backup2.py, Dime_Curve_Butter_Strategy.py, Dime_Curve_Strategies.py, hit_rate_analytics.py, metadata_storage.py, momentum_calculator.py, oanda_api.py, psychological_levels_trader.py, Quarter_Curve_Butter_Strategy.py, simple_diagnostic.py, sync_all.py, test_metadata.py, tradephantoms_batch_orders.py, TradePhantoms_trade_setup_generator.py
+
+Found key files: Demo_Trading_Penny_Curve_Strategy.py, metadata_storage.py, oanda_api.py, psychological_levels_trader.py, momentum_calculator.py, airtable_utils.py, airtable_debugger.py
+Missing key files: 

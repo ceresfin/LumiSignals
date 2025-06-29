@@ -1,0 +1,2 @@
+2025-06-25 17:24:44,466 - INFO - Integrated Dime Curve Trading Bot started
+2025-06-25 17:24:51,201 - ERROR - Error getting daily candlestick for USD_JPY: ('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))

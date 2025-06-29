@@ -1,0 +1,6 @@
+Instrument,Units,Entry_Price,Stop_Loss,Target_Price,Setup_Name,Direction,Duration,Risk_Reward_Ratio
+EUR_USD,2878,1.1405,1.1335,1.1505,EURUSD_Swing,Long,Swing,1.44049
+EUR_USD,6724,1.1478,1.1508,1.1428,EURUSD_IntraSwing,Short,Intra-Swing,1.66778
+EUR_USD,3702,1.1505,1.1559,1.1405,EURUSD_ActiveSwing,Short,Active Swing,1.8532
+USD_CAD,6724,1.1478,1.1508,1.1428,USDCAD_IntraSwing,Short,Intra-Swing,1.66778
+GBP_USD,3702,1.1505,1.1559,1.1405,GBPUSD_ActiveSwing,Short,Active Swing,1.8532

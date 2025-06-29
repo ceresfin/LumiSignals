@@ -1,0 +1,102 @@
+2025-06-24 13:53:29,562 - INFO - Dime Curve Butter Trading Bot started
+2025-06-24 14:06:26,490 - INFO - Dime Curve Butter Trading Bot started
+2025-06-24 14:10:15,490 - INFO - Dime Curve Butter Trading Bot started
+2025-06-24 14:10:22,441 - INFO - 🔍 Scanning for Dime Curve Butter quarter level crosses with daily candlestick confirmation...
+2025-06-24 14:10:22,713 - ERROR - Error in Dime Curve Butter analysis for EUR_USD: 'MarketAwareMomentumCalculator' object has no attribute 'analyze_momentum_comprehensive'
+2025-06-24 14:10:22,713 - WARNING - ❌ EUR_USD: 'MarketAwareMomentumCalculator' object has no attribute 'analyze_momentum_comprehensive'
+2025-06-24 14:10:23,007 - ERROR - Error in Dime Curve Butter analysis for GBP_USD: 'MarketAwareMomentumCalculator' object has no attribute 'analyze_momentum_comprehensive'
+2025-06-24 14:10:23,007 - WARNING - ❌ GBP_USD: 'MarketAwareMomentumCalculator' object has no attribute 'analyze_momentum_comprehensive'
+2025-06-24 14:10:23,246 - ERROR - Error in Dime Curve Butter analysis for USD_JPY: 'MarketAwareMomentumCalculator' object has no attribute 'analyze_momentum_comprehensive'
+2025-06-24 14:10:23,248 - WARNING - ❌ USD_JPY: 'MarketAwareMomentumCalculator' object has no attribute 'analyze_momentum_comprehensive'
+2025-06-24 14:10:23,579 - ERROR - Error in Dime Curve Butter analysis for USD_CAD: 'MarketAwareMomentumCalculator' object has no attribute 'analyze_momentum_comprehensive'
+2025-06-24 14:10:23,579 - WARNING - ❌ USD_CAD: 'MarketAwareMomentumCalculator' object has no attribute 'analyze_momentum_comprehensive'
+2025-06-24 14:10:23,846 - ERROR - Error in Dime Curve Butter analysis for AUD_USD: 'MarketAwareMomentumCalculator' object has no attribute 'analyze_momentum_comprehensive'
+2025-06-24 14:10:23,846 - WARNING - ❌ AUD_USD: 'MarketAwareMomentumCalculator' object has no attribute 'analyze_momentum_comprehensive'
+2025-06-24 14:10:24,134 - ERROR - Error in Dime Curve Butter analysis for NZD_USD: 'MarketAwareMomentumCalculator' object has no attribute 'analyze_momentum_comprehensive'
+2025-06-24 14:10:24,134 - WARNING - ❌ NZD_USD: 'MarketAwareMomentumCalculator' object has no attribute 'analyze_momentum_comprehensive'
+2025-06-24 14:13:12,367 - INFO - Dime Curve Butter Trading Bot started
+2025-06-24 14:13:24,545 - INFO - Dime Curve Butter Trading Bot started
+2025-06-24 14:13:27,567 - INFO - 🔍 Scanning for Dime Curve Butter quarter level crosses with daily candlestick confirmation...
+2025-06-24 14:13:29,004 - INFO - 🧈 USD_JPY: QUARTER_750_CROSS_SELL_VERY_BEARISH SELL LIMIT @ 147.5000 (Conf: 95%)
+2025-06-24 14:13:29,004 - INFO -    Stop: 148.0000 (-50 pips) | Target: 142.5000 (+500 pips)
+2025-06-24 14:13:41,836 - INFO - Dime Curve Butter Trading Bot started
+2025-06-24 14:13:44,566 - INFO - 🔍 Scanning for Dime Curve Butter quarter level crosses with daily candlestick confirmation...
+2025-06-24 14:13:46,153 - INFO - 🧈 USD_JPY: QUARTER_750_CROSS_SELL_VERY_BEARISH SELL LIMIT @ 147.5000 (Conf: 95%)
+2025-06-24 14:13:46,153 - INFO -    Stop: 148.0000 (-50 pips) | Target: 142.5000 (+500 pips)
+2025-06-24 14:13:53,833 - INFO - 🧈 Placing Dime Curve Butter LIMIT SELL for USD_JPY @ 147.5000
+2025-06-24 14:13:53,833 - INFO - 🧈 Dime Curve Butter Setup: DimeCurveButter_USD/JPY_QUARTER_750_CROSS_SELL_VERY_BEARISH_SELL_Moderate
+2025-06-24 14:13:53,833 - INFO -    Setup Type: QUARTER_750_CROSS_SELL_VERY_BEARISH
+2025-06-24 14:13:53,833 - INFO -    Entry: 147.5000 | Stop: 148.0000 | Target: 142.5000
+2025-06-24 14:13:53,974 - INFO - 📝 Stored Dime Curve Butter metadata for order 72
+2025-06-24 14:13:53,974 - INFO - ✅ Dime Curve Butter limit order placed: USD_JPY SELL @ 147.5000
+2025-06-24 14:13:53,975 - INFO - 🧈 Setup: DimeCurveButter_USD/JPY_QUARTER_750_CROSS_SELL_VERY_BEARISH_SELL_Moderate
+2025-06-24 15:43:25,581 - INFO - Dime Curve Butter Trading Bot started
+2025-06-24 15:44:56,731 - INFO - Dime Curve Butter Trading Bot started
+2025-06-24 15:45:00,341 - INFO - 🔍 Scanning for Dime Curve Butter quarter level crosses with daily candlestick confirmation...
+2025-06-24 15:45:02,060 - INFO - 🧈 USD_JPY: QUARTER_750_CROSS_SELL_VERY_BEARISH SELL LIMIT @ 147.5000 (Conf: 95%)
+2025-06-24 15:45:02,060 - INFO -    Stop: 148.0000 (-50 pips) | Target: 142.5000 (+500 pips)
+2025-06-24 15:45:18,485 - INFO - Dime Curve Butter Trading Bot started
+2025-06-24 15:45:20,831 - INFO - 🔍 Scanning for Dime Curve Butter quarter level crosses with daily candlestick confirmation...
+2025-06-24 15:45:22,538 - INFO - 🧈 USD_JPY: QUARTER_750_CROSS_SELL_VERY_BEARISH SELL LIMIT @ 147.5000 (Conf: 95%)
+2025-06-24 15:45:22,538 - INFO -    Stop: 148.0000 (-50 pips) | Target: 142.5000 (+500 pips)
+2025-06-24 15:45:29,065 - INFO - 🧈 Placing Dime Curve Butter LIMIT SELL for USD_JPY @ 147.5000
+2025-06-24 15:45:29,065 - ERROR - Error creating Dime Curve Butter metadata: bad operand type for abs(): 'NoneType'
+2025-06-24 15:45:29,244 - INFO - 📝 Stored Dime Curve Butter metadata for order 73
+2025-06-24 15:45:29,244 - INFO - ✅ Dime Curve Butter limit order placed: USD_JPY SELL @ 147.5000
+2025-06-24 15:45:29,244 - INFO - 🧈 Setup: DimeCurveButter_USD_JPY_SELL
+2025-06-24 16:12:37,766 - INFO - Dime Curve Butter Trading Bot started
+2025-06-24 16:12:50,862 - INFO - Dime Curve Butter Trading Bot started
+2025-06-24 16:12:53,160 - INFO - 🔍 Scanning for Dime Curve Butter quarter level crosses with daily candlestick confirmation...
+2025-06-24 16:12:54,792 - INFO - 🧈 USD_JPY: QUARTER_750_CROSS_SELL_VERY_BEARISH SELL LIMIT @ 147.5000 (Conf: 95%)
+2025-06-24 16:12:54,792 - INFO -    Stop: 148.0000 (-50 pips) | Target: 142.5000 (+500 pips)
+2025-06-24 16:13:04,874 - INFO - Dime Curve Butter Trading Bot started
+2025-06-24 16:13:06,177 - INFO - 🔍 Scanning for Dime Curve Butter quarter level crosses with daily candlestick confirmation...
+2025-06-24 16:13:07,689 - INFO - 🧈 USD_JPY: QUARTER_750_CROSS_SELL_VERY_BEARISH SELL LIMIT @ 147.5000 (Conf: 95%)
+2025-06-24 16:13:07,695 - INFO -    Stop: 148.0000 (-50 pips) | Target: 142.5000 (+500 pips)
+2025-06-24 16:13:11,310 - INFO - 🧈 Placing Dime Curve Butter LIMIT SELL for USD_JPY @ 147.5000
+2025-06-24 16:13:11,310 - INFO - 🧈 Dime Curve Butter Setup: DimeCurveButter_USD/JPY_QUARTER_750_CROSS_SELL_VERY_BEARISH_SELL_VeryStrong
+2025-06-24 16:13:11,310 - INFO -    Quarter Level: X.X750 | Candlestick: VERY_BEARISH
+2025-06-24 16:13:11,311 - INFO -    Trade Direction: SELL | Confidence: 95%
+2025-06-24 16:13:11,311 - INFO -    Entry: 147.5000 | Stop: 148.0000 | Target: 142.5000
+2025-06-24 16:13:11,311 - INFO -    📊 Metadata: Momentum fields set to None (strategy doesn't use momentum)
+2025-06-24 16:13:11,311 - INFO -    📊 Zone Position: X.X750_VERY_BEARISH_CROSS
+2025-06-24 16:13:11,311 - INFO -    📊 Distance to Entry: 0.0 pips
+2025-06-24 16:13:11,311 - INFO -    📊 Signal Confidence: 95%
+2025-06-24 16:13:11,488 - INFO - 📝 Stored Dime Curve Butter metadata for order 74
+2025-06-24 16:13:11,489 - INFO - 📝 Metadata stored with momentum fields set to None
+2025-06-24 16:13:11,489 - INFO - ✅ Dime Curve Butter limit order placed: USD_JPY SELL @ 147.5000
+2025-06-24 16:13:11,489 - INFO - 🧈 Setup: DimeCurveButter_USD/JPY_QUARTER_750_CROSS_SELL_VERY_BEARISH_SELL_VeryStrong
+2025-06-24 16:37:29,455 - INFO - Dime Curve Butter Trading Bot started
+2025-06-24 16:37:30,894 - INFO - 🔍 Scanning for Dime Curve Butter quarter level crosses with daily candlestick confirmation...
+2025-06-24 16:37:32,799 - INFO - 🧈 USD_JPY: QUARTER_750_CROSS_SELL_VERY_BEARISH SELL LIMIT @ 147.5000 (Conf: 95%)
+2025-06-24 16:37:32,799 - INFO -    Stop: 148.0000 (-50 pips) | Target: 142.5000 (+500 pips)
+2025-06-24 16:37:35,793 - INFO - 🧈 Placing Dime Curve Butter LIMIT SELL for USD_JPY @ 147.5000
+2025-06-24 16:37:35,793 - ERROR - Error creating Dime Curve Butter metadata: 'DimeCurveButterTradingBot' object has no attribute 'get_quarter_level_type'
+2025-06-24 16:37:35,793 - ERROR - Error placing Dime Curve Butter limit order: 'DimeCurveButterTradingBot' object has no attribute 'get_quarter_level_type'
+2025-06-24 16:40:17,098 - INFO - Dime Curve Butter Trading Bot started
+2025-06-24 16:40:19,770 - INFO - 🔍 Scanning for Dime Curve Butter quarter level crosses with daily candlestick confirmation...
+2025-06-24 16:40:21,477 - INFO - 🧈 USD_JPY: QUARTER_750_CROSS_SELL_VERY_BEARISH SELL LIMIT @ 147.5000 (Conf: 95%)
+2025-06-24 16:40:21,477 - INFO -    Stop: 148.0000 (-50 pips) | Target: 142.5000 (+500 pips)
+2025-06-24 16:40:25,254 - INFO - 🧈 Placing Dime Curve Butter LIMIT SELL for USD_JPY @ 147.5000
+2025-06-24 16:40:25,254 - ERROR - Error creating Dime Curve Butter metadata: 'DimeCurveButterTradingBot' object has no attribute 'get_quarter_level_type'
+2025-06-24 16:40:25,254 - ERROR - Error placing Dime Curve Butter limit order: 'DimeCurveButterTradingBot' object has no attribute 'get_quarter_level_type'
+2025-06-24 16:46:11,617 - INFO - Dime Curve Butter Trading Bot started
+2025-06-24 16:47:09,677 - INFO - Dime Curve Butter Trading Bot started
+2025-06-24 16:47:12,727 - INFO - 🔍 Scanning for Dime Curve Butter quarter level crosses with daily candlestick confirmation...
+2025-06-24 16:47:14,318 - INFO - 🧈 USD_JPY: QUARTER_750_CROSS_SELL_VERY_BEARISH SELL LIMIT @ 147.5000 (Conf: 95%)
+2025-06-24 16:47:14,332 - INFO -    Stop: 148.0000 (-50 pips) | Target: 142.5000 (+500 pips)
+2025-06-24 16:47:17,915 - INFO - 🧈 Placing Dime Curve Butter LIMIT SELL for USD_JPY @ 147.5000
+2025-06-24 16:47:17,915 - INFO - 🧈 Dime Curve Butter Setup: DimeCurveButter_USD/JPY_QUARTER_750_CROSS_SELL_VERY_BEARISH_SELL_VeryStrong
+2025-06-24 16:47:17,915 - INFO -    Quarter Level: X.X750 | Candlestick: VERY_BEARISH
+2025-06-24 16:47:17,915 - INFO -    Trade Direction: SELL | Confidence: 95%
+2025-06-24 16:47:17,915 - INFO -    Entry: 147.5000 | Stop: 148.0000 | Target: 142.5000
+2025-06-24 16:47:17,915 - INFO -    📊 Metadata: Momentum fields set to None (strategy doesn't use momentum)
+2025-06-24 16:47:17,915 - INFO -    📊 Zone Position: QUARTER_750_CROSS_SELL_VERY_BEARISH (mapped to valid Airtable option)
+2025-06-24 16:47:17,915 - INFO -    📊 Distance to Entry: 0.0 pips (float type)
+2025-06-24 16:47:17,915 - INFO -    📊 Signal Confidence: 95%
+2025-06-24 16:47:18,076 - INFO - 📝 Stored Dime Curve Butter metadata for order 75
+2025-06-24 16:47:18,076 - INFO - 📝 Metadata stored: Zone Position = QUARTER_750_CROSS_SELL_VERY_BEARISH (Airtable-compatible)
+2025-06-24 16:47:18,076 - INFO - 📝 Metadata stored: Distance = 0.0 (float type)
+2025-06-24 16:47:18,076 - INFO - 📝 Metadata stored: Momentum fields = None (strategy doesn't use momentum)
+2025-06-24 16:47:18,076 - INFO - ✅ Dime Curve Butter limit order placed: USD_JPY SELL @ 147.5000
+2025-06-24 16:47:18,076 - INFO - 🧈 Setup: DimeCurveButter_USD/JPY_QUARTER_750_CROSS_SELL_VERY_BEARISH_SELL_VeryStrong

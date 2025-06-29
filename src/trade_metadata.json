@@ -1,0 +1,135 @@
+{
+  "201": {
+    "setup_name": "PCM_EUR/USD_LIMIT_BUY_Weak_LondonNY",
+    "strategy_tag": "PennyCurveMomentum",
+    "momentum_strength": 0.1936,
+    "momentum_direction": "WEAK_BULLISH",
+    "strategy_bias": "BUY",
+    "zone_position": "Above_Buy_Zone",
+    "distance_to_entry_pips": 26.200000000000667,
+    "signal_confidence": 100,
+    "momentum_alignment": 0.8,
+    "created_at": "2025-06-27T11:55:01.666232",
+    "notes": "Reasoning: ✅ Momentum sufficient: 0.194%; 📈 Strategy Direction: BUY (momentum-driven); 🎯 LIMIT BUY - Above buy zones; Entry at penny below: 1.1700; Current: 1.17262; Distance to entry: 26.2 pips; Better entry price with bullish momentum; Moderate momentum bonus (+10); 📋 Strategic limit order - Good confidence (+10); 💰 Reward/Risk Ratio: 5.00:1; Market timing: London-NY overlap trading: Confidence 100% >= 60% (Liquidity: 5/5)",
+    "session_info": {
+      "current_session": "London",
+      "liquidity_level": "HIGH",
+      "overlaps": [
+        "London-NY"
+      ],
+      "market_time": "2025-06-27 11:55:01 EDT"
+    }
+  },
+  "202": {
+    "setup_name": "PCM_EUR/CAD_MARKET_BUY_Weak_LondonNY",
+    "strategy_tag": "PennyCurveMomentum",
+    "momentum_strength": 0.1657,
+    "momentum_direction": "WEAK_BULLISH",
+    "strategy_bias": "BUY",
+    "zone_position": "In_Buy_Zone",
+    "distance_to_entry_pips": 0.0,
+    "signal_confidence": 100,
+    "momentum_alignment": 1.0,
+    "created_at": "2025-06-27T11:55:01.773929",
+    "notes": "Reasoning: ✅ Momentum sufficient: 0.166%; 📈 Strategy Direction: BUY (momentum-driven); 🎯 MARKET BUY - IN buy zone of 1.6000 penny; Buy zone: 1.6000 to 1.6025; Position: 19.4 pips above penny; Immediate execution - optimal buy zone entry; Moderate momentum bonus (+10); 🎯 OPTIMAL ZONE ENTRY - High confidence (+20); 💰 Reward/Risk Ratio: 4.03:1; Market timing: London-NY overlap trading: Confidence 100% >= 60% (Liquidity: 4/5)",
+    "session_info": {
+      "current_session": "London",
+      "liquidity_level": "HIGH",
+      "overlaps": [
+        "London-NY"
+      ],
+      "market_time": "2025-06-27 11:55:01 EDT"
+    }
+  },
+  "203": {
+    "setup_name": "PCM_EUR/CAD_MARKET_BUY_Weak_LondonNY",
+    "strategy_tag": "PennyCurveMomentum",
+    "momentum_strength": 0.1657,
+    "momentum_direction": "WEAK_BULLISH",
+    "strategy_bias": "BUY",
+    "zone_position": "In_Buy_Zone",
+    "distance_to_entry_pips": 0.0,
+    "signal_confidence": 100,
+    "momentum_alignment": 1.0,
+    "created_at": "2025-06-27T11:55:01.773929",
+    "notes": "Reasoning: ✅ Momentum sufficient: 0.166%; 📈 Strategy Direction: BUY (momentum-driven); 🎯 MARKET BUY - IN buy zone of 1.6000 penny; Buy zone: 1.6000 to 1.6025; Position: 19.4 pips above penny; Immediate execution - optimal buy zone entry; Moderate momentum bonus (+10); 🎯 OPTIMAL ZONE ENTRY - High confidence (+20); 💰 Reward/Risk Ratio: 4.03:1; Market timing: London-NY overlap trading: Confidence 100% >= 60% (Liquidity: 4/5)",
+    "session_info": {
+      "current_session": "London",
+      "liquidity_level": "HIGH",
+      "overlaps": [
+        "London-NY"
+      ],
+      "market_time": "2025-06-27 11:55:01 EDT"
+    }
+  },
+  "206": {
+    "setup_name": "PCM_EUR/USD_MARKET_BUY_Weak_LondonNY",
+    "strategy_tag": "PennyCurveMomentum",
+    "momentum_strength": 0.1823,
+    "momentum_direction": "WEAK_BULLISH",
+    "strategy_bias": "BUY",
+    "zone_position": "In_Buy_Zone",
+    "distance_to_entry_pips": 0.0,
+    "signal_confidence": 100,
+    "momentum_alignment": 0.6,
+    "created_at": "2025-06-27T11:58:44.871758",
+    "notes": "Reasoning: ✅ Momentum sufficient: 0.182%; 📈 Strategy Direction: BUY (momentum-driven); 🎯 MARKET BUY - IN buy zone of 1.1700 penny; Buy zone: 1.1700 to 1.1725; Position: 24.7 pips above penny; Immediate execution - optimal buy zone entry; Moderate momentum bonus (+10); 🎯 OPTIMAL ZONE ENTRY - High confidence (+20); 💰 Reward/Risk Ratio: 3.76:1; Market timing: London-NY overlap trading: Confidence 100% >= 60% (Liquidity: 5/5)",
+    "session_info": {
+      "current_session": "London",
+      "liquidity_level": "HIGH",
+      "overlaps": [
+        "London-NY"
+      ],
+      "market_time": "2025-06-27 11:58:44 EDT"
+    }
+  },
+  "207": {
+    "setup_name": "PCM_EUR/USD_MARKET_BUY_Weak_LondonNY",
+    "strategy_tag": "PennyCurveMomentum",
+    "momentum_strength": 0.1823,
+    "momentum_direction": "WEAK_BULLISH",
+    "strategy_bias": "BUY",
+    "zone_position": "In_Buy_Zone",
+    "distance_to_entry_pips": 0.0,
+    "signal_confidence": 100,
+    "momentum_alignment": 0.6,
+    "created_at": "2025-06-27T11:58:44.871758",
+    "notes": "Reasoning: ✅ Momentum sufficient: 0.182%; 📈 Strategy Direction: BUY (momentum-driven); 🎯 MARKET BUY - IN buy zone of 1.1700 penny; Buy zone: 1.1700 to 1.1725; Position: 24.7 pips above penny; Immediate execution - optimal buy zone entry; Moderate momentum bonus (+10); 🎯 OPTIMAL ZONE ENTRY - High confidence (+20); 💰 Reward/Risk Ratio: 3.76:1; Market timing: London-NY overlap trading: Confidence 100% >= 60% (Liquidity: 5/5)",
+    "session_info": {
+      "current_session": "London",
+      "liquidity_level": "HIGH",
+      "overlaps": [
+        "London-NY"
+      ],
+      "market_time": "2025-06-27 11:58:44 EDT"
+    }
+  },
+  "229": {
+    "setup_name": "Fallback_EUR_CAD_BUY",
+    "strategy_tag": "PennyCurveMomentum",
+    "momentum_strength": null,
+    "momentum_direction": null,
+    "strategy_bias": null,
+    "zone_position": null,
+    "distance_to_entry_pips": null,
+    "signal_confidence": 100,
+    "momentum_alignment": null,
+    "created_at": "2025-06-27T13:10:42.872466",
+    "notes": null,
+    "session_info": null
+  },
+  "230": {
+    "setup_name": "Fallback_NZD_CAD_BUY",
+    "strategy_tag": "PennyCurveMomentum",
+    "momentum_strength": null,
+    "momentum_direction": null,
+    "strategy_bias": null,
+    "zone_position": null,
+    "distance_to_entry_pips": null,
+    "signal_confidence": 100,
+    "momentum_alignment": null,
+    "created_at": "2025-06-27T13:10:42.967543",
+    "notes": null,
+    "session_info": null
+  }
+}

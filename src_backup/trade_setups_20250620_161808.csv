@@ -1,0 +1,7 @@
+signal_source,signal_date,setup_id,instrument,direction,order_type,entry_price,stop_loss,stop_loss_risk_dollars,target_price,position_size,risk_percent,notes,original_signal,target_number,r_r_ratio
+TradePhantoms,6/19/2025,TP_USDCAD_Short_T1_20250620,USD_CAD,Short,LIMIT,1.38,1.3905,10.0,1.3695,952,0.01,TradePhantoms Swing Trade - Target 1,Limit @ 1.3800,1,1.0
+TradePhantoms,6/19/2025,TP_USDCAD_Short_T2_20250620,USD_CAD,Short,LIMIT,1.38,1.3905,10.0,1.3545,952,0.01,TradePhantoms Swing Trade - Target 2,Limit @ 1.3800,2,2.43
+TradePhantoms,6/19/2025,TP_CHFJPY_Short_T1_20250620,CHF_JPY,Short,LIMIT,180.0,181.35,9.45,178.65,7,0.009,TradePhantoms Swing Trade - Target 1,Limit @ 180.00,1,1.0
+TradePhantoms,6/19/2025,TP_CHFJPY_Short_T2_20250620,CHF_JPY,Short,LIMIT,180.0,181.35,9.45,170.35,7,0.009,TradePhantoms Swing Trade - Target 2,Limit @ 180.00,2,7.15
+TradePhantoms,5/19/2025,TP_EURGBP_Long_T1_20250620,EUR_GBP,Long,MARKET,0.6532,0.8485,9.96,0.8641,51,0.01,TradePhantoms Swing Trade - Target 1,Market @ .6532,1,1.08
+TradePhantoms,5/19/2025,TP_EURGBP_Long_T2_20250620,EUR_GBP,Long,MARKET,0.6532,0.8485,9.96,0.8715,51,0.01,TradePhantoms Swing Trade - Target 2,Market @ .6532,2,1.12

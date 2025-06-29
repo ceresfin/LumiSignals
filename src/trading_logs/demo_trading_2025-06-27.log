@@ -1,0 +1,301 @@
+2025-06-27 10:45:11,593 - INFO - Demo Trading Bot started with Fixed Dollar Risk Management and Enhanced Tracking
+2025-06-27 11:11:47,842 - INFO - Demo Trading Bot started with Fixed Dollar Risk Management and Enhanced Tracking
+2025-06-27 11:11:50,772 - INFO - 🔄 Starting trading cycle...
+2025-06-27 11:11:51,455 - WARNING - Could not get pending orders: 'list' object has no attribute 'get'
+2025-06-27 11:11:51,550 - INFO - Status: 0 pending orders, 2 open positions
+2025-06-27 11:11:51,550 - INFO - 🔍 Scanning for trading opportunities with fixed dollar risk...
+2025-06-27 11:11:51,550 - INFO - 📅 Current session: 2025-06-27 11:11:51 EDT - Active: London, New York - Liquidity: HIGH
+2025-06-27 11:12:12,527 - INFO - No trading opportunities found
+2025-06-27 11:12:12,635 - INFO - ✅ Trading cycle completed
+2025-06-27 11:12:25,511 - INFO - Demo Trading Bot started with Fixed Dollar Risk Management and Enhanced Tracking
+2025-06-27 11:24:05,460 - INFO - 🔄 Starting trading cycle...
+2025-06-27 11:24:05,753 - WARNING - Could not get pending orders: 'list' object has no attribute 'get'
+2025-06-27 11:24:05,840 - INFO - Status: 0 pending orders, 2 open positions
+2025-06-27 11:24:05,840 - INFO - 🔍 Scanning for trading opportunities with fixed dollar risk...
+2025-06-27 11:24:05,840 - INFO - 📅 Current session: 2025-06-27 11:24:05 EDT - Active: London, New York - Liquidity: HIGH
+2025-06-27 11:24:28,248 - INFO - No trading opportunities found
+2025-06-27 11:24:28,375 - INFO - ✅ Trading cycle completed
+2025-06-27 11:26:00,917 - INFO - Demo Trading Bot started with Fixed Dollar Risk Management and Enhanced Tracking
+2025-06-27 11:26:03,081 - INFO - 🔄 Starting trading cycle...
+2025-06-27 11:26:03,435 - WARNING - Could not get pending orders: 'list' object has no attribute 'get'
+2025-06-27 11:26:03,557 - INFO - Status: 0 pending orders, 2 open positions
+2025-06-27 11:26:03,557 - INFO - 🔍 Scanning for trading opportunities with fixed dollar risk...
+2025-06-27 11:26:03,557 - INFO - 📅 Current session: 2025-06-27 11:26:03 EDT - Active: London, New York - Liquidity: HIGH
+2025-06-27 11:26:05,322 - INFO - ⏰ EUR_USD: BUY signal found but skipping - Poor timing: Outside optimal window: 03:00-11:00 ET
+2025-06-27 11:26:28,186 - INFO - No trading opportunities found
+2025-06-27 11:26:28,308 - INFO - ✅ Trading cycle completed
+2025-06-27 11:54:35,045 - INFO - Demo Trading Bot started with ALL CRITICAL FIXES APPLIED
+2025-06-27 11:54:38,885 - INFO - 🔄 Starting trading cycle...
+2025-06-27 11:54:39,268 - INFO - Status: 30 pending orders, 2 open positions
+2025-06-27 11:54:39,268 - INFO - 🔍 Scanning for trading opportunities with fixed dollar risk...
+2025-06-27 11:54:39,268 - INFO - 📅 Current session: 2025-06-27 11:54:39 EDT - Active: London, New York - Liquidity: HIGH
+2025-06-27 11:54:40,278 - INFO - 💰 EUR_USD Risk: $10.00 USD (5.0 micro lots, 20.0 pips)
+2025-06-27 11:54:40,278 - INFO - 🎯 EUR_USD: BUY LIMIT @ 1.1700 (Confidence: 100%, Liquidity: 5/5)
+2025-06-27 11:54:48,367 - INFO - 💰 EUR_CAD Risk: $10.25 USD (7.0 micro lots, 20.0 pips)
+2025-06-27 11:54:48,371 - INFO - 🎯 EUR_CAD: BUY MARKET @ 1.6019 (Confidence: 100%, Liquidity: 4/5)
+2025-06-27 11:55:01,666 - INFO - 📋 Placing LIMIT BUY for EUR_USD @ 1.1700
+2025-06-27 11:55:01,666 - INFO - 📊 Created enhanced metadata: PCM_EUR/USD_LIMIT_BUY_Weak_LondonNY
+2025-06-27 11:55:01,666 - INFO -    Momentum: 0.194 | Direction: WEAK_BULLISH
+2025-06-27 11:55:01,666 - INFO -    Session: London | Confidence: 100%
+2025-06-27 11:55:01,759 - INFO - 📝 Stored metadata for limit order 201
+2025-06-27 11:55:01,759 - INFO - ✅ Limit order placed: EUR_USD BUY @ 1.1700
+2025-06-27 11:55:01,759 - INFO - 📝 Setup: PCM_EUR/USD_LIMIT_BUY_Weak_LondonNY
+2025-06-27 11:55:01,759 - INFO - 📊 Setup executed: PCM_EUR/USD_LIMIT_BUY_Weak_LondonNY
+2025-06-27 11:55:01,759 - INFO - Trade reasoning for EUR_USD:
+2025-06-27 11:55:01,759 - INFO -    ✅ Momentum sufficient: 0.194%
+2025-06-27 11:55:01,759 - INFO -    📈 Strategy Direction: BUY (momentum-driven)
+2025-06-27 11:55:01,773 - INFO -    🎯 LIMIT BUY - Above buy zones
+2025-06-27 11:55:01,773 - INFO -    Entry at penny below: 1.1700
+2025-06-27 11:55:01,773 - INFO -    Current: 1.17262
+2025-06-27 11:55:01,773 - INFO -    Distance to entry: 26.2 pips
+2025-06-27 11:55:01,773 - INFO -    Better entry price with bullish momentum
+2025-06-27 11:55:01,773 - INFO -    Moderate momentum bonus (+10)
+2025-06-27 11:55:01,773 - INFO -    📋 Strategic limit order - Good confidence (+10)
+2025-06-27 11:55:01,773 - INFO -    💰 Reward/Risk Ratio: 5.00:1
+2025-06-27 11:55:01,773 - INFO -    Market timing: London-NY overlap trading: Confidence 100% >= 60% (Liquidity: 5/5)
+2025-06-27 11:55:01,773 - INFO - 📈 Placing MARKET BUY for EUR_CAD
+2025-06-27 11:55:01,773 - INFO - 📊 Created enhanced metadata: PCM_EUR/CAD_MARKET_BUY_Weak_LondonNY
+2025-06-27 11:55:01,773 - INFO -    Momentum: 0.166 | Direction: WEAK_BULLISH
+2025-06-27 11:55:01,773 - INFO -    Session: London | Confidence: 100%
+2025-06-27 11:55:01,869 - INFO - 📝 Stored metadata for order 202
+2025-06-27 11:55:01,869 - INFO - 📝 Stored metadata for trade 203
+2025-06-27 11:55:01,869 - INFO - ✅ Market order filled: EUR_CAD BUY @ 1.6019
+2025-06-27 11:55:01,869 - INFO - 📝 Setup: PCM_EUR/CAD_MARKET_BUY_Weak_LondonNY
+2025-06-27 11:55:01,869 - INFO - 📊 Setup executed: PCM_EUR/CAD_MARKET_BUY_Weak_LondonNY
+2025-06-27 11:55:01,869 - INFO - Trade reasoning for EUR_CAD:
+2025-06-27 11:55:01,869 - INFO -    ✅ Momentum sufficient: 0.166%
+2025-06-27 11:55:01,869 - INFO -    📈 Strategy Direction: BUY (momentum-driven)
+2025-06-27 11:55:01,869 - INFO -    🎯 MARKET BUY - IN buy zone of 1.6000 penny
+2025-06-27 11:55:01,869 - INFO -    Buy zone: 1.6000 to 1.6025
+2025-06-27 11:55:01,869 - INFO -    Position: 19.4 pips above penny
+2025-06-27 11:55:01,869 - INFO -    Immediate execution - optimal buy zone entry
+2025-06-27 11:55:01,869 - INFO -    Moderate momentum bonus (+10)
+2025-06-27 11:55:01,869 - INFO -    🎯 OPTIMAL ZONE ENTRY - High confidence (+20)
+2025-06-27 11:55:01,885 - INFO -    💰 Reward/Risk Ratio: 4.03:1
+2025-06-27 11:55:01,885 - INFO -    Market timing: London-NY overlap trading: Confidence 100% >= 60% (Liquidity: 4/5)
+2025-06-27 11:55:02,093 - INFO - ✅ Trading cycle completed
+2025-06-27 11:58:19,224 - INFO - Demo Trading Bot started with ALL CRITICAL FIXES APPLIED
+2025-06-27 11:58:22,389 - INFO - 🔄 Starting trading cycle...
+2025-06-27 11:58:23,316 - INFO - Status: 33 pending orders, 3 open positions
+2025-06-27 11:58:23,316 - INFO - 🔍 Scanning for trading opportunities with fixed dollar risk...
+2025-06-27 11:58:23,316 - INFO - 📅 Current session: 2025-06-27 11:58:23 EDT - Active: London, New York - Liquidity: HIGH
+2025-06-27 11:58:24,431 - INFO - 💰 EUR_USD Risk: $10.00 USD (5.0 micro lots, 20.0 pips)
+2025-06-27 11:58:24,431 - INFO - 🎯 EUR_USD: BUY MARKET @ 1.1725 (Confidence: 100%, Liquidity: 5/5)
+2025-06-27 11:58:32,826 - INFO - 💰 EUR_CAD Risk: $10.25 USD (7.0 micro lots, 20.0 pips)
+2025-06-27 11:58:32,826 - INFO - 🎯 EUR_CAD: BUY MARKET @ 1.6019 (Confidence: 100%, Liquidity: 4/5)
+2025-06-27 11:58:44,871 - INFO - 📈 Placing MARKET BUY for EUR_USD
+2025-06-27 11:58:44,871 - INFO - 📊 Created enhanced metadata: PCM_EUR/USD_MARKET_BUY_Weak_LondonNY
+2025-06-27 11:58:44,887 - INFO -    Momentum: 0.182 | Direction: WEAK_BULLISH
+2025-06-27 11:58:44,887 - INFO -    Session: London | Confidence: 100%
+2025-06-27 11:58:45,094 - INFO - 📝 Stored metadata for order 206
+2025-06-27 11:58:45,094 - INFO - 📝 Stored metadata for trade 207
+2025-06-27 11:58:45,094 - INFO - ✅ Market order filled: EUR_USD BUY @ 1.1725
+2025-06-27 11:58:45,094 - INFO - 📝 Setup: PCM_EUR/USD_MARKET_BUY_Weak_LondonNY
+2025-06-27 11:58:45,094 - INFO - 📊 Setup executed: PCM_EUR/USD_MARKET_BUY_Weak_LondonNY
+2025-06-27 11:58:45,094 - INFO - Trade reasoning for EUR_USD:
+2025-06-27 11:58:45,094 - INFO -    ✅ Momentum sufficient: 0.182%
+2025-06-27 11:58:45,094 - INFO -    📈 Strategy Direction: BUY (momentum-driven)
+2025-06-27 11:58:45,094 - INFO -    🎯 MARKET BUY - IN buy zone of 1.1700 penny
+2025-06-27 11:58:45,094 - INFO -    Buy zone: 1.1700 to 1.1725
+2025-06-27 11:58:45,094 - INFO -    Position: 24.7 pips above penny
+2025-06-27 11:58:45,094 - INFO -    Immediate execution - optimal buy zone entry
+2025-06-27 11:58:45,094 - INFO -    Moderate momentum bonus (+10)
+2025-06-27 11:58:45,094 - INFO -    🎯 OPTIMAL ZONE ENTRY - High confidence (+20)
+2025-06-27 11:58:45,094 - INFO -    💰 Reward/Risk Ratio: 3.76:1
+2025-06-27 11:58:45,094 - INFO -    Market timing: London-NY overlap trading: Confidence 100% >= 60% (Liquidity: 5/5)
+2025-06-27 11:58:45,094 - INFO - 📈 Placing MARKET BUY for EUR_CAD
+2025-06-27 11:58:45,094 - INFO - 📊 Created enhanced metadata: PCM_EUR/CAD_MARKET_BUY_Weak_LondonNY
+2025-06-27 11:58:45,094 - INFO -    Momentum: 0.170 | Direction: WEAK_BULLISH
+2025-06-27 11:58:45,094 - INFO -    Session: London | Confidence: 100%
+2025-06-27 11:58:45,334 - ERROR - ❌ Market order failed: {'orderCreateTransaction': {'id': '210', 'accountID': '101-001-21245555-001', 'userID': 21245555, 'batchID': '210', 'requestID': '61387589292793677', 'time': '2025-06-27T15:58:45.422735279Z', 'type': 'MARKET_ORDER', 'instrument': 'EUR_CAD', 'units': '7000', 'timeInForce': 'FOK', 'positionFill': 'DEFAULT', 'takeProfitOnFill': {'price': '1.61000', 'timeInForce': 'GTC'}, 'stopLossOnFill': {'price': '1.59990', 'timeInForce': 'GTC', 'triggerMode': 'TOP_OF_BOOK'}, 'reason': 'CLIENT_ORDER'}, 'orderCancelTransaction': {'id': '211', 'accountID': '101-001-21245555-001', 'userID': 21245555, 'batchID': '210', 'requestID': '61387589292793677', 'time': '2025-06-27T15:58:45.422735279Z', 'type': 'ORDER_CANCEL', 'orderID': '210', 'reason': 'FIFO_VIOLATION_SAFEGUARD_VIOLATION'}, 'relatedTransactionIDs': ['210', '211'], 'lastTransactionID': '211'}
+2025-06-27 11:58:45,497 - INFO - ✅ Trading cycle completed
+2025-06-27 13:10:18,470 - INFO - Demo Trading Bot started with ENHANCED AIRTABLE METADATA INTEGRATION
+2025-06-27 13:10:20,428 - INFO - 🔄 Starting trading cycle...
+2025-06-27 13:10:22,235 - INFO - Status: 26 pending orders, 6 open positions
+2025-06-27 13:10:22,235 - INFO - 🔍 Scanning for trading opportunities with fixed dollar risk...
+2025-06-27 13:10:22,235 - INFO - 📅 Current session: 2025-06-27 13:10:22 EDT - Active: New York - Liquidity: MEDIUM
+2025-06-27 13:10:30,904 - INFO - 💰 EUR_CAD Risk: $10.23 USD (7.0 micro lots, 20.0 pips)
+2025-06-27 13:10:30,904 - INFO - 🎯 EUR_CAD: BUY LIMIT @ 1.6000 (Confidence: 100%, Liquidity: 2/5)
+2025-06-27 13:10:42,140 - INFO - 💰 NZD_CAD Risk: $10.23 USD (7.0 micro lots, 20.0 pips)
+2025-06-27 13:10:42,140 - INFO - 🎯 NZD_CAD: BUY LIMIT @ 0.8200 (Confidence: 100%, Liquidity: 2/5)
+2025-06-27 13:10:42,872 - INFO - 📋 Placing LIMIT BUY for EUR_CAD @ 1.6000
+2025-06-27 13:10:42,872 - ERROR - Error creating enhanced metadata: TradeMetadata.__init__() got an unexpected keyword argument 'momentum_strength_str'
+2025-06-27 13:10:42,872 - INFO - 📝 Added enhanced clientExtensions with Airtable fields
+2025-06-27 13:10:42,967 - INFO - 📝 Stored metadata for limit order 229
+2025-06-27 13:10:42,967 - INFO - ✅ Limit order placed: EUR_CAD BUY @ 1.6000
+2025-06-27 13:10:42,967 - INFO - 📝 Setup: Fallback_EUR_CAD_BUY
+2025-06-27 13:10:42,967 - INFO - 📊 Setup executed: PCM_EUR/CAD_LIMIT_BUY_Weak_New York
+2025-06-27 13:10:42,967 - INFO - Trade reasoning for EUR_CAD:
+2025-06-27 13:10:42,967 - INFO -    ✅ Momentum sufficient: 0.188%
+2025-06-27 13:10:42,967 - INFO -    📈 Strategy Direction: BUY (momentum-driven)
+2025-06-27 13:10:42,967 - INFO -    🎯 LIMIT BUY - Above buy zones
+2025-06-27 13:10:42,967 - INFO -    Entry at penny below: 1.6000
+2025-06-27 13:10:42,967 - INFO -    Current: 1.60338
+2025-06-27 13:10:42,967 - INFO -    Distance to entry: 33.8 pips
+2025-06-27 13:10:42,967 - INFO -    Better entry price with bullish momentum
+2025-06-27 13:10:42,967 - INFO -    Moderate momentum bonus (+10)
+2025-06-27 13:10:42,967 - INFO -    📋 Strategic limit order - Good confidence (+10)
+2025-06-27 13:10:42,967 - INFO -    💰 Reward/Risk Ratio: 5.00:1
+2025-06-27 13:10:42,967 - INFO -    Market timing: Trading approved: Confidence 100% >= 60% (Liquidity: 2/5)
+2025-06-27 13:10:42,967 - INFO - 📋 Placing LIMIT BUY for NZD_CAD @ 0.8200
+2025-06-27 13:10:42,967 - ERROR - Error creating enhanced metadata: TradeMetadata.__init__() got an unexpected keyword argument 'momentum_strength_str'
+2025-06-27 13:10:42,967 - INFO - 📝 Added enhanced clientExtensions with Airtable fields
+2025-06-27 13:10:43,063 - INFO - 📝 Stored metadata for limit order 230
+2025-06-27 13:10:43,063 - INFO - ✅ Limit order placed: NZD_CAD BUY @ 0.8200
+2025-06-27 13:10:43,063 - INFO - 📝 Setup: Fallback_NZD_CAD_BUY
+2025-06-27 13:10:43,063 - INFO - 📊 Setup executed: PCM_NZD/CAD_LIMIT_BUY_Weak_New York
+2025-06-27 13:10:43,063 - INFO - Trade reasoning for NZD_CAD:
+2025-06-27 13:10:43,063 - INFO -    ✅ Momentum sufficient: 0.168%
+2025-06-27 13:10:43,063 - INFO -    📈 Strategy Direction: BUY (momentum-driven)
+2025-06-27 13:10:43,063 - INFO -    🎯 LIMIT BUY - Above buy zones
+2025-06-27 13:10:43,063 - INFO -    Entry at penny below: 0.8200
+2025-06-27 13:10:43,063 - INFO -    Current: 0.82932
+2025-06-27 13:10:43,063 - INFO -    Distance to entry: 93.2 pips
+2025-06-27 13:10:43,063 - INFO -    Better entry price with bullish momentum
+2025-06-27 13:10:43,063 - INFO -    Moderate momentum bonus (+10)
+2025-06-27 13:10:43,063 - INFO -    📋 Strategic limit order - Good confidence (+10)
+2025-06-27 13:10:43,063 - INFO -    💰 Reward/Risk Ratio: 5.00:1
+2025-06-27 13:10:43,063 - INFO -    Market timing: Trading approved: Confidence 100% >= 60% (Liquidity: 2/5)
+2025-06-27 13:10:43,159 - INFO - ✅ Trading cycle completed
+2025-06-27 13:32:33,017 - INFO - Demo Trading Bot started with ENHANCED AIRTABLE METADATA INTEGRATION - FIXED VERSION
+2025-06-27 13:32:34,949 - INFO - 🔄 Starting trading cycle...
+2025-06-27 13:32:35,473 - INFO - Status: 29 pending orders, 7 open positions
+2025-06-27 13:32:35,473 - INFO - 🔍 Scanning for trading opportunities with fixed dollar risk...
+2025-06-27 13:32:35,473 - INFO - 📅 Current session: 2025-06-27 13:32:35 EDT - Active: New York - Liquidity: MEDIUM
+2025-06-27 13:32:54,996 - INFO - No trading opportunities found
+2025-06-27 13:32:55,091 - INFO - ✅ Trading cycle completed
+2025-06-27 13:45:51,649 - INFO - Demo Trading Bot started with ENHANCED AIRTABLE METADATA INTEGRATION - FIXED VERSION
+2025-06-27 13:45:55,551 - INFO - 🔄 Starting trading cycle...
+2025-06-27 13:45:55,964 - INFO - Status: 25 pending orders, 5 open positions
+2025-06-27 13:45:55,966 - INFO - 🔍 Scanning for trading opportunities with fixed dollar risk...
+2025-06-27 13:45:55,966 - INFO - 📅 Current session: 2025-06-27 13:45:55 EDT - Active: New York - Liquidity: MEDIUM
+2025-06-27 13:46:01,850 - INFO - 💰 USD_CAD Risk: $10.20 USD (7.0 micro lots, 20.0 pips)
+2025-06-27 13:46:01,850 - INFO - 🎯 USD_CAD: BUY MARKET @ 1.3724 (Confidence: 100%, Liquidity: 4/5)
+2025-06-27 13:46:02,911 - INFO - 💰 AUD_USD Risk: $10.00 USD (5.0 micro lots, 20.0 pips)
+2025-06-27 13:46:02,911 - INFO - 🎯 AUD_USD: SELL LIMIT @ 0.6600 (Confidence: 100%, Liquidity: 2/5)
+2025-06-27 13:46:08,101 - INFO - 💰 EUR_CAD Risk: $10.21 USD (7.0 micro lots, 20.0 pips)
+2025-06-27 13:46:08,101 - INFO - 🎯 EUR_CAD: BUY LIMIT @ 1.6000 (Confidence: 100%, Liquidity: 2/5)
+2025-06-27 13:46:13,039 - INFO - 💰 GBP_CAD Risk: $10.21 USD (7.0 micro lots, 20.0 pips)
+2025-06-27 13:46:13,039 - INFO - 🎯 GBP_CAD: BUY LIMIT @ 1.8700 (Confidence: 100%, Liquidity: 2/5)
+2025-06-27 13:46:17,344 - INFO - 💰 AUD_CAD Risk: $10.21 USD (7.0 micro lots, 20.0 pips)
+2025-06-27 13:46:17,344 - INFO - 🎯 AUD_CAD: BUY LIMIT @ 0.8900 (Confidence: 100%, Liquidity: 2/5)
+2025-06-27 13:46:20,498 - INFO - 💰 NZD_CAD Risk: $10.20 USD (7.0 micro lots, 20.0 pips)
+2025-06-27 13:46:20,498 - INFO - 🎯 NZD_CAD: BUY MARKET @ 0.8302 (Confidence: 100%, Liquidity: 2/5)
+2025-06-27 13:46:22,053 - INFO - 💰 CAD_JPY Risk: $9.67 USD (7.0 micro lots, 20.0 pips)
+2025-06-27 13:46:22,053 - INFO - 🎯 CAD_JPY: SELL LIMIT @ 106.0000 (Confidence: 100%, Liquidity: 2/5)
+2025-06-27 13:46:22,053 - INFO - 📈 Placing MARKET BUY for USD_CAD
+2025-06-27 13:46:22,053 - INFO - 📊 FIXED Enhanced Airtable metadata created: PCM_USD/CAD_MARKET_BUY_Moderate_New York
+2025-06-27 13:46:22,053 - INFO -    Momentum: Moderate (0.390) | Direction: Strong Bullish
+2025-06-27 13:46:22,053 - INFO -    Bias: BULLISH | Zone: In_Buy_Zone | Distance: 0.0 pips
+2025-06-27 13:46:22,053 - INFO -    Confidence: 100% | Alignment: 0.8
+2025-06-27 13:46:22,053 - INFO -    Zone Logic Check: MARKET BUY should be In_Buy_Zone
+2025-06-27 13:46:22,053 - INFO - 📝 Added enhanced clientExtensions with Airtable fields
+2025-06-27 13:46:22,213 - INFO - 📝 Stored metadata for order 240
+2025-06-27 13:46:22,225 - INFO - 📝 Stored metadata for trade 241
+2025-06-27 13:46:22,225 - INFO - ✅ Market order filled: USD_CAD BUY @ 1.3724
+2025-06-27 13:46:22,225 - INFO - 📝 Setup: PCM_USD/CAD_MARKET_BUY_Moderate_New York
+2025-06-27 13:46:22,225 - INFO - 📊 Setup executed: PCM_USD/CAD_MARKET_BUY_Moderate_New York
+2025-06-27 13:46:22,225 - INFO - Trade reasoning for USD_CAD:
+2025-06-27 13:46:22,225 - INFO -    ✅ Momentum sufficient: 0.390%
+2025-06-27 13:46:22,225 - INFO -    📈 Strategy Direction: BUY (momentum-driven)
+2025-06-27 13:46:22,225 - INFO -    🎯 MARKET BUY - IN buy zone of 1.3700 penny
+2025-06-27 13:46:22,225 - INFO -    Buy zone: 1.3700 to 1.3725
+2025-06-27 13:46:22,225 - INFO -    Position: 24.3 pips above penny
+2025-06-27 13:46:22,225 - INFO -    Immediate execution - optimal buy zone entry
+2025-06-27 13:46:22,225 - INFO -    Strong momentum bonus (+15)
+2025-06-27 13:46:22,225 - INFO -    🎯 OPTIMAL ZONE ENTRY - High confidence (+20)
+2025-06-27 13:46:22,225 - INFO -    💰 Reward/Risk Ratio: 3.78:1
+2025-06-27 13:46:22,225 - INFO -    Market timing: Trading approved: Confidence 100% >= 60% (Liquidity: 4/5)
+2025-06-27 13:46:22,225 - INFO - 📋 Placing LIMIT SELL for AUD_USD @ 0.6600
+2025-06-27 13:46:22,225 - INFO - 📊 FIXED Enhanced Airtable metadata created: PCM_AUD/USD_LIMIT_SELL_Weak_New York
+2025-06-27 13:46:22,225 - INFO -    Momentum: Weak (-0.157) | Direction: Weak Bearish
+2025-06-27 13:46:22,225 - INFO -    Bias: BEARISH | Zone: Below_Sell_Zone | Distance: 77.6 pips
+2025-06-27 13:46:22,225 - INFO -    Confidence: 100% | Alignment: 0.2
+2025-06-27 13:46:22,225 - INFO -    Zone Logic Check: LIMIT SELL should be Below_Sell_Zone
+2025-06-27 13:46:22,225 - INFO - 📝 Added enhanced clientExtensions with Airtable fields
+2025-06-27 13:46:22,372 - INFO - 📝 Stored metadata for limit order 244
+2025-06-27 13:46:22,372 - INFO - ✅ Limit order placed: AUD_USD SELL @ 0.6600
+2025-06-27 13:46:22,378 - INFO - 📝 Setup: PCM_AUD/USD_LIMIT_SELL_Weak_New York
+2025-06-27 13:46:22,378 - INFO - 📊 Setup executed: PCM_AUD/USD_LIMIT_SELL_Weak_New York
+2025-06-27 13:46:22,378 - INFO - Trade reasoning for AUD_USD:
+2025-06-27 13:46:22,378 - INFO -    ✅ Momentum sufficient: -0.157%
+2025-06-27 13:46:22,378 - INFO -    📈 Strategy Direction: SELL (momentum-driven)
+2025-06-27 13:46:22,378 - INFO -    🎯 LIMIT SELL - Below sell zones
+2025-06-27 13:46:22,381 - INFO -    Entry at penny above: 0.6600
+2025-06-27 13:46:22,381 - INFO -    Current: 0.65224
+2025-06-27 13:46:22,381 - INFO -    Distance to entry: 77.6 pips
+2025-06-27 13:46:22,381 - INFO -    Better entry price with bearish momentum
+2025-06-27 13:46:22,381 - INFO -    Moderate momentum bonus (+10)
+2025-06-27 13:46:22,381 - INFO -    📋 Strategic limit order - Good confidence (+10)
+2025-06-27 13:46:22,381 - INFO -    💰 Reward/Risk Ratio: 5.00:1
+2025-06-27 13:46:22,381 - INFO -    Market timing: Trading approved: Confidence 100% >= 60% (Liquidity: 2/5)
+2025-06-27 13:46:22,381 - INFO - 📋 Placing LIMIT BUY for EUR_CAD @ 1.6000
+2025-06-27 13:46:22,381 - INFO - 📊 FIXED Enhanced Airtable metadata created: PCM_EUR/CAD_LIMIT_BUY_Moderate_New York
+2025-06-27 13:46:22,381 - INFO -    Momentum: Moderate (0.329) | Direction: Strong Bullish
+2025-06-27 13:46:22,381 - INFO -    Bias: BULLISH | Zone: Above_Buy_Zone | Distance: 58.7 pips
+2025-06-27 13:46:22,381 - INFO -    Confidence: 100% | Alignment: 1.0
+2025-06-27 13:46:22,381 - INFO -    Zone Logic Check: LIMIT BUY should be Above_Buy_Zone
+2025-06-27 13:46:22,381 - INFO - 📝 Added enhanced clientExtensions with Airtable fields
+2025-06-27 13:46:22,481 - INFO - 📝 Stored metadata for limit order 245
+2025-06-27 13:46:22,481 - INFO - ✅ Limit order placed: EUR_CAD BUY @ 1.6000
+2025-06-27 13:46:22,481 - INFO - 📝 Setup: PCM_EUR/CAD_LIMIT_BUY_Moderate_New York
+2025-06-27 13:46:22,481 - INFO - 📊 Setup executed: PCM_EUR/CAD_LIMIT_BUY_Moderate_New York
+2025-06-27 13:46:22,481 - INFO - Trade reasoning for EUR_CAD:
+2025-06-27 13:46:22,481 - INFO -    ✅ Momentum sufficient: 0.329%
+2025-06-27 13:46:22,481 - INFO -    📈 Strategy Direction: BUY (momentum-driven)
+2025-06-27 13:46:22,481 - INFO -    🎯 LIMIT BUY - Above buy zones
+2025-06-27 13:46:22,481 - INFO -    Entry at penny below: 1.6000
+2025-06-27 13:46:22,481 - INFO -    Current: 1.60587
+2025-06-27 13:46:22,481 - INFO -    Distance to entry: 58.7 pips
+2025-06-27 13:46:22,481 - INFO -    Better entry price with bullish momentum
+2025-06-27 13:46:22,481 - INFO -    Strong momentum bonus (+15)
+2025-06-27 13:46:22,481 - INFO -    📋 Strategic limit order - Good confidence (+10)
+2025-06-27 13:46:22,481 - INFO -    💰 Reward/Risk Ratio: 5.00:1
+2025-06-27 13:46:22,481 - INFO -    Market timing: Trading approved: Confidence 100% >= 60% (Liquidity: 2/5)
+2025-06-27 13:46:22,481 - INFO - 📋 Placing LIMIT BUY for GBP_CAD @ 1.8700
+2025-06-27 13:46:22,481 - INFO - 📊 FIXED Enhanced Airtable metadata created: PCM_GBP/CAD_LIMIT_BUY_Weak_New York
+2025-06-27 13:46:22,481 - INFO -    Momentum: Weak (0.210) | Direction: Strong Bullish
+2025-06-27 13:46:22,481 - INFO -    Bias: BULLISH | Zone: Above_Buy_Zone | Distance: 80.2 pips
+2025-06-27 13:46:22,481 - INFO -    Confidence: 100% | Alignment: 1.0
+2025-06-27 13:46:22,481 - INFO -    Zone Logic Check: LIMIT BUY should be Above_Buy_Zone
+2025-06-27 13:46:22,481 - INFO - 📝 Added enhanced clientExtensions with Airtable fields
+2025-06-27 13:46:22,592 - INFO - 📝 Stored metadata for limit order 246
+2025-06-27 13:46:22,592 - INFO - ✅ Limit order placed: GBP_CAD BUY @ 1.8700
+2025-06-27 13:46:22,592 - INFO - 📝 Setup: PCM_GBP/CAD_LIMIT_BUY_Weak_New York
+2025-06-27 13:46:22,592 - INFO - 📊 Setup executed: PCM_GBP/CAD_LIMIT_BUY_Weak_New York
+2025-06-27 13:46:22,592 - INFO - Trade reasoning for GBP_CAD:
+2025-06-27 13:46:22,592 - INFO -    ✅ Momentum sufficient: 0.210%
+2025-06-27 13:46:22,592 - INFO -    📈 Strategy Direction: BUY (momentum-driven)
+2025-06-27 13:46:22,592 - INFO -    🎯 LIMIT BUY - Above buy zones
+2025-06-27 13:46:22,592 - INFO -    Entry at penny below: 1.8700
+2025-06-27 13:46:22,592 - INFO -    Current: 1.87803
+2025-06-27 13:46:22,592 - INFO -    Distance to entry: 80.2 pips
+2025-06-27 13:46:22,592 - INFO -    Better entry price with bullish momentum
+2025-06-27 13:46:22,592 - INFO -    Moderate momentum bonus (+10)
+2025-06-27 13:46:22,592 - INFO -    📋 Strategic limit order - Good confidence (+10)
+2025-06-27 13:46:22,592 - INFO -    💰 Reward/Risk Ratio: 5.00:1
+2025-06-27 13:46:22,592 - INFO -    Market timing: Trading approved: Confidence 100% >= 60% (Liquidity: 2/5)
+2025-06-27 13:46:22,592 - INFO - 📋 Placing LIMIT BUY for AUD_CAD @ 0.8900
+2025-06-27 13:46:22,592 - INFO - 📊 FIXED Enhanced Airtable metadata created: PCM_AUD/CAD_LIMIT_BUY_Weak_New York
+2025-06-27 13:46:22,592 - INFO -    Momentum: Weak (0.199) | Direction: Weak Bullish
+2025-06-27 13:46:22,592 - INFO -    Bias: BULLISH | Zone: Above_Buy_Zone | Distance: 47.5 pips
+2025-06-27 13:46:22,592 - INFO -    Confidence: 100% | Alignment: 1.0
+2025-06-27 13:46:22,592 - INFO -    Zone Logic Check: LIMIT BUY should be Above_Buy_Zone
+2025-06-27 13:46:22,592 - INFO - 📝 Added enhanced clientExtensions with Airtable fields
+2025-06-27 13:46:22,752 - INFO - 📝 Stored metadata for limit order 247
+2025-06-27 13:46:22,752 - INFO - ✅ Limit order placed: AUD_CAD BUY @ 0.8900
+2025-06-27 13:46:22,752 - INFO - 📝 Setup: PCM_AUD/CAD_LIMIT_BUY_Weak_New York
+2025-06-27 13:46:22,752 - INFO - 📊 Setup executed: PCM_AUD/CAD_LIMIT_BUY_Weak_New York
+2025-06-27 13:46:22,752 - INFO - Trade reasoning for AUD_CAD:
+2025-06-27 13:46:22,752 - INFO -    ✅ Momentum sufficient: 0.199%
+2025-06-27 13:46:22,752 - INFO -    📈 Strategy Direction: BUY (momentum-driven)
+2025-06-27 13:46:22,752 - INFO -    🎯 LIMIT BUY - Above buy zones
+2025-06-27 13:46:22,752 - INFO -    Entry at penny below: 0.8900
+2025-06-27 13:46:22,752 - INFO -    Current: 0.89475
+2025-06-27 13:46:22,752 - INFO -    Distance to entry: 47.5 pips
+2025-06-27 13:46:22,752 - INFO -    Better entry price with bullish momentum
+2025-06-27 13:46:22,752 - INFO -    Moderate momentum bonus (+10)
+2025-06-27 13:46:22,752 - INFO -    📋 Strategic limit order - Good confidence (+10)
+2025-06-27 13:46:22,752 - INFO -    💰 Reward/Risk Ratio: 5.00:1
+2025-06-27 13:46:22,752 - INFO -    Market timing: Trading approved: Confidence 100% >= 60% (Liquidity: 2/5)
+2025-06-27 13:46:22,895 - INFO - ✅ Trading cycle completed

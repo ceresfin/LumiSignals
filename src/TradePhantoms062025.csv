@@ -1,0 +1,4 @@
+Date,Asset Class,Ticker/ Pair,Direction,Type of Trade,Entry,Current Price (Delayed),Stop Loss,Target 1,Target 2,Target 3,Strike,Expiration,Notes / Trade Management:,Results:,% Return Option,% W/L Account
+6/19/2025,Forex,USDCAD,Short,Swing Trade,Limit @ 1.3800,1.3726,105 Pips,105 Pips,255 Pips,,,,1.0% Risk Take 1:1 first. Reduce half postion Lock in profit. Wait for further instructions as we near far target. ,,,
+6/19/2025,Forex,CHFJPY,Short,Swing Trade,Limit @ 180.00,178.63,135 Pips,135 Pips,965 Pips,,,,1.0% Risk Take 1:1 first. Reduce half postion Lock in profit. Wait for further instructions as we near far target. ,,,
+5/19/2025,Forex,EURGBP,Long,Swing Trade,Market @ .6532,0.8563,0.8485,0.8641,0.8715,,,,1.0% Risk Take 1:1 first. Reduce half postion Lock in profit. Wait for further instructions as we near far target. ,,,0.6% Gain

@@ -1,0 +1,425 @@
+2025-06-27 16:15:30,564 - INFO - Quarter Curve Butter Middle Trading Bot started
+2025-06-27 16:15:46,900 - INFO - Quarter Curve Butter Middle Trading Bot started
+2025-06-27 16:15:49,409 - INFO - 🔍 Scanning for Quarter Curve Butter Middle opportunities...
+2025-06-27 16:15:49,633 - INFO - 🎯 EUR_USD: Quarter Curve Butter Middle SELL @ 1.1675
+2025-06-27 16:15:49,633 - INFO -    Quarters: 1.1500 - 1.1750
+2025-06-27 16:15:49,634 - INFO -    Target: 100 pips | Stop: 25 pips
+2025-06-27 16:15:49,841 - INFO - 🎯 GBP_USD: Quarter Curve Butter Middle SELL @ 1.3675
+2025-06-27 16:15:49,844 - INFO -    Quarters: 1.3500 - 1.3750
+2025-06-27 16:15:49,845 - INFO -    Target: 100 pips | Stop: 25 pips
+2025-06-27 16:15:51,388 - INFO - 🎯 EUR_JPY: Quarter Curve Butter Middle SELL @ 169.2500
+2025-06-27 16:15:51,389 - INFO -    Quarters: 167.5000 - 170.0000
+2025-06-27 16:15:51,389 - INFO -    Target: 100 pips | Stop: 25 pips
+2025-06-27 16:16:00,867 - INFO - Quarter Curve Butter Middle Trading Bot started
+2025-06-27 16:16:04,335 - INFO - 🔍 Scanning for Quarter Curve Butter Middle opportunities...
+2025-06-27 16:16:04,885 - INFO - 🎯 EUR_USD: Quarter Curve Butter Middle SELL @ 1.1675
+2025-06-27 16:16:04,886 - INFO -    Quarters: 1.1500 - 1.1750
+2025-06-27 16:16:04,886 - INFO -    Target: 100 pips | Stop: 25 pips
+2025-06-27 16:16:05,114 - INFO - 🎯 GBP_USD: Quarter Curve Butter Middle SELL @ 1.3675
+2025-06-27 16:16:05,115 - INFO -    Quarters: 1.3500 - 1.3750
+2025-06-27 16:16:05,116 - INFO -    Target: 100 pips | Stop: 25 pips
+2025-06-27 16:16:06,875 - INFO - 🎯 EUR_JPY: Quarter Curve Butter Middle SELL @ 169.2500
+2025-06-27 16:16:06,876 - INFO -    Quarters: 167.5000 - 170.0000
+2025-06-27 16:16:06,876 - INFO -    Target: 100 pips | Stop: 25 pips
+2025-06-27 16:16:11,226 - INFO - 🎯 Placing Quarter Curve Butter Middle order for EUR_USD
+2025-06-27 16:16:11,226 - INFO - 🎯 Quarter Curve Butter Middle Setup: QCButterMiddle_EUR/USD_SELL_1.1675_bearish
+2025-06-27 16:16:11,226 - INFO -    Quarter Bounds: 1.1500 - 1.1750
+2025-06-27 16:16:11,226 - INFO -    Bodyguard Breached: 1.1675
+2025-06-27 16:16:11,226 - INFO -    Breach Direction: above_upper_bodyguard
+2025-06-27 16:16:11,226 - INFO -    Entry: 1.1675 | Stop: 1.1700 (25 pips)
+2025-06-27 16:16:11,227 - INFO -    Target: 1.1575 (100 pips)
+2025-06-27 16:16:11,227 - INFO -    📊 Setup Name: QCButterMiddle_EUR/USD_SELL_1.1675_bearish
+2025-06-27 16:16:11,227 - INFO -    📊 Strategy Tag: QuarterCurveButterMiddle
+2025-06-27 16:16:11,227 - INFO -    📊 Momentum Strength: 0.75 (decimal for 75% display)
+2025-06-27 16:16:11,227 - INFO -    📊 Momentum Direction: WEAK_BEARISH (candlestick strength)
+2025-06-27 16:16:11,228 - INFO -    📊 Strategy Bias: SELL
+2025-06-27 16:16:11,228 - INFO -    📊 Zone Position: In_Sell_Zone (price relative to breached zone)
+2025-06-27 16:16:11,228 - INFO -    📊 Momentum Alignment: 0.6 (numeric)
+2025-06-27 16:16:11,228 - INFO -    📊 Signal Confidence: 75
+2025-06-27 16:16:11,336 - INFO - ✅ Order placed successfully: 253
+2025-06-27 16:16:11,337 - INFO - 🎯 Placing Quarter Curve Butter Middle order for GBP_USD
+2025-06-27 16:16:11,337 - INFO - 🎯 Quarter Curve Butter Middle Setup: QCButterMiddle_GBP/USD_SELL_1.3675_strong_bearish
+2025-06-27 16:16:11,337 - INFO -    Quarter Bounds: 1.3500 - 1.3750
+2025-06-27 16:16:11,337 - INFO -    Bodyguard Breached: 1.3675
+2025-06-27 16:16:11,337 - INFO -    Breach Direction: above_upper_bodyguard
+2025-06-27 16:16:11,337 - INFO -    Entry: 1.3675 | Stop: 1.3700 (25 pips)
+2025-06-27 16:16:11,338 - INFO -    Target: 1.3575 (100 pips)
+2025-06-27 16:16:11,338 - INFO -    📊 Setup Name: QCButterMiddle_GBP/USD_SELL_1.3675_strong_bearish
+2025-06-27 16:16:11,339 - INFO -    📊 Strategy Tag: QuarterCurveButterMiddle
+2025-06-27 16:16:11,339 - INFO -    📊 Momentum Strength: 0.85 (decimal for 85% display)
+2025-06-27 16:16:11,339 - INFO -    📊 Momentum Direction: STRONG_BEARISH (candlestick strength)
+2025-06-27 16:16:11,339 - INFO -    📊 Strategy Bias: SELL
+2025-06-27 16:16:11,339 - INFO -    📊 Zone Position: In_Sell_Zone (price relative to breached zone)
+2025-06-27 16:16:11,339 - INFO -    📊 Momentum Alignment: 1.0 (numeric)
+2025-06-27 16:16:11,339 - INFO -    📊 Signal Confidence: 85
+2025-06-27 16:16:11,485 - INFO - ✅ Order placed successfully: 255
+2025-06-27 16:16:11,486 - INFO - 🎯 Placing Quarter Curve Butter Middle order for EUR_JPY
+2025-06-27 16:16:11,486 - INFO - 🎯 Quarter Curve Butter Middle Setup: QCButterMiddle_EUR/JPY_SELL_169.2500_bearish
+2025-06-27 16:16:11,487 - INFO -    Quarter Bounds: 167.5000 - 170.0000
+2025-06-27 16:16:11,487 - INFO -    Bodyguard Breached: 169.2500
+2025-06-27 16:16:11,488 - INFO -    Breach Direction: above_upper_bodyguard
+2025-06-27 16:16:11,488 - INFO -    Entry: 169.2500 | Stop: 169.5000 (25 pips)
+2025-06-27 16:16:11,488 - INFO -    Target: 168.2500 (100 pips)
+2025-06-27 16:16:11,488 - INFO -    📊 Setup Name: QCButterMiddle_EUR/JPY_SELL_169.2500_bearish
+2025-06-27 16:16:11,488 - INFO -    📊 Strategy Tag: QuarterCurveButterMiddle
+2025-06-27 16:16:11,488 - INFO -    📊 Momentum Strength: 0.75 (decimal for 75% display)
+2025-06-27 16:16:11,488 - INFO -    📊 Momentum Direction: WEAK_BEARISH (candlestick strength)
+2025-06-27 16:16:11,488 - INFO -    📊 Strategy Bias: SELL
+2025-06-27 16:16:11,489 - INFO -    📊 Zone Position: In_Sell_Zone (price relative to breached zone)
+2025-06-27 16:16:11,490 - INFO -    📊 Momentum Alignment: 0.6 (numeric)
+2025-06-27 16:16:11,490 - INFO -    📊 Signal Confidence: 75
+2025-06-27 16:16:11,597 - INFO - ✅ Order placed successfully: 257
+2025-06-27 16:21:16,526 - INFO - Quarter Curve Butter Middle Trading Bot started
+2025-06-27 16:21:18,455 - INFO - 🔍 Scanning for Quarter Curve Butter Middle opportunities...
+2025-06-27 16:21:19,009 - INFO - 🎯 EUR_USD: Quarter Curve Butter Middle SELL @ 1.1675
+2025-06-27 16:21:19,010 - INFO -    Quarters: 1.1500 - 1.1750
+2025-06-27 16:21:19,010 - INFO -    Target: 100 pips | Stop: 25 pips
+2025-06-27 16:21:19,218 - INFO - 🎯 GBP_USD: Quarter Curve Butter Middle SELL @ 1.3675
+2025-06-27 16:21:19,220 - INFO -    Quarters: 1.3500 - 1.3750
+2025-06-27 16:21:19,220 - INFO -    Target: 100 pips | Stop: 25 pips
+2025-06-27 16:21:20,880 - INFO - 🎯 EUR_JPY: Quarter Curve Butter Middle SELL @ 169.2500
+2025-06-27 16:21:20,881 - INFO -    Quarters: 167.5000 - 170.0000
+2025-06-27 16:21:20,881 - INFO -    Target: 100 pips | Stop: 25 pips
+2025-06-27 16:21:24,614 - INFO - 🎯 Placing Quarter Curve Butter Middle order for EUR_USD
+2025-06-27 16:21:24,614 - INFO - 🎯 Quarter Curve Butter Middle Setup: QCButterMiddle_EUR/USD_SELL_1.1675_bearish
+2025-06-27 16:21:24,614 - INFO -    Quarter Bounds: 1.1500 - 1.1750
+2025-06-27 16:21:24,615 - INFO -    Bodyguard Breached: 1.1675
+2025-06-27 16:21:24,615 - INFO -    Breach Direction: above_upper_bodyguard
+2025-06-27 16:21:24,615 - INFO -    Entry: 1.1675 | Stop: 1.1700 (25 pips)
+2025-06-27 16:21:24,615 - INFO -    Target: 1.1575 (100 pips)
+2025-06-27 16:21:24,615 - INFO -    📊 Setup Name: QCButterMiddle_EUR/USD_SELL_1.1675_bearish
+2025-06-27 16:21:24,615 - INFO -    📊 Strategy Tag: QuarterCurveButterMiddle
+2025-06-27 16:21:24,615 - INFO -    📊 Momentum Strength: 0.75 (decimal for 75% display)
+2025-06-27 16:21:24,615 - INFO -    📊 Momentum Direction: WEAK_BEARISH (candlestick strength)
+2025-06-27 16:21:24,615 - INFO -    📊 Strategy Bias: SELL
+2025-06-27 16:21:24,615 - INFO -    📊 Zone Position: In_Sell_Zone (price relative to breached zone)
+2025-06-27 16:21:24,615 - INFO -    📊 Momentum Alignment: 0.6 (numeric)
+2025-06-27 16:21:24,616 - INFO -    📊 Signal Confidence: 75
+2025-06-27 16:21:24,753 - INFO - ✅ Order placed successfully: 261
+2025-06-27 16:21:24,753 - INFO - 🎯 Placing Quarter Curve Butter Middle order for GBP_USD
+2025-06-27 16:21:24,754 - INFO - 🎯 Quarter Curve Butter Middle Setup: QCButterMiddle_GBP/USD_SELL_1.3675_strong_bearish
+2025-06-27 16:21:24,755 - INFO -    Quarter Bounds: 1.3500 - 1.3750
+2025-06-27 16:21:24,755 - INFO -    Bodyguard Breached: 1.3675
+2025-06-27 16:21:24,755 - INFO -    Breach Direction: above_upper_bodyguard
+2025-06-27 16:21:24,755 - INFO -    Entry: 1.3675 | Stop: 1.3700 (25 pips)
+2025-06-27 16:21:24,755 - INFO -    Target: 1.3575 (100 pips)
+2025-06-27 16:21:24,755 - INFO -    📊 Setup Name: QCButterMiddle_GBP/USD_SELL_1.3675_strong_bearish
+2025-06-27 16:21:24,755 - INFO -    📊 Strategy Tag: QuarterCurveButterMiddle
+2025-06-27 16:21:24,755 - INFO -    📊 Momentum Strength: 0.85 (decimal for 85% display)
+2025-06-27 16:21:24,755 - INFO -    📊 Momentum Direction: STRONG_BEARISH (candlestick strength)
+2025-06-27 16:21:24,757 - INFO -    📊 Strategy Bias: SELL
+2025-06-27 16:21:24,757 - INFO -    📊 Zone Position: In_Sell_Zone (price relative to breached zone)
+2025-06-27 16:21:24,757 - INFO -    📊 Momentum Alignment: 1.0 (numeric)
+2025-06-27 16:21:24,757 - INFO -    📊 Signal Confidence: 85
+2025-06-27 16:21:24,870 - INFO - ✅ Order placed successfully: 263
+2025-06-27 16:21:24,871 - INFO - 🎯 Placing Quarter Curve Butter Middle order for EUR_JPY
+2025-06-27 16:21:24,871 - INFO - 🎯 Quarter Curve Butter Middle Setup: QCButterMiddle_EUR/JPY_SELL_169.2500_bearish
+2025-06-27 16:21:24,871 - INFO -    Quarter Bounds: 167.5000 - 170.0000
+2025-06-27 16:21:24,871 - INFO -    Bodyguard Breached: 169.2500
+2025-06-27 16:21:24,871 - INFO -    Breach Direction: above_upper_bodyguard
+2025-06-27 16:21:24,871 - INFO -    Entry: 169.2500 | Stop: 169.5000 (25 pips)
+2025-06-27 16:21:24,872 - INFO -    Target: 168.2500 (100 pips)
+2025-06-27 16:21:24,872 - INFO -    📊 Setup Name: QCButterMiddle_EUR/JPY_SELL_169.2500_bearish
+2025-06-27 16:21:24,872 - INFO -    📊 Strategy Tag: QuarterCurveButterMiddle
+2025-06-27 16:21:24,872 - INFO -    📊 Momentum Strength: 0.75 (decimal for 75% display)
+2025-06-27 16:21:24,872 - INFO -    📊 Momentum Direction: WEAK_BEARISH (candlestick strength)
+2025-06-27 16:21:24,872 - INFO -    📊 Strategy Bias: SELL
+2025-06-27 16:21:24,873 - INFO -    📊 Zone Position: In_Sell_Zone (price relative to breached zone)
+2025-06-27 16:21:24,873 - INFO -    📊 Momentum Alignment: 0.6 (numeric)
+2025-06-27 16:21:24,873 - INFO -    📊 Signal Confidence: 75
+2025-06-27 16:21:25,005 - INFO - ✅ Order placed successfully: 265
+2025-06-27 16:32:38,487 - INFO - Quarter Curve Butter Middle Trading Bot started
+2025-06-27 16:32:40,346 - INFO - 🔍 Scanning for Quarter Curve Butter Middle opportunities...
+2025-06-27 16:32:40,610 - INFO - 🎯 EUR_USD: Quarter Curve Butter Middle SELL @ 1.1675
+2025-06-27 16:32:40,610 - INFO -    Quarters: 1.1500 - 1.1750
+2025-06-27 16:32:40,610 - INFO -    Target: 100 pips | Stop: 25 pips
+2025-06-27 16:32:40,856 - INFO - 🎯 GBP_USD: Quarter Curve Butter Middle SELL @ 1.3675
+2025-06-27 16:32:40,856 - INFO -    Quarters: 1.3500 - 1.3750
+2025-06-27 16:32:40,856 - INFO -    Target: 100 pips | Stop: 25 pips
+2025-06-27 16:32:42,495 - INFO - 🎯 EUR_JPY: Quarter Curve Butter Middle SELL @ 169.2500
+2025-06-27 16:32:42,495 - INFO -    Quarters: 167.5000 - 170.0000
+2025-06-27 16:32:42,495 - INFO -    Target: 100 pips | Stop: 25 pips
+2025-06-27 16:32:48,894 - INFO - 🎯 Placing Quarter Curve Butter Middle order for EUR_USD
+2025-06-27 16:32:48,894 - INFO - 🎯 Quarter Curve Butter Middle Setup: QCButterMiddle_EUR/USD_SELL_1.1675_bearish
+2025-06-27 16:32:48,894 - INFO -    Quarter Bounds: 1.1500 - 1.1750
+2025-06-27 16:32:48,894 - INFO -    Bodyguard Breached: 1.1675
+2025-06-27 16:32:48,894 - INFO -    Breach Direction: above_upper_bodyguard
+2025-06-27 16:32:48,894 - INFO -    Entry: 1.1675 | Stop: 1.1700 (25 pips)
+2025-06-27 16:32:48,894 - INFO -    Target: 1.1575 (100 pips)
+2025-06-27 16:32:48,894 - INFO -    📊 Setup Name: QCButterMiddle_EUR/USD_SELL_1.1675_bearish
+2025-06-27 16:32:48,894 - INFO -    📊 Strategy Tag: QuarterCurveButterMiddle
+2025-06-27 16:32:48,894 - INFO -    📊 Momentum Strength: 0.75 (decimal for 75% display)
+2025-06-27 16:32:48,894 - INFO -    📊 Momentum Direction: WEAK_BEARISH (candlestick strength)
+2025-06-27 16:32:48,894 - INFO -    📊 Strategy Bias: SELL
+2025-06-27 16:32:48,894 - INFO -    📊 Zone Position: In_Sell_Zone (price relative to breached zone)
+2025-06-27 16:32:48,894 - INFO -    📊 Momentum Alignment: 0.6 (numeric)
+2025-06-27 16:32:48,894 - INFO -    📊 Signal Confidence: 75
+2025-06-27 16:32:49,018 - INFO - ✅ Order placed successfully: 269
+2025-06-27 16:32:49,018 - INFO - 🎯 Placing Quarter Curve Butter Middle order for GBP_USD
+2025-06-27 16:32:49,018 - INFO - 🎯 Quarter Curve Butter Middle Setup: QCButterMiddle_GBP/USD_SELL_1.3675_strong_bearish
+2025-06-27 16:32:49,018 - INFO -    Quarter Bounds: 1.3500 - 1.3750
+2025-06-27 16:32:49,018 - INFO -    Bodyguard Breached: 1.3675
+2025-06-27 16:32:49,018 - INFO -    Breach Direction: above_upper_bodyguard
+2025-06-27 16:32:49,018 - INFO -    Entry: 1.3675 | Stop: 1.3700 (25 pips)
+2025-06-27 16:32:49,018 - INFO -    Target: 1.3575 (100 pips)
+2025-06-27 16:32:49,018 - INFO -    📊 Setup Name: QCButterMiddle_GBP/USD_SELL_1.3675_strong_bearish
+2025-06-27 16:32:49,018 - INFO -    📊 Strategy Tag: QuarterCurveButterMiddle
+2025-06-27 16:32:49,018 - INFO -    📊 Momentum Strength: 0.85 (decimal for 85% display)
+2025-06-27 16:32:49,018 - INFO -    📊 Momentum Direction: STRONG_BEARISH (candlestick strength)
+2025-06-27 16:32:49,018 - INFO -    📊 Strategy Bias: SELL
+2025-06-27 16:32:49,018 - INFO -    📊 Zone Position: In_Sell_Zone (price relative to breached zone)
+2025-06-27 16:32:49,018 - INFO -    📊 Momentum Alignment: 1.0 (numeric)
+2025-06-27 16:32:49,018 - INFO -    📊 Signal Confidence: 85
+2025-06-27 16:32:49,146 - INFO - ✅ Order placed successfully: 271
+2025-06-27 16:32:49,146 - INFO - 🎯 Placing Quarter Curve Butter Middle order for EUR_JPY
+2025-06-27 16:32:49,146 - INFO - 🎯 Quarter Curve Butter Middle Setup: QCButterMiddle_EUR/JPY_SELL_169.2500_bearish
+2025-06-27 16:32:49,146 - INFO -    Quarter Bounds: 167.5000 - 170.0000
+2025-06-27 16:32:49,146 - INFO -    Bodyguard Breached: 169.2500
+2025-06-27 16:32:49,146 - INFO -    Breach Direction: above_upper_bodyguard
+2025-06-27 16:32:49,146 - INFO -    Entry: 169.2500 | Stop: 169.5000 (25 pips)
+2025-06-27 16:32:49,146 - INFO -    Target: 168.2500 (100 pips)
+2025-06-27 16:32:49,146 - INFO -    📊 Setup Name: QCButterMiddle_EUR/JPY_SELL_169.2500_bearish
+2025-06-27 16:32:49,146 - INFO -    📊 Strategy Tag: QuarterCurveButterMiddle
+2025-06-27 16:32:49,146 - INFO -    📊 Momentum Strength: 0.75 (decimal for 75% display)
+2025-06-27 16:32:49,146 - INFO -    📊 Momentum Direction: WEAK_BEARISH (candlestick strength)
+2025-06-27 16:32:49,146 - INFO -    📊 Strategy Bias: SELL
+2025-06-27 16:32:49,146 - INFO -    📊 Zone Position: In_Sell_Zone (price relative to breached zone)
+2025-06-27 16:32:49,146 - INFO -    📊 Momentum Alignment: 0.6 (numeric)
+2025-06-27 16:32:49,146 - INFO -    📊 Signal Confidence: 75
+2025-06-27 16:32:49,272 - INFO - ✅ Order placed successfully: 273
+2025-06-27 16:41:57,021 - INFO - Quarter Curve Butter Middle Trading Bot started
+2025-06-27 16:41:58,797 - INFO - 🔍 Scanning for Quarter Curve Butter Middle opportunities...
+2025-06-27 16:41:59,121 - INFO - 🎯 EUR_USD: Quarter Curve Butter Middle SELL @ 1.1675
+2025-06-27 16:41:59,133 - INFO -    Quarters: 1.1500 - 1.1750
+2025-06-27 16:41:59,133 - INFO -    Target: 100 pips | Stop: 25 pips
+2025-06-27 16:41:59,362 - INFO - 🎯 GBP_USD: Quarter Curve Butter Middle SELL @ 1.3675
+2025-06-27 16:41:59,362 - INFO -    Quarters: 1.3500 - 1.3750
+2025-06-27 16:41:59,362 - INFO -    Target: 100 pips | Stop: 25 pips
+2025-06-27 16:42:01,080 - INFO - 🎯 EUR_JPY: Quarter Curve Butter Middle SELL @ 169.2500
+2025-06-27 16:42:01,080 - INFO -    Quarters: 167.5000 - 170.0000
+2025-06-27 16:42:01,096 - INFO -    Target: 100 pips | Stop: 25 pips
+2025-06-27 16:42:04,824 - INFO - 🎯 Placing Quarter Curve Butter Middle order for EUR_USD
+2025-06-27 16:42:04,837 - INFO - 🎯 Quarter Curve Butter Middle Setup: QCButterMiddle_EUR/USD_SELL_1.1675_bearish
+2025-06-27 16:42:04,837 - INFO -    Quarter Bounds: 1.1500 - 1.1750
+2025-06-27 16:42:04,837 - INFO -    Bodyguard Breached: 1.1675
+2025-06-27 16:42:04,837 - INFO -    Breach Direction: above_upper_bodyguard
+2025-06-27 16:42:04,837 - INFO -    Entry: 1.1675 | Stop: 1.1700 (25 pips)
+2025-06-27 16:42:04,837 - INFO -    Target: 1.1575 (100 pips)
+2025-06-27 16:42:04,837 - INFO -    📊 Setup Name: QCButterMiddle_EUR/USD_SELL_1.1675_bearish
+2025-06-27 16:42:04,837 - INFO -    📊 Strategy Tag: QuarterCurveButterMiddle
+2025-06-27 16:42:04,837 - INFO -    📊 Momentum Strength: 0.75 (decimal for 75% display)
+2025-06-27 16:42:04,837 - INFO -    📊 Momentum Direction: WEAK_BEARISH (candlestick strength)
+2025-06-27 16:42:04,837 - INFO -    📊 Strategy Bias: SELL
+2025-06-27 16:42:04,837 - INFO -    📊 Zone Position: In_Sell_Zone (price relative to breached zone)
+2025-06-27 16:42:04,837 - INFO -    📊 Momentum Alignment: 0.6 (numeric)
+2025-06-27 16:42:04,837 - INFO -    📊 Signal Confidence: 75
+2025-06-27 16:42:04,981 - INFO - ✅ Order placed successfully: 279
+2025-06-27 16:42:04,981 - INFO - 🎯 Placing Quarter Curve Butter Middle order for GBP_USD
+2025-06-27 16:42:04,981 - INFO - 🎯 Quarter Curve Butter Middle Setup: QCButterMiddle_GBP/USD_SELL_1.3675_strong_bearish
+2025-06-27 16:42:04,981 - INFO -    Quarter Bounds: 1.3500 - 1.3750
+2025-06-27 16:42:04,981 - INFO -    Bodyguard Breached: 1.3675
+2025-06-27 16:42:04,996 - INFO -    Breach Direction: above_upper_bodyguard
+2025-06-27 16:42:04,996 - INFO -    Entry: 1.3675 | Stop: 1.3700 (25 pips)
+2025-06-27 16:42:04,996 - INFO -    Target: 1.3575 (100 pips)
+2025-06-27 16:42:04,996 - INFO -    📊 Setup Name: QCButterMiddle_GBP/USD_SELL_1.3675_strong_bearish
+2025-06-27 16:42:04,996 - INFO -    📊 Strategy Tag: QuarterCurveButterMiddle
+2025-06-27 16:42:04,996 - INFO -    📊 Momentum Strength: 0.85 (decimal for 85% display)
+2025-06-27 16:42:04,996 - INFO -    📊 Momentum Direction: STRONG_BEARISH (candlestick strength)
+2025-06-27 16:42:04,996 - INFO -    📊 Strategy Bias: SELL
+2025-06-27 16:42:04,996 - INFO -    📊 Zone Position: In_Sell_Zone (price relative to breached zone)
+2025-06-27 16:42:04,996 - INFO -    📊 Momentum Alignment: 1.0 (numeric)
+2025-06-27 16:42:04,996 - INFO -    📊 Signal Confidence: 85
+2025-06-27 16:42:05,118 - INFO - ✅ Order placed successfully: 281
+2025-06-27 16:42:05,118 - INFO - 🎯 Placing Quarter Curve Butter Middle order for EUR_JPY
+2025-06-27 16:42:05,118 - INFO - 🎯 Quarter Curve Butter Middle Setup: QCButterMiddle_EUR/JPY_SELL_169.2500_bearish
+2025-06-27 16:42:05,118 - INFO -    Quarter Bounds: 167.5000 - 170.0000
+2025-06-27 16:42:05,118 - INFO -    Bodyguard Breached: 169.2500
+2025-06-27 16:42:05,118 - INFO -    Breach Direction: above_upper_bodyguard
+2025-06-27 16:42:05,118 - INFO -    Entry: 169.2500 | Stop: 169.5000 (25 pips)
+2025-06-27 16:42:05,118 - INFO -    Target: 168.2500 (100 pips)
+2025-06-27 16:42:05,118 - INFO -    📊 Setup Name: QCButterMiddle_EUR/JPY_SELL_169.2500_bearish
+2025-06-27 16:42:05,118 - INFO -    📊 Strategy Tag: QuarterCurveButterMiddle
+2025-06-27 16:42:05,118 - INFO -    📊 Momentum Strength: 0.75 (decimal for 75% display)
+2025-06-27 16:42:05,118 - INFO -    📊 Momentum Direction: WEAK_BEARISH (candlestick strength)
+2025-06-27 16:42:05,118 - INFO -    📊 Strategy Bias: SELL
+2025-06-27 16:42:05,118 - INFO -    📊 Zone Position: In_Sell_Zone (price relative to breached zone)
+2025-06-27 16:42:05,124 - INFO -    📊 Momentum Alignment: 0.6 (numeric)
+2025-06-27 16:42:05,124 - INFO -    📊 Signal Confidence: 75
+2025-06-27 16:42:05,254 - INFO - ✅ Order placed successfully: 283
+2025-06-27 16:50:14,641 - INFO - Quarter Curve Butter Middle Trading Bot started
+2025-06-27 16:50:16,496 - INFO - 🔍 Scanning for Quarter Curve Butter Middle opportunities...
+2025-06-27 16:50:16,847 - INFO - 🎯 EUR_USD: Quarter Curve Butter Middle SELL @ 1.1675
+2025-06-27 16:50:16,847 - INFO -    Quarters: 1.1500 - 1.1750
+2025-06-27 16:50:16,847 - INFO -    Target: 100 pips | Stop: 25 pips
+2025-06-27 16:50:17,086 - INFO - 🎯 GBP_USD: Quarter Curve Butter Middle SELL @ 1.3675
+2025-06-27 16:50:17,086 - INFO -    Quarters: 1.3500 - 1.3750
+2025-06-27 16:50:17,086 - INFO -    Target: 100 pips | Stop: 25 pips
+2025-06-27 16:50:18,807 - INFO - 🎯 EUR_JPY: Quarter Curve Butter Middle SELL @ 169.2500
+2025-06-27 16:50:18,807 - INFO -    Quarters: 167.5000 - 170.0000
+2025-06-27 16:50:18,807 - INFO -    Target: 100 pips | Stop: 25 pips
+2025-06-27 16:50:28,888 - INFO - 🎯 Placing Quarter Curve Butter Middle order for EUR_USD
+2025-06-27 16:50:28,888 - INFO - 🎯 Quarter Curve Butter Middle Setup: QCButterMiddle_EUR/USD_SELL_1.1675_bearish
+2025-06-27 16:50:28,888 - INFO -    Quarter Bounds: 1.1500 - 1.1750
+2025-06-27 16:50:28,888 - INFO -    Bodyguard Breached: 1.1675
+2025-06-27 16:50:28,888 - INFO -    Breach Direction: above_upper_bodyguard
+2025-06-27 16:50:28,888 - INFO -    Entry: 1.1675 | Stop: 1.1700 (25 pips)
+2025-06-27 16:50:28,888 - INFO -    Target: 1.1575 (100 pips)
+2025-06-27 16:50:28,888 - INFO -    📊 Setup Name: QCButterMiddle_EUR/USD_SELL_1.1675_bearish
+2025-06-27 16:50:28,888 - INFO -    📊 Strategy Tag: QuarterCurveButterMiddle
+2025-06-27 16:50:28,888 - INFO -    📊 Momentum Strength: 0.75 (decimal for 75% display)
+2025-06-27 16:50:28,888 - INFO -    📊 Momentum Direction: WEAK_BEARISH (candlestick strength)
+2025-06-27 16:50:28,888 - INFO -    📊 Strategy Bias: SELL
+2025-06-27 16:50:28,888 - INFO -    📊 Zone Position: In_Sell_Zone (price relative to breached zone)
+2025-06-27 16:50:28,888 - INFO -    📊 Momentum Alignment: 0.6 (numeric)
+2025-06-27 16:50:28,888 - INFO -    📊 Signal Confidence: 75
+2025-06-27 16:50:28,996 - INFO - ✅ Order placed successfully: 289
+2025-06-27 16:50:28,996 - INFO - 🎯 Placing Quarter Curve Butter Middle order for GBP_USD
+2025-06-27 16:50:28,996 - INFO - 🎯 Quarter Curve Butter Middle Setup: QCButterMiddle_GBP/USD_SELL_1.3675_strong_bearish
+2025-06-27 16:50:28,996 - INFO -    Quarter Bounds: 1.3500 - 1.3750
+2025-06-27 16:50:28,996 - INFO -    Bodyguard Breached: 1.3675
+2025-06-27 16:50:28,996 - INFO -    Breach Direction: above_upper_bodyguard
+2025-06-27 16:50:28,996 - INFO -    Entry: 1.3675 | Stop: 1.3700 (25 pips)
+2025-06-27 16:50:28,996 - INFO -    Target: 1.3575 (100 pips)
+2025-06-27 16:50:28,996 - INFO -    📊 Setup Name: QCButterMiddle_GBP/USD_SELL_1.3675_strong_bearish
+2025-06-27 16:50:28,996 - INFO -    📊 Strategy Tag: QuarterCurveButterMiddle
+2025-06-27 16:50:28,996 - INFO -    📊 Momentum Strength: 0.85 (decimal for 85% display)
+2025-06-27 16:50:28,996 - INFO -    📊 Momentum Direction: STRONG_BEARISH (candlestick strength)
+2025-06-27 16:50:28,996 - INFO -    📊 Strategy Bias: SELL
+2025-06-27 16:50:28,996 - INFO -    📊 Zone Position: In_Sell_Zone (price relative to breached zone)
+2025-06-27 16:50:28,996 - INFO -    📊 Momentum Alignment: 1.0 (numeric)
+2025-06-27 16:50:28,996 - INFO -    📊 Signal Confidence: 85
+2025-06-27 16:50:29,155 - INFO - ✅ Order placed successfully: 291
+2025-06-27 16:50:29,155 - INFO - 🎯 Placing Quarter Curve Butter Middle order for EUR_JPY
+2025-06-27 16:50:29,155 - INFO - 🎯 Quarter Curve Butter Middle Setup: QCButterMiddle_EUR/JPY_SELL_169.2500_bearish
+2025-06-27 16:50:29,155 - INFO -    Quarter Bounds: 167.5000 - 170.0000
+2025-06-27 16:50:29,155 - INFO -    Bodyguard Breached: 169.2500
+2025-06-27 16:50:29,155 - INFO -    Breach Direction: above_upper_bodyguard
+2025-06-27 16:50:29,155 - INFO -    Entry: 169.2500 | Stop: 169.5000 (25 pips)
+2025-06-27 16:50:29,155 - INFO -    Target: 168.2500 (100 pips)
+2025-06-27 16:50:29,155 - INFO -    📊 Setup Name: QCButterMiddle_EUR/JPY_SELL_169.2500_bearish
+2025-06-27 16:50:29,155 - INFO -    📊 Strategy Tag: QuarterCurveButterMiddle
+2025-06-27 16:50:29,155 - INFO -    📊 Momentum Strength: 0.75 (decimal for 75% display)
+2025-06-27 16:50:29,155 - INFO -    📊 Momentum Direction: WEAK_BEARISH (candlestick strength)
+2025-06-27 16:50:29,155 - INFO -    📊 Strategy Bias: SELL
+2025-06-27 16:50:29,155 - INFO -    📊 Zone Position: In_Sell_Zone (price relative to breached zone)
+2025-06-27 16:50:29,155 - INFO -    📊 Momentum Alignment: 0.6 (numeric)
+2025-06-27 16:50:29,155 - INFO -    📊 Signal Confidence: 75
+2025-06-27 16:50:29,307 - INFO - ✅ Order placed successfully: 293
+2025-06-27 16:56:45,506 - INFO - Quarter Curve Butter Middle Trading Bot started
+2025-06-27 16:56:46,821 - INFO - 🔍 Scanning for Quarter Curve Butter Middle opportunities...
+2025-06-27 16:56:47,057 - INFO - 🎯 EUR_USD: Quarter Curve Butter Middle SELL @ 1.1675
+2025-06-27 16:56:47,057 - INFO -    Quarters: 1.1500 - 1.1750
+2025-06-27 16:56:47,057 - INFO -    Target: 100 pips | Stop: 25 pips
+2025-06-27 16:56:47,264 - INFO - 🎯 GBP_USD: Quarter Curve Butter Middle SELL @ 1.3675
+2025-06-27 16:56:47,264 - INFO -    Quarters: 1.3500 - 1.3750
+2025-06-27 16:56:47,264 - INFO -    Target: 100 pips | Stop: 25 pips
+2025-06-27 16:56:48,955 - INFO - 🎯 EUR_JPY: Quarter Curve Butter Middle SELL @ 169.2500
+2025-06-27 16:56:48,955 - INFO -    Quarters: 167.5000 - 170.0000
+2025-06-27 16:56:48,955 - INFO -    Target: 100 pips | Stop: 25 pips
+2025-06-27 16:56:51,751 - INFO - 🎯 Placing Quarter Curve Butter Middle order for EUR_USD
+2025-06-27 16:56:51,751 - INFO - 🎯 Quarter Curve Butter Middle Setup: QCButterMiddle_EUR/USD_SELL_1.1675_bearish
+2025-06-27 16:56:51,751 - INFO -    Quarter Bounds: 1.1500 - 1.1750
+2025-06-27 16:56:51,751 - INFO -    Bodyguard Breached: 1.1675
+2025-06-27 16:56:51,751 - INFO -    Breach Direction: above_upper_bodyguard
+2025-06-27 16:56:51,751 - INFO -    Entry: 1.1675 | Stop: 1.1700 (25 pips)
+2025-06-27 16:56:51,751 - INFO -    Target: 1.1575 (100 pips)
+2025-06-27 16:56:51,751 - INFO -    📊 Setup Name: QCButterMiddle_EUR/USD_SELL_1.1675_bearish
+2025-06-27 16:56:51,751 - INFO -    📊 Strategy Tag: QuarterCurveButterMiddle
+2025-06-27 16:56:51,751 - INFO -    📊 Momentum Strength: 0.75 (decimal for 75% display)
+2025-06-27 16:56:51,751 - INFO -    📊 Momentum Direction: WEAK_BEARISH (candlestick strength)
+2025-06-27 16:56:51,751 - INFO -    📊 Strategy Bias: SELL
+2025-06-27 16:56:51,751 - INFO -    📊 Zone Position: In_Sell_Zone (price relative to breached zone)
+2025-06-27 16:56:51,751 - INFO -    📊 Momentum Alignment: 0.6 (numeric)
+2025-06-27 16:56:51,751 - INFO -    📊 Signal Confidence: 75
+2025-06-27 16:56:51,834 - INFO - ✅ Order placed successfully: 295
+2025-06-27 16:56:51,834 - INFO - 🎯 Placing Quarter Curve Butter Middle order for GBP_USD
+2025-06-27 16:56:51,834 - INFO - 🎯 Quarter Curve Butter Middle Setup: QCButterMiddle_GBP/USD_SELL_1.3675_strong_bearish
+2025-06-27 16:56:51,844 - INFO -    Quarter Bounds: 1.3500 - 1.3750
+2025-06-27 16:56:51,844 - INFO -    Bodyguard Breached: 1.3675
+2025-06-27 16:56:51,844 - INFO -    Breach Direction: above_upper_bodyguard
+2025-06-27 16:56:51,844 - INFO -    Entry: 1.3675 | Stop: 1.3700 (25 pips)
+2025-06-27 16:56:51,844 - INFO -    Target: 1.3575 (100 pips)
+2025-06-27 16:56:51,844 - INFO -    📊 Setup Name: QCButterMiddle_GBP/USD_SELL_1.3675_strong_bearish
+2025-06-27 16:56:51,844 - INFO -    📊 Strategy Tag: QuarterCurveButterMiddle
+2025-06-27 16:56:51,844 - INFO -    📊 Momentum Strength: 0.85 (decimal for 85% display)
+2025-06-27 16:56:51,844 - INFO -    📊 Momentum Direction: STRONG_BEARISH (candlestick strength)
+2025-06-27 16:56:51,844 - INFO -    📊 Strategy Bias: SELL
+2025-06-27 16:56:51,844 - INFO -    📊 Zone Position: In_Sell_Zone (price relative to breached zone)
+2025-06-27 16:56:51,844 - INFO -    📊 Momentum Alignment: 1.0 (numeric)
+2025-06-27 16:56:51,844 - INFO -    📊 Signal Confidence: 85
+2025-06-27 16:56:51,938 - INFO - ✅ Order placed successfully: 297
+2025-06-27 16:56:51,938 - INFO - 🎯 Placing Quarter Curve Butter Middle order for EUR_JPY
+2025-06-27 16:56:51,938 - INFO - 🎯 Quarter Curve Butter Middle Setup: QCButterMiddle_EUR/JPY_SELL_169.2500_bearish
+2025-06-27 16:56:51,938 - INFO -    Quarter Bounds: 167.5000 - 170.0000
+2025-06-27 16:56:51,938 - INFO -    Bodyguard Breached: 169.2500
+2025-06-27 16:56:51,938 - INFO -    Breach Direction: above_upper_bodyguard
+2025-06-27 16:56:51,938 - INFO -    Entry: 169.2500 | Stop: 169.5000 (25 pips)
+2025-06-27 16:56:51,938 - INFO -    Target: 168.2500 (100 pips)
+2025-06-27 16:56:51,938 - INFO -    📊 Setup Name: QCButterMiddle_EUR/JPY_SELL_169.2500_bearish
+2025-06-27 16:56:51,938 - INFO -    📊 Strategy Tag: QuarterCurveButterMiddle
+2025-06-27 16:56:51,938 - INFO -    📊 Momentum Strength: 0.75 (decimal for 75% display)
+2025-06-27 16:56:51,938 - INFO -    📊 Momentum Direction: WEAK_BEARISH (candlestick strength)
+2025-06-27 16:56:51,938 - INFO -    📊 Strategy Bias: SELL
+2025-06-27 16:56:51,938 - INFO -    📊 Zone Position: In_Sell_Zone (price relative to breached zone)
+2025-06-27 16:56:51,938 - INFO -    📊 Momentum Alignment: 0.6 (numeric)
+2025-06-27 16:56:51,938 - INFO -    📊 Signal Confidence: 75
+2025-06-27 16:56:52,033 - INFO - ✅ Order placed successfully: 299
+2025-06-27 17:12:58,559 - INFO - Quarter Curve Butter Middle Trading Bot started
+2025-06-27 17:13:00,203 - INFO - 🔍 Scanning for Quarter Curve Butter Middle opportunities...
+2025-06-27 17:13:00,526 - INFO - 🎯 EUR_USD: Quarter Curve Butter Middle SELL @ 1.1675
+2025-06-27 17:13:00,526 - INFO -    Quarters: 1.1500 - 1.1750
+2025-06-27 17:13:00,526 - INFO -    Target: 100 pips | Stop: 25 pips
+2025-06-27 17:13:00,716 - INFO - 🎯 GBP_USD: Quarter Curve Butter Middle SELL @ 1.3675
+2025-06-27 17:13:00,716 - INFO -    Quarters: 1.3500 - 1.3750
+2025-06-27 17:13:00,716 - INFO -    Target: 100 pips | Stop: 25 pips
+2025-06-27 17:13:02,591 - INFO - 🎯 EUR_JPY: Quarter Curve Butter Middle SELL @ 169.2500
+2025-06-27 17:13:02,591 - INFO -    Quarters: 167.5000 - 170.0000
+2025-06-27 17:13:02,591 - INFO -    Target: 100 pips | Stop: 25 pips
+2025-06-27 17:13:05,524 - INFO - 🎯 Placing Quarter Curve Butter Middle order for EUR_USD
+2025-06-27 17:13:05,524 - INFO - 🎯 Quarter Curve Butter Middle Setup: QCButterMiddle_EUR/USD_SELL_1.1675_bearish
+2025-06-27 17:13:05,524 - INFO -    Quarter Bounds: 1.1500 - 1.1750
+2025-06-27 17:13:05,524 - INFO -    Bodyguard Breached: 1.1675
+2025-06-27 17:13:05,524 - INFO -    Breach Direction: above_upper_bodyguard
+2025-06-27 17:13:05,524 - INFO -    Entry: 1.1675 | Stop: 1.1700 (25 pips)
+2025-06-27 17:13:05,524 - INFO -    Target: 1.1575 (100 pips)
+2025-06-27 17:13:05,524 - INFO -    📊 Setup Name: QCButterMiddle_EUR/USD_SELL_1.1675_bearish
+2025-06-27 17:13:05,524 - INFO -    📊 Strategy Tag: QuarterCurveButterMiddle
+2025-06-27 17:13:05,524 - INFO -    📊 Momentum Strength: 0.75 (decimal for 75% display)
+2025-06-27 17:13:05,536 - INFO -    📊 Momentum Direction: WEAK_BEARISH (candlestick strength)
+2025-06-27 17:13:05,536 - INFO -    📊 Strategy Bias: SELL
+2025-06-27 17:13:05,536 - INFO -    📊 Zone Position: In_Sell_Zone (price relative to breached zone)
+2025-06-27 17:13:05,536 - INFO -    📊 Momentum Alignment: 0.6 (numeric)
+2025-06-27 17:13:05,536 - INFO -    📊 Signal Confidence: 75
+2025-06-27 17:13:05,632 - INFO - ✅ Order placed successfully: 302
+2025-06-27 17:13:05,632 - INFO - 🎯 Placing Quarter Curve Butter Middle order for GBP_USD
+2025-06-27 17:13:05,632 - INFO - 🎯 Quarter Curve Butter Middle Setup: QCButterMiddle_GBP/USD_SELL_1.3675_strong_bearish
+2025-06-27 17:13:05,632 - INFO -    Quarter Bounds: 1.3500 - 1.3750
+2025-06-27 17:13:05,632 - INFO -    Bodyguard Breached: 1.3675
+2025-06-27 17:13:05,632 - INFO -    Breach Direction: above_upper_bodyguard
+2025-06-27 17:13:05,632 - INFO -    Entry: 1.3675 | Stop: 1.3700 (25 pips)
+2025-06-27 17:13:05,632 - INFO -    Target: 1.3575 (100 pips)
+2025-06-27 17:13:05,632 - INFO -    📊 Setup Name: QCButterMiddle_GBP/USD_SELL_1.3675_strong_bearish
+2025-06-27 17:13:05,632 - INFO -    📊 Strategy Tag: QuarterCurveButterMiddle
+2025-06-27 17:13:05,632 - INFO -    📊 Momentum Strength: 0.85 (decimal for 85% display)
+2025-06-27 17:13:05,632 - INFO -    📊 Momentum Direction: STRONG_BEARISH (candlestick strength)
+2025-06-27 17:13:05,632 - INFO -    📊 Strategy Bias: SELL
+2025-06-27 17:13:05,632 - INFO -    📊 Zone Position: In_Sell_Zone (price relative to breached zone)
+2025-06-27 17:13:05,632 - INFO -    📊 Momentum Alignment: 1.0 (numeric)
+2025-06-27 17:13:05,632 - INFO -    📊 Signal Confidence: 85
+2025-06-27 17:13:05,760 - INFO - ✅ Order placed successfully: 303
+2025-06-27 17:13:05,760 - INFO - 🎯 Placing Quarter Curve Butter Middle order for EUR_JPY
+2025-06-27 17:13:05,760 - INFO - 🎯 Quarter Curve Butter Middle Setup: QCButterMiddle_EUR/JPY_SELL_169.2500_bearish
+2025-06-27 17:13:05,760 - INFO -    Quarter Bounds: 167.5000 - 170.0000
+2025-06-27 17:13:05,760 - INFO -    Bodyguard Breached: 169.2500
+2025-06-27 17:13:05,760 - INFO -    Breach Direction: above_upper_bodyguard
+2025-06-27 17:13:05,760 - INFO -    Entry: 169.2500 | Stop: 169.5000 (25 pips)
+2025-06-27 17:13:05,760 - INFO -    Target: 168.2500 (100 pips)
+2025-06-27 17:13:05,760 - INFO -    📊 Setup Name: QCButterMiddle_EUR/JPY_SELL_169.2500_bearish
+2025-06-27 17:13:05,760 - INFO -    📊 Strategy Tag: QuarterCurveButterMiddle
+2025-06-27 17:13:05,760 - INFO -    📊 Momentum Strength: 0.75 (decimal for 75% display)
+2025-06-27 17:13:05,760 - INFO -    📊 Momentum Direction: WEAK_BEARISH (candlestick strength)
+2025-06-27 17:13:05,760 - INFO -    📊 Strategy Bias: SELL
+2025-06-27 17:13:05,760 - INFO -    📊 Zone Position: In_Sell_Zone (price relative to breached zone)
+2025-06-27 17:13:05,760 - INFO -    📊 Momentum Alignment: 0.6 (numeric)
+2025-06-27 17:13:05,760 - INFO -    📊 Signal Confidence: 75
+2025-06-27 17:13:05,886 - INFO - ✅ Order placed successfully: 304
