@@ -155,17 +155,28 @@ class DataOrchestrator:
     
     async def backfill_historical_h1_data(self):
         """One-time backfill of historical H1 data for dashboard charts"""
+        print("DEBUG: Entered backfill_historical_h1_data() function")
         logger.info("🕐 Starting historical H1 data backfill for dashboard charts")
+        print("DEBUG: H1 backfill log message sent")
         
         try:
             # Check if we already have sufficient H1 data for the first currency pair
+            print("DEBUG: About to get test_pair from currency_pairs")
             test_pair = self.settings.currency_pairs[0]  # EUR_USD
+            print(f"DEBUG: test_pair = {test_pair}")
+            print("DEBUG: About to get shard_index")
             shard_index = self.settings.get_redis_node_for_pair(test_pair)
+            print(f"DEBUG: shard_index = {shard_index}")
+            print("DEBUG: About to get redis connection")
             redis_conn = await self.redis_manager.get_connection(shard_index)
+            print(f"DEBUG: redis_conn obtained = {type(redis_conn)}")
             
             # Check current H1 data count
+            print("DEBUG: About to check existing H1 data")
             historical_key = f"market_data:{test_pair}:H1:historical"
+            print(f"DEBUG: historical_key = {historical_key}")
             existing_data = await redis_conn.get(historical_key)
+            print(f"DEBUG: existing_data = {existing_data is not None}")
             existing_count = 0
             
             if existing_data:
@@ -175,15 +186,20 @@ class DataOrchestrator:
                         existing_count = len(parsed_data['candles'])
                     elif isinstance(parsed_data, list):
                         existing_count = len(parsed_data)
-                except:
+                except Exception as e:
+                    print(f"DEBUG: Error parsing existing H1 data: {e}")
                     existing_count = 0
             
+            print(f"DEBUG: existing_count = {existing_count}")
             logger.info(f"Current H1 data for {test_pair}: {existing_count} candles")
             
             # Only backfill if we have less than 90 H1 candles (about 4 days worth)
             if existing_count >= 90:
+                print("DEBUG: Sufficient data exists, skipping backfill")
                 logger.info("✅ Sufficient H1 historical data already exists, skipping backfill")
                 return
+            
+            print("DEBUG: Insufficient data, proceeding with backfill")
             
             logger.info(f"📥 Backfilling H1 data for {len(self.settings.currency_pairs)} currency pairs...")
             
@@ -219,7 +235,10 @@ class DataOrchestrator:
             logger.info("🎉 Historical H1 data backfill completed")
             
         except Exception as e:
+            print(f"DEBUG: Exception in H1 backfill: {e}")
             logger.error(f"❌ Historical H1 data backfill failed: {e}")
+            import traceback
+            print(f"DEBUG: Traceback: {traceback.format_exc()}")
 
     async def _backfill_pair_h1_data(self, currency_pair: str) -> int:
         """Backfill H1 data for a specific currency pair"""
