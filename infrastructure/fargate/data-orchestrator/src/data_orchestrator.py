@@ -160,52 +160,57 @@ class DataOrchestrator:
         print("DEBUG: H1 backfill log message sent")
         
         try:
-            # Check if we already have sufficient H1 data for the first currency pair
-            print("DEBUG: About to get test_pair from currency_pairs")
-            test_pair = self.settings.currency_pairs[0]  # EUR_USD
-            print(f"DEBUG: test_pair = {test_pair}")
-            print("DEBUG: About to get shard_index")
-            shard_index = self.settings.get_redis_node_for_pair(test_pair)
-            print(f"DEBUG: shard_index = {shard_index}")
-            print("DEBUG: About to get redis connection")
-            redis_conn = await self.redis_manager.get_connection(shard_index)
-            print(f"DEBUG: redis_conn obtained = {type(redis_conn)}")
+            print("DEBUG: Starting individual pair H1 data assessment")
+            logger.info(f"🔍 Checking H1 data availability for {len(self.settings.currency_pairs)} currency pairs")
             
-            # Check current H1 data count
-            print("DEBUG: About to check existing H1 data")
-            historical_key = f"market_data:{test_pair}:H1:historical"
-            print(f"DEBUG: historical_key = {historical_key}")
-            existing_data = await redis_conn.get(historical_key)
-            print(f"DEBUG: existing_data = {existing_data is not None}")
-            existing_count = 0
+            # Check each pair individually and collect pairs that need backfill
+            pairs_needing_backfill = []
             
-            if existing_data:
+            for pair in self.settings.currency_pairs:
                 try:
-                    parsed_data = json.loads(existing_data)
-                    if isinstance(parsed_data, dict) and 'candles' in parsed_data:
-                        existing_count = len(parsed_data['candles'])
-                    elif isinstance(parsed_data, list):
-                        existing_count = len(parsed_data)
-                except Exception as e:
-                    print(f"DEBUG: Error parsing existing H1 data: {e}")
+                    print(f"DEBUG: Checking H1 data for {pair}")
+                    shard_index = self.settings.get_redis_node_for_pair(pair)
+                    redis_conn = await self.redis_manager.get_connection(shard_index)
+                    
+                    historical_key = f"market_data:{pair}:H1:historical"
+                    existing_data = await redis_conn.get(historical_key)
                     existing_count = 0
+                    
+                    if existing_data:
+                        try:
+                            parsed_data = json.loads(existing_data)
+                            if isinstance(parsed_data, dict) and 'candles' in parsed_data:
+                                existing_count = len(parsed_data['candles'])
+                            elif isinstance(parsed_data, list):
+                                existing_count = len(parsed_data)
+                        except Exception as e:
+                            print(f"DEBUG: Error parsing H1 data for {pair}: {e}")
+                            existing_count = 0
+                    
+                    print(f"DEBUG: {pair} has {existing_count} H1 candles")
+                    
+                    # Only backfill pairs with insufficient data (less than 90 H1 candles)
+                    if existing_count < 90:
+                        pairs_needing_backfill.append(pair)
+                        logger.info(f"⏳ {pair}: {existing_count} H1 candles (needs backfill)")
+                    else:
+                        logger.info(f"✅ {pair}: {existing_count} H1 candles (sufficient)")
+                
+                except Exception as e:
+                    print(f"DEBUG: Error checking {pair}: {e}")
+                    pairs_needing_backfill.append(pair)  # Include pair if we can't check
             
-            print(f"DEBUG: existing_count = {existing_count}")
-            logger.info(f"Current H1 data for {test_pair}: {existing_count} candles")
-            
-            # Only backfill if we have less than 90 H1 candles (about 4 days worth)
-            if existing_count >= 90:
-                print("DEBUG: Sufficient data exists, skipping backfill")
-                logger.info("✅ Sufficient H1 historical data already exists, skipping backfill")
+            if not pairs_needing_backfill:
+                print("DEBUG: No pairs need H1 backfill")
+                logger.info("✅ All currency pairs have sufficient H1 data, skipping backfill")
                 return
             
-            print("DEBUG: Insufficient data, proceeding with backfill")
+            print(f"DEBUG: {len(pairs_needing_backfill)} pairs need backfill: {pairs_needing_backfill}")
+            logger.info(f"📥 Backfilling H1 data for {len(pairs_needing_backfill)} currency pairs: {', '.join(pairs_needing_backfill)}")
             
-            logger.info(f"📥 Backfilling H1 data for {len(self.settings.currency_pairs)} currency pairs...")
-            
-            # Backfill H1 data for each currency pair
+            # Backfill H1 data for pairs that need it
             backfill_tasks = []
-            for pair in self.settings.currency_pairs:
+            for pair in pairs_needing_backfill:
                 task = asyncio.create_task(
                     self._backfill_pair_h1_data(pair),
                     name=f"backfill_h1_{pair}"
@@ -222,7 +227,7 @@ class DataOrchestrator:
                 
                 # Log results
                 for j, result in enumerate(results):
-                    pair = self.settings.currency_pairs[i + j]
+                    pair = pairs_needing_backfill[i + j]
                     if isinstance(result, Exception):
                         logger.warning(f"Backfill failed for {pair}: {result}")
                     else:
