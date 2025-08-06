@@ -296,10 +296,22 @@ class DataOrchestrator:
         
         # One-time historical H1 data backfill for dashboard charts
         # Only run if environment variable is set (for gradual rollout)
-        if os.getenv('ENABLE_H1_BACKFILL', 'false').lower() == 'true':
+        h1_backfill_env = os.getenv('ENABLE_H1_BACKFILL', 'false').lower()
+        print(f"DEBUG: ENABLE_H1_BACKFILL environment variable = '{h1_backfill_env}'")
+        logger.info(f"DEBUG: ENABLE_H1_BACKFILL environment variable = '{h1_backfill_env}'")
+        
+        if h1_backfill_env == 'true':
+            print("DEBUG: H1 backfill condition met, about to start backfill")
             logger.info("🕐 H1 backfill enabled via environment variable")
-            await self.backfill_historical_h1_data()
+            try:
+                await self.backfill_historical_h1_data()
+                print("DEBUG: H1 backfill completed successfully")
+                logger.info("✅ H1 backfill completed successfully")
+            except Exception as e:
+                print(f"DEBUG: H1 backfill failed with error: {e}")
+                logger.error(f"❌ H1 backfill failed: {e}")
         else:
+            print("DEBUG: H1 backfill disabled, skipping")
             logger.info("🕐 H1 backfill disabled (set ENABLE_H1_BACKFILL=true to enable)")
         
         try:
