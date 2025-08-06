@@ -8,6 +8,8 @@ ARCHITECTURE COMPLIANCE:
 """
 
 import asyncio
+import json
+import os
 import time
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional
@@ -151,6 +153,136 @@ class DataOrchestrator:
             logger.error("❌ Data orchestrator initialization failed", error=str(e))
             raise
     
+    async def backfill_historical_h1_data(self):
+        """One-time backfill of historical H1 data for dashboard charts"""
+        logger.info("🕐 Starting historical H1 data backfill for dashboard charts")
+        
+        try:
+            # Check if we already have sufficient H1 data for the first currency pair
+            test_pair = self.settings.currency_pairs[0]  # EUR_USD
+            shard_index = self.settings.get_redis_node_for_pair(test_pair)
+            redis_conn = await self.redis_manager.get_connection(shard_index)
+            
+            # Check current H1 data count
+            historical_key = f"market_data:{test_pair}:H1:historical"
+            existing_data = await redis_conn.get(historical_key)
+            existing_count = 0
+            
+            if existing_data:
+                try:
+                    parsed_data = json.loads(existing_data)
+                    if isinstance(parsed_data, dict) and 'candles' in parsed_data:
+                        existing_count = len(parsed_data['candles'])
+                    elif isinstance(parsed_data, list):
+                        existing_count = len(parsed_data)
+                except:
+                    existing_count = 0
+            
+            logger.info(f"Current H1 data for {test_pair}: {existing_count} candles")
+            
+            # Only backfill if we have less than 90 H1 candles (about 4 days worth)
+            if existing_count >= 90:
+                logger.info("✅ Sufficient H1 historical data already exists, skipping backfill")
+                return
+            
+            logger.info(f"📥 Backfilling H1 data for {len(self.settings.currency_pairs)} currency pairs...")
+            
+            # Backfill H1 data for each currency pair
+            backfill_tasks = []
+            for pair in self.settings.currency_pairs:
+                task = asyncio.create_task(
+                    self._backfill_pair_h1_data(pair),
+                    name=f"backfill_h1_{pair}"
+                )
+                backfill_tasks.append(task)
+            
+            # Process in smaller batches to avoid overwhelming OANDA API
+            batch_size = 5
+            for i in range(0, len(backfill_tasks), batch_size):
+                batch = backfill_tasks[i:i + batch_size]
+                logger.info(f"Processing backfill batch {i//batch_size + 1}/{(len(backfill_tasks) + batch_size - 1)//batch_size}")
+                
+                results = await asyncio.gather(*batch, return_exceptions=True)
+                
+                # Log results
+                for j, result in enumerate(results):
+                    pair = self.settings.currency_pairs[i + j]
+                    if isinstance(result, Exception):
+                        logger.warning(f"Backfill failed for {pair}: {result}")
+                    else:
+                        logger.info(f"✅ Backfilled {result} H1 candles for {pair}")
+                
+                # Small delay between batches
+                if i + batch_size < len(backfill_tasks):
+                    await asyncio.sleep(2)
+            
+            logger.info("🎉 Historical H1 data backfill completed")
+            
+        except Exception as e:
+            logger.error(f"❌ Historical H1 data backfill failed: {e}")
+
+    async def _backfill_pair_h1_data(self, currency_pair: str) -> int:
+        """Backfill H1 data for a specific currency pair"""
+        try:
+            # Fetch 100 H1 candles from OANDA
+            data = await self.oanda_client.get_candlesticks(
+                instrument=currency_pair,
+                granularity="H1", 
+                count=100
+            )
+            
+            if not data or 'candles' not in data:
+                logger.warning(f"No H1 data received for {currency_pair}")
+                return 0
+            
+            candles = data['candles']
+            if not candles:
+                return 0
+            
+            # Filter out incomplete candles and format data
+            formatted_candles = []
+            for candle in candles:
+                if candle.get('complete') and candle.get('mid'):
+                    mid = candle['mid']
+                    formatted_candle = {
+                        'time': candle['time'],
+                        'open': float(mid.get('o', 0)),
+                        'high': float(mid.get('h', 0)),
+                        'low': float(mid.get('l', 0)),
+                        'close': float(mid.get('c', 0)),
+                        'volume': int(candle.get('volume', 0))
+                    }
+                    formatted_candles.append(formatted_candle)
+            
+            if not formatted_candles:
+                return 0
+            
+            # Store in Redis under H1 timeframe
+            shard_index = self.settings.get_redis_node_for_pair(currency_pair)
+            redis_conn = self.redis_manager.get_connection(shard_index)
+            
+            historical_key = f"market_data:{currency_pair}:H1:historical"
+            historical_data = {
+                'candles': formatted_candles,
+                'timestamp': datetime.now().isoformat(),
+                'source': 'FARGATE_H1_BACKFILL',
+                'count': len(formatted_candles)
+            }
+            
+            # Store with TTL
+            await redis_conn.setex(
+                historical_key,
+                self.settings.redis_ttl_seconds,
+                json.dumps(historical_data)
+            )
+            
+            logger.debug(f"Stored {len(formatted_candles)} H1 candles for {currency_pair}")
+            return len(formatted_candles)
+            
+        except Exception as e:
+            logger.error(f"Failed to backfill H1 data for {currency_pair}: {e}")
+            return 0
+
     async def start(self):
         """Start the data collection loop"""
         print("DEBUG: DataOrchestrator.start() method called")
@@ -161,6 +293,14 @@ class DataOrchestrator:
         logger.info(f"💱 Currency pairs to monitor: {len(self.settings.currency_pairs)}")
         logger.info(f"🎯 Target timeframes: {self.settings.timeframes}")
         print("DEBUG: Data collection loop starting, is_running =", self.is_running)
+        
+        # One-time historical H1 data backfill for dashboard charts
+        # Only run if environment variable is set (for gradual rollout)
+        if os.getenv('ENABLE_H1_BACKFILL', 'false').lower() == 'true':
+            logger.info("🕐 H1 backfill enabled via environment variable")
+            await self.backfill_historical_h1_data()
+        else:
+            logger.info("🕐 H1 backfill disabled (set ENABLE_H1_BACKFILL=true to enable)")
         
         try:
             while self.is_running:

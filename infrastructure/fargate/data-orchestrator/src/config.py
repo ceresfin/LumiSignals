@@ -121,8 +121,8 @@ class Settings(BaseSettings):
     retry_delay_seconds: int = Field(1, env="RETRY_DELAY_SECONDS")
     
     # Data Retention Configuration
-    redis_ttl_seconds: int = Field(7200, env="REDIS_TTL_SECONDS")  # 2 hours
-    historical_data_points: int = Field(100, env="HISTORICAL_DATA_POINTS")
+    redis_ttl_seconds: int = Field(432000, env="REDIS_TTL_SECONDS")  # 5 days (120 hours)
+    historical_data_points: int = Field(1200, env="HISTORICAL_DATA_POINTS")
     
     # Health Monitoring
     health_check_interval: int = Field(30, env="HEALTH_CHECK_INTERVAL")  # 30 seconds
