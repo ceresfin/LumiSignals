@@ -259,7 +259,7 @@ class DataOrchestrator:
             
             # Store in Redis under H1 timeframe
             shard_index = self.settings.get_redis_node_for_pair(currency_pair)
-            redis_conn = self.redis_manager.get_connection(shard_index)
+            redis_conn = await self.redis_manager.get_connection(shard_index)
             
             historical_key = f"market_data:{currency_pair}:H1:historical"
             historical_data = {
