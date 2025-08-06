@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LUMITRADE - Momentum Dashboard</title>
+    <meta name="description" content="Institutional-grade momentum trading dashboard for LumiTrade. Real-time analysis of 28 currency pairs with Renaissance Technologies-style interface." />
+    
+    <!-- LumiTrade Brand Favicon -->
+    <link rel="icon" type="image/png" sizes="32x32" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='16' fill='%23A2C8A1'/><rect x='8' y='18' width='2' height='8' fill='white' rx='1'/><rect x='11' y='15' width='2' height='11' fill='white' rx='1'/><rect x='14' y='12' width='2' height='14' fill='white' rx='1'/><rect x='17' y='15' width='2' height='11' fill='white' rx='1'/><rect x='20' y='18' width='2' height='8' fill='white' rx='1'/><circle cx='16' cy='8' r='2' stroke='white' stroke-width='1' fill='none'/></svg>" />
+    
+    <!-- Preload fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Meta tags for social sharing -->
+    <meta property="og:title" content="LUMITRADE - Momentum Dashboard" />
+    <meta property="og:description" content="Professional forex momentum analysis with 28-pair real-time ranking system" />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="/lumitrade-dashboard-preview.png" />
+    
+    <!-- Performance optimizations -->
+    <link rel="dns-prefetch" href="//api.lumitrade.com">
+    <link rel="preconnect" href="https://xrlwec390l.execute-api.us-east-1.amazonaws.com">
+    
+    <!-- Theme initialization script - prevents flash of incorrect theme -->
+    <script>
+      (function() {
+        function getTheme() {
+          const stored = localStorage.getItem('lumitrade-theme');
+          if (stored === 'light' || stored === 'dark') return stored;
+          if (stored === 'system' || !stored) {
+            return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+          }
+          return 'dark'; // Default to dark for trading aesthetic
+        }
+        
+        const theme = getTheme();
+        document.documentElement.classList.toggle('dark', theme === 'dark');
+        document.documentElement.style.colorScheme = theme;
+        
+        // Add theme transition prevention during initial load
+        document.addEventListener('DOMContentLoaded', function() {
+          if (document.body) {
+            document.body.classList.add('theme-transitioning');
+          }
+        });
+      })();
+    </script>
+    
+    <!-- Inline critical CSS for faster initial paint -->
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      
+      body {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+        overflow-x: hidden;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+        /* Theme-aware background */
+        background-color: #f9fafb; /* Light mode default */
+        color: #1f2937; /* Light mode text */
+      }
+      
+      .dark body {
+        background-color: #111827; /* Dark mode background */
+        color: #f9fafb; /* Dark mode text */
+      }
+      
+      #root {
+        min-height: 100vh;
+      }
+      
+      /* Loading spinner */
+      .loading-container {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        flex-direction: column;
+        gap: 2rem;
+      }
+      
+      .loading-logo {
+        width: 80px;
+        height: 80px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, #A2C8A1 0%, #32A0A8 100%);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        animation: pulse 2s infinite;
+      }
+      
+      .loading-text {
+        color: #B6E6C4;
+        font-size: 1.125rem;
+        font-weight: 500;
+      }
+      
+      @keyframes pulse {
+        0%, 100% {
+          transform: scale(1);
+          opacity: 1;
+        }
+        50% {
+          transform: scale(1.05);
+          opacity: 0.8;
+        }
+      }
+      
+      /* Hide loading once React app loads */
+      #root:not(:empty) + .loading-container {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    
+    <!-- Loading fallback (shown before React hydrates) -->
+    <div class="loading-container">
+      <div class="loading-logo">
+        <div style="display: flex; flex-direction: column; align-items: center; color: white;">
+          <div style="display: flex; gap: 2px; margin-bottom: 4px;">
+            <div style="width: 4px; height: 8px; background: white; border-radius: 1px;"></div>
+            <div style="width: 4px; height: 12px; background: white; border-radius: 1px;"></div>
+            <div style="width: 4px; height: 16px; background: white; border-radius: 1px;"></div>
+            <div style="width: 4px; height: 12px; background: white; border-radius: 1px;"></div>
+            <div style="width: 4px; height: 8px; background: white; border-radius: 1px;"></div>
+          </div>
+          <div style="width: 8px; height: 8px; border: 1px solid white; border-radius: 50%;"></div>
+        </div>
+      </div>
+      <div class="loading-text">Loading LUMITRADE Dashboard...</div>
+      <div style="color: #B6E6C4; font-size: 0.875rem; opacity: 0.7;">
+        Illuminating Financial Empowerment
+      </div>
+    </div>
+    
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

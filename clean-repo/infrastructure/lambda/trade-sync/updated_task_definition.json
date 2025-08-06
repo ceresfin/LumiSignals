@@ -1,0 +1,64 @@
+{
+  "family": "lumisignals-institutional-orchestrator-postgresql17",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "256",
+  "memory": "512",
+  "executionRoleArn": "arn:aws:iam::816945674467:role/LumiSignals-prod-TaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::816945674467:role/LumiSignals-prod-TaskRole",
+  "containerDefinitions": [
+    {
+      "name": "orchestrator",
+      "image": "816945674467.dkr.ecr.us-east-1.amazonaws.com/lumisignals/institutional-orchestrator-postgresql17:latest",
+      "essential": true,
+      "environment": [
+        {
+          "name": "AWS_REGION",
+          "value": "us-east-1"
+        },
+        {
+          "name": "REDIS_PORT",
+          "value": "6379"
+        },
+        {
+          "name": "DATABASE_ENDPOINT",
+          "value": "lumisignals-postgresql.cg12a06y29s3.us-east-1.rds.amazonaws.com"
+        },
+        {
+          "name": "REDIS_ENDPOINT",
+          "value": "lumisignals-prod-redis-pg17.wo9apa.ng.0001.use1.cache.amazonaws.com"
+        },
+        {
+          "name": "ENVIRONMENT",
+          "value": "prod"
+        },
+        {
+          "name": "DATABASE_SSL_MODE",
+          "value": "require"
+        }
+      ],
+      "secrets": [
+        {
+          "name": "OANDA_CREDENTIALS",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:816945674467:secret:lumisignals/oanda/api/credentials-j8hE5E"
+        },
+        {
+          "name": "DATABASE_CREDENTIALS",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:816945674467:secret:lumisignals/rds/postgresql/credentials-anxzg6"
+        },
+        {
+          "name": "REDIS_CREDENTIALS",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:816945674467:secret:lumisignals/redis/market-data/auth-token-RwbtCJ"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/lumisignals-institutional-postgresql",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "orchestrator"
+        }
+      }
+    }
+  ]
+}

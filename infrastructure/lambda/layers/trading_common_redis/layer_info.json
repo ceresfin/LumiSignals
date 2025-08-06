@@ -1,0 +1,23 @@
+{
+  "layer_name": "trading_common_redis",
+  "layer_arn": "arn:aws:lambda:us-east-1:816945674467:layer:trading_common_redis",
+  "version": 1,
+  "full_arn": "arn:aws:lambda:us-east-1:816945674467:layer:trading_common_redis:1",
+  "compatible_runtimes": [
+    "python3.9",
+    "python3.10",
+    "python3.11",
+    "python3.12"
+  ],
+  "packages_included": [
+    "boto3>=1.28.0",
+    "pytz>=2023.3",
+    "typing-extensions>=4.7.0",
+    "requests>=2.32.0",
+    "redis>=4.5.0",
+    "oanda_api.py",
+    "metadata_storage.py",
+    "momentum_calculator.py",
+    "redis_integration.py"
+  ]
+}

@@ -1,0 +1,117 @@
+{
+    "taskDefinitionArn": "arn:aws:ecs:us-east-1:816945674467:task-definition/lumisignals-data-orchestrator:113",
+    "containerDefinitions": [
+        {
+            "name": "lumisignals-data-orchestrator",
+            "image": "816945674467.dkr.ecr.us-east-1.amazonaws.com/lumisignals-data-orchestrator:manual-fix-20250731",
+            "cpu": 0,
+            "portMappings": [
+                {
+                    "containerPort": 8080,
+                    "hostPort": 8080,
+                    "protocol": "tcp"
+                }
+            ],
+            "essential": true,
+            "environment": [
+                {
+                    "name": "OANDA_API_KEY",
+                    "value": "9a5b17c13ea6db2b8c7d5b5e1e2e2c9c-4b52b20ec44d3e58adfbebfbec1b42e4"
+                },
+                {
+                    "name": "OANDA_ENVIRONMENT",
+                    "value": "practice"
+                },
+                {
+                    "name": "COLLECTION_INTERVAL_SECONDS",
+                    "value": "300"
+                },
+                {
+                    "name": "AWS_DEFAULT_REGION",
+                    "value": "us-east-1"
+                },
+                {
+                    "name": "MAX_REQUESTS_PER_SECOND",
+                    "value": "20"
+                },
+                {
+                    "name": "LOG_LEVEL",
+                    "value": "INFO"
+                },
+                {
+                    "name": "REDIS_TTL_SECONDS",
+                    "value": "300"
+                },
+                {
+                    "name": "OANDA_ACCOUNT_ID",
+                    "value": "101-001-29027045-001"
+                }
+            ],
+            "mountPoints": [],
+            "volumesFrom": [],
+            "secrets": [
+                {
+                    "name": "DATABASE_CREDENTIALS",
+                    "valueFrom": "arn:aws:secretsmanager:us-east-1:816945674467:secret:lumisignals/rds/postgresql/credentials-anxzg6"
+                }
+            ],
+            "logConfiguration": {
+                "logDriver": "awslogs",
+                "options": {
+                    "awslogs-group": "/ecs/lumisignals-data-orchestrator",
+                    "awslogs-region": "us-east-1",
+                    "awslogs-stream-prefix": "ecs"
+                }
+            },
+            "systemControls": []
+        }
+    ],
+    "family": "lumisignals-data-orchestrator",
+    "taskRoleArn": "arn:aws:iam::816945674467:role/lumisignals-ecs-task-role",
+    "executionRoleArn": "arn:aws:iam::816945674467:role/lumisignals-ecs-task-execution-role",
+    "networkMode": "awsvpc",
+    "revision": 113,
+    "volumes": [],
+    "status": "ACTIVE",
+    "requiresAttributes": [
+        {
+            "name": "com.amazonaws.ecs.capability.logging-driver.awslogs"
+        },
+        {
+            "name": "ecs.capability.execution-role-awslogs"
+        },
+        {
+            "name": "com.amazonaws.ecs.capability.ecr-auth"
+        },
+        {
+            "name": "com.amazonaws.ecs.capability.docker-remote-api.1.19"
+        },
+        {
+            "name": "ecs.capability.secrets.asm.environment-variables"
+        },
+        {
+            "name": "com.amazonaws.ecs.capability.task-iam-role"
+        },
+        {
+            "name": "ecs.capability.execution-role-ecr-pull"
+        },
+        {
+            "name": "com.amazonaws.ecs.capability.docker-remote-api.1.18"
+        },
+        {
+            "name": "ecs.capability.task-eni"
+        }
+    ],
+    "placementConstraints": [],
+    "compatibilities": [
+        "EC2",
+        "FARGATE"
+    ],
+    "requiresCompatibilities": [
+        "FARGATE"
+    ],
+    "cpu": "2048",
+    "memory": "4096",
+    "registeredAt": "2025-07-31T19:03:38.393000-04:00",
+    "registeredBy": "arn:aws:iam::816945674467:user/Sonia"
+}

@@ -1,0 +1,337 @@
+/* LumiTrade Momentum Dashboard - Professional Trading Interface with Brand Identity */
+
+/* Tailwind CSS directives */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Root Variables - LumiTrade Brand Colors */
+:root {
+  /* LumiTrade Brand Colors */
+  --lumitrade-charcoal: #121212;
+  --lumitrade-graphite: #1E1E1E;
+  --lumitrade-fog-gray: #2C2C2C;
+  --lumitrade-soft-ash: #3B3B63;
+  --lumitrade-sage-haze: #A2C8A1;
+  --lumitrade-misty-olive: #32A0A8;
+  --lumitrade-soft-eucalyptus: #C9F7CF;
+  --lumitrade-blush-mist: #D9A2A1;
+  --lumitrade-rosy-veil: #CF4505;
+  --lumitrade-dusty-rose: #A67D8B;
+  --lumitrade-petal-beige: #FFE4B3;
+  --lumitrade-honey-pearl: #FFE4B3;
+  --lumitrade-moonlit-taupe: #B6E6C4;
+  --lumitrade-soft-champagne: #F7F2E6;
+
+  /* Momentum Colors (LumiTrade Themed) */
+  --momentum-strong-bullish: var(--lumitrade-sage-haze);
+  --momentum-weak-bullish: var(--lumitrade-soft-eucalyptus);
+  --momentum-neutral: var(--lumitrade-fog-gray);
+  --momentum-weak-bearish: var(--lumitrade-blush-mist);
+  --momentum-strong-bearish: var(--lumitrade-rosy-veil);
+
+  /* Background Gradients (LumiTrade Inspired) */
+  --bg-primary: linear-gradient(135deg, var(--lumitrade-charcoal) 0%, var(--lumitrade-graphite) 100%);
+  --bg-secondary: linear-gradient(135deg, var(--lumitrade-graphite) 0%, var(--lumitrade-fog-gray) 100%);
+  --bg-card: rgba(18, 18, 18, 0.9);
+  
+  /* Trading Colors (LumiTrade Palette) */
+  --color-profit: var(--lumitrade-sage-haze);
+  --color-loss: var(--lumitrade-rosy-veil);
+  --color-neutral: var(--lumitrade-moonlit-taupe);
+  --color-warning: var(--lumitrade-honey-pearl);
+  
+  /* Glass Morphism (LumiTrade Style) */
+  --glass-bg: rgba(162, 200, 161, 0.1);
+  --glass-border: rgba(162, 200, 161, 0.2);
+  --glass-shadow: 0 8px 32px 0 rgba(162, 200, 161, 0.1);
+}
+
+/* Global Styles */
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+  /* Remove hardcoded background - let Tailwind handle it */
+}
+
+/* Momentum Signal Classes - LumiTrade Brand Themed */
+.momentum-strong-bullish {
+  background: linear-gradient(135deg, var(--lumitrade-sage-haze) 0%, var(--lumitrade-misty-olive) 100%);
+  border-color: var(--momentum-strong-bullish);
+  color: var(--lumitrade-soft-champagne);
+  box-shadow: 0 4px 20px rgba(162, 200, 161, 0.3);
+}
+
+.momentum-weak-bullish {
+  background: linear-gradient(135deg, var(--lumitrade-soft-eucalyptus) 0%, var(--lumitrade-sage-haze) 100%);
+  border-color: var(--momentum-weak-bullish);
+  color: var(--lumitrade-charcoal);
+  box-shadow: 0 4px 20px rgba(201, 247, 207, 0.2);
+}
+
+.momentum-neutral {
+  background: linear-gradient(135deg, var(--lumitrade-fog-gray) 0%, var(--lumitrade-soft-ash) 100%);
+  border-color: var(--momentum-neutral);
+  color: var(--lumitrade-moonlit-taupe);
+  box-shadow: 0 4px 20px rgba(44, 44, 44, 0.2);
+}
+
+.momentum-weak-bearish {
+  background: linear-gradient(135deg, var(--lumitrade-blush-mist) 0%, var(--lumitrade-dusty-rose) 100%);
+  border-color: var(--momentum-weak-bearish);
+  color: var(--lumitrade-soft-champagne);
+  box-shadow: 0 4px 20px rgba(217, 162, 161, 0.3);
+}
+
+.momentum-strong-bearish {
+  background: linear-gradient(135deg, var(--lumitrade-rosy-veil) 0%, var(--lumitrade-blush-mist) 100%);
+  border-color: var(--momentum-strong-bearish);
+  color: var(--lumitrade-soft-champagne);
+  box-shadow: 0 4px 20px rgba(207, 69, 5, 0.3);
+}
+
+/* Glass Morphism Cards */
+.glass-card {
+  background: var(--glass-bg);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+  border-radius: 12px;
+}
+
+/* Trading Card Hover Effects */
+.trading-card {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  overflow: hidden;
+}
+
+.trading-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+  transition: left 0.5s;
+}
+
+.trading-card:hover::before {
+  left: 100%;
+}
+
+.trading-card:hover {
+  transform: translateY(-4px) scale(1.02);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+}
+
+/* Momentum Gauge Animations */
+.momentum-gauge {
+  position: relative;
+  overflow: hidden;
+}
+
+.momentum-gauge-fill {
+  transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+}
+
+.momentum-gauge-fill::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 4px;
+  height: 100%;
+  background: rgba(255, 255, 255, 0.6);
+  border-radius: 2px;
+  animation: pulse 2s infinite;
+}
+
+/* Pulse Animation for Active Elements */
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.5;
+    transform: scale(0.98);
+  }
+}
+
+.pulse {
+  animation: pulse 2s infinite;
+}
+
+/* Gradient Text Effect */
+.gradient-text {
+  background: linear-gradient(135deg, #60a5fa 0%, #34d399 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Chart Container Styles */
+.chart-container {
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 8px;
+  padding: 8px;
+  position: relative;
+}
+
+.chart-container::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.05)) border-box;
+  mask: linear-gradient(#fff 0 0) padding-box, linear-gradient(#fff 0 0);
+  mask-composite: xor;
+}
+
+/* Status Indicators */
+.status-indicator {
+  position: relative;
+  display: inline-block;
+}
+
+.status-indicator::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  border-radius: inherit;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.1);
+  animation: statusPulse 2s infinite;
+}
+
+@keyframes statusPulse {
+  0%, 100% {
+    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.1);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.05);
+  }
+}
+
+/* Profit/Loss Colors */
+.profit {
+  color: var(--color-profit);
+}
+
+.loss {
+  color: var(--color-loss);
+}
+
+.neutral {
+  color: var(--color-neutral);
+}
+
+.warning {
+  color: var(--color-warning);
+}
+
+/* Scrollbar Styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(31, 41, 55, 0.5);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(156, 163, 175, 0.5);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(156, 163, 175, 0.7);
+}
+
+/* Loading Spinner */
+.loading-spinner {
+  border: 2px solid rgba(59, 130, 246, 0.3);
+  border-radius: 50%;
+  border-top: 2px solid #3b82f6;
+  width: 24px;
+  height: 24px;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Connection Status */
+.connection-online {
+  background: linear-gradient(135deg, var(--color-profit), #059669);
+  box-shadow: 0 0 20px rgba(16, 185, 129, 0.3);
+}
+
+.connection-offline {
+  background: linear-gradient(135deg, var(--color-loss), #dc2626);
+  box-shadow: 0 0 20px rgba(239, 68, 68, 0.3);
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .trading-card {
+    margin-bottom: 1rem;
+  }
+  
+  .glass-card {
+    border-radius: 8px;
+  }
+  
+  .chart-container {
+    padding: 4px;
+  }
+}
+
+/* High Performance Mode */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Focus Styles for Accessibility */
+button:focus,
+input:focus,
+select:focus {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+}
+
+/* Print Styles */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  
+  body {
+    background: white !important;
+    color: black !important;
+  }
+}

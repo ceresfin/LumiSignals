@@ -1,0 +1,518 @@
+#!/usr/bin/env python3
+"""
+Enhanced OANDA Data Collection for Fargate Data Orchestrator
+Collects ALL 31 Airtable fields directly from OANDA API to populate RDS
+
+This enhanced version grabs everything possible from OANDA instead of calculating it ourselves:
+- All trade fields from /v3/accounts/{account_id}/openTrades
+- Current pricing from /v3/accounts/{account_id}/pricing  
+- Account info from /v3/accounts/{account_id}
+- Position details from /v3/accounts/{account_id}/openPositions
+- Transaction history for strategy identification
+"""
+
+import logging
+from typing import Optional, Dict, Any, List
+from datetime import datetime, timezone, timedelta
+from decimal import Decimal
+import json
+
+logger = logging.getLogger(__name__)
+
+class EnhancedOandaDataCollector:
+    """Enhanced OANDA data collection for complete trade information"""
+    
+    def __init__(self, oanda_client):
+        self.client = oanda_client
+        self.market_sessions = {
+            'SYDNEY': {'start': 22, 'end': 7},   # 22:00 - 07:00 UTC
+            'TOKYO': {'start': 0, 'end': 9},     # 00:00 - 09:00 UTC  
+            'LONDON': {'start': 8, 'end': 17},   # 08:00 - 17:00 UTC
+            'NEW_YORK': {'start': 13, 'end': 22} # 13:00 - 22:00 UTC
+        }
+    
+    async def collect_comprehensive_trade_data(self) -> Optional[Dict[str, Any]]:
+        """
+        Collect ALL trade data needed for 31 Airtable fields
+        
+        Returns complete trade data including:
+        - All OANDA trade fields
+        - Current pricing and calculations  
+        - Market session information
+        - Strategy identification
+        - Enhanced metadata
+        """
+        try:
+            logger.info("🚀 Starting comprehensive OANDA data collection...")
+            
+            # Step 1: Get all open trades with full details
+            trades_response = await self._get_detailed_open_trades()
+            if not trades_response:
+                return None
+            
+            # Step 2: Get current account information
+            account_info = await self._get_account_info()
+            
+            # Step 3: Get current pricing for all instruments
+            instruments = self._extract_instruments_from_trades(trades_response.get('trades', []))
+            current_pricing = await self._get_current_pricing(instruments)
+            
+            # Step 4: Get position information
+            positions_info = await self._get_positions_info()
+            
+            # Step 5: Enhance each trade with comprehensive data
+            enhanced_trades = await self._enhance_trades_comprehensively(
+                trades_response, account_info, current_pricing, positions_info
+            )
+            
+            logger.info(f"✅ Comprehensive data collection completed for {len(enhanced_trades.get('trades', []))} trades")
+            return enhanced_trades
+            
+        except Exception as e:
+            logger.error(f"❌ Comprehensive data collection failed: {str(e)}", exc_info=True)
+            return None
+    
+    async def _get_detailed_open_trades(self) -> Optional[Dict[str, Any]]:
+        """Get all open trades with complete OANDA details"""
+        try:
+            data = await self.client.get_open_trades()
+            if data:
+                logger.info(f"📊 Retrieved {len(data.get('trades', []))} open trades from OANDA")
+                return data
+            else:
+                logger.error("Failed to get open trades")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error getting detailed open trades: {str(e)}")
+            return None
+    
+    async def _get_account_info(self) -> Optional[Dict[str, Any]]:
+        """Get current account information including balance"""
+        try:
+            data = await self.client.get_account_summary()
+            if data:
+                logger.info("📊 Retrieved account information")
+                return data
+            else:
+                logger.error("Failed to get account info")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error getting account info: {str(e)}")
+            return None
+    
+    async def _get_current_pricing(self, instruments: List[str]) -> Optional[Dict[str, Any]]:
+        """Get current pricing for all trade instruments"""
+        if not instruments:
+            return None
+            
+        try:
+            pricing_data = await self.client.get_account_pricing(instruments)
+            if pricing_data:
+                logger.info(f"📊 Retrieved pricing for {len(instruments)} instruments")
+                return pricing_data
+            else:
+                logger.error("Failed to get pricing")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error getting current pricing: {str(e)}")
+            return None
+    
+    async def _get_positions_info(self) -> Optional[Dict[str, Any]]:
+        """Get open positions information"""
+        try:
+            positions_data = await self.client.get_open_positions()
+            if positions_data:
+                logger.info(f"📊 Retrieved {len(positions_data.get('positions', []))} positions")
+                return positions_data
+            else:
+                logger.error("Failed to get positions")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error getting positions info: {str(e)}")
+            return None
+    
+    def _extract_instruments_from_trades(self, trades: List[Dict[str, Any]]) -> List[str]:
+        """Extract unique instruments from trades"""
+        return list(set(trade.get('instrument', '') for trade in trades if trade.get('instrument')))
+    
+    async def _enhance_trades_comprehensively(self, trades_response: Dict[str, Any], 
+                                            account_info: Optional[Dict[str, Any]],
+                                            current_pricing: Optional[Dict[str, Any]],
+                                            positions_info: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Enhance trades with ALL 31 Airtable fields using OANDA data
+        
+        Maps to Airtable columns:
+        1. OANDA Order ID → trade['id'] 
+        2. Trade ID → trade['id']
+        3. Order Time → trade['openTime'] 
+        4. Fill Time → trade['openTime']
+        5. Pending Duration → 0 (immediate fills)
+        6. Active Trade Duration → calculated from openTime
+        7. Instrument → trade['instrument']
+        8. Direction → based on trade['currentUnits'] 
+        9. Strategy → inferred from trade metadata/tags
+        10. Margin Used → trade['marginUsed']
+        11. Order Type → 'Market Order' (post-fill data)
+        12. Units → trade['currentUnits']
+        13. Entry Price → trade['price']
+        14. Current Price → from pricing API
+        15. Exit Price → null (for open trades)
+        16. Unrealized PnL → trade['unrealizedPL']
+        17. Stop Loss → trade['stopLossOrder']['price']
+        18. Take Profit → trade['takeProfitOrder']['price'] 
+        19. Potential Risk Amount → calculated from SL
+        20. Potential Profit ($) → calculated from TP
+        21. Return over Risk Ratio → Profit/Risk ratio
+        22. Exit Time → null (for open trades)
+        23. Realized PnL → null (for open trades)  
+        24. Trade State → 'OPEN'
+        25. Spread → from pricing data (ask - bid)
+        26. Account Balance Before → account['balance']
+        27. Market Session → calculated from time
+        28. Momentum Strength → from strategy logic
+        29. Analysis Type → from strategy logic
+        30. Current Time → real-time timestamp
+        31. Distance to Entry → calculated pips moved
+        """
+        
+        trades = trades_response.get('trades', [])
+        if not trades:
+            return trades_response
+        
+        # Create pricing lookup
+        pricing_lookup = self._create_pricing_lookup(current_pricing)
+        
+        # Current account balance
+        account_balance = float(account_info.get('balance', 0)) if account_info else 0.0
+        
+        # Current timestamp
+        current_time = datetime.now(timezone.utc)
+        
+        enhanced_trades = []
+        
+        for trade in trades:
+            try:
+                # Extract basic OANDA fields
+                trade_id = trade.get('id', '')
+                instrument = trade.get('instrument', '')
+                current_units = float(trade.get('currentUnits', 0))
+                entry_price = float(trade.get('price', 0))
+                unrealized_pl = float(trade.get('unrealizedPL', 0))
+                margin_used = float(trade.get('marginUsed', 0))
+                open_time_str = trade.get('openTime', '')
+                
+                # Parse open time
+                open_time = self._parse_oanda_time(open_time_str) if open_time_str else current_time
+                
+                # Direction based on units
+                direction = 'Long' if current_units > 0 else 'Short'
+                
+                # Get current price
+                current_price = pricing_lookup.get(instrument, {}).get('mid', entry_price)
+                
+                # Get spread
+                pricing_data = pricing_lookup.get(instrument, {})
+                spread = pricing_data.get('spread', 0.0)
+                
+                # Extract stop loss and take profit
+                stop_loss_price = None
+                take_profit_price = None
+                
+                if 'stopLossOrder' in trade and trade['stopLossOrder']:
+                    stop_loss_price = float(trade['stopLossOrder'].get('price', 0))
+                
+                if 'takeProfitOrder' in trade and trade['takeProfitOrder']:
+                    take_profit_price = float(trade['takeProfitOrder'].get('price', 0))
+                
+                # Calculate durations
+                active_duration = self._calculate_duration(open_time, current_time)
+                
+                # Get Distance to Entry directly from OANDA if available, otherwise calculate
+                # Try various possible field names for OANDA's distance measurement
+                distance_to_entry = None
+                for field_name in ['distanceToEntry', 'distance_to_entry', 'pipsFromEntry', 'pips_from_entry']:
+                    if field_name in trade:
+                        distance_to_entry = trade.get(field_name)
+                        break
+                
+                if distance_to_entry is not None:
+                    # OANDA provides direct distance field
+                    pips_moved = float(distance_to_entry)
+                    logger.info(f"✅ Using OANDA Distance to Entry: {pips_moved} pips for trade {trade_id}")
+                else:
+                    # Fallback to calculation if OANDA doesn't provide it
+                    pips_moved = self._calculate_pips_moved(entry_price, current_price, instrument, direction)
+                    logger.info(f"📊 Calculated pips moved: {pips_moved} pips for trade {trade_id}")
+                
+                # Calculate risk/reward amounts
+                risk_amount, profit_amount, rr_ratio = self._calculate_risk_reward(
+                    entry_price, stop_loss_price, take_profit_price, abs(current_units), direction, instrument
+                )
+                
+                # Determine market session
+                market_session = self._get_market_session(current_time)
+                
+                # Strategy identification (enhanced logic)
+                strategy_name = self._identify_strategy(trade, current_units, instrument)
+                
+                # Create comprehensive enhanced trade
+                enhanced_trade = {
+                    # Basic OANDA fields (1-16)
+                    'trade_id': trade_id,
+                    'instrument': instrument,
+                    'units': int(current_units),
+                    'current_units': int(current_units),
+                    'price': entry_price,  # Entry price
+                    'current_price': current_price,
+                    'entry_price': entry_price,
+                    'unrealized_pl': unrealized_pl,
+                    'margin_used': margin_used,
+                    'open_time': open_time.isoformat(),
+                    'state': 'OPEN',
+                    'direction': direction,
+                    
+                    # Stop Loss & Take Profit (17-18)
+                    'stop_loss_price': stop_loss_price,
+                    'take_profit_price': take_profit_price,
+                    
+                    # Calculated fields (19-31)
+                    'potential_risk_amount': risk_amount,
+                    'potential_profit_amount': profit_amount,
+                    'risk_reward_ratio': rr_ratio,
+                    'realized_pnl': None,  # Open trades don't have realized P&L
+                    'exit_price': None,    # Open trades don't have exit price
+                    'exit_time': None,     # Open trades don't have exit time
+                    'spread': spread,
+                    'account_balance_before': account_balance,
+                    'market_session': market_session,
+                    'strategy': strategy_name,
+                    'order_type': 'Market Order',  # Post-fill, assume market
+                    'pips_moved': pips_moved,
+                    'distance_to_entry': pips_moved,  # OANDA's Distance to Entry field
+                    'oanda_distance_to_entry': distance_to_entry,  # Raw OANDA value if available
+                    
+                    # Duration calculations
+                    'active_trade_duration': active_duration,
+                    'pending_duration': 0,  # Immediate market fills
+                    
+                    # Analysis fields (strategy-dependent)
+                    'momentum_strength': self._calculate_momentum_strength(pips_moved, unrealized_pl),
+                    'analysis_type': self._determine_analysis_type(strategy_name),
+                    
+                    # Timestamps
+                    'order_time': open_time.isoformat(),
+                    'fill_time': open_time.isoformat(),
+                    'current_time': current_time.isoformat(),
+                    
+                    # Additional OANDA metadata
+                    'financing': float(trade.get('financing', 0)),
+                    'commission': float(trade.get('commission', 0)),
+                    'initial_units': int(trade.get('initialUnits', current_units)),
+                    
+                    # Enhancement metadata
+                    'data_source': 'FARGATE_OANDA_COMPREHENSIVE',
+                    'enhancement_timestamp': current_time.isoformat(),
+                    'oanda_raw_data': trade  # Keep original for debugging
+                }
+                
+                enhanced_trades.append(enhanced_trade)
+                
+            except Exception as e:
+                logger.error(f"Error enhancing trade {trade.get('id', 'unknown')}: {str(e)}")
+                # Add basic trade data even if enhancement fails
+                enhanced_trades.append({
+                    'trade_id': trade.get('id', ''),
+                    'instrument': trade.get('instrument', ''),
+                    'units': int(trade.get('currentUnits', 0)),
+                    'price': float(trade.get('price', 0)),
+                    'unrealized_pl': float(trade.get('unrealizedPL', 0)),
+                    'state': 'OPEN',
+                    'error': f'Enhancement failed: {str(e)}'
+                })
+        
+        # Return enhanced response
+        enhanced_response = trades_response.copy()
+        enhanced_response['trades'] = enhanced_trades
+        enhanced_response['enhancement_metadata'] = {
+            'enhanced_at': current_time.isoformat(),
+            'account_balance': account_balance,
+            'total_trades_enhanced': len(enhanced_trades),
+            'pricing_instruments': len(pricing_lookup),
+            'market_session': self._get_market_session(current_time)
+        }
+        
+        return enhanced_response
+    
+    def _create_pricing_lookup(self, current_pricing: Optional[Dict[str, Any]]) -> Dict[str, Dict[str, float]]:
+        """Create instrument → pricing data lookup"""
+        pricing_lookup = {}
+        
+        if not current_pricing or 'prices' not in current_pricing:
+            return pricing_lookup
+        
+        for price_data in current_pricing['prices']:
+            instrument = price_data.get('instrument', '')
+            if not instrument:
+                continue
+                
+            try:
+                bid = float(price_data['bids'][0]['price'])
+                ask = float(price_data['asks'][0]['price'])
+                mid = (bid + ask) / 2
+                spread = ask - bid
+                
+                pricing_lookup[instrument] = {
+                    'bid': bid,
+                    'ask': ask,
+                    'mid': mid,
+                    'spread': spread
+                }
+                
+            except (KeyError, IndexError, ValueError) as e:
+                logger.warning(f"Failed to parse pricing for {instrument}: {str(e)}")
+        
+        return pricing_lookup
+    
+    def _parse_oanda_time(self, time_str: str) -> datetime:
+        """Parse OANDA timestamp format"""
+        try:
+            # OANDA format: 2023-07-28T19:30:45.123456789Z
+            if time_str.endswith('Z'):
+                time_str = time_str[:-1] + '+00:00'
+            return datetime.fromisoformat(time_str)
+        except Exception:
+            return datetime.now(timezone.utc)
+    
+    def _calculate_duration(self, start_time: datetime, end_time: datetime) -> int:
+        """Calculate duration in minutes"""
+        return int((end_time - start_time).total_seconds() / 60)
+    
+    def _calculate_pips_moved(self, entry_price: float, current_price: float, instrument: str, direction: str) -> float:
+        """Calculate pips moved using existing logic"""
+        if not current_price or not entry_price:
+            return 0.0
+            
+        # Pip values for different instrument types
+        pip_values = {
+            # Major pairs (4 decimal places)
+            'EUR_USD': 0.0001, 'GBP_USD': 0.0001, 'USD_CHF': 0.0001, 'USD_CAD': 0.0001,
+            'AUD_USD': 0.0001, 'NZD_USD': 0.0001, 'EUR_GBP': 0.0001, 'EUR_CHF': 0.0001,
+            'GBP_CHF': 0.0001, 'EUR_CAD': 0.0001, 'GBP_CAD': 0.0001, 'AUD_CAD': 0.0001,
+            'EUR_AUD': 0.0001, 'GBP_AUD': 0.0001, 'EUR_NZD': 0.0001, 'GBP_NZD': 0.0001,
+            'AUD_NZD': 0.0001, 'CAD_CHF': 0.0001, 'AUD_CHF': 0.0001, 'NZD_CHF': 0.0001,
+            # Yen pairs (2 decimal places)
+            'USD_JPY': 0.01, 'EUR_JPY': 0.01, 'GBP_JPY': 0.01, 'CHF_JPY': 0.01,
+            'CAD_JPY': 0.01, 'AUD_JPY': 0.01, 'NZD_JPY': 0.01
+        }
+        
+        pip_value = pip_values.get(instrument, 0.0001)
+        price_difference = current_price - entry_price
+        
+        # For short positions, flip the sign
+        if direction.lower() in ['short', 'sell']:
+            price_difference = -price_difference
+        
+        return round(price_difference / pip_value, 1)
+    
+    def _calculate_risk_reward(self, entry_price: float, stop_loss_price: Optional[float], 
+                              take_profit_price: Optional[float], units: float, 
+                              direction: str, instrument: str) -> tuple:
+        """Calculate risk amount, profit amount, and R:R ratio"""
+        risk_amount = 0.0
+        profit_amount = 0.0
+        rr_ratio = None
+        
+        if not stop_loss_price and not take_profit_price:
+            return risk_amount, profit_amount, rr_ratio
+        
+        # Calculate risk (if stop loss exists)
+        if stop_loss_price:
+            risk_pips = abs(entry_price - stop_loss_price)
+            # Simplified USD calculation (should use proper conversion)
+            risk_amount = risk_pips * units
+            
+        # Calculate profit potential (if take profit exists)  
+        if take_profit_price:
+            profit_pips = abs(take_profit_price - entry_price)
+            profit_amount = profit_pips * units
+            
+        # Calculate R:R ratio
+        if risk_amount > 0 and profit_amount > 0:
+            rr_ratio = round(profit_amount / risk_amount, 2)
+            
+        return round(risk_amount, 2), round(profit_amount, 2), rr_ratio
+    
+    def _get_market_session(self, current_time: datetime) -> str:
+        """Determine current market session"""
+        utc_hour = current_time.hour
+        
+        # Check each session
+        for session, hours in self.market_sessions.items():
+            start, end = hours['start'], hours['end']
+            
+            if start <= end:  # Normal range
+                if start <= utc_hour < end:
+                    return session
+            else:  # Overnight range (like Sydney)
+                if utc_hour >= start or utc_hour < end:
+                    return session
+        
+        return 'OFF_HOURS'
+    
+    def _identify_strategy(self, trade: Dict[str, Any], units: float, instrument: str) -> str:
+        """
+        Identify strategy based on trade characteristics
+        This is where we need your input on strategy identification logic
+        """
+        
+        # Check for client extensions/tags first
+        client_ext = trade.get('clientExtensions', {})
+        if client_ext.get('tag'):
+            return f"Strategy_{client_ext['tag']}"
+        if client_ext.get('comment'):
+            return f"Strategy_{client_ext['comment']}"
+        
+        # Strategy inference based on trade characteristics
+        abs_units = abs(units)
+        
+        # Large position strategies
+        if abs_units >= 10000:
+            return "Large_Position_Strategy"
+        elif abs_units >= 5000:
+            return "Medium_Position_Strategy"
+        elif abs_units >= 1000:
+            return "Standard_Position_Strategy"
+        else:
+            return "Small_Position_Strategy"
+        
+        # Could also identify by:
+        # - Instrument type (Major, Minor, Exotic)
+        # - Time of day (session-based strategies)
+        # - Position size patterns
+        # - Stop loss / take profit ratios
+        
+        # Default fallback
+        return "LumiSignals_Strategy"
+    
+    def _calculate_momentum_strength(self, pips_moved: float, unrealized_pl: float) -> str:
+        """Calculate momentum strength based on trade performance"""
+        if pips_moved > 50 or unrealized_pl > 100:
+            return "STRONG_BULLISH" if pips_moved > 0 else "STRONG_BEARISH"
+        elif pips_moved > 20 or unrealized_pl > 50:
+            return "WEAK_BULLISH" if pips_moved > 0 else "WEAK_BEARISH"
+        else:
+            return "NEUTRAL"
+    
+    def _determine_analysis_type(self, strategy_name: str) -> str:
+        """Determine analysis type based on strategy"""
+        if "Large_Position" in strategy_name:
+            return "INSTITUTIONAL_ANALYSIS"
+        elif "Medium_Position" in strategy_name:
+            return "SWING_ANALYSIS"
+        else:
+            return "SCALPING_ANALYSIS"
