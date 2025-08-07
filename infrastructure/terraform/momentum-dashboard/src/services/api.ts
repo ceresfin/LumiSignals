@@ -114,10 +114,18 @@ class ApiService {
     data?: any
   ): Promise<ApiResponse<T>> {
     try {
+      console.log(`🚀 RDS API Request: ${method} ${this.rdsClient.defaults.baseURL}${endpoint}`);
       const response = await this.rdsClient.request({
         method,
         url: endpoint,
         data,
+      });
+
+      console.log(`✅ RDS API Response: ${response.status}`, {
+        success: response.data?.success,
+        hasData: !!response.data?.data,
+        dataType: typeof response.data?.data,
+        dataLength: Array.isArray(response.data?.data) ? response.data.data.length : 'not array'
       });
 
       // RDS Lambda returns data in { success: true, data: ... } format
@@ -131,7 +139,13 @@ class ApiService {
         throw new Error(response.data?.error || 'RDS query failed');
       }
     } catch (error: any) {
-      console.log('🔄 RDS API unavailable, falling back to demo data:', error.message);
+      console.error('❌ RDS API Error:', {
+        message: error.message,
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        data: error.response?.data,
+        url: `${this.rdsClient.defaults.baseURL}${endpoint}`
+      });
       return {
         success: false,
         data: {} as T,
@@ -289,7 +303,14 @@ class ApiService {
 
   // Get active trades from RDS API
   async getActiveTradesFromRDS(): Promise<ApiResponse<any>> {
-    return this.makeRDSRequest('GET', '/active-trades');
+    console.log('🎯 FETCHING ACTIVE TRADES from RDS API...');
+    const result = await this.makeRDSRequest('GET', '/active-trades');
+    console.log('📊 Active trades API result:', {
+      success: result.success,
+      dataCount: result.data ? (Array.isArray(result.data) ? result.data.length : 'not array') : 'no data',
+      error: result.error
+    });
+    return result;
   }
 
   // Get dashboard data (includes active trades)
