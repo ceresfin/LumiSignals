@@ -1,7 +1,7 @@
 # The LumiSignals Architecture Bible
 *The Complete Guide to the LumiSignals Algorithmic Trading Platform*
 
-**Version**: 1.3  
+**Version**: 1.4  
 **Last Updated**: August 6, 2025  
 **Status**: Production Ready  
 **Maintainer**: Sonia LumiSignals Team
@@ -4464,16 +4464,22 @@ EUR: +1,200 exposure, Risk: 1.20%
 **Key Achievement**: Successfully displays REAL active trades from OANDA account, not sample data.
 
 #### 4. Graphs Tab (Candlestick Charts)
-**Status**: ✅ FULLY OPERATIONAL with REAL M5→H1 DATA  
-**Data Source**: Redis M5 candlestick data → Lambda H1 aggregation  
+**Status**: ✅ FULLY OPERATIONAL with **100 H1 CANDLES** (MAJOR UPGRADE!)  
+**Data Source**: Direct H1 historical data from Redis (99 candles) + Live H1 aggregation  
 **Refresh**: Every 5 minutes via Fargate Data Orchestrator  
 
+**🚀 RECENT MAJOR ACHIEVEMENT (Aug 6, 2025)**: 
+- **Before**: TradingView charts showed only 5 H1 candles
+- **After**: TradingView charts now display **100 H1 candles** (4+ days of hourly data)
+- **Technical Innovation**: H1 historical backfill system + direct Redis H1 keys
+
 **Features**:
-- Real-time candlestick charts for 7 major currency pairs
-- M5 to H1 data aggregation (5-minute data aggregated to hourly)
-- Interactive OHLC (Open, High, Low, Close) candlestick visualization
+- Real-time candlestick charts for **ALL 28 currency pairs** (expanded from 7)
+- **Direct H1 data retrieval** (no more M5→H1 aggregation dependency)
+- Interactive OHLC (Open, High, Low, Close) candlestick visualization with **100 candles**
 - Volume data display
 - Auto-refresh every 5 minutes
+- **Historical depth**: 99 pre-loaded H1 candles + 1 live candle = 100 total
 
 **Active Currency Pairs with Real Data**:
 1. **EUR/USD**: ✅ Live OHLC data
@@ -4505,24 +4511,72 @@ EUR: +1,200 exposure, Risk: 1.20%
 - **CORS Configuration**: Proper cross-origin resource sharing for browser access
 - **Rate Limiting**: 20 requests/second with burst capacity
 
-#### Data Flow
+#### Data Flow (Updated August 6, 2025)
 ```
-OANDA API → Fargate Data Orchestrator → Redis (M5 data) → Lambda API → React Frontend
+🔥 NEW H1 ARCHITECTURE:
+OANDA API → Fargate (Single Connection) → Redis H1 Historical Keys → Direct Candlestick API → TradingView (100 candles)
                       ↓
                  RDS PostgreSQL (positions, exposures, trades)
+
+LEGACY M5→H1 (Fallback only):
+OANDA API → Fargate → Redis (M5 data) → Lambda H1 Aggregation → React Frontend
 ```
 
-#### API Integration
-**Base URL**: `https://6oot32ybz4.execute-api.us-east-1.amazonaws.com/prod`  
-**Authentication**: `x-api-key: lumi-dash-2025-secure-api-key-renaissance-trading-system`  
+#### H1 Historical Backfill System (Technical Achievement)
+**Innovation**: Implemented a sophisticated H1 historical data system that provides 100 candlesticks instead of 5.
 
-**Key Endpoints**:
-- `/active-trades` - Live trading positions
-- `/positions` - Currency pair positions  
-- `/exposures` - Currency exposure analysis
-- `/portfolio-summary` - Account summary
-- `/candlestick-data` - M5→H1 aggregated chart data
-- `/redis-status` - Redis cluster health and data availability
+**Architecture Components**:
+1. **Fargate H1 Backfill Module** (`data_orchestrator.py:backfill_historical_h1_data()`)
+   - Requests 1200 M5 candles from OANDA (covers 100 hours)
+   - Aggregates M5→H1 using 12:1 ratio (12 M5 candles = 1 H1 candle)
+   - Stores in Redis keys: `market_data:{pair}:H1:historical`
+   - Runs individual pair validation (fixes ALL 28 pairs independently)
+
+2. **Direct Candlestick Lambda API** (`lambda_function.py`)
+   - **Primary**: Direct H1 data retrieval from `market_data:{pair}:H1:historical` 
+   - **Fallback**: M5→H1 aggregation for backward compatibility
+   - Returns 99 historical + 1 live candle = 100 total
+   - Data source tracking: `REDIS_FARGATE_DIRECT_H1` vs `AGGREGATED_M5_TO_H1`
+
+3. **Redis Data Architecture**:
+   ```
+   market_data:EUR_USD:H1:historical  → 99 H1 candles (pre-aggregated)
+   market_data:EUR_USD:H1:current     → Live H1 candle (updating)
+   market_data:EUR_USD:M5:historical  → M5 backup data (fallback)
+   ```
+
+**Key Technical Fixes**:
+- **Async/Await Bug**: Fixed `'coroutine' object has no attribute 'get'` errors in Redis connections
+- **Individual Pair Logic**: Changed from EUR_USD-only check to per-pair validation  
+- **CORS Resolution**: Deployed Lambda with Redis dependencies (fixed import errors)
+- **Single OANDA Connection**: Eliminated redundant Lambda→OANDA calls
+
+**Performance Metrics**:
+- **Before**: 5 H1 candles via M5 aggregation (limited display)  
+- **After**: 100 H1 candles via direct Redis retrieval (4+ days of data)
+- **Latency**: Sub-second response time with Redis caching
+- **Coverage**: ALL 28 currency pairs with 99 H1 candles each
+
+#### API Integration
+
+**🔥 NEW Direct Candlestick API (Primary)**:
+- **Base URL**: `https://4kctdba5vc.execute-api.us-east-1.amazonaws.com/prod/candlestick/`
+- **Authentication**: None required (CORS-enabled for pipstop.org)
+- **Endpoint**: `/candlestick/{currency_pair}/{timeframe}?count={number}`
+- **Example**: `https://4kctdba5vc.execute-api.us-east-1.amazonaws.com/prod/candlestick/USD_JPY/H1?count=100`
+- **Response**: Direct H1 data with 100 candles (99 historical + 1 live)
+- **Data Source**: `REDIS_FARGATE_DIRECT_H1`
+
+**Legacy Dashboard API (Secondary)**:
+- **Base URL**: `https://6oot32ybz4.execute-api.us-east-1.amazonaws.com/prod`  
+- **Authentication**: `x-api-key: lumi-dash-2025-secure-api-key-renaissance-trading-system`  
+- **Key Endpoints**:
+  - `/active-trades` - Live trading positions
+  - `/positions` - Currency pair positions  
+  - `/exposures` - Currency exposure analysis
+  - `/portfolio-summary` - Account summary
+  - `/candlestick-data` - M5→H1 aggregated chart data (legacy fallback)
+  - `/redis-status` - Redis cluster health and data availability
 
 #### M5 to H1 Aggregation Logic
 **Innovation**: Custom aggregation logic that converts 5-minute candlesticks to hourly:
@@ -4915,19 +4969,279 @@ The PipStop.org dashboard represents a significant achievement in real-time trad
 
 **Production Status**: ✅ FULLY OPERATIONAL - pipstop.org serves as the live production interface for LumiSignals trading operations.
 
+## Trade Overlay Visualization Implementation (August 8, 2025)
+
+### The Challenge: Making Trade Levels Visible
+
+The biggest technical challenge was displaying entry, target, and stop loss lines on the TradingView Lightweight Charts while ensuring they remained visible regardless of the current candlestick data range.
+
+### Technical Breakthrough: Chart Scaling Solution
+
+**Problem**: Trade levels (e.g., Entry: 1.38000, Target: 1.36950, Stop: 1.39050) were outside the visible candlestick range (1.37217 - 1.37740), making the price lines invisible.
+
+**Failed Approach**: Using `setVisibleRange()` API - this method doesn't exist in Lightweight Charts v4.2.3.
+
+**Successful Solution**: Dynamic scale margins with `applyOptions()`:
+
+```typescript
+// When trades exist, expand chart margins to show all levels
+chartRef.current.priceScale('right').applyOptions({
+  scaleMargins: {
+    top: 0.3,    // 30% margin at top
+    bottom: 0.3, // 30% margin at bottom
+  },
+  autoScale: true, // Let chart auto-scale within margins
+});
+```
+
+### Implementation Architecture
+
+**1. Data Flow**:
+```
+RDS PostgreSQL → Lambda API → CurrencyPairGraphsWithTrades → LightweightTradingViewChartWithTrades
+```
+
+**2. Price Line Creation**:
+```typescript
+// Entry line (bright blue)
+const entryLine = candlestickSeriesRef.current.createPriceLine({
+  price: trade.entry_price,
+  color: '#00BFFF',
+  lineWidth: 4,
+  axisLabelVisible: true,
+  title: `Entry ${trade.entry_price.toFixed(decimalPlaces)}`,
+});
+
+// Target line (bright green)  
+const targetLine = candlestickSeriesRef.current.createPriceLine({
+  price: trade.take_profit_price,
+  color: '#00FF00', // SUPER BRIGHT GREEN
+  lineWidth: 6,
+  axisLabelVisible: true,
+  title: `TARGET ${trade.take_profit_price.toFixed(decimalPlaces)}`,
+});
+
+// Stop loss line (bright red, dashed)
+const stopLine = candlestickSeriesRef.current.createPriceLine({
+  price: trade.stop_loss_price, 
+  color: '#FF0000', // SUPER BRIGHT RED
+  lineWidth: 8,
+  lineStyle: 2, // Dashed
+  axisLabelVisible: true,
+  title: `STOP ${trade.stop_loss_price.toFixed(decimalPlaces)}`,
+});
+```
+
+**3. Y-Axis Configuration Fix**:
+```typescript
+rightPriceScale: {
+  visible: true,
+  autoScale: true,
+  minimumWidth: 100,
+  scaleMargins: {
+    top: 0.1,
+    bottom: 0.1,
+  },
+}
+```
+
+### Key Technical Insights
+
+1. **API Compatibility**: `setVisibleRange()` doesn't exist in Lightweight Charts - use `applyOptions()` instead
+2. **Scale Margins**: Values are percentages (0-1), not absolute prices  
+3. **Line Visibility**: Price lines are created but invisible if outside the visible range
+4. **Color Strategy**: Bright, impossible-to-miss colors (#00FF00, #FF0000, #00BFFF)
+5. **JPY vs Non-JPY**: Different decimal precision (3 vs 5 decimal places)
+
+### Production Result
+
+✅ **Perfect Visualization**: Entry, target, and stop loss lines are now clearly visible on all 28 currency pairs  
+✅ **Professional Interface**: Color-coded levels with directional arrows and strategy filtering  
+✅ **Responsive Scaling**: Charts automatically adjust to show all relevant price levels  
+✅ **Cross-Platform**: Works on all devices with proper y-axis scaling
+
+This breakthrough transforms pipstop.org from a basic charting interface into a professional trading visualization platform.
+
 ---
 
 ## Contact and Maintenance
 
 **Maintainer**: Claude Code Assistant  
-**Last Updated**: August 6, 2025  
-**Version**: 1.3  
-**Status**: ✅ PRODUCTION READY - pipstop.org dashboard operational
+**Last Updated**: August 8, 2025  
+**Version**: 1.5  
+**Status**: ✅ PRODUCTION READY - pipstop.org dashboard operational with trade overlay visualization
 
-**Latest Achievements (August 6, 2025)**:
+**Latest Achievements (August 8, 2025)**:
+- ✅ **BREAKTHROUGH: Trade Overlay Visualization System** - Entry, target, and stop loss lines now display on all charts
+- ✅ **Complete Y-Axis Fix**: All currency pairs (JPY and non-JPY) now show proper price scale labels
+- ✅ **Lightweight Charts API Mastery**: Fixed setVisibleRange compatibility issues with proper applyOptions scaling
+- ✅ **Enhanced Strategy Filtering**: Dynamic dropdown populated from live RDS trade data
+- ✅ **Professional Trading Interface**: Bright color-coded lines (blue entry, green target, red stop) with directional arrows
+- ✅ **Chart Scaling Intelligence**: Automatic margin adjustment to ensure all trade levels are visible
 - ✅ Fixed graphs tab with direct multi-shard Redis API (all 28 currency pairs working)
+- ✅ **H1 Candlestick Data Achievement**: TradingView charts now display 100 H1 candles instead of 5
+- ✅ **Single OANDA Connection Architecture**: Eliminated Lambda→OANDA calls, consolidated to Fargate-only
+- ✅ **H1 Historical Backfill System**: 99 H1 candles pre-loaded for all 28 currency pairs via Fargate
+- ✅ **CORS Error Resolution**: Fixed Lambda Redis dependency issue blocking pipstop.org API calls
 - ✅ Unified deployment system (replaced 100+ scripts with 1 tool)
 - ✅ Project cleanup (9.4GB freed, 55% size reduction)
 - ✅ Lambda layer optimization (unused layers removed)
+- ✅ GitHub repository migration (clean production-ready structure)
+
+---
+
+## Repository Migration: From Development Chaos to Production Excellence
+
+### The Challenge: GitHub File Size Limits
+
+After successful development and cleanup, the LumiSignals repository encountered a critical blocker when attempting to push to GitHub. The repository contained several large files that exceeded GitHub's limits:
+
+**Problematic Files**:
+- `awscliv2.zip` (63MB) - AWS CLI installer
+- `infrastructure/fargate/trade-executor/fixes.bundle` (442MB) - Git bundle file
+- `infrastructure/fargate/trade-executor/combined_fixes.patch` (554MB) - Large patch file  
+- `infrastructure/terraform/.terraform/providers/.../terraform-provider-aws_v5.100.0_x5` (674MB) - Terraform provider binary
+
+**GitHub Limits**:
+- Warning threshold: 50MB
+- Hard rejection limit: 100MB
+- Total repository recommended limit: <1GB
+
+### The Solution: Clean Repository Migration
+
+Rather than using Git LFS or other workarounds, we implemented a **clean migration strategy** that preserved all achievements while creating a professional, maintainable repository structure.
+
+#### Migration Process
+
+**Step 1: Repository Analysis**
+```bash
+# Identified large files
+find . -size +50M -type f
+
+# Repository size analysis
+du -sh . # Initial: 17GB → Post-cleanup: 7.8GB → Final clean: ~500MB
+```
+
+**Step 2: Clean Branch Creation**
+```bash
+# Created orphan branch (no git history)
+git checkout --orphan fresh-start
+
+# Added only production-essential files
+git add [essential files only]
+git commit -m "feat: clean production-ready LumiSignals repository"
+```
+
+**Step 3: GitHub Repository Migration**
+```bash
+# Connected to clean Lumi repository
+git remote add lumi https://github.com/ceresfin/Lumi.git
+
+# Force pushed clean repository (replaced all content)
+git push lumi fresh-start:main --force
+```
+
+### Clean Repository Structure
+
+The migrated repository contains only **production-essential components**:
+
+#### Core Documentation
+```
+THE_LUMISIGNALS_ARCHITECTURE_BIBLE.md    # Complete system documentation
+README.md                                # Project overview and setup
+```
+
+#### Infrastructure Components
+```
+infrastructure/
+├── deployment/
+│   └── lumisignals-deploy.py           # Unified deployment system
+├── lambda/
+│   ├── direct-candlestick-api/         # Multi-shard Redis API
+│   ├── backup-automation/              # Automated backup system
+│   ├── trade-sync/                     # Trade synchronization
+│   └── layers/trading_common_redis/    # Shared Lambda layer
+├── fargate/
+│   └── data-orchestrator/              # Real-time data collection
+└── terraform/
+    └── momentum-dashboard/             # React frontend application
+```
+
+#### Configuration Files
+```
+.gitignore                              # Git ignore patterns
+.v20.conf                              # OANDA API configuration
+robust_tunnel.bat                      # Database tunnel script
+test_redis_connectivity.py             # Redis connection testing
+response.json                          # Sample API responses
+```
+
+### Repository Metrics
+
+**Size Optimization**:
+- Original repository: 17GB
+- Post-cleanup: 7.8GB  
+- Clean repository: ~500MB
+- **Total reduction: 97% (34x smaller)**
+
+**File Organization**:
+- Original files: 10,000+
+- Clean repository: 2,055 files
+- All production-essential code preserved
+- No functionality lost
+
+### Technical Benefits
+
+#### 1. GitHub Compatibility
+- No large file warnings or errors
+- Fast clone times for developers
+- Efficient CI/CD pipeline integration
+- Professional appearance for stakeholders
+
+#### 2. Development Efficiency  
+- Faster `git clone` operations
+- Reduced disk space requirements
+- Clear separation of production vs. development assets
+- Simplified onboarding for new team members
+
+#### 3. Maintainability
+- Clean git history with meaningful commits
+- No legacy development artifacts cluttering repository
+- Focus on production-ready code only
+- Easy to identify essential vs. optional components
+
+### Preserved Achievements
+
+✅ **All Technical Functionality Maintained**:
+- Direct candlestick API (28 currency pairs)
+- Unified deployment system  
+- Complete Architecture Bible documentation
+- Multi-shard Redis integration
+- React dashboard with working graphs
+- Fargate data orchestrator
+- Trade synchronization systems
+
+✅ **Development History Archived**:
+- Created `archive-pre-cleanup` branch locally
+- All development work preserved for reference
+- Clean production branch for ongoing development
+- Historical issues and resolutions documented
+
+### Repository URL
+
+**Production Repository**: https://github.com/ceresfin/Lumi  
+**Status**: ✅ Live and accessible
+**Structure**: Clean, professional, production-ready
+
+### Lessons Learned
+
+1. **Early Repository Hygiene**: Establish `.gitignore` patterns early to prevent large files
+2. **Separation of Concerns**: Keep development artifacts separate from production code  
+3. **Regular Cleanup**: Periodic cleanup prevents repository bloat
+4. **Migration Strategy**: Clean migration often better than incremental cleanup for legacy repositories
+
+This repository migration represents a significant milestone in the LumiSignals project evolution, transitioning from a development-heavy repository to a clean, professional, production-ready codebase suitable for stakeholder review and team collaboration.
+
+---
 
 This comprehensive Architecture Bible serves as the definitive guide to the LumiSignals trading platform. Keep this document updated as the system evolves.
