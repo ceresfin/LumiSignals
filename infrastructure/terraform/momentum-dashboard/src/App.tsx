@@ -6,6 +6,7 @@ import { SystemHealth } from './components/system/SystemHealth';
 import { MarketRegimes } from './components/market/MarketRegimes';
 import StrategyDashboard from './components/strategies/StrategyDashboard';
 import { CurrencyPairGraphs } from './components/charts/CurrencyPairGraphs';
+import { CurrencyPairGraphsWithTrades } from './components/charts/CurrencyPairGraphsWithTrades';
 import PortfolioOverview from './components/portfolio/PortfolioOverview';
 import { 
   TrendingUp, 
@@ -45,7 +46,7 @@ const tabs: TabConfig[] = [
     id: 'graphs',
     label: 'Graphs',
     icon: <BarChart3 className="w-5 h-5" />,
-    description: 'Candlestick charts for all 28 currency pairs from Fargate→Redis data flow'
+    description: 'Candlestick charts with active trade overlays - 100 H1 candles per pair'
   },
   {
     id: 'portfolio',
@@ -103,7 +104,8 @@ function AppContent() {
       case 'momentum':
         return <MomentumGrid columns={7} showFilters={true} autoRefresh={true} />;
       case 'graphs':
-        return <CurrencyPairGraphs timeframe="H1" chartHeight={160} />;
+        // Enhanced version with trade overlays
+        return <CurrencyPairGraphsWithTrades timeframe="H1" chartHeight={400} />;
       case 'strategies':
         return <StrategyDashboard />;
       case 'portfolio':

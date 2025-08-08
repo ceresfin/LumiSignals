@@ -43,12 +43,12 @@ interface LightweightTradingViewChartWithTradesProps {
   selectedStrategies?: string[];
 }
 
-// Color schemes for different strategies (slightly different shades)
+// Color schemes for different strategies (brighter, more visible colors)
 const STRATEGY_COLORS = [
-  { entry: '#4A90E2', target: '#5CB85C', stop: '#D9534F' }, // Blue, Green, Red
-  { entry: '#6B9BD1', target: '#70C670', stop: '#E56B6B' }, // Lighter shades
-  { entry: '#357ABD', target: '#449D44', stop: '#C9302C' }, // Darker shades
-  { entry: '#5BC0DE', target: '#7ED321', stop: '#FF6B6B' }, // Cyan-ish, Lime, Light Red
+  { entry: '#00BFFF', target: '#00FF7F', stop: '#FF4500' }, // Bright Blue, Bright Green, Bright Red
+  { entry: '#1E90FF', target: '#32CD32', stop: '#DC143C' }, // Dodger Blue, Lime Green, Crimson
+  { entry: '#4169E1', target: '#228B22', stop: '#B22222' }, // Royal Blue, Forest Green, Fire Brick
+  { entry: '#00CED1', target: '#9ACD32', stop: '#FF6347' }, // Dark Turquoise, Yellow Green, Tomato
 ];
 
 export const LightweightTradingViewChartWithTrades: React.FC<LightweightTradingViewChartWithTradesProps> = ({
@@ -57,6 +57,11 @@ export const LightweightTradingViewChartWithTrades: React.FC<LightweightTradingV
   height = 300,
   selectedStrategies = []
 }) => {
+  console.log(`🚀 TradingViewChartWithTrades mounted for ${currencyPair}, strategies:`, selectedStrategies);
+  
+  // Determine if this is a JPY pair for proper decimal formatting
+  const isJPYPair = currencyPair.includes('JPY');
+  const decimalPlaces = isJPYPair ? 3 : 5; // JPY: 3 decimals (e.g. 150.123), Others: 5 decimals (e.g. 1.37402)
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candlestickSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
@@ -98,7 +103,7 @@ export const LightweightTradingViewChartWithTrades: React.FC<LightweightTradingV
           visible: true,
         },
         horzLines: {
-          color: '#333333',
+          color: '#555555',
           style: 1,
           visible: true,
         },
@@ -119,11 +124,17 @@ export const LightweightTradingViewChartWithTrades: React.FC<LightweightTradingV
         },
       },
       rightPriceScale: {
-        borderColor: '#333333',
+        borderColor: '#555555',
         scaleMargins: {
           top: 0.1,
           bottom: 0.1,
         },
+        visible: true,
+        entireTextOnly: false,
+        drawTicks: true,
+        alignLabels: true,
+        minimumWidth: 100,
+        autoScale: true, // Let the chart auto-scale first
       },
       timeScale: {
         borderColor: '#333333',
@@ -178,6 +189,18 @@ export const LightweightTradingViewChartWithTrades: React.FC<LightweightTradingV
 
   // Add trade overlays
   const addTradeOverlays = () => {
+    console.log(`🎨 Adding trade overlays for ${currencyPair}:`, {
+      hasChart: !!candlestickSeriesRef.current,
+      selectedStrategies,
+      activeTrades: activeTrades.map(t => ({ 
+        instrument: t.instrument, 
+        strategy: t.strategy_name,
+        entry: t.entry_price,
+        target: t.take_profit_price,
+        stop: t.stop_loss_price
+      }))
+    });
+    
     if (!candlestickSeriesRef.current || !chartRef.current) return;
     
     clearOverlays();
@@ -186,6 +209,8 @@ export const LightweightTradingViewChartWithTrades: React.FC<LightweightTradingV
     const filteredTrades = selectedStrategies.length > 0
       ? activeTrades.filter(trade => selectedStrategies.includes(trade.strategy_name))
       : activeTrades;
+    
+    console.log(`🎯 Filtered ${filteredTrades.length} trades for ${currencyPair} with strategies:`, selectedStrategies);
 
     // Group trades by strategy for coloring
     const tradesByStrategy: { [key: string]: ActiveTrade[] } = {};
@@ -204,38 +229,121 @@ export const LightweightTradingViewChartWithTrades: React.FC<LightweightTradingV
       const trades = tradesByStrategy[strategy];
       
       trades.forEach((trade, tradeIndex) => {
-        // Add entry price line with custom label
-        const entryLine = candlestickSeriesRef.current!.createPriceLine({
-          price: trade.entry_price,
-          color: colorScheme.entry,
-          lineWidth: 2,
-          lineStyle: 0, // Solid
-          axisLabelVisible: true,
-          title: `Entry ${trade.entry_price.toFixed(4)}`,
+        console.log(`📍 Creating price lines for ${trade.instrument} - ${trade.strategy_name}:`, {
+          entry: trade.entry_price,
+          target: trade.take_profit_price,
+          stop: trade.stop_loss_price,
+          current: trade.current_price,
+          colorScheme,
+          // Check if prices are valid numbers
+          entryValid: !isNaN(trade.entry_price) && trade.entry_price > 0,
+          targetValid: !isNaN(trade.take_profit_price) && trade.take_profit_price > 0,
+          stopValid: !isNaN(trade.stop_loss_price) && trade.stop_loss_price > 0
         });
-        priceLinesRef.current.push(entryLine);
+        console.log('🎨 DEBUG: Color scheme being used:', colorScheme);
+        console.log('🎨 DEBUG: Strategy Colors array:', STRATEGY_COLORS);
+        
+        // Validate price data before creating lines
+        console.log('🔍 Validating prices:', {
+          entry: trade.entry_price,
+          entryType: typeof trade.entry_price,
+          entryValid: trade.entry_price && !isNaN(trade.entry_price) && trade.entry_price > 0,
+          target: trade.take_profit_price,
+          targetType: typeof trade.take_profit_price,
+          targetValid: trade.take_profit_price && !isNaN(trade.take_profit_price) && trade.take_profit_price > 0,
+          stop: trade.stop_loss_price,
+          stopType: typeof trade.stop_loss_price,
+          stopValid: trade.stop_loss_price && !isNaN(trade.stop_loss_price) && trade.stop_loss_price > 0
+        });
+        
+        // TEMPORARILY DISABLE VALIDATION TO FIX STRATEGY DROPDOWN
+        /*
+        if (!trade.entry_price || isNaN(trade.entry_price) || trade.entry_price <= 0) {
+          console.error(`❌ Invalid entry price for ${trade.instrument}: ${trade.entry_price}`);
+          return;
+        }
+        if (!trade.take_profit_price || isNaN(trade.take_profit_price) || trade.take_profit_price <= 0) {
+          console.error(`❌ Invalid target price for ${trade.instrument}: ${trade.take_profit_price}`);
+          return;
+        }
+        if (!trade.stop_loss_price || isNaN(trade.stop_loss_price) || trade.stop_loss_price <= 0) {
+          console.error(`❌ Invalid stop price for ${trade.instrument}: ${trade.stop_loss_price}`);
+          return;
+        }
+        */
+        
+        // Skip invalid prices but don't return early (allow strategy dropdown to work)
+        if (!trade.entry_price || isNaN(trade.entry_price) || trade.entry_price <= 0) {
+          console.warn(`⚠️ Skipping entry line for ${trade.instrument}: invalid price ${trade.entry_price}`);
+        }
+        if (!trade.take_profit_price || isNaN(trade.take_profit_price) || trade.take_profit_price <= 0) {
+          console.warn(`⚠️ Skipping target line for ${trade.instrument}: invalid price ${trade.take_profit_price}`);
+        }
+        if (!trade.stop_loss_price || isNaN(trade.stop_loss_price) || trade.stop_loss_price <= 0) {
+          console.warn(`⚠️ Skipping stop line for ${trade.instrument}: invalid price ${trade.stop_loss_price}`);
+        }
+        
+        console.log('✅ Attempting to create lines...');
+        
+        // Add entry price line with custom label (if valid)
+        if (trade.entry_price && !isNaN(trade.entry_price) && trade.entry_price > 0) {
+          const entryLine = candlestickSeriesRef.current!.createPriceLine({
+            price: trade.entry_price,
+            color: colorScheme.entry,
+            lineWidth: 4,
+            lineStyle: 0, // Solid
+            axisLabelVisible: true,
+            title: `Entry ${trade.entry_price.toFixed(decimalPlaces)}`,
+            lineVisible: true,
+          });
+          priceLinesRef.current.push(entryLine);
+          console.log(`🔥 CACHE-BUST ${Date.now()}: Created BRIGHT ENTRY line at ${trade.entry_price.toFixed(5)} for ${trade.instrument} (color: ${colorScheme.entry})`);
+        }
 
-        // Add target price line with custom label
-        const targetLine = candlestickSeriesRef.current!.createPriceLine({
-          price: trade.take_profit_price,
-          color: colorScheme.target,
-          lineWidth: 2,
-          lineStyle: 0, // Solid
-          axisLabelVisible: true,
-          title: `Target ${trade.take_profit_price.toFixed(4)}`,
-        });
-        priceLinesRef.current.push(targetLine);
+        // Add target price line with custom label - SUPER BRIGHT GREEN (if valid)
+        if (trade.take_profit_price && !isNaN(trade.take_profit_price) && trade.take_profit_price > 0) {
+          const targetLine = candlestickSeriesRef.current!.createPriceLine({
+            price: trade.take_profit_price,
+            color: '#00FF00', // SUPER BRIGHT GREEN - IMPOSSIBLE TO MISS
+            lineWidth: 6,
+            lineStyle: 0, // Solid
+            axisLabelVisible: true,
+            title: `TARGET ${trade.take_profit_price.toFixed(decimalPlaces)}`,
+            lineVisible: true,
+          });
+          priceLinesRef.current.push(targetLine);
+          console.log(`🔥 CACHE-BUST ${Date.now()}: Created BRIGHT TARGET line at ${trade.take_profit_price.toFixed(5)} for ${trade.instrument} (color: #00FF00)`);
+        }
 
-        // Add stop loss price line with custom label
-        const stopLine = candlestickSeriesRef.current!.createPriceLine({
-          price: trade.stop_loss_price,
-          color: colorScheme.stop,
-          lineWidth: 2,
-          lineStyle: 2, // Dashed
-          axisLabelVisible: true,
-          title: `Stop ${trade.stop_loss_price.toFixed(4)}`,
-        });
-        priceLinesRef.current.push(stopLine);
+        // Add stop loss price line with custom label - SUPER BRIGHT RED (if valid)
+        if (trade.stop_loss_price && !isNaN(trade.stop_loss_price) && trade.stop_loss_price > 0) {
+          const stopLine = candlestickSeriesRef.current!.createPriceLine({
+            price: trade.stop_loss_price,
+            color: '#FF0000', // SUPER BRIGHT RED - IMPOSSIBLE TO MISS
+            lineWidth: 8,
+            lineStyle: 2, // Dashed
+            axisLabelVisible: true,
+            title: `STOP ${trade.stop_loss_price.toFixed(decimalPlaces)}`,
+            lineVisible: true,
+          });
+          priceLinesRef.current.push(stopLine);
+          console.log(`🔥 CACHE-BUST ${Date.now()}: Created BRIGHT STOP line at ${trade.stop_loss_price.toFixed(5)} for ${trade.instrument} (color: #FF0000)`);
+        }
+        
+        // Log chart visible range vs trade prices
+        if (candlestickData.length > 0) {
+          const candlePrices = candlestickData.map(c => [c.high, c.low]).flat();
+          const chartMin = Math.min(...candlePrices);
+          const chartMax = Math.max(...candlePrices);
+          console.log(`📊 Chart range for ${trade.instrument}: ${chartMin.toFixed(5)} - ${chartMax.toFixed(5)}`);
+          console.log(`🎯 Trade levels: Entry ${trade.entry_price.toFixed(5)}, Target ${trade.take_profit_price.toFixed(5)}, Stop ${trade.stop_loss_price.toFixed(5)}`);
+          
+          // Check if trade levels are within visible range
+          const entryInRange = trade.entry_price >= chartMin && trade.entry_price <= chartMax;
+          const targetInRange = trade.take_profit_price >= chartMin && trade.take_profit_price <= chartMax;
+          const stopInRange = trade.stop_loss_price >= chartMin && trade.stop_loss_price <= chartMax;
+          console.log(`🔍 Lines in chart range: Entry ${entryInRange ? '✅' : '❌'}, Target ${targetInRange ? '✅' : '❌'}, Stop ${stopInRange ? '✅' : '❌'}`);
+        }
 
         // Add large directional arrow marker at entry
         if (candlestickData.length > 0) {
@@ -274,6 +382,13 @@ export const LightweightTradingViewChartWithTrades: React.FC<LightweightTradingV
 
   // Update chart data when candlestick data changes
   useEffect(() => {
+    console.log(`📊 Chart data update for ${currencyPair}:`, {
+      hasSeries: !!candlestickSeriesRef.current,
+      candleCount: candlestickData.length,
+      tradeCount: activeTrades.length,
+      selectedStrategies
+    });
+    
     if (!candlestickSeriesRef.current || candlestickData.length === 0) return;
 
     // Convert data to TradingView format
@@ -299,13 +414,85 @@ export const LightweightTradingViewChartWithTrades: React.FC<LightweightTradingV
       }
     }
 
-    // Fit content
-    if (chartRef.current) {
-      chartRef.current.timeScale().fitContent();
-    }
-
     // Add trade overlays after chart data is set
+    console.log(`🎯 Calling addTradeOverlays for ${currencyPair}`);
     addTradeOverlays();
+    
+    // Force chart to show all price lines by adjusting visible range
+    setTimeout(() => {
+      if (chartRef.current && activeTrades.length > 0) {
+        // Calculate price range including trade levels
+        const filteredTrades = selectedStrategies.length > 0
+          ? activeTrades.filter(trade => selectedStrategies.includes(trade.strategy_name))
+          : activeTrades;
+        
+        if (filteredTrades.length > 0) {
+          const tradePrices = filteredTrades.flatMap(trade => [
+            trade.entry_price,
+            trade.take_profit_price || trade.entry_price,
+            trade.stop_loss_price || trade.entry_price,
+            trade.current_price || trade.entry_price
+          ]).filter(price => price && !isNaN(price));
+          
+          const candlePrices = candlestickData.flatMap(candle => [candle.high, candle.low]);
+          const allPrices = [...tradePrices, ...candlePrices];
+          
+          if (allPrices.length > 0) {
+            const minPrice = Math.min(...allPrices);
+            const maxPrice = Math.max(...allPrices);
+            // For non-JPY pairs, ensure minimum range for visible price labels
+            const minRange = isJPYPair ? 0.5 : 0.0020; // Minimum range: 0.5 for JPY, 0.002 for others
+            const currentRange = maxPrice - minPrice;
+            const padding = Math.max(currentRange * 0.15, minRange); // Use larger of 15% padding or min range
+            
+            console.log(`📊 Force-scaling ${isJPYPair ? 'JPY' : 'non-JPY'} chart for ${currencyPair}: ${minPrice.toFixed(decimalPlaces)} - ${maxPrice.toFixed(decimalPlaces)} (range: ${currentRange.toFixed(decimalPlaces)}, padding: ${padding.toFixed(decimalPlaces)})`);
+            
+            // Simply expand the scale margins to show trade lines
+            try {
+              console.log(`📊 Expanding price scale for ${currencyPair} to show trade lines`);
+              chartRef.current.priceScale('right').applyOptions({
+                scaleMargins: {
+                  top: 0.3,    // 30% margin at top
+                  bottom: 0.3, // 30% margin at bottom
+                },
+                autoScale: true, // Let it auto-scale with margins
+              });
+              console.log(`✅ Applied expanded margins for ${currencyPair}`);
+            } catch (e) {
+              console.error('Price scaling failed for', currencyPair, e);
+            }
+          }
+        }
+        
+        chartRef.current.timeScale().fitContent();
+      } else {
+        // No trades, just fit the candlestick data but ensure minimum range for non-JPY pairs
+        if (chartRef.current) {
+          if (!isJPYPair && candlestickData.length > 0) {
+            // For non-JPY pairs without trades, still ensure good y-axis scaling
+            const candlePrices = candlestickData.flatMap(candle => [candle.high, candle.low]);
+            const minPrice = Math.min(...candlePrices);
+            const maxPrice = Math.max(...candlePrices);
+            const range = maxPrice - minPrice;
+            const minRange = 0.0020; // Minimum 20 pips range
+            
+            // Always ensure price scale is visible with proper margins
+            chartRef.current.priceScale('right').applyOptions({
+              visible: true,
+              autoScale: true,
+              scaleMargins: {
+                top: 0.1,
+                bottom: 0.1,
+              },
+            });
+            console.log(`📊 Applied basic scaling for ${currencyPair} without trades`);
+          }
+          
+          // Ensure chart time scale fits content
+          chartRef.current.timeScale().fitContent();
+        }
+      }
+    }, 100); // Small delay to ensure price lines are created first
   }, [candlestickData, activeTrades, selectedStrategies]);
 
   // Fetch active trades
@@ -368,7 +555,7 @@ export const LightweightTradingViewChartWithTrades: React.FC<LightweightTradingV
         }
 
         // Fetch 100 candlesticks from Redis via Lambda API
-        console.log(`🎯 TRADINGVIEW WITH TRADES: ${currencyPair} with 100 candles`);
+        console.log(`🎯 TRADINGVIEW WITH TRADES: ${currencyPair} requesting 100 candles`);
         const response = await api.getCandlestickData(currencyPair, timeframe, 100);
         
         if (!mounted) return;
@@ -394,6 +581,7 @@ export const LightweightTradingViewChartWithTrades: React.FC<LightweightTradingV
           );
           
           if (formattedData.length > 0) {
+            console.log(`📊 Received ${formattedData.length} candlesticks for ${currencyPair} (requested 100)`);
             setCandlestickData(formattedData);
             setError(null);
           } else {
@@ -571,7 +759,7 @@ export const LightweightTradingViewChartWithTrades: React.FC<LightweightTradingV
           {currentPrice && (
             <>
               <div className="text-lg font-semibold text-white">
-                {currentPrice.toFixed(5)}
+                {currentPrice.toFixed(decimalPlaces)}
               </div>
               {priceChange !== null && (
                 <div className={`flex items-center justify-end gap-1 text-sm ${priceChange >= 0 ? 'text-green-400' : 'text-red-400'}`}>
