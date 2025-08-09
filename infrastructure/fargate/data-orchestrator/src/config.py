@@ -61,7 +61,7 @@ class Settings(BaseSettings):
     
     # Multi-timeframe candlestick collection
     timeframes: List[str] = Field(
-        default=["M5", "M15", "M30", "H1", "H4", "D", "W"],
+        default=["M5"],  # Only collect M5 regularly, H1 handled by backfill
         env="TIMEFRAMES"
     )
     
@@ -123,6 +123,10 @@ class Settings(BaseSettings):
     # Data Retention Configuration
     redis_ttl_seconds: int = Field(432000, env="REDIS_TTL_SECONDS")  # 5 days (120 hours)
     historical_data_points: int = Field(1200, env="HISTORICAL_DATA_POINTS")
+    
+    # H1 Backfill Configuration - Enhanced for trader scrollback experience
+    h1_backfill_days: int = Field(30, env="H1_BACKFILL_DAYS")  # Days of H1 data to collect
+    h1_max_candles: int = Field(500, env="H1_MAX_CANDLES")  # Max candles to store in Redis
     
     # Health Monitoring
     health_check_interval: int = Field(30, env="HEALTH_CHECK_INTERVAL")  # 30 seconds

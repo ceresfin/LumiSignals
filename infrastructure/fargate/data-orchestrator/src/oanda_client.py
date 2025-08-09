@@ -81,14 +81,16 @@ class OandaClient:
             logger.error("❌ OANDA API connection test failed", error=str(e))
             return False
     
-    async def get_candlesticks(self, instrument: str, granularity: str = "M2", count: int = 100) -> Optional[Dict[str, Any]]:
+    async def get_candlesticks(self, instrument: str, granularity: str = "M2", count: int = None, from_time: str = None, to_time: str = None) -> Optional[Dict[str, Any]]:
         """
         Get candlestick data for a currency pair
         
         Args:
             instrument: Currency pair (e.g., 'EUR_USD')
             granularity: Timeframe (M2 for 2-minute candles)
-            count: Number of candles to retrieve
+            count: Number of candles to retrieve (default: 100 if no time range specified)
+            from_time: ISO 8601 formatted start time (e.g., '2025-01-01T00:00:00.000000000Z')
+            to_time: ISO 8601 formatted end time (optional, defaults to now)
         """
         try:
             self.total_requests += 1
@@ -96,9 +98,19 @@ class OandaClient:
             # Build request parameters
             params = {
                 "granularity": granularity,
-                "count": count,
                 "price": "M"  # Midpoint prices
             }
+            
+            # Use either count or time range (time range takes priority)
+            if from_time:
+                params["from"] = from_time
+                if to_time:
+                    params["to"] = to_time
+                logger.info(f"📅 H1 API Request: {instrument} {granularity} from {from_time} to {to_time or 'now'}")
+            else:
+                # Default to count-based if no time range specified
+                params["count"] = count if count is not None else 100
+                logger.debug(f"Using count-based: {params['count']} candles")
             
             # Make API request with retry logic
             for attempt in range(self.settings.retry_attempts):
@@ -113,9 +125,13 @@ class OandaClient:
                         self.last_successful_request = datetime.now()
                         data = response.json()
                         
-                        logger.debug(f"Candlestick data retrieved for {instrument}",
-                                   candles=len(data.get('candles', [])),
-                                   granularity=granularity)
+                        candle_count = len(data.get('candles', []))
+                        if granularity == "H1":
+                            logger.info(f"✅ H1 API Response: {instrument} returned {candle_count} candles")
+                        else:
+                            logger.debug(f"Candlestick data retrieved for {instrument}",
+                                       candles=candle_count,
+                                       granularity=granularity)
                         
                         return data
                     

@@ -126,15 +126,17 @@ export const LightweightTradingViewChartWithTrades: React.FC<LightweightTradingV
       rightPriceScale: {
         borderColor: '#555555',
         scaleMargins: {
-          top: 0.1,
-          bottom: 0.1,
+          top: 0.2,
+          bottom: 0.2,
         },
         visible: true,
         entireTextOnly: false,
         drawTicks: true,
         alignLabels: true,
-        minimumWidth: 100,
-        autoScale: true, // Let the chart auto-scale first
+        minimumWidth: 120,
+        autoScale: true,
+        invertScale: false,
+        borderVisible: true,
       },
       timeScale: {
         borderColor: '#333333',
@@ -418,9 +420,16 @@ export const LightweightTradingViewChartWithTrades: React.FC<LightweightTradingV
     console.log(`🎯 Calling addTradeOverlays for ${currencyPair}`);
     addTradeOverlays();
     
-    // Force chart to show all price lines by adjusting visible range
-    setTimeout(() => {
-      if (chartRef.current && activeTrades.length > 0) {
+    // Ensure price scale is always visible
+    if (chartRef.current) {
+      console.log(`📊 Ensuring price scale is visible for ${currencyPair}`);
+      chartRef.current.priceScale('right').applyOptions({
+        visible: true,
+        autoScale: true,
+      });
+      chartRef.current.timeScale().fitContent();
+      
+      if (activeTrades.length > 0) {
         // Calculate price range including trade levels
         const filteredTrades = selectedStrategies.length > 0
           ? activeTrades.filter(trade => selectedStrategies.includes(trade.strategy_name))
@@ -447,17 +456,15 @@ export const LightweightTradingViewChartWithTrades: React.FC<LightweightTradingV
             
             console.log(`📊 Force-scaling ${isJPYPair ? 'JPY' : 'non-JPY'} chart for ${currencyPair}: ${minPrice.toFixed(decimalPlaces)} - ${maxPrice.toFixed(decimalPlaces)} (range: ${currentRange.toFixed(decimalPlaces)}, padding: ${padding.toFixed(decimalPlaces)})`);
             
-            // Simply expand the scale margins to show trade lines
+            // Keep price scale stable - don't change margins dynamically
             try {
-              console.log(`📊 Expanding price scale for ${currencyPair} to show trade lines`);
+              console.log(`📊 Ensuring stable price scale for ${currencyPair}`);
+              // Just ensure the price scale is visible and working
               chartRef.current.priceScale('right').applyOptions({
-                scaleMargins: {
-                  top: 0.3,    // 30% margin at top
-                  bottom: 0.3, // 30% margin at bottom
-                },
-                autoScale: true, // Let it auto-scale with margins
+                visible: true,
+                autoScale: true,
               });
-              console.log(`✅ Applied expanded margins for ${currencyPair}`);
+              console.log(`✅ Applied stable scaling for ${currencyPair}`);
             } catch (e) {
               console.error('Price scaling failed for', currencyPair, e);
             }
@@ -476,23 +483,17 @@ export const LightweightTradingViewChartWithTrades: React.FC<LightweightTradingV
             const range = maxPrice - minPrice;
             const minRange = 0.0020; // Minimum 20 pips range
             
-            // Always ensure price scale is visible with proper margins
+            // Always ensure price scale is visible
             chartRef.current.priceScale('right').applyOptions({
               visible: true,
               autoScale: true,
-              scaleMargins: {
-                top: 0.1,
-                bottom: 0.1,
-              },
             });
             console.log(`📊 Applied basic scaling for ${currencyPair} without trades`);
           }
           
-          // Ensure chart time scale fits content
-          chartRef.current.timeScale().fitContent();
         }
       }
-    }, 100); // Small delay to ensure price lines are created first
+    }
   }, [candlestickData, activeTrades, selectedStrategies]);
 
   // Fetch active trades

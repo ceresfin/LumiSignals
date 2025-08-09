@@ -126,9 +126,37 @@ class DirectCandlestickAPI:
             h1_candles.append(h1_candle)
         
         logger.info(f"Aggregated {len(sorted_candles)} M5 candles → {len(h1_candles)} H1 candles")
-        if len(sorted_candles) > 0 and len(h1_candles) == 0:
-            # Debug: log the first few M5 candles to understand the format
-            logger.info(f"DEBUG: First M5 candle structure: {sorted_candles[0] if sorted_candles else 'None'}")
+        
+        # Enhanced debugging
+        if len(sorted_candles) > 0 and len(h1_candles) < 10:
+            logger.info(f"LOW H1 OUTPUT DEBUG:")
+            logger.info(f"- M5 candles: {len(sorted_candles)}")
+            logger.info(f"- H1 candles: {len(h1_candles)}")
+            logger.info(f"- Expected H1: ~{len(sorted_candles) // 12}")
+            logger.info(f"- First M5 candle: {sorted_candles[0] if sorted_candles else 'None'}")
+            logger.info(f"- Last M5 candle: {sorted_candles[-1] if sorted_candles else 'None'}")
+            
+            # Show unique hour boundaries found
+            unique_hours = set()
+            for candle in sorted_candles[:50]:  # Check first 50
+                try:
+                    candle_time_str = candle.get('time') or candle.get('timestamp')
+                    if candle_time_str:
+                        if candle_time_str.endswith('Z'):
+                            if '.000000000Z' in candle_time_str:
+                                candle_time_str = candle_time_str.replace('.000000000Z', 'Z')
+                            candle_time = datetime.fromisoformat(candle_time_str.replace('Z', '+00:00'))
+                        else:
+                            candle_time = datetime.fromisoformat(candle_time_str)
+                        hour_boundary = candle_time.replace(minute=0, second=0, microsecond=0)
+                        unique_hours.add(hour_boundary.isoformat())
+                except:
+                    continue
+            logger.info(f"- Unique hour boundaries found: {len(unique_hours)}")
+            if unique_hours:
+                sorted_hours = sorted(unique_hours)
+                logger.info(f"- Hour range: {sorted_hours[0]} to {sorted_hours[-1]}")
+        
         return h1_candles
     
     def create_h1_candle(self, m5_group, hour_boundary):
@@ -172,13 +200,25 @@ class DirectCandlestickAPI:
                     "data": []
                 }
             
-            # Try multiple Redis key patterns (matches working dashboard API)
+            # Debug: List all keys for this currency pair to see what's available
+            try:
+                all_keys = redis_conn.keys(f"market_data:{currency_pair}:*")
+                logger.info(f"Available Redis keys for {currency_pair}: {[key.decode() if isinstance(key, bytes) else key for key in all_keys]}")
+            except Exception as e:
+                logger.warning(f"Could not list Redis keys for {currency_pair}: {e}")
+            
+            # Try multiple Redis key patterns - prioritize direct timeframe data
             possible_keys = [
+                # First priority: Direct timeframe data (H1, M5, etc.)
                 (f"market_data:{currency_pair}:{timeframe}:historical", f"market_data:{currency_pair}:{timeframe}:current"),
-                (f"market_data:{currency_pair}:M5:historical", f"market_data:{currency_pair}:M5:current"),  # Fallback to M5
                 (f"candlestick:{currency_pair}:{timeframe}", None),
                 (f"ohlc:{currency_pair}:{timeframe}", None),
             ]
+            
+            # Only add M5 fallback if requesting H1 (for backward compatibility during transition)
+            if timeframe == "H1":
+                possible_keys.append((f"market_data:{currency_pair}:M5:historical", f"market_data:{currency_pair}:M5:current"))
+                logger.info(f"H1 requested for {currency_pair} - will try direct H1 first, M5 aggregation as fallback")
             
             # Test connection
             redis_conn.ping()
@@ -233,14 +273,40 @@ class DirectCandlestickAPI:
                 except json.JSONDecodeError as e:
                     logger.warning(f"Failed to parse current data for {currency_pair}: {e}")
             
-            # If we got M5 data but requested H1, aggregate it
-            if candles and used_keys and 'M5' in used_keys[0] and timeframe == 'H1':
-                candles = self.aggregate_m5_to_h1(candles)
-                logger.info(f"Aggregated M5 data to H1 for {currency_pair}")
+            # Check what type of data we retrieved
+            data_source = "UNKNOWN"
+            if used_keys:
+                if timeframe in used_keys[0]:
+                    data_source = f"DIRECT_{timeframe}"
+                    logger.info(f"✅ Using direct {timeframe} data for {currency_pair} from {used_keys[0]}")
+                elif 'M5' in used_keys[0] and timeframe == 'H1':
+                    data_source = "AGGREGATED_M5_TO_H1"
+                    logger.info(f"⚠️ No direct H1 data found for {currency_pair}, falling back to M5 aggregation")
+                    
+                    # Only aggregate if we have M5 data and requested H1
+                    logger.info(f"Before aggregation: {len(candles)} M5 candles for {currency_pair}")
+                    if candles:
+                        first_time = candles[0].get('time', 'unknown')
+                        last_time = candles[-1].get('time', 'unknown') if len(candles) > 1 else first_time
+                        logger.info(f"M5 time range: {first_time} to {last_time}")
+                    
+                    candles = self.aggregate_m5_to_h1(candles)
+                    logger.info(f"After aggregation: {len(candles)} H1 candles for {currency_pair}")
+                    
+                    if candles:
+                        h1_times = [c.get('time', 'unknown') for c in candles[:10]]
+                        logger.info(f"H1 candle times: {h1_times}")
             
             # Sort by time and limit to requested count
             if candles:
+                pre_sort_count = len(candles)
                 candles = sorted(candles, key=lambda x: x.get('time', ''))[-count:]
+                logger.info(f"Limited from {pre_sort_count} to {len(candles)} candles (requested {count})")
+            
+            # Log if we have insufficient data (Fargate should have backfilled this)
+            if len(candles) < count and len(candles) < 50 and timeframe == "H1":
+                logger.warning(f"Insufficient H1 data in Redis ({len(candles)} < {count}). Fargate may need to run backfill.")
+                logger.info(f"Using {len(candles)} available H1 candles from Redis instead of requested {count}")
             
             # Format response for dashboard compatibility
             formatted_candles = []
@@ -263,7 +329,7 @@ class DirectCandlestickAPI:
                     "count_requested": count,
                     "count_returned": len(formatted_candles),
                     "shard_index": shard_index,
-                    "data_source": "DIRECT_REDIS_FARGATE",
+                    "data_source": f"REDIS_FARGATE_{data_source}",
                     "timestamp": datetime.now().isoformat()
                 }
             }
@@ -291,6 +357,22 @@ def lambda_handler(event, context):
     - count: number of candles (default 50)
     """
     
+    # CORS headers for all responses
+    cors_headers = {
+        'Access-Control-Allow-Origin': 'https://pipstop.org',
+        'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token',
+        'Access-Control-Allow-Methods': 'GET,OPTIONS',
+        'Access-Control-Allow-Credentials': 'false'
+    }
+    
+    # Handle OPTIONS preflight request
+    if event.get('httpMethod') == 'OPTIONS':
+        return {
+            'statusCode': 200,
+            'headers': cors_headers,
+            'body': ''
+        }
+    
     try:
         # Extract path parameters
         path_params = event.get('pathParameters', {}) or {}
@@ -305,9 +387,7 @@ def lambda_handler(event, context):
                 'statusCode': 400,
                 'headers': {
                     'Content-Type': 'application/json',
-                    'Access-Control-Allow-Origin': '*',
-                    'Access-Control-Allow-Headers': 'Content-Type,x-api-key',
-                    'Access-Control-Allow-Methods': 'GET,POST,OPTIONS'
+                    **cors_headers
                 },
                 'body': json.dumps({
                     'success': False,
@@ -325,9 +405,7 @@ def lambda_handler(event, context):
             'statusCode': 200,
             'headers': {
                 'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Headers': 'Content-Type,x-api-key',
-                'Access-Control-Allow-Methods': 'GET,POST,OPTIONS'
+                **cors_headers
             },
             'body': json.dumps(result)
         }
@@ -338,9 +416,7 @@ def lambda_handler(event, context):
             'statusCode': 500,
             'headers': {
                 'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Headers': 'Content-Type,x-api-key',
-                'Access-Control-Allow-Methods': 'GET,POST,OPTIONS'
+                **cors_headers
             },
             'body': json.dumps({
                 'success': False,

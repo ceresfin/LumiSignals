@@ -246,14 +246,33 @@ class DataOrchestrator:
             print(f"DEBUG: Traceback: {traceback.format_exc()}")
 
     async def _backfill_pair_h1_data(self, currency_pair: str) -> int:
-        """Backfill H1 data for a specific currency pair"""
+        """Backfill H1 data for a specific currency pair using date-range approach"""
         try:
-            # Fetch 100 H1 candles from OANDA
+            # Calculate date range for extensive historical data using configurable settings
+            # This provides rich scrollback experience for traders analyzing patterns
+            # Accounts for weekends, holidays, and gives plenty of historical context
+            backfill_days = self.settings.h1_backfill_days
+            max_candles = self.settings.h1_max_candles
+            
+            # Generate proper OANDA timestamp format for API request
+            from_datetime = datetime.now() - timedelta(days=backfill_days)
+            from_time = from_datetime.strftime('%Y-%m-%dT%H:%M:%S.000000000Z')  # OANDA format with nanoseconds
+            
+            logger.info(f"🕐 Requesting H1 historical data for {currency_pair} from {from_time} ({backfill_days} days, max {max_candles} candles)")
+            
+            # Fetch H1 candles using date range (works during market closure)
             data = await self.oanda_client.get_candlesticks(
                 instrument=currency_pair,
                 granularity="H1", 
-                count=100
+                from_time=from_time
             )
+            
+            # Debug logging for OANDA response
+            if data:
+                candle_count = len(data.get('candles', []))
+                logger.info(f"📊 OANDA returned {candle_count} H1 candles for {currency_pair}")
+            else:
+                logger.warning(f"⚠️ OANDA returned no data for {currency_pair} H1 request")
             
             if not data or 'candles' not in data:
                 logger.warning(f"No H1 data received for {currency_pair}")
@@ -263,20 +282,50 @@ class DataOrchestrator:
             if not candles:
                 return 0
             
-            # Filter out incomplete candles and format data
+            # Filter out incomplete candles and format data with proper time handling
             formatted_candles = []
             for candle in candles:
                 if candle.get('complete') and candle.get('mid'):
                     mid = candle['mid']
+                    
+                    # Parse OANDA timestamp with nanosecond precision handling
+                    raw_time = candle['time']
+                    formatted_time = self._parse_oanda_timestamp(raw_time)
+                    
                     formatted_candle = {
-                        'time': candle['time'],
+                        'time': formatted_time,
                         'open': float(mid.get('o', 0)),
                         'high': float(mid.get('h', 0)),
                         'low': float(mid.get('l', 0)),
                         'close': float(mid.get('c', 0)),
-                        'volume': int(candle.get('volume', 0))
+                        'volume': int(candle.get('volume', 0)),
+                        '_raw_time': raw_time,  # Keep original for debugging
+                        '_parsed_dt': dt.isoformat() if 'dt' in locals() else None
                     }
                     formatted_candles.append(formatted_candle)
+            
+            # Sort by time using proper datetime comparison for accuracy
+            # Provide more data for traders who want to scroll back and analyze patterns
+            def get_sort_key(candle):
+                try:
+                    time_str = candle['time']
+                    if time_str.endswith('Z'):
+                        return datetime.fromisoformat(time_str.replace('Z', '+00:00'))
+                    return datetime.fromisoformat(time_str)
+                except Exception as e:
+                    logger.warning(f"Failed to parse time for sorting {candle.get('time')}: {e}")
+                    return datetime.min  # Put unparseable dates at the beginning
+            
+            formatted_candles.sort(key=get_sort_key, reverse=True)
+            
+            # Keep configurable amount of historical data for smooth scrolling experience
+            # This enables rich scrollback in TradingView charts
+            max_candles = self.settings.h1_max_candles
+            if len(formatted_candles) > max_candles:
+                formatted_candles = formatted_candles[:max_candles]
+                logger.info(f"📊 Limited to {max_candles} candles from {len(formatted_candles)} available (configured limit)")
+                
+            formatted_candles.reverse()  # Restore chronological order
             
             if not formatted_candles:
                 return 0
@@ -300,11 +349,17 @@ class DataOrchestrator:
                 json.dumps(historical_data)
             )
             
-            logger.debug(f"Stored {len(formatted_candles)} H1 candles for {currency_pair}")
+            logger.info(f"✅ Backfilled {len(formatted_candles)} H1 candles for {currency_pair} (30-day range for rich scrollback)")
+            
+            # Log the time range for verification
+            if formatted_candles:
+                first_candle = formatted_candles[0]['time']
+                last_candle = formatted_candles[-1]['time']
+                logger.info(f"📅 H1 data range: {first_candle} → {last_candle} ({len(formatted_candles)} candles)")
             return len(formatted_candles)
             
         except Exception as e:
-            logger.error(f"Failed to backfill H1 data for {currency_pair}: {e}")
+            logger.error(f"❌ Failed to backfill H1 data for {currency_pair}: {e}")
             return 0
 
     async def start(self):
@@ -572,7 +627,7 @@ class DataOrchestrator:
             logger.error("Failed to collect current pricing", error=str(e))
     
     def _process_candlestick_data(self, raw_data: Dict[str, Any], currency_pair: str, timeframe: str) -> Dict[str, Any]:
-        """Process raw OANDA candlestick data into Redis format"""
+        """Process raw OANDA candlestick data into Redis format with proper time handling"""
         try:
             candles = raw_data.get('candles', [])
             if not candles:
@@ -582,11 +637,15 @@ class DataOrchestrator:
             latest_candle = candles[-1]
             mid_prices = latest_candle.get('mid', {})
             
+            # Parse timestamp with nanosecond precision handling
+            raw_timestamp = latest_candle.get('time')
+            formatted_timestamp = self._parse_oanda_timestamp(raw_timestamp)
+            
             # Format for Redis storage
             processed_data = {
                 'instrument': currency_pair,
                 'timeframe': timeframe,
-                'timestamp': latest_candle.get('time'),
+                'timestamp': formatted_timestamp,
                 'open': float(mid_prices.get('o', 0)),
                 'high': float(mid_prices.get('h', 0)),
                 'low': float(mid_prices.get('l', 0)),
@@ -613,8 +672,12 @@ class DataOrchestrator:
             
             for candle in candles[-history_count:]:  # Last N candles based on timeframe
                 mid = candle.get('mid', {})
+                # Parse each historical candle timestamp properly
+                raw_candle_time = candle.get('time')
+                formatted_candle_time = self._parse_oanda_timestamp(raw_candle_time)
+                
                 historical_candles.append({
-                    'time': candle.get('time'),
+                    'time': formatted_candle_time,
                     'open': float(mid.get('o', 0)),
                     'high': float(mid.get('h', 0)),
                     'low': float(mid.get('l', 0)),
@@ -630,6 +693,28 @@ class DataOrchestrator:
         except Exception as e:
             logger.error(f"Data processing failed for {currency_pair} {timeframe}", error=str(e))
             return {}
+    
+    def _parse_oanda_timestamp(self, raw_timestamp: str) -> str:
+        """Parse OANDA timestamp with nanosecond precision handling"""
+        if not raw_timestamp:
+            return raw_timestamp
+        
+        try:
+            # Handle OANDA's nanosecond precision format: 2025-01-01T12:34:56.000000000Z
+            if raw_timestamp.endswith('.000000000Z'):
+                # Remove nanoseconds for compatibility
+                cleaned_timestamp = raw_timestamp.replace('.000000000Z', 'Z')
+            else:
+                cleaned_timestamp = raw_timestamp
+            
+            # Parse to datetime object for validation and consistent formatting
+            dt = datetime.fromisoformat(cleaned_timestamp.replace('Z', '+00:00'))
+            # Return as ISO string with Z suffix for TradingView compatibility
+            return dt.isoformat().replace('+00:00', 'Z')
+            
+        except Exception as e:
+            logger.warning(f"Failed to parse OANDA timestamp {raw_timestamp}: {e}, using raw value")
+            return raw_timestamp
     
     async def _write_shard_timeframe_to_redis(self, shard_index: int, shard_data: Dict[str, Any], timeframe: str):
         """Write shard data for specific timeframe to appropriate Redis node"""

@@ -334,6 +334,16 @@ class ApiService {
   }
 
   // Get candlestick data directly from Redis (bypasses Lambda strategies) - FORCE UPDATE 2025-08-05
+  async getCandlestickDataFromRDS(currencyPair: string, timeframe: string = 'H1', count: number = 50): Promise<ApiResponse<any>> {
+    console.log(`🎯 FETCHING CANDLESTICK DATA from RDS API for ${currencyPair} ${timeframe}`);
+    const params = new URLSearchParams({
+      currency_pair: currencyPair,
+      timeframe: timeframe,
+      count: count.toString()
+    });
+    return this.makeRDSRequest('GET', `/candlestick-data?${params.toString()}`);
+  }
+
   async getCandlestickData(currencyPair: string, timeframe: string = 'H1', count: number = 50): Promise<ApiResponse<any>> {
     console.log(`🚀 FORCING DIRECT candlestick API for ${currencyPair} ${timeframe} - NEW VERSION`);
     
