@@ -62,6 +62,13 @@ export const LightweightTradingViewChartWithTrades: React.FC<LightweightTradingV
   // Determine if this is a JPY pair for proper decimal formatting
   const isJPYPair = currencyPair.includes('JPY');
   const decimalPlaces = isJPYPair ? 3 : 5; // JPY: 3 decimals (e.g. 150.123), Others: 5 decimals (e.g. 1.37402)
+  
+  console.log(`🔍 Y-axis precision debug for ${currencyPair}:`, {
+    isJPYPair,
+    priceFormatPrecision: isJPYPair ? 2 : 4,
+    decimalPlaces,
+    minMove: isJPYPair ? 0.01 : 0.0001
+  });
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candlestickSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
@@ -153,6 +160,11 @@ export const LightweightTradingViewChartWithTrades: React.FC<LightweightTradingV
       borderDownColor: '#C26A6A',
       wickUpColor: '#C7D9C5',
       wickDownColor: '#C26A6A',
+      priceFormat: {
+        type: 'price',
+        precision: isJPYPair ? 2 : 4,
+        minMove: isJPYPair ? 0.01 : 0.0001,
+      },
     });
 
     chartRef.current = chart;
