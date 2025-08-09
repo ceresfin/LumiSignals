@@ -2955,6 +2955,100 @@ REDIS_SSL_ENABLED=true
 LOG_LEVEL=DEBUG
 ```
 
+## H1 Candlestick Data & Trade Visualization Solution
+
+### Problem Resolution: Consistent 100+ H1 Candles
+
+**Issue Identified (August 2025):**
+- Charts initially showed only 25 H1 candles during weekends/market closure
+- H1 backfill data (500 candles) was being overwritten by regular collection (24 candles)
+- Redis TTL of 5 minutes caused H1 historical data to expire too quickly
+- Trade entry/target/stop loss lines weren't displaying consistently
+
+**Root Cause Analysis:**
+```
+1. Regular data collection included H1 in timeframes array
+2. Every 5 minutes: M5 collection → also collected H1 with 24 candles
+3. H1 backfill (500 candles) → overwritten by regular H1 collection (24 candles)
+4. Redis TTL = 300 seconds → H1 data expired after 5 minutes
+```
+
+**Technical Solution Implemented:**
+
+#### 1. Data Collection Separation
+```python
+# config.py - Before (problematic)
+timeframes: List[str] = Field(default=["M5", "M15", "M30", "H1", "H4", "D", "W"])
+
+# config.py - After (fixed)  
+timeframes: List[str] = Field(default=["M5"])  # Only M5 in regular collection
+# H1 handled exclusively by dedicated backfill process
+```
+
+#### 2. Enhanced H1 Backfill Configuration
+```python
+# New H1 backfill settings for rich trader experience
+h1_backfill_days: int = Field(30, env="H1_BACKFILL_DAYS")    # 30 days history
+h1_max_candles: int = Field(500, env="H1_MAX_CANDLES")       # 500 candles max
+```
+
+#### 3. Redis TTL Fix
+```json
+{
+  "name": "REDIS_TTL_SECONDS",
+  "value": "432000"  // Changed from 300 (5 min) to 432000 (5 days)
+}
+```
+
+#### 4. Date-Range API Requests
+```python
+# Enhanced backfill using date ranges instead of count-based requests
+# Works during market closure (weekends/holidays)
+from_datetime = datetime.now() - timedelta(days=backfill_days)
+from_time = from_datetime.strftime('%Y-%m-%dT%H:%M:%S.000000000Z')
+
+data = await self.oanda_client.get_candlesticks(
+    instrument=currency_pair,
+    granularity="H1", 
+    from_time=from_time  # Date range approach vs count-based
+)
+```
+
+#### 5. Nanosecond Timestamp Handling
+```python
+def _parse_oanda_timestamp(self, raw_timestamp: str) -> str:
+    """Parse OANDA's nanosecond precision timestamps"""
+    if raw_timestamp.endswith('.000000000Z'):
+        # Remove nanoseconds for compatibility
+        cleaned_timestamp = raw_timestamp.replace('.000000000Z', 'Z')
+        return cleaned_timestamp
+    return raw_timestamp
+```
+
+**Deployment Process:**
+```bash
+# ECS Task Definition Updates (Revision 187)
+TIMEFRAMES=["M5"]                    # Separate collection concerns  
+REDIS_TTL_SECONDS=432000            # 5-day persistence
+ENABLE_H1_BACKFILL=true             # Dedicated H1 process
+
+# Results in stable 100+ H1 candles across all currency pairs
+```
+
+**Verification Commands:**
+```bash
+# Test API response
+curl -s "https://4kctdba5vc.execute-api.us-east-1.amazonaws.com/prod/candlestick/USD_CAD/H1?count=100"
+
+# Expected result: 100 candles with data_source: "REDIS_FARGATE_DIRECT_H1"
+```
+
+**Trade Visualization Integration:**
+- Entry, target, and stop loss lines now display consistently
+- Proper price scaling for all currency pairs (JPY vs non-JPY handling)  
+- Cache-busting ensures lines refresh properly
+- Stable during weekends and market closure periods
+
 ### Git Workflow
 
 #### Branch Strategy
