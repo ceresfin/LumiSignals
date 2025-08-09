@@ -2285,7 +2285,101 @@ aws lambda invoke \
 cat /tmp/strategy_test.json | grep -o '"status":"[^"]*"'
 ```
 
-### 3. Database Schema Updates
+### 3. Frontend Deployment (React/TypeScript Dashboard)
+
+#### 3.1 PowerShell Cache-Clearing Deployment
+
+**When to Use**: Deploy when experiencing cache issues, build problems, or when changes aren't appearing on pipstop.org.
+
+**Prerequisites**:
+- Windows PowerShell or PowerShell Core
+- AWS CLI configured with appropriate credentials
+- Node.js and npm installed
+
+**Deployment Script** (`deploy-y-axis-fix-simple.ps1`):
+```powershell
+# Build React application
+npm run build
+
+# Deploy to S3 with proper cache headers
+aws s3 sync dist/ s3://pipstop.org-website/ --delete --cache-control "max-age=31536000" --exclude "index.html" --region us-east-1
+aws s3 cp dist/index.html s3://pipstop.org-website/index.html --cache-control "no-cache" --region us-east-1
+
+# Invalidate CloudFront for immediate updates
+aws cloudfront create-invalidation --distribution-id EKCW6AHXVBAW0 --paths "/*" --region us-east-1
+```
+
+**Execution**:
+```powershell
+cd "C:\Users\sonia\LumiSignals\infrastructure\terraform\momentum-dashboard"
+.\deploy-y-axis-fix-simple.ps1
+```
+
+**Key Benefits**:
+- **Bypasses dev server issues**: Direct build-to-production workflow
+- **Proper cache handling**: Long cache for assets, no-cache for HTML
+- **Immediate deployment**: CloudFront invalidation ensures instant updates
+- **Windows-friendly**: Native PowerShell syntax
+- **Debugging-ready**: Easy to add console logging for troubleshooting
+
+**Expected Output**:
+```
+Building dashboard...
+✓ built in 31.75s
+Deploying to S3...
+upload: dist\assets\index-41b67c69.js to s3://pipstop.org-website/assets/index-41b67c69.js
+Invalidating CloudFront...
+{
+    "Invalidation": {
+        "Id": "ICZVYN1BHMNMXC5D4CMHHPVFMR",
+        "Status": "InProgress"
+    }
+}
+Deployment complete! Check https://pipstop.org
+```
+
+#### 3.2 Standard Frontend Deployment
+
+**When to Use**: Normal frontend updates without cache/build issues.
+
+**Using Unified Deployment Manager**:
+```bash
+cd /mnt/c/Users/sonia/LumiSignals/infrastructure/deployment
+python3 lumisignals-deploy.py dashboard
+```
+
+**Manual Deployment** (Bash):
+```bash
+cd infrastructure/terraform/momentum-dashboard
+npm run build
+aws s3 sync dist/ s3://pipstop.org-website --delete
+aws cloudfront create-invalidation --distribution-id EKCW6AHXVBAW0 --paths "/*"
+```
+
+#### 3.3 Troubleshooting Frontend Deployments
+
+**Common Issues & Solutions**:
+
+1. **Build files not updating on pipstop.org**
+   - **Cause**: CloudFront cache not invalidated
+   - **Solution**: Always run CloudFront invalidation after S3 sync
+   - **Command**: `aws cloudfront create-invalidation --distribution-id EKCW6AHXVBAW0 --paths "/*"`
+
+2. **Development changes not reflected in production**
+   - **Cause**: Using development server instead of production build
+   - **Solution**: Use PowerShell deployment script for direct build-to-production
+   - **Verification**: Check browser dev tools for new JS file hashes
+
+3. **PowerShell execution policy errors**
+   - **Cause**: Windows execution policy restrictions
+   - **Solution**: `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser`
+
+4. **npm run build fails**
+   - **Cause**: Missing dependencies or TypeScript errors
+   - **Solution**: Run `npm install` and fix TypeScript errors before deployment
+   - **Debug**: Check build output for specific error messages
+
+### 4. Database Schema Updates
 
 #### 3.1 PostgreSQL Schema Changes
 
@@ -5145,7 +5239,7 @@ rightPriceScale: {
 2. **Scale Margins**: Values are percentages (0-1), not absolute prices  
 3. **Line Visibility**: Price lines are created but invisible if outside the visible range
 4. **Color Strategy**: Bright, impossible-to-miss colors (#00FF00, #FF0000, #00BFFF)
-5. **JPY vs Non-JPY**: Different decimal precision (3 vs 5 decimal places)
+5. **JPY vs Non-JPY**: Different decimal precision (3 vs 5 decimal places for labels, 2 vs 4 for Y-axis ticks)
 
 ### Production Result
 
@@ -5155,6 +5249,78 @@ rightPriceScale: {
 ✅ **Cross-Platform**: Works on all devices with proper y-axis scaling
 
 This breakthrough transforms pipstop.org from a basic charting interface into a professional trading visualization platform.
+
+## Y-Axis Decimal Precision Enhancement (August 2025)
+
+### Problem Statement
+Non-JPY currency pairs were displaying only 2 decimal places on the Y-axis ticks, making it difficult for traders to see precise price movements. For forex trading, non-JPY pairs require 4 decimal places (e.g., 1.3740 instead of 1.37) while JPY pairs need only 2 decimal places (e.g., 150.12).
+
+### Technical Solution
+
+**Root Cause**: TradingView Lightweight Charts requires `priceFormat` configuration on the candlestick series, not the `rightPriceScale`.
+
+**Implementation** (`LightweightTradingViewChartWithTrades.tsx:156-160`):
+```typescript
+// Determine if this is a JPY pair for proper decimal formatting
+const isJPYPair = currencyPair.includes('JPY');
+
+// Configure price format for Y-axis tick precision
+const candlestickSeries = chart.addCandlestickSeries({
+  priceFormat: {
+    type: 'price',
+    precision: isJPYPair ? 2 : 4,           // Y-axis ticks: JPY=2, Others=4
+    minMove: isJPYPair ? 0.01 : 0.0001,     // Minimum price movement
+  },
+});
+```
+
+**Key Technical Details**:
+- **Precision**: Controls Y-axis tick decimal places (2 for JPY, 4 for non-JPY)
+- **MinMove**: Must match precision (0.01 for 2 decimals, 0.0001 for 4 decimals)
+- **Price Lines**: Continue using separate `decimalPlaces` variable (3 for JPY, 5 for non-JPY) for entry/target/stop labels
+- **Automatic Detection**: Uses existing `currencyPair.includes('JPY')` logic
+
+### Deployment Solution: PowerShell Workflow
+
+**Challenge**: Local development builds were not deploying to production pipstop.org due to cache issues and build failures.
+
+**Solution**: Created PowerShell deployment script for Windows development environment.
+
+**PowerShell Script** (`deploy-y-axis-fix-simple.ps1`):
+```powershell
+# Build React application
+npm run build
+
+# Deploy to S3 with proper cache headers
+aws s3 sync dist/ s3://pipstop.org-website/ --delete --cache-control "max-age=31536000" --exclude "index.html" --region us-east-1
+aws s3 cp dist/index.html s3://pipstop.org-website/index.html --cache-control "no-cache" --region us-east-1
+
+# Invalidate CloudFront for immediate updates
+aws cloudfront create-invalidation --distribution-id EKCW6AHXVBAW0 --paths "/*" --region us-east-1
+```
+
+**Key Benefits**:
+- **Bypasses local dev server issues**: Direct build-to-production workflow
+- **Handles cache correctly**: Long cache for assets, no-cache for HTML
+- **Immediate deployment**: CloudFront invalidation ensures instant updates
+- **Windows-friendly**: PowerShell syntax for Windows development environments
+- **Future-proof**: Reusable for any frontend changes
+
+**When to Use This Workflow**:
+- Build process fails in development
+- Changes not appearing on pipstop.org
+- Cache-related deployment issues
+- Need immediate production deployment
+- Local environment conflicts
+
+### Production Result
+
+✅ **Y-Axis Precision**: Non-JPY pairs now show 4 decimal places (e.g., USD_CAD: 1.3740)  
+✅ **JPY Pairs**: Continue showing 2 decimal places (e.g., USD_JPY: 150.12)  
+✅ **Deployment Process**: Reliable PowerShell workflow for frontend changes  
+✅ **Live on pipstop.org**: Successfully deployed and verified
+
+This enhancement provides traders with the precise price visibility required for professional forex trading analysis.
 
 ---
 
