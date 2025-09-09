@@ -277,15 +277,27 @@ class Settings(BaseSettings):
                         # Set the Redis cluster nodes from the secret as JSON array for Pydantic List[str]
                         os.environ['REDIS_CLUSTER_NODES'] = json.dumps([f"{endpoint}:{port}"])
             
-            # Parse Database credentials from JSON secret
+            # Parse Database credentials - prioritize DATABASE_CREDENTIALS JSON format
+            # Method 1: JSON secret (Architecture Bible format - preferred)
             database_credentials_json = os.getenv('DATABASE_CREDENTIALS')
             if database_credentials_json:
+                print(f"DEBUG: Parsing DATABASE_CREDENTIALS JSON (Architecture Bible format)")
                 db_creds = json.loads(database_credentials_json)
                 os.environ['DATABASE_HOST'] = db_creds.get('host', '')
                 os.environ['DATABASE_PORT'] = str(db_creds.get('port', 5432))
                 os.environ['DATABASE_NAME'] = db_creds.get('dbname', '')
                 os.environ['DATABASE_USERNAME'] = db_creds.get('username', '')
                 os.environ['DATABASE_PASSWORD'] = db_creds.get('password', '')
+                print(f"DEBUG: Parsed database config - host: {db_creds.get('host', 'MISSING')}, port: {db_creds.get('port', 5432)}")
+            elif os.getenv('DATABASE_HOST'):
+                # Method 2: Individual environment variables (fallback)
+                print(f"DEBUG: Using individual database environment variables (fallback)")
+                # Individual variables already set by AWS Secrets Manager
+                pass
+            else:
+                print(f"DEBUG: No database credentials found in either format")
+                print(f"DEBUG: DATABASE_CREDENTIALS env var: {'SET' if database_credentials_json else 'NOT SET'}")
+                print(f"DEBUG: DATABASE_HOST env var: {'SET' if os.getenv('DATABASE_HOST') else 'NOT SET'}")
                 
         except json.JSONDecodeError as e:
             print(f"Warning: Failed to parse JSON secrets: {e}")
@@ -314,7 +326,9 @@ class Settings(BaseSettings):
     @property
     def parsed_database_host(self) -> str:
         """Get database host from parsed credentials"""
-        return os.getenv('DATABASE_HOST', self.database_host)
+        host = os.getenv('DATABASE_HOST', self.database_host)
+        print(f"DEBUG: parsed_database_host returning: '{host}'")
+        return host
     
     @property
     def parsed_database_port(self) -> int:

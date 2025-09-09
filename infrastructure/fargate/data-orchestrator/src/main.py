@@ -532,9 +532,12 @@ async def main():
         
         # Initialize enhanced database manager if credentials are available
         print("DEBUG: About to check database credentials")
+        print(f"DEBUG: settings.parsed_database_host = '{settings.parsed_database_host}'")
+        print(f"DEBUG: settings.parsed_database_username = '{settings.parsed_database_username}'")
+        print(f"DEBUG: settings.parsed_database_name = '{settings.parsed_database_name}'")
         database_manager = None
         if settings.parsed_database_host:
-            print("DEBUG: Database host found, initializing Enhanced DatabaseManager")
+            print(f"DEBUG: Database host found ({settings.parsed_database_host}), initializing Enhanced DatabaseManager")
             logger.info("📊 Initializing Enhanced PostgreSQL database connection with Distance to Entry support...")
             
             # Create enhanced database manager for comprehensive OANDA data

@@ -56,15 +56,17 @@ class DataOrchestrator:
         # Initialize comprehensive data orchestrator with cleanup capabilities
         # This replaces the basic enhanced_data_collector with full cleanup logic
         if self.database_manager:
-            # Create database config from AWS Secrets Manager credentials
+            # Use the database config from main.py (already parsed from AWS Secrets Manager)
+            # This ensures consistency between main.py and data_orchestrator.py database connections
             database_config = {
-                'host': os.getenv('DATABASE_HOST', ''),
-                'port': int(os.getenv('DATABASE_PORT', '5432')),
-                'username': os.getenv('DATABASE_USERNAME', ''),
-                'password': os.getenv('DATABASE_PASSWORD', ''),
-                'dbname': os.getenv('DATABASE_NAME', ''),
+                'host': settings.parsed_database_host,
+                'port': settings.parsed_database_port or 5432,
+                'username': settings.parsed_database_username,
+                'password': settings.parsed_database_password,
+                'dbname': settings.parsed_database_name,
                 'ssl': True
             }
+            logger.info(f"🎯 Creating comprehensive orchestrator with database: {database_config['host']}")
             self.comprehensive_orchestrator = ComprehensiveDataOrchestrator(
                 self.oanda_client, database_config, self.redis_manager
             )
