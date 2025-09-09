@@ -532,19 +532,41 @@ export const LightweightTradingViewChartWithTrades: React.FC<LightweightTradingV
     });
     institutionalLinesRef.current = [];
     
-    // Calculate levels based on current price
-    const levels = calculateInstitutionalLevels(currentPrice, isJPYPair);
+    // Calculate all levels based on current price
+    const allLevels = calculateInstitutionalLevels(currentPrice, isJPYPair);
     
-    // Filter levels based on settings
-    const filteredLevels = levels.filter(level => {
+    // Filter levels based on user settings
+    const enabledLevels = allLevels.filter(level => {
       if (level.type === 'penny' && !institutionalSettings.showPennies) return false;
       if (level.type === 'quarter' && !institutionalSettings.showQuarters) return false;
       if (level.type === 'dime' && !institutionalSettings.showDimes) return false;
       return true;
     });
     
-    // Add price lines for each level
-    filteredLevels.forEach(level => {
+    // Group levels by price to handle overlaps
+    const levelsByPrice = new Map<number, InstitutionalLevel[]>();
+    enabledLevels.forEach(level => {
+      const roundedPrice = Math.round(level.price * 10000) / 10000; // Handle floating point precision
+      if (!levelsByPrice.has(roundedPrice)) {
+        levelsByPrice.set(roundedPrice, []);
+      }
+      levelsByPrice.get(roundedPrice)!.push(level);
+    });
+    
+    // Apply hierarchy: Dimes > Quarters > Pennies
+    const hierarchyOrder = { 'dime': 3, 'quarter': 2, 'penny': 1 };
+    const finalLevels: InstitutionalLevel[] = [];
+    
+    levelsByPrice.forEach((levelsAtPrice, price) => {
+      // Sort by hierarchy priority (highest first)
+      levelsAtPrice.sort((a, b) => hierarchyOrder[b.type] - hierarchyOrder[a.type]);
+      // Take the highest priority level
+      const dominantLevel = levelsAtPrice[0];
+      finalLevels.push(dominantLevel);
+    });
+    
+    // Add price lines for final levels (no overlaps)
+    finalLevels.forEach(level => {
       const line = candlestickSeriesRef.current!.createPriceLine({
         price: level.price,
         color: INSTITUTIONAL_COLORS[level.type],
@@ -557,10 +579,11 @@ export const LightweightTradingViewChartWithTrades: React.FC<LightweightTradingV
       institutionalLinesRef.current.push(line);
     });
     
-    console.log(`🏛️ Added ${filteredLevels.length} institutional levels for ${currencyPair}:`, {
-      pennies: filteredLevels.filter(l => l.type === 'penny').length,
-      quarters: filteredLevels.filter(l => l.type === 'quarter').length,
-      dimes: filteredLevels.filter(l => l.type === 'dime').length
+    console.log(`🏛️ Added ${finalLevels.length} institutional levels for ${currencyPair}:`, {
+      pennies: finalLevels.filter(l => l.type === 'penny').length,
+      quarters: finalLevels.filter(l => l.type === 'quarter').length,
+      dimes: finalLevels.filter(l => l.type === 'dime').length,
+      overlapsResolved: enabledLevels.length - finalLevels.length
     });
   };
 
