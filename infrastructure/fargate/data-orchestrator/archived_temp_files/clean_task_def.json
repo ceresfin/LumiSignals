@@ -1,0 +1,94 @@
+{
+    "family": "lumisignals-data-orchestrator",
+    "taskRoleArn": "arn:aws:iam::816945674467:role/lumisignals-ecs-task-role",
+    "executionRoleArn": "arn:aws:iam::816945674467:role/lumisignals-ecs-task-execution-role",
+    "networkMode": "awsvpc",
+    "requiresCompatibilities": [
+        "FARGATE"
+    ],
+    "cpu": "2048",
+    "memory": "4096",
+    "containerDefinitions": [
+        {
+            "name": "lumisignals-data-orchestrator",
+            "image": "816945674467.dkr.ecr.us-east-1.amazonaws.com/lumisignals-data-orchestrator:b1ed439-20250806-143802",
+            "cpu": 0,
+            "portMappings": [
+                {
+                    "containerPort": 8080,
+                    "hostPort": 8080,
+                    "protocol": "tcp"
+                }
+            ],
+            "essential": true,
+            "environment": [
+                {
+                    "name": "COLLECTION_INTERVAL_SECONDS",
+                    "value": "300"
+                },
+                {
+                    "name": "AWS_DEFAULT_REGION",
+                    "value": "us-east-1"
+                },
+                {
+                    "name": "MAX_REQUESTS_PER_SECOND",
+                    "value": "20"
+                },
+                {
+                    "name": "LOG_LEVEL",
+                    "value": "INFO"
+                },
+                {
+                    "name": "REDIS_TTL_SECONDS",
+                    "value": "300"
+                },
+                {
+                    "name": "ENABLE_H1_BACKFILL",
+                    "value": "true"
+                }
+            ],
+            "secrets": [
+                {
+                    "name": "OANDA_API_KEY",
+                    "valueFrom": "arn:aws:secretsmanager:us-east-1:816945674467:secret:lumisignals/oanda/api/credentials:api_key::"
+                },
+                {
+                    "name": "OANDA_ACCOUNT_ID",
+                    "valueFrom": "arn:aws:secretsmanager:us-east-1:816945674467:secret:lumisignals/oanda/api/credentials:account_id::"
+                },
+                {
+                    "name": "OANDA_ENVIRONMENT",
+                    "valueFrom": "arn:aws:secretsmanager:us-east-1:816945674467:secret:lumisignals/oanda/api/credentials:environment::"
+                },
+                {
+                    "name": "DATABASE_HOST",
+                    "valueFrom": "arn:aws:secretsmanager:us-east-1:816945674467:secret:lumisignals/rds/postgresql/credentials:host::"
+                },
+                {
+                    "name": "DATABASE_PORT",
+                    "valueFrom": "arn:aws:secretsmanager:us-east-1:816945674467:secret:lumisignals/rds/postgresql/credentials:port::"
+                },
+                {
+                    "name": "DATABASE_NAME",
+                    "valueFrom": "arn:aws:secretsmanager:us-east-1:816945674467:secret:lumisignals/rds/postgresql/credentials:dbname::"
+                },
+                {
+                    "name": "DATABASE_USERNAME",
+                    "valueFrom": "arn:aws:secretsmanager:us-east-1:816945674467:secret:lumisignals/rds/postgresql/credentials:username::"
+                },
+                {
+                    "name": "DATABASE_PASSWORD",
+                    "valueFrom": "arn:aws:secretsmanager:us-east-1:816945674467:secret:lumisignals/rds/postgresql/credentials:password::"
+                }
+            ],
+            "logConfiguration": {
+                "logDriver": "awslogs",
+                "options": {
+                    "awslogs-group": "/ecs/lumisignals-data-orchestrator",
+                    "awslogs-region": "us-east-1",
+                    "awslogs-stream-prefix": "ecs"
+                }
+            }
+        }
+    ]
+}
