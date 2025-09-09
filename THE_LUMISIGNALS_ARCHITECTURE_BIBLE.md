@@ -1,8 +1,8 @@
 # The LumiSignals Architecture Bible
 *The Complete Guide to the LumiSignals Algorithmic Trading Platform*
 
-**Version**: 1.4  
-**Last Updated**: August 6, 2025  
+**Version**: 1.5  
+**Last Updated**: September 9, 2025  
 **Status**: Production Ready  
 **Maintainer**: Sonia LumiSignals Team
 
@@ -5115,6 +5115,253 @@ python3 lumisignals-deploy.py --list
 - Consistent error messages and recovery procedures
 
 **Production Impact**: The unified deployment system prevents the file hash mismatch issues that caused the graphs tab problems, ensuring reliable and consistent deployments across all components.
+
+---
+
+## ECS Golden Template System & AWS Secrets Manager Configuration
+
+### The Golden Template Evolution: Task Definition 196
+
+#### Historical Context: Silent Failure Problem (September 2025)
+
+**Critical Issue Discovered**: During comprehensive orchestrator deployment improvements, we identified that 7+ consecutive ECS deployments (TD 188-194) had been **silently failing** due to incorrect IAM role configurations, while appearing successful in deployment logs.
+
+**Root Cause Analysis**:
+```bash
+# Task Definition Analysis
+TD 187: ✅ Correct IAM roles, ❌ Old database secrets format, ✅ High CPU/Memory (2048/4096)
+TD 195: ❌ Wrong execution role, ✅ JSON database format, ❌ Low CPU/Memory (256/512)  
+TD 191: ❌ Wrong task role, ❌ Old database format, ❌ Low CPU/Memory
+
+# The Problem: No single TD had optimal configuration
+```
+
+**The Solution**: Created hybrid **Task Definition 196** combining the best elements from multiple configurations.
+
+#### Task Definition 196: The Optimal Golden Template
+
+**Created**: September 9, 2025  
+**Status**: ✅ Production Active  
+**Container**: `iam-fix-20250909-131543`
+
+**Complete Configuration**:
+```json
+{
+  "family": "lumisignals-data-orchestrator",
+  "taskRoleArn": "arn:aws:iam::816945674467:role/lumisignals-ecs-task-role",
+  "executionRoleArn": "arn:aws:iam::816945674467:role/lumisignals-ecs-task-execution-role",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "2048",
+  "memory": "4096",
+  "containerDefinitions": [{
+    "name": "lumisignals-data-orchestrator",
+    "image": "816945674467.dkr.ecr.us-east-1.amazonaws.com/lumisignals/institutional-orchestrator-postgresql17:iam-fix-20250909-131543",
+    "essential": true,
+    "logConfiguration": {
+      "logDriver": "awslogs",
+      "options": {
+        "awslogs-group": "/ecs/lumisignals-data-orchestrator",
+        "awslogs-region": "us-east-1",
+        "awslogs-stream-prefix": "ecs"
+      }
+    },
+    "secrets": [
+      {
+        "name": "OANDA_API_KEY",
+        "valueFrom": "arn:aws:secretsmanager:us-east-1:816945674467:secret:lumisignals/oanda/api/credentials:api_key::"
+      },
+      {
+        "name": "OANDA_ACCOUNT_ID", 
+        "valueFrom": "arn:aws:secretsmanager:us-east-1:816945674467:secret:lumisignals/oanda/api/credentials:account_id::"
+      },
+      {
+        "name": "OANDA_ENVIRONMENT",
+        "valueFrom": "arn:aws:secretsmanager:us-east-1:816945674467:secret:lumisignals/oanda/api/credentials:environment::"
+      },
+      {
+        "name": "DATABASE_CREDENTIALS",
+        "valueFrom": "arn:aws:secretsmanager:us-east-1:816945674467:secret:lumisignals/rds/postgresql/credentials"
+      }
+    ]
+  }]
+}
+```
+
+#### AWS Secrets Manager Configuration
+
+**Architecture Principle**: All credentials stored in AWS Secrets Manager using JSON format for maximum flexibility and security.
+
+##### 1. OANDA API Credentials
+```bash
+# Secret ARN: arn:aws:secretsmanager:us-east-1:816945674467:secret:lumisignals/oanda/api/credentials
+
+# JSON Structure:
+{
+  "api_key": "YOUR_OANDA_API_KEY",
+  "account_id": "YOUR_OANDA_ACCOUNT_ID", 
+  "environment": "practice"
+}
+
+# ECS Task Definition References:
+OANDA_API_KEY → :api_key::
+OANDA_ACCOUNT_ID → :account_id::
+OANDA_ENVIRONMENT → :environment::
+```
+
+##### 2. Database Credentials (JSON Format)
+```bash
+# Secret ARN: arn:aws:secretsmanager:us-east-1:816945674467:secret:lumisignals/rds/postgresql/credentials
+
+# JSON Structure (Architecture Bible Standard):
+{
+  "host": "lumisignals-postgresql.cg12a06y29s3.us-east-1.rds.amazonaws.com",
+  "port": 5432,
+  "dbname": "lumisignals",
+  "username": "lumisignals_user",
+  "password": "SECURE_PASSWORD_HERE",
+  "ssl": true
+}
+
+# ECS Task Definition Reference:
+DATABASE_CREDENTIALS → (entire JSON secret)
+```
+
+##### 3. Configuration Parsing Implementation
+```python
+# src/config.py - JSON Credential Parsing
+class Settings(BaseSettings):
+    def _parse_json_secrets(self):
+        """Parse JSON secrets from AWS Secrets Manager environment variables"""
+        
+        # Parse OANDA credentials from JSON secret
+        oanda_credentials_json = os.getenv('OANDA_CREDENTIALS')
+        if oanda_credentials_json:
+            oanda_creds = json.loads(oanda_credentials_json)
+            os.environ['OANDA_API_KEY'] = oanda_creds.get('api_key', '')
+            os.environ['OANDA_ACCOUNT_ID'] = oanda_creds.get('account_id', '')
+            os.environ['OANDA_ENVIRONMENT'] = oanda_creds.get('environment', 'practice')
+        
+        # Parse Database credentials - prioritize JSON format
+        database_credentials_json = os.getenv('DATABASE_CREDENTIALS')
+        if database_credentials_json:
+            print(f"DEBUG: Parsing DATABASE_CREDENTIALS JSON (Architecture Bible format)")
+            db_creds = json.loads(database_credentials_json)
+            os.environ['DATABASE_HOST'] = db_creds.get('host', '')
+            os.environ['DATABASE_PORT'] = str(db_creds.get('port', 5432))
+            os.environ['DATABASE_NAME'] = db_creds.get('dbname', '')
+            os.environ['DATABASE_USERNAME'] = db_creds.get('username', '')
+            os.environ['DATABASE_PASSWORD'] = db_creds.get('password', '')
+            print(f"DEBUG: Parsed database config - host: {db_creds.get('host', 'MISSING')}")
+```
+
+#### Deployment Verification System
+
+**Critical Innovation**: Comprehensive deployment verification prevents silent failures.
+
+##### Silent Failure Prevention
+```bash
+# Deployment Verification Steps (Implemented in deploy-correct-iam-role.bat)
+
+# STEP 1: Verify task definition creation
+if "%NEW_REVISION%"=="" (
+    echo ❌ ERROR: Task definition creation failed
+    exit /b 1
+)
+
+# STEP 2: Check correct secrets count  
+aws ecs describe-task-definition --task-definition lumisignals-data-orchestrator:%NEW_REVISION% --query "length(taskDefinition.containerDefinitions[0].secrets)" --output text > secrets-count.txt
+# Should return: 4
+
+# STEP 3: Verify correct IAM roles
+aws ecs describe-task-definition --task-definition lumisignals-data-orchestrator:%NEW_REVISION% --query "taskDefinition.{taskRole:taskRoleArn,executionRole:executionRoleArn}" --output json
+# Should return: both lumisignals-ecs-* roles
+
+# STEP 4: CRITICAL - Verify new task actually starts (not just TD created)
+aws ecs list-tasks --cluster lumisignals-cluster --service-name lumisignals-data-orchestrator --query "taskArns[0]" --output text > current-task.txt
+if "%TASK_ARN%"=="None" (
+    echo ❌ CRITICAL ERROR: No running task found - deployment failed silently
+    aws ecs describe-services --cluster lumisignals-cluster --services lumisignals-data-orchestrator --query "services[0].events[:5]" --output table
+    exit /b 1
+)
+
+# STEP 5: Verify new task definition is actually running
+aws ecs describe-tasks --cluster lumisignals-cluster --tasks %TASK_ARN% --query "tasks[0].taskDefinitionArn" --output text > running-td.txt
+echo %RUNNING_TD% | findstr /C:":%NEW_REVISION%" >nul
+# Must find the new revision number in the running task definition
+```
+
+##### Golden Template Validation
+```bash
+# Pre-Deployment Verification
+# Check current golden template (TD 196)
+aws ecs describe-task-definition --task-definition lumisignals-data-orchestrator:196 --query "taskDefinition.{taskRole:taskRoleArn,executionRole:executionRoleArn,cpu:cpu,memory:memory,secrets:length(containerDefinitions[0].secrets)}" --output json
+
+# Expected Output:
+{
+    "taskRole": "arn:aws:iam::816945674467:role/lumisignals-ecs-task-role",
+    "executionRole": "arn:aws:iam::816945674467:role/lumisignals-ecs-task-execution-role", 
+    "cpu": "2048",
+    "memory": "4096",
+    "secrets": 4
+}
+```
+
+#### Critical IAM Roles (CORRECTED)
+
+**Task Role**: `lumisignals-ecs-task-role`
+- Purpose: Runtime permissions for application code
+- Permissions: Access to AWS Secrets Manager, RDS, Redis
+
+**Execution Role**: `lumisignals-ecs-task-execution-role`  
+- Purpose: ECS service permissions to pull containers and retrieve secrets
+- Permissions: ECR access, CloudWatch logs, Secrets Manager retrieval
+
+**⚠️ CRITICAL**: Previous deployments failed due to incorrect role naming:
+- ❌ WRONG: `LumiSignalsECSTaskRole`, `LumiSignalsECSExecutionRole`
+- ✅ CORRECT: `lumisignals-ecs-task-role`, `lumisignals-ecs-task-execution-role`
+
+#### Deployment Process Documentation
+
+**Complete Deployment Script Location**:
+- **Working Script**: `infrastructure/fargate/data-orchestrator/deploy-correct-iam-role.bat`
+- **Documentation**: `infrastructure/fargate/data-orchestrator/container-deployment-script.md`
+- **GitHub Commit**: `da791b4` (September 9, 2025)
+
+**Key Features**:
+- ✅ **Silent Failure Prevention**: Detects deployment failures immediately
+- ✅ **IAM Role Verification**: Confirms correct roles before and after deployment
+- ✅ **Task Startup Verification**: Ensures new tasks actually start
+- ✅ **ECS Service Event Monitoring**: Shows deployment error details
+- ✅ **Comprehensive Logging**: Full audit trail of deployment steps
+- ✅ **Automatic Cache Clearing**: 4 methods ensure fresh container deployment
+
+#### Production Results
+
+**Task Definition 196 Status** (September 9, 2025):
+```bash
+✅ Comprehensive orchestrator initializing successfully
+✅ Account data collection: "Comprehensive orchestrator completed successfully"  
+✅ OANDA API authentication: Working with 28 currency pairs
+✅ Database cleanup active: Automated stale trade removal (trade 1581)
+✅ High performance resources: CPU 2048, Memory 4096
+✅ JSON secrets format: Architecture Bible compliance
+✅ Deployment verification: Prevents future silent failures
+```
+
+**Architecture Compliance**:
+- ✅ Single OANDA API connection maintained  
+- ✅ Fargate → Redis → PostgreSQL → pipstop.org pipeline restored
+- ✅ Comprehensive data orchestrator with cleanup capabilities active
+- ✅ AWS Secrets Manager JSON format for all credentials
+- ✅ Production-ready with full monitoring and verification
+
+**Documentation Created**:
+- Complete deployment process documentation (368 lines)
+- Silent failure prevention system
+- Golden template validation procedures  
+- AWS Secrets Manager configuration standards
+- 19 deployment iterations fully documented for future reference
 
 ---
 
