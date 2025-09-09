@@ -606,11 +606,11 @@ class EnhancedDatabaseManager:
             
         async with self.connection_pool.acquire() as conn:
             try:
-                result = await conn.execute("""
+                result = await conn.execute(f"""
                     DELETE FROM active_trades 
-                    WHERE sync_timestamp < NOW() - INTERVAL '%s hours'
+                    WHERE sync_timestamp < NOW() - INTERVAL '{hours_threshold} hours'
                     AND state = 'OPEN'
-                """, hours_threshold)
+                """)
                 
                 deleted_count = int(result.split()[-1]) if result else 0
                 if deleted_count > 0:
@@ -1461,8 +1461,8 @@ class EnhancedDatabaseManager:
             logger.debug(f"Error getting trade data from Redis: {str(e)}")
             return None
 
-    async def cleanup_inactive_trades(self):
-        """Move stale trades from active_trades to closed_trades table
+    async def cleanup_inactive_trades_standalone(self):
+        """Move stale trades from active_trades to closed_trades table (standalone version)
         
         This function:
         1. Gets all trades from OANDA API

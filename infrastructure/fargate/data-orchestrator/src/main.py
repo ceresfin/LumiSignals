@@ -533,17 +533,17 @@ async def main():
         # Initialize enhanced database manager if credentials are available
         print("DEBUG: About to check database credentials")
         database_manager = None
-        if settings.database_host:
+        if settings.parsed_database_host:
             print("DEBUG: Database host found, initializing Enhanced DatabaseManager")
             logger.info("📊 Initializing Enhanced PostgreSQL database connection with Distance to Entry support...")
             
             # Create enhanced database manager for comprehensive OANDA data
             database_config = {
-                'host': settings.database_host,
-                'port': settings.database_port or 5432,
-                'username': settings.database_username,
-                'password': settings.database_password,
-                'dbname': settings.database_name,
+                'host': settings.parsed_database_host,
+                'port': settings.parsed_database_port or 5432,
+                'username': settings.parsed_database_username,
+                'password': settings.parsed_database_password,
+                'dbname': settings.parsed_database_name,
                 'ssl': True
             }
             
@@ -552,7 +552,7 @@ async def main():
             
             # Use enhanced database manager which has comprehensive methods
             database_manager = enhanced_db_manager
-            logger.info(f"✅ Enhanced database manager initialized for host: {settings.database_host}")
+            logger.info(f"✅ Enhanced database manager initialized for host: {settings.parsed_database_host}")
             logger.info("🎯 Ready to store OANDA Distance to Entry and all 31 Airtable fields")
             print("DEBUG: Enhanced DatabaseManager created successfully")
             

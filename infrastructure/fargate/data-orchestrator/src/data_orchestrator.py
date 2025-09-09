@@ -24,6 +24,7 @@ from .rate_limiter import RateLimiter
 from .database_manager import DatabaseManager
 from .enhanced_database_manager import EnhancedDatabaseManager
 from .enhanced_oanda_data_collection import EnhancedOandaDataCollector
+from .integrate_comprehensive_data_collection import ComprehensiveDataOrchestrator
 # from .closed_trade_enhancer import ClosedTradeEnhancer  # DISABLED: causes 403 errors from OANDA transaction API
 
 logger = structlog.get_logger()
@@ -52,8 +53,30 @@ class DataOrchestrator:
         # Initialize OANDA client (SINGLE CONNECTION POINT)
         self.oanda_client = OandaClient(settings)
         
-        # Initialize enhanced data collector for comprehensive OANDA data
-        self.enhanced_data_collector = EnhancedOandaDataCollector(self.oanda_client)
+        # Initialize comprehensive data orchestrator with cleanup capabilities
+        # This replaces the basic enhanced_data_collector with full cleanup logic
+        if self.database_manager:
+            # Create database config from AWS Secrets Manager credentials
+            database_config = {
+                'host': os.getenv('DATABASE_HOST', ''),
+                'port': int(os.getenv('DATABASE_PORT', '5432')),
+                'username': os.getenv('DATABASE_USERNAME', ''),
+                'password': os.getenv('DATABASE_PASSWORD', ''),
+                'dbname': os.getenv('DATABASE_NAME', ''),
+                'ssl': True
+            }
+            self.comprehensive_orchestrator = ComprehensiveDataOrchestrator(
+                self.oanda_client, database_config, self.redis_manager
+            )
+            self.enhanced_data_collector = None  # Don't use fallback when comprehensive exists
+            self._comprehensive_initialized = False  # Track initialization state
+            logger.info("🎯 Comprehensive orchestrator created - initialization pending")
+        else:
+            # Fallback to basic collector if no database
+            self.enhanced_data_collector = EnhancedOandaDataCollector(self.oanda_client)
+            self.comprehensive_orchestrator = None
+            self._comprehensive_initialized = False
+            logger.info("⚠️ No database manager - using enhanced collector without cleanup")
         
         # Initialize rate limiter
         self.rate_limiter = RateLimiter(
@@ -143,6 +166,13 @@ class DataOrchestrator:
                     logger.warning("⚠️ Database connection failed - continuing without database", error=str(db_error))
                     logger.info("📊 Market data collection will still work via Redis")
                     self.database_manager = None  # Disable database functionality
+                    self.comprehensive_orchestrator = None  # Disable integrated collector
+            
+            # Initialize comprehensive orchestrator if available
+            if self.comprehensive_orchestrator:
+                logger.info("🚀 Initializing comprehensive data orchestrator with cleanup...")
+                await self.comprehensive_orchestrator.initialize()
+                logger.info("✅ Comprehensive data orchestrator with cleanup initialized successfully")
             
             # Initialize health monitoring
             await self.health_monitor.initialize()
@@ -836,10 +866,40 @@ class DataOrchestrator:
         print("DEBUG: Starting account data collection")
         
         try:
-            # Use enhanced data collector for comprehensive OANDA data including Distance to Entry
-            logger.info("🚀 Using enhanced OANDA data collection with Distance to Entry")
-            print("DEBUG: About to call enhanced_data_collector.collect_comprehensive_trade_data()")
-            comprehensive_data = await self.enhanced_data_collector.collect_comprehensive_trade_data()
+            # Use comprehensive orchestrator if available (includes cleanup), otherwise fallback
+            if self.comprehensive_orchestrator:
+                logger.info("🚀 Using comprehensive data orchestrator with built-in cleanup")
+                
+                # Initialize if not already done
+                if not self._comprehensive_initialized:
+                    print("DEBUG: Initializing comprehensive orchestrator")
+                    init_success = await self.comprehensive_orchestrator.initialize()
+                    self._comprehensive_initialized = init_success
+                    if not init_success:
+                        logger.error("Failed to initialize comprehensive orchestrator")
+                        return
+                    logger.info("✅ Comprehensive orchestrator initialized successfully")
+                
+                print("DEBUG: About to call comprehensive_orchestrator.collect_and_store_comprehensive_data()")
+                success = await self.comprehensive_orchestrator.collect_and_store_comprehensive_data()
+                if success:
+                    logger.info("✅ Comprehensive data collection and cleanup completed successfully")
+                    print("DEBUG: Comprehensive orchestrator completed successfully")
+                    return  # Exit early since comprehensive orchestrator handles everything
+                else:
+                    logger.warning("⚠️ Comprehensive orchestrator failed, no fallback available")
+                    print("DEBUG: Comprehensive orchestrator failed, no fallback available")
+                    return
+            
+            # Only use enhanced data collector if comprehensive orchestrator doesn't exist
+            if self.enhanced_data_collector is not None:
+                logger.info("🚀 Using enhanced OANDA data collection with Distance to Entry (fallback)")
+                print("DEBUG: About to call enhanced_data_collector.collect_comprehensive_trade_data()")
+                comprehensive_data = await self.enhanced_data_collector.collect_comprehensive_trade_data()
+            else:
+                logger.error("❌ No data collector available")
+                print("DEBUG: No data collector available")
+                return
             print(f"DEBUG: Enhanced data result type: {type(comprehensive_data)}, content: {comprehensive_data}")
             
             print(f"DEBUG: Checking if comprehensive_data is truthy: {bool(comprehensive_data)}")

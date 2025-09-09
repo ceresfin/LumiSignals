@@ -21,10 +21,10 @@ class ComprehensiveDataOrchestrator:
     This replaces the basic data collection with comprehensive 31-field collection
     """
     
-    def __init__(self, oanda_client, database_config: Dict[str, Any]):
+    def __init__(self, oanda_client, database_config: Dict[str, Any], redis_manager=None):
         self.oanda_client = oanda_client
         self.data_collector = EnhancedOandaDataCollector(oanda_client)
-        self.db_manager = EnhancedDatabaseManager(database_config)
+        self.db_manager = EnhancedDatabaseManager(database_config, redis_manager)
         self.is_initialized = False
     
     async def initialize(self) -> bool:
