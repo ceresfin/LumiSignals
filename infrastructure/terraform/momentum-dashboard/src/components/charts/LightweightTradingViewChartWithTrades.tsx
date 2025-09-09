@@ -43,6 +43,18 @@ interface LightweightTradingViewChartWithTradesProps {
   selectedStrategies?: string[];
 }
 
+interface InstitutionalLevel {
+  price: number;
+  type: 'penny' | 'quarter' | 'dime';
+  label: string;
+}
+
+interface InstitutionalLevelSettings {
+  showPennies: boolean;
+  showQuarters: boolean;
+  showDimes: boolean;
+}
+
 // Color schemes for different strategies (brighter, more visible colors)
 const STRATEGY_COLORS = [
   { entry: '#00BFFF', target: '#00FF7F', stop: '#FF4500' }, // Bright Blue, Bright Green, Bright Red
@@ -50,6 +62,111 @@ const STRATEGY_COLORS = [
   { entry: '#4169E1', target: '#228B22', stop: '#B22222' }, // Royal Blue, Forest Green, Fire Brick
   { entry: '#00CED1', target: '#9ACD32', stop: '#FF6347' }, // Dark Turquoise, Yellow Green, Tomato
 ];
+
+// Institutional level colors as specified
+const INSTITUTIONAL_COLORS = {
+  penny: '#FF69B4', // Pink
+  quarter: '#00FF00', // Green  
+  dime: '#0000FF'   // Blue
+};
+
+// Calculate institutional levels based on psychological price points
+const calculateInstitutionalLevels = (currentPrice: number, isJPYPair: boolean): InstitutionalLevel[] => {
+  const levels: InstitutionalLevel[] = [];
+  
+  if (!currentPrice || isNaN(currentPrice)) return levels;
+  
+  if (isJPYPair) {
+    // JPY pairs (2 decimal places)
+    
+    // Dimes: X00.00 levels (every 10.00) - 2 above and below current price
+    const currentDime = Math.round(currentPrice / 10) * 10;
+    for (let i = -2; i <= 2; i++) {
+      const price = currentDime + (i * 10);
+      if (price > 0) {
+        levels.push({
+          price,
+          type: 'dime',
+          label: `${price.toFixed(2)}`
+        });
+      }
+    }
+    
+    // Get dime range for quarters
+    const minDime = currentDime - 20;
+    const maxDime = currentDime + 20;
+    
+    // Quarters: XX2.50, XX5.00, XX7.50 levels (every 2.50) - all within dime range
+    for (let price = Math.ceil(minDime / 2.5) * 2.5; price <= maxDime; price += 2.5) {
+      if (price > 0 && price % 10 !== 0) { // Exclude dime levels
+        levels.push({
+          price,
+          type: 'quarter',
+          label: `${price.toFixed(2)}`
+        });
+      }
+    }
+    
+    // Pennies: XX1.00, XX2.00 levels (every 1.00) - 2 above and below current price
+    const currentPenny = Math.round(currentPrice);
+    for (let i = -2; i <= 2; i++) {
+      const price = currentPenny + i;
+      if (price > 0 && price % 2.5 !== 0) { // Exclude quarter/dime levels
+        levels.push({
+          price,
+          type: 'penny',
+          label: `${price.toFixed(2)}`
+        });
+      }
+    }
+    
+  } else {
+    // Non-JPY pairs (4 decimal places)
+    
+    // Dimes: X.1000, X.2000 levels (every 0.1000) - 2 above and below current price
+    const currentDime = Math.round(currentPrice * 10) / 10;
+    for (let i = -2; i <= 2; i++) {
+      const price = currentDime + (i * 0.1);
+      if (price > 0) {
+        levels.push({
+          price,
+          type: 'dime',
+          label: `${price.toFixed(4)}`
+        });
+      }
+    }
+    
+    // Get dime range for quarters
+    const minDime = currentDime - 0.2;
+    const maxDime = currentDime + 0.2;
+    
+    // Quarters: X.X250, X.X500, X.X750 levels (every 0.0250) - all within dime range
+    for (let price = Math.ceil(minDime / 0.025) * 0.025; price <= maxDime; price += 0.025) {
+      if (price > 0 && (price * 10) % 1 !== 0) { // Exclude dime levels
+        levels.push({
+          price: Math.round(price * 10000) / 10000, // Fix floating point precision
+          type: 'quarter',
+          label: `${price.toFixed(4)}`
+        });
+      }
+    }
+    
+    // Pennies: X.XX10, X.XX20 levels (every 0.0100) - 2 above and below current price
+    const currentPenny = Math.round(currentPrice * 100) / 100;
+    for (let i = -2; i <= 2; i++) {
+      const price = currentPenny + (i * 0.01);
+      if (price > 0 && (price * 100) % 2.5 !== 0) { // Exclude quarter/dime levels
+        levels.push({
+          price: Math.round(price * 10000) / 10000, // Fix floating point precision
+          type: 'penny',
+          label: `${price.toFixed(4)}`
+        });
+      }
+    }
+  }
+  
+  return levels.sort((a, b) => a.price - b.price);
+};
 
 export const LightweightTradingViewChartWithTrades: React.FC<LightweightTradingViewChartWithTradesProps> = ({
   currencyPair,
@@ -73,6 +190,7 @@ export const LightweightTradingViewChartWithTrades: React.FC<LightweightTradingV
   const chartRef = useRef<IChartApi | null>(null);
   const candlestickSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const priceLinesRef = useRef<IPriceLine[]>([]);
+  const institutionalLinesRef = useRef<IPriceLine[]>([]);
   const markersRef = useRef<any[]>([]);
   
   const [candlestickData, setCandlestickData] = useState<CandlestickData[]>([]);
@@ -81,6 +199,11 @@ export const LightweightTradingViewChartWithTrades: React.FC<LightweightTradingV
   const [error, setError] = useState<string | null>(null);
   const [currentPrice, setCurrentPrice] = useState<number | null>(null);
   const [priceChange, setPriceChange] = useState<number | null>(null);
+  const [institutionalSettings, setInstitutionalSettings] = useState<InstitutionalLevelSettings>({
+    showPennies: false,
+    showQuarters: false, 
+    showDimes: false
+  });
 
   // Clean up chart on unmount
   useEffect(() => {
@@ -194,6 +317,11 @@ export const LightweightTradingViewChartWithTrades: React.FC<LightweightTradingV
         candlestickSeriesRef.current!.removePriceLine(line);
       });
       priceLinesRef.current = [];
+      
+      institutionalLinesRef.current.forEach(line => {
+        candlestickSeriesRef.current!.removePriceLine(line);
+      });
+      institutionalLinesRef.current = [];
       
       // Clear markers
       candlestickSeriesRef.current.setMarkers([]);
@@ -394,6 +522,48 @@ export const LightweightTradingViewChartWithTrades: React.FC<LightweightTradingV
     }
   };
 
+  // Add institutional level overlays
+  const addInstitutionalLevels = () => {
+    if (!candlestickSeriesRef.current || !currentPrice) return;
+    
+    // Clear existing institutional lines
+    institutionalLinesRef.current.forEach(line => {
+      candlestickSeriesRef.current!.removePriceLine(line);
+    });
+    institutionalLinesRef.current = [];
+    
+    // Calculate levels based on current price
+    const levels = calculateInstitutionalLevels(currentPrice, isJPYPair);
+    
+    // Filter levels based on settings
+    const filteredLevels = levels.filter(level => {
+      if (level.type === 'penny' && !institutionalSettings.showPennies) return false;
+      if (level.type === 'quarter' && !institutionalSettings.showQuarters) return false;
+      if (level.type === 'dime' && !institutionalSettings.showDimes) return false;
+      return true;
+    });
+    
+    // Add price lines for each level
+    filteredLevels.forEach(level => {
+      const line = candlestickSeriesRef.current!.createPriceLine({
+        price: level.price,
+        color: INSTITUTIONAL_COLORS[level.type],
+        lineWidth: 2,
+        lineStyle: 1, // Dotted
+        axisLabelVisible: true,
+        title: level.label,
+        lineVisible: true,
+      });
+      institutionalLinesRef.current.push(line);
+    });
+    
+    console.log(`🏛️ Added ${filteredLevels.length} institutional levels for ${currencyPair}:`, {
+      pennies: filteredLevels.filter(l => l.type === 'penny').length,
+      quarters: filteredLevels.filter(l => l.type === 'quarter').length,
+      dimes: filteredLevels.filter(l => l.type === 'dime').length
+    });
+  };
+
   // Update chart data when candlestick data changes
   useEffect(() => {
     console.log(`📊 Chart data update for ${currencyPair}:`, {
@@ -431,6 +601,9 @@ export const LightweightTradingViewChartWithTrades: React.FC<LightweightTradingV
     // Add trade overlays after chart data is set
     console.log(`🎯 Calling addTradeOverlays for ${currencyPair}`);
     addTradeOverlays();
+    
+    // Add institutional levels if enabled
+    addInstitutionalLevels();
     
     // Ensure price scale is always visible
     if (chartRef.current) {
@@ -506,7 +679,7 @@ export const LightweightTradingViewChartWithTrades: React.FC<LightweightTradingV
         }
       }
     }
-  }, [candlestickData, activeTrades, selectedStrategies]);
+  }, [candlestickData, activeTrades, selectedStrategies, institutionalSettings]);
 
   // Fetch active trades
   useEffect(() => {
@@ -643,6 +816,47 @@ export const LightweightTradingViewChartWithTrades: React.FC<LightweightTradingV
     };
   }, [currencyPair, timeframe]);
 
+  // Render institutional level controls
+  const renderInstitutionalControls = () => {
+    return (
+      <div className="bg-green-800/90 px-3 py-2 rounded-lg border border-green-600 text-xs">
+        <div className="text-center text-white mb-2 font-bold">📊 Institutional Levels</div>
+        <div className="flex flex-wrap justify-center gap-4">
+          <label className="flex items-center gap-1 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={institutionalSettings.showPennies}
+              onChange={(e) => setInstitutionalSettings(prev => ({ ...prev, showPennies: e.target.checked }))}
+              className="w-3 h-3"
+            />
+            <span style={{ color: INSTITUTIONAL_COLORS.penny }}>●</span>
+            <span className="text-gray-200">Pennies (100 pips)</span>
+          </label>
+          <label className="flex items-center gap-1 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={institutionalSettings.showQuarters}
+              onChange={(e) => setInstitutionalSettings(prev => ({ ...prev, showQuarters: e.target.checked }))}
+              className="w-3 h-3"
+            />
+            <span style={{ color: INSTITUTIONAL_COLORS.quarter }}>●</span>
+            <span className="text-gray-200">Quarters (250 pips)</span>
+          </label>
+          <label className="flex items-center gap-1 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={institutionalSettings.showDimes}
+              onChange={(e) => setInstitutionalSettings(prev => ({ ...prev, showDimes: e.target.checked }))}
+              className="w-3 h-3"
+            />
+            <span style={{ color: INSTITUTIONAL_COLORS.dime }}>●</span>
+            <span className="text-gray-200">Dimes (1000 pips)</span>
+          </label>
+        </div>
+      </div>
+    );
+  };
+
   // Render trade metrics overlay
   const renderTradeMetrics = () => {
     const filteredTrades = selectedStrategies.length > 0
@@ -768,6 +982,11 @@ export const LightweightTradingViewChartWithTrades: React.FC<LightweightTradingV
             {activeTrades.length > 0 && ` • ${activeTrades.length} active trades`}
           </p>
         </div>
+        
+        <div className="flex-1 flex justify-center mx-4">
+          {renderInstitutionalControls()}
+        </div>
+        
         <div className="text-right">
           {currentPrice && (
             <>
@@ -792,7 +1011,6 @@ export const LightweightTradingViewChartWithTrades: React.FC<LightweightTradingV
       <div className="relative">
         <div ref={chartContainerRef} style={{ height: `${height}px` }} />
         {renderTradeMetrics()}
-        
       </div>
       
       <div className="mt-2 text-xs text-gray-500 text-center">
