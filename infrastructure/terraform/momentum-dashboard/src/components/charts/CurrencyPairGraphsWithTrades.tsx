@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { LightweightTradingViewChartWithTrades } from './LightweightTradingViewChartWithTrades';
 import { api } from '../../services/api';
 import { ChevronDown, Filter, TrendingUp, Target, Shield } from 'lucide-react';
@@ -19,6 +19,40 @@ interface CurrencyPairGraphsWithTradesProps {
   chartHeight?: number;
 }
 
+// Calculate distance to nearest institutional level
+const calculateInstitutionalDistance = (price: number, isJPYPair: boolean): { type: 'dime' | 'quarter' | 'penny', distance: number } => {
+  if (!price || isNaN(price)) return { type: 'penny', distance: Infinity };
+  
+  let distances = [];
+  
+  if (isJPYPair) {
+    // JPY pairs
+    const nearestDime = Math.round(price / 10) * 10;
+    const nearestQuarter = Math.round(price / 2.5) * 2.5;
+    const nearestPenny = Math.round(price);
+    
+    distances.push(
+      { type: 'dime' as const, distance: Math.abs(price - nearestDime) },
+      { type: 'quarter' as const, distance: Math.abs(price - nearestQuarter) },
+      { type: 'penny' as const, distance: Math.abs(price - nearestPenny) }
+    );
+  } else {
+    // Non-JPY pairs
+    const nearestDime = Math.round(price * 10) / 10;
+    const nearestQuarter = Math.round(price / 0.025) * 0.025;
+    const nearestPenny = Math.round(price * 100) / 100;
+    
+    distances.push(
+      { type: 'dime' as const, distance: Math.abs(price - nearestDime) },
+      { type: 'quarter' as const, distance: Math.abs(price - nearestQuarter) },
+      { type: 'penny' as const, distance: Math.abs(price - nearestPenny) }
+    );
+  }
+  
+  // Return the closest level type and distance
+  return distances.reduce((min, curr) => curr.distance < min.distance ? curr : min);
+};
+
 export const CurrencyPairGraphsWithTrades: React.FC<CurrencyPairGraphsWithTradesProps> = ({
   timeframe = 'H1',
   chartHeight = 400
@@ -27,6 +61,7 @@ export const CurrencyPairGraphsWithTrades: React.FC<CurrencyPairGraphsWithTrades
   const [selectedStrategies, setSelectedStrategies] = useState<string[]>([]);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [currentPrices, setCurrentPrices] = useState<Record<string, number>>({});
 
   // Fetch available strategies from active trades
   useEffect(() => {
@@ -80,6 +115,67 @@ export const CurrencyPairGraphsWithTrades: React.FC<CurrencyPairGraphsWithTrades
   const clearAllStrategies = () => {
     setSelectedStrategies([]);
   };
+  
+  // Fetch current prices for all pairs
+  useEffect(() => {
+    const fetchPrices = async () => {
+      const prices: Record<string, number> = {};
+      
+      // Fetch candlestick data for each pair to get current price
+      const pricePromises = CURRENCY_PAIRS.map(async (pair) => {
+        try {
+          const response = await api.getCandlestickData(pair, timeframe, 1);
+          if (response.success && response.data && response.data.length > 0) {
+            const latestCandle = response.data[response.data.length - 1];
+            prices[pair] = parseFloat(latestCandle.close);
+          }
+        } catch (error) {
+          console.error(`Failed to fetch price for ${pair}:`, error);
+        }
+      });
+      
+      await Promise.all(pricePromises);
+      setCurrentPrices(prices);
+    };
+    
+    fetchPrices();
+    // Refresh prices every minute
+    const interval = setInterval(fetchPrices, 60000);
+    
+    return () => clearInterval(interval);
+  }, [timeframe]);
+  
+  // Sort currency pairs by proximity to institutional levels
+  const sortedCurrencyPairs = useMemo(() => {
+    if (Object.keys(currentPrices).length === 0) {
+      return CURRENCY_PAIRS; // Return original order if no prices yet
+    }
+    
+    const pairsWithDistance = CURRENCY_PAIRS.map(pair => {
+      const price = currentPrices[pair];
+      if (!price) {
+        return { pair, type: 'penny' as const, distance: Infinity, hierarchyScore: 3 };
+      }
+      
+      const isJPYPair = pair.includes('JPY');
+      const { type, distance } = calculateInstitutionalDistance(price, isJPYPair);
+      
+      // Create hierarchy score: dime=1, quarter=2, penny=3
+      const hierarchyScore = type === 'dime' ? 1 : type === 'quarter' ? 2 : 3;
+      
+      return { pair, type, distance, hierarchyScore };
+    });
+    
+    // Sort by hierarchy first (dime < quarter < penny), then by distance
+    return pairsWithDistance
+      .sort((a, b) => {
+        if (a.hierarchyScore !== b.hierarchyScore) {
+          return a.hierarchyScore - b.hierarchyScore;
+        }
+        return a.distance - b.distance;
+      })
+      .map(item => item.pair);
+  }, [currentPrices]);
 
   return (
     <div className="p-8">
@@ -193,9 +289,22 @@ export const CurrencyPairGraphsWithTrades: React.FC<CurrencyPairGraphsWithTrades
         )}
       </div>
 
+      {/* Institutional Level Proximity Indicator */}
+      {Object.keys(currentPrices).length > 0 && (
+        <div className="mb-4 text-center text-sm text-gray-600 dark:text-gray-400">
+          <span className="inline-flex items-center gap-2">
+            <span className="text-blue-500">●</span> Closest to Dimes
+            <span className="mx-2">→</span>
+            <span className="text-green-500">●</span> Closest to Quarters
+            <span className="mx-2">→</span>
+            <span className="text-pink-500">●</span> Closest to Pennies
+          </span>
+        </div>
+      )}
+      
       {/* Currency Pair Charts Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {CURRENCY_PAIRS.map((pair) => (
+        {sortedCurrencyPairs.map((pair) => (
           <LightweightTradingViewChartWithTrades
             key={pair}
             currencyPair={pair}
