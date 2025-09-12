@@ -229,19 +229,15 @@ class Settings(BaseSettings):
         # Always collect M5 (primary timeframe)
         timeframes_to_collect = [self.primary_timeframe]
         
-        # DEBUG: Log the H1 compliance check
-        print(f"DEBUG: get_timeframes_to_collect - configured timeframes: {self.timeframes}")
-        print(f"DEBUG: get_timeframes_to_collect - initial collection list: {timeframes_to_collect}")
-        print(f"DEBUG: H1 compliance check - 'H1' in self.timeframes: {'H1' in self.timeframes}")
-        print(f"DEBUG: H1 compliance check - 'H1' not in timeframes_to_collect: {'H1' not in timeframes_to_collect}")
-        
         # ARCHITECTURE COMPLIANCE: Always collect H1 for dashboard compatibility
         # The Architecture Bible specifies H1 data for pipstop.org dashboard
-        if "H1" in self.timeframes and "H1" not in timeframes_to_collect:
-            timeframes_to_collect.append("H1")
-            print(f"DEBUG: ✅ H1 added for architecture compliance - dashboard needs H1 data")
-        else:
-            print(f"DEBUG: ❌ H1 NOT added - condition failed")
+        # Fix: Explicitly ensure H1 is always collected when configured
+        if "H1" in self.timeframes:
+            if "H1" not in timeframes_to_collect:
+                timeframes_to_collect.append("H1")
+                print(f"DEBUG: ✅ H1 added for architecture compliance - dashboard needs H1 data")
+            else:
+                print(f"DEBUG: ℹ️ H1 already in collection list")
         
         # Add other timeframes based on their intervals (excluding H1 which is always collected)
         for timeframe in self.timeframes:
@@ -250,7 +246,6 @@ class Settings(BaseSettings):
                 self.should_collect_timeframe(timeframe, current_time)):
                 timeframes_to_collect.append(timeframe)
         
-        print(f"DEBUG: Final timeframes_to_collect: {timeframes_to_collect}")
         return timeframes_to_collect
     
     def should_aggregate_timeframe(self, timeframe: str, current_time: int) -> bool:
