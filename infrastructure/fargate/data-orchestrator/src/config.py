@@ -13,7 +13,19 @@ import json
 import boto3
 from typing import List, Dict, Any
 from pydantic import Field, validator
-from pydantic_settings import BaseSettings
+
+# Handle pydantic_settings import with fallback for compatibility
+try:
+    from pydantic_settings import BaseSettings
+    print("DEBUG: Successfully imported pydantic_settings.BaseSettings")
+except ImportError as e:
+    print(f"WARNING: Failed to import pydantic_settings: {e}")
+    try:
+        from pydantic import BaseSettings
+        print("DEBUG: Fallback - using pydantic.BaseSettings (legacy)")
+    except ImportError as fallback_e:
+        print(f"CRITICAL: Cannot import BaseSettings from either pydantic_settings or pydantic: {fallback_e}")
+        raise RuntimeError("Cannot import BaseSettings - check pydantic installation")
 
 
 class Settings(BaseSettings):
@@ -61,12 +73,28 @@ class Settings(BaseSettings):
     
     # Multi-timeframe candlestick collection
     timeframes: List[str] = Field(
-        default=["M5"],  # Only collect M5 regularly, H1 handled by backfill
-        env="TIMEFRAMES"
+        default=["M5", "H1"]  # Collect M5 every 5 minutes, H1 every hour
     )
     
     # Primary timeframe for frequent collection
     primary_timeframe: str = Field("M5", env="PRIMARY_TIMEFRAME")
+    
+    # Aggregated timeframes (created from M5 data)
+    aggregated_timeframes: List[str] = Field(
+        default=["M15", "M30"]  # These are computed from M5 candles
+    )
+    
+    # Bootstrap configuration
+    bootstrap_candles: int = Field(500, env="BOOTSTRAP_CANDLES")  # Historical depth for lazy loading
+    
+    # Tiered Redis Storage Configuration for 500 candlestick lazy loading
+    hot_tier_candles: int = Field(50, env="HOT_TIER_CANDLES")      # Most recent candles for immediate access
+    warm_tier_candles: int = Field(450, env="WARM_TIER_CANDLES")   # Older candles for chart scrollback
+    
+    # Tiered storage TTL settings
+    hot_tier_ttl: int = Field(86400, env="HOT_TIER_TTL")           # 1 day for hot data
+    warm_tier_ttl: int = Field(432000, env="WARM_TIER_TTL")        # 5 days for warm data
+    cold_tier_ttl: int = Field(604800, env="COLD_TIER_TTL")        # 7 days for bootstrap/cold data
     
     # Collection intervals for different timeframes (in seconds)
     timeframe_intervals: Dict[str, int] = Field(
@@ -171,6 +199,17 @@ class Settings(BaseSettings):
     @validator("timeframes", pre=True)
     def parse_timeframes(cls, v):
         """Parse timeframes from environment variable if string"""
+        print(f"DEBUG: parse_timeframes called with value: {repr(v)} (type: {type(v)})")
+        if isinstance(v, str):
+            result = [tf.strip() for tf in v.split(",")]
+            print(f"DEBUG: parse_timeframes returning: {result}")
+            return result
+        print(f"DEBUG: parse_timeframes returning unchanged: {v}")
+        return v
+    
+    @validator("aggregated_timeframes", pre=True)
+    def parse_aggregated_timeframes(cls, v):
+        """Parse aggregated timeframes from environment variable if string"""
         if isinstance(v, str):
             return [tf.strip() for tf in v.split(",")]
         return v
@@ -180,14 +219,8 @@ class Settings(BaseSettings):
         if timeframe not in self.timeframe_intervals:
             return False
         
-        # For dashboard candlestick charts, collect key timeframes more frequently
-        # to ensure data is available for visualization
-        dashboard_timeframes = ["M5", "M15", "H1"]
-        if timeframe in dashboard_timeframes:
-            # Collect dashboard timeframes every 5 minutes (on M5 schedule)
-            return current_time % 300 == 0
-        
-        # For other timeframes, use original interval logic
+        # Use proper interval logic for each timeframe
+        # M5: every 5 minutes, H1: every hour, etc.
         interval = self.timeframe_intervals[timeframe]
         return current_time % interval == 0
     
@@ -196,12 +229,98 @@ class Settings(BaseSettings):
         # Always collect M5 (primary timeframe)
         timeframes_to_collect = [self.primary_timeframe]
         
-        # Add other timeframes based on their intervals
+        # DEBUG: Log the H1 compliance check
+        print(f"DEBUG: get_timeframes_to_collect - configured timeframes: {self.timeframes}")
+        print(f"DEBUG: get_timeframes_to_collect - initial collection list: {timeframes_to_collect}")
+        print(f"DEBUG: H1 compliance check - 'H1' in self.timeframes: {'H1' in self.timeframes}")
+        print(f"DEBUG: H1 compliance check - 'H1' not in timeframes_to_collect: {'H1' not in timeframes_to_collect}")
+        
+        # ARCHITECTURE COMPLIANCE: Always collect H1 for dashboard compatibility
+        # The Architecture Bible specifies H1 data for pipstop.org dashboard
+        if "H1" in self.timeframes and "H1" not in timeframes_to_collect:
+            timeframes_to_collect.append("H1")
+            print(f"DEBUG: ✅ H1 added for architecture compliance - dashboard needs H1 data")
+        else:
+            print(f"DEBUG: ❌ H1 NOT added - condition failed")
+        
+        # Add other timeframes based on their intervals (excluding H1 which is always collected)
         for timeframe in self.timeframes:
-            if timeframe != self.primary_timeframe and self.should_collect_timeframe(timeframe, current_time):
+            if (timeframe != self.primary_timeframe and 
+                timeframe != "H1" and 
+                self.should_collect_timeframe(timeframe, current_time)):
                 timeframes_to_collect.append(timeframe)
         
+        print(f"DEBUG: Final timeframes_to_collect: {timeframes_to_collect}")
         return timeframes_to_collect
+    
+    def should_aggregate_timeframe(self, timeframe: str, current_time: int) -> bool:
+        """Check if an aggregated timeframe should be computed at current time"""
+        if timeframe not in self.aggregated_timeframes:
+            return False
+        
+        # Check if we're at the boundary for this aggregated timeframe
+        interval = self.timeframe_intervals[timeframe]
+        return current_time % interval == 0
+    
+    def get_aggregation_ratio(self, timeframe: str) -> int:
+        """Get how many M5 candles are needed to create one aggregated candle"""
+        aggregation_map = {
+            "M15": 3,   # 15 min / 5 min = 3 M5 candles
+            "M30": 6,   # 30 min / 5 min = 6 M5 candles
+            "H1": 12,   # 60 min / 5 min = 12 M5 candles (but H1 is native, not aggregated)
+        }
+        return aggregation_map.get(timeframe, 1)
+    
+    def get_all_supported_timeframes(self) -> List[str]:
+        """Get all timeframes supported (native + aggregated)"""
+        return self.timeframes + self.aggregated_timeframes
+    
+    def get_candle_count_for_collection(self, timeframe: str, is_bootstrap: bool) -> int:
+        """Get number of candles to collect - 500 for bootstrap, 1 for incremental"""
+        if is_bootstrap:
+            return self.bootstrap_candles
+        else:
+            return 1  # Only collect latest candle for ongoing updates
+    
+    def get_total_tier_capacity(self) -> int:
+        """Get total capacity across all tiers (should equal bootstrap_candles)"""
+        return self.hot_tier_candles + self.warm_tier_candles
+    
+    def get_tier_config_for_timeframe(self, timeframe: str) -> Dict[str, Any]:
+        """Get tiered storage configuration for a specific timeframe"""
+        return {
+            'hot': {
+                'capacity': self.hot_tier_candles,
+                'ttl': self.hot_tier_ttl,
+                'key_suffix': ':hot'
+            },
+            'warm': {
+                'capacity': self.warm_tier_candles, 
+                'ttl': self.warm_tier_ttl,
+                'key_suffix': ':warm'
+            },
+            'cold': {
+                'capacity': self.bootstrap_candles,
+                'ttl': self.cold_tier_ttl,
+                'key_suffix': ':historical'  # Bootstrap data
+            }
+        }
+    
+    def should_rotate_to_warm_tier(self, hot_count: int) -> bool:
+        """Check if hot tier needs rotation to warm tier"""
+        return hot_count > self.hot_tier_candles
+    
+    def get_redis_keys_for_pair_timeframe(self, currency_pair: str, timeframe: str) -> Dict[str, str]:
+        """Get all Redis keys for a currency pair and timeframe"""
+        base = f"market_data:{currency_pair}:{timeframe}"
+        return {
+            'current': f"{base}:current",
+            'hot': f"{base}:hot", 
+            'warm': f"{base}:warm",
+            'cold': f"{base}:historical",  # Bootstrap/historical data
+            'last_update': f"{base}:last_update",
+            'rotation_meta': f"{base}:rotation:meta"
+        }
     
     def get_redis_node_for_pair(self, currency_pair: str) -> int:
         """Get Redis node index for currency pair based on sharding"""
@@ -236,16 +355,58 @@ class Settings(BaseSettings):
         }
     
     def __init__(self, **kwargs):
-        # Parse JSON secrets from environment variables
-        self._parse_json_secrets()
-        super().__init__(**kwargs)
+        print("DEBUG: Config initialization starting...")
+        try:
+            # Fix timeframes environment variables before pydantic processes them
+            timeframes_env = os.getenv('TIMEFRAMES')
+            if timeframes_env:
+                print(f"DEBUG: Pre-processing TIMEFRAMES env: {timeframes_env}")
+                try:
+                    # Remove the env var to prevent pydantic from trying to parse it as JSON
+                    del os.environ['TIMEFRAMES']
+                    # Parse and set via kwargs instead
+                    kwargs['timeframes'] = [tf.strip() for tf in timeframes_env.split(",")]
+                    print(f"DEBUG: Set kwargs timeframes to: {kwargs['timeframes']}")
+                except Exception as e:
+                    print(f"ERROR: Failed to process TIMEFRAMES env var: {e}")
+                    # Use default if parsing fails
+                    kwargs['timeframes'] = ["M5", "H1"]
+            
+            aggregated_timeframes_env = os.getenv('AGGREGATED_TIMEFRAMES')
+            if aggregated_timeframes_env:
+                print(f"DEBUG: Pre-processing AGGREGATED_TIMEFRAMES env: {aggregated_timeframes_env}")
+                try:
+                    # Remove the env var to prevent pydantic from trying to parse it as JSON
+                    del os.environ['AGGREGATED_TIMEFRAMES']
+                    # Parse and set via kwargs instead
+                    kwargs['aggregated_timeframes'] = [tf.strip() for tf in aggregated_timeframes_env.split(",")]
+                    print(f"DEBUG: Set kwargs aggregated_timeframes to: {kwargs['aggregated_timeframes']}")
+                except Exception as e:
+                    print(f"ERROR: Failed to process AGGREGATED_TIMEFRAMES env var: {e}")
+                    # Use default if parsing fails
+                    kwargs['aggregated_timeframes'] = ["M15", "M30"]
+            
+            # Parse JSON secrets from environment variables
+            print("DEBUG: About to parse JSON secrets...")
+            self._parse_json_secrets()
+            print("DEBUG: JSON secrets parsed successfully")
+            
+            print("DEBUG: About to call super().__init__...")
+            super().__init__(**kwargs)
+            print("DEBUG: Config initialization completed successfully")
+            
+        except Exception as e:
+            print(f"CRITICAL: Config initialization failed: {e}")
+            import traceback
+            traceback.print_exc()
+            raise RuntimeError(f"Failed to initialize Settings: {e}")
     
     def _parse_json_secrets(self):
         """Parse JSON secrets from AWS Secrets Manager environment variables"""
         try:
             # Parse OANDA credentials from JSON secret
             oanda_credentials_json = os.getenv('OANDA_CREDENTIALS')
-            if oanda_credentials_json:
+            if oanda_credentials_json and oanda_credentials_json.strip():
                 oanda_creds = json.loads(oanda_credentials_json)
                 os.environ['OANDA_API_KEY'] = oanda_creds.get('api_key', '')
                 os.environ['OANDA_ACCOUNT_ID'] = oanda_creds.get('account_id', '')
@@ -255,7 +416,7 @@ class Settings(BaseSettings):
             
             # Parse Redis credentials from JSON secret
             redis_credentials_json = os.getenv('REDIS_CREDENTIALS')
-            if redis_credentials_json:
+            if redis_credentials_json and redis_credentials_json.strip():
                 redis_creds = json.loads(redis_credentials_json)
                 os.environ['REDIS_AUTH_TOKEN'] = redis_creds.get('auth_token', '')
                 
@@ -280,42 +441,43 @@ class Settings(BaseSettings):
             # Parse Database credentials - prioritize DATABASE_CREDENTIALS JSON format
             # Method 1: JSON secret (Architecture Bible format - preferred)
             database_credentials_json = os.getenv('DATABASE_CREDENTIALS')
-            if database_credentials_json:
-                print(f"DEBUG: Parsing DATABASE_CREDENTIALS JSON (Architecture Bible format)")
+            if database_credentials_json and database_credentials_json.strip():
                 db_creds = json.loads(database_credentials_json)
                 os.environ['DATABASE_HOST'] = db_creds.get('host', '')
                 os.environ['DATABASE_PORT'] = str(db_creds.get('port', 5432))
                 os.environ['DATABASE_NAME'] = db_creds.get('dbname', '')
                 os.environ['DATABASE_USERNAME'] = db_creds.get('username', '')
                 os.environ['DATABASE_PASSWORD'] = db_creds.get('password', '')
-                print(f"DEBUG: Parsed database config - host: {db_creds.get('host', 'MISSING')}, port: {db_creds.get('port', 5432)}")
+                # Database credentials parsed successfully
             elif os.getenv('DATABASE_HOST'):
                 # Method 2: Individual environment variables (fallback)
-                print(f"DEBUG: Using individual database environment variables (fallback)")
+                # Using individual database environment variables (fallback)
                 # Individual variables already set by AWS Secrets Manager
                 pass
             else:
-                print(f"DEBUG: No database credentials found in either format")
-                print(f"DEBUG: DATABASE_CREDENTIALS env var: {'SET' if database_credentials_json else 'NOT SET'}")
-                print(f"DEBUG: DATABASE_HOST env var: {'SET' if os.getenv('DATABASE_HOST') else 'NOT SET'}")
-                
+                # No database credentials found
+                pass
         except json.JSONDecodeError as e:
-            print(f"Warning: Failed to parse JSON secrets: {e}")
+            print(f"ERROR: Failed to parse JSON secrets - invalid JSON format: {e}")
+            import traceback
+            traceback.print_exc()
+            # Don't raise here - allow system to continue with defaults
         except Exception as e:
-            print(f"Warning: Error processing secrets: {e}")
+            print(f"ERROR: Error processing secrets: {e}")
+            import traceback
+            traceback.print_exc()
+            # Don't raise here - allow system to continue with defaults
     
     @property
     def parsed_oanda_api_key(self) -> str:
         """Get OANDA API key from parsed credentials"""
         api_key = os.getenv('OANDA_API_KEY', self.oanda_api_key)
-        print(f"DEBUG: OANDA API key length: {len(api_key) if api_key else 0}")
         return api_key
     
     @property
     def parsed_oanda_account_id(self) -> str:
         """Get OANDA account ID from parsed credentials"""
         account_id = os.getenv('OANDA_ACCOUNT_ID', self.oanda_account_id)
-        print(f"DEBUG: OANDA Account ID: {account_id}")
         return account_id
     
     @property
@@ -327,7 +489,6 @@ class Settings(BaseSettings):
     def parsed_database_host(self) -> str:
         """Get database host from parsed credentials"""
         host = os.getenv('DATABASE_HOST', self.database_host)
-        print(f"DEBUG: parsed_database_host returning: '{host}'")
         return host
     
     @property
