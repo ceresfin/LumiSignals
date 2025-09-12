@@ -232,6 +232,10 @@ class ApiService {
     return this.makeRequest('GET', '/api/market-data');
   }
 
+  async getMomentumScannerData(): Promise<ApiResponse<any>> {
+    return this.makeRequest('GET', '/api/momentum/scanner');
+  }
+
   async getPortfolioOverview(): Promise<ApiResponse<any>> {
     return this.makeRequest('GET', '/analytics?type=portfolio-overview');
   }

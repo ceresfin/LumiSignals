@@ -216,7 +216,12 @@ export const LightweightTradingViewChartWithTrades: React.FC<LightweightTradingV
   useEffect(() => {
     return () => {
       if (chartRef.current) {
-        chartRef.current.remove();
+        try {
+          chartRef.current.remove();
+          chartRef.current = null;
+        } catch (e) {
+          console.warn('Chart already disposed on unmount:', e);
+        }
       }
     };
   }, []);
@@ -332,26 +337,37 @@ export const LightweightTradingViewChartWithTrades: React.FC<LightweightTradingV
 
     return () => {
       window.removeEventListener('resize', handleResize);
-      chart.remove();
+      // Don't dispose chart here - it's handled by the unmount cleanup
+      // This prevents double disposal which causes "Object is disposed" error
     };
   }, [height, loading, error]);
 
   // Clear previous price lines and markers
   const clearOverlays = () => {
     if (candlestickSeriesRef.current) {
-      priceLinesRef.current.forEach(line => {
-        candlestickSeriesRef.current!.removePriceLine(line);
-      });
-      priceLinesRef.current = [];
-      
-      institutionalLinesRef.current.forEach(line => {
-        candlestickSeriesRef.current!.removePriceLine(line);
-      });
-      institutionalLinesRef.current = [];
-      
-      // Clear markers
-      candlestickSeriesRef.current.setMarkers([]);
-      markersRef.current = [];
+      try {
+        priceLinesRef.current.forEach(line => {
+          if (candlestickSeriesRef.current) {
+            candlestickSeriesRef.current.removePriceLine(line);
+          }
+        });
+        priceLinesRef.current = [];
+        
+        institutionalLinesRef.current.forEach(line => {
+          if (candlestickSeriesRef.current) {
+            candlestickSeriesRef.current.removePriceLine(line);
+          }
+        });
+        institutionalLinesRef.current = [];
+        
+        // Clear markers
+        if (candlestickSeriesRef.current) {
+          candlestickSeriesRef.current.setMarkers([]);
+        }
+        markersRef.current = [];
+      } catch (e) {
+        console.warn('Error clearing chart overlays:', e);
+      }
     }
   };
 

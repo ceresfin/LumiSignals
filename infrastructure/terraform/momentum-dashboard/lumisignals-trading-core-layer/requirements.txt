@@ -1,0 +1,27 @@
+# LumiSignals Trading Core - Lambda Layer Dependencies
+# Python packages required for market-aware momentum calculations
+
+# Core timezone and datetime handling
+pytz>=2023.3
+
+# HTTP requests for OANDA API integration
+requests>=2.31.0
+
+# JSON handling (included in Python standard library, but explicit for clarity)
+# json - standard library
+
+# Logging (standard library)
+# logging - standard library
+
+# Date/time utilities (standard library) 
+# datetime - standard library
+
+# Type hints (standard library for Python 3.9+)
+# typing - standard library
+
+# Math operations (standard library)
+# math - standard library
+
+# Note: This layer is designed to be lightweight and use mostly Python standard library
+# to minimize size and cold start impact in AWS Lambda functions.
+# Additional dependencies should only be added if absolutely necessary.

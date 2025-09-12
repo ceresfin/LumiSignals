@@ -1,6 +1,7 @@
 // Main LumiSignals Momentum Dashboard - "Pilot's Cockpit" Design
 import React, { useState } from 'react';
 import { MomentumGrid } from './components/momentum/MomentumGrid';
+import { MomentumScanner } from './components/momentum/MomentumScanner';
 import { PortfolioExposure } from './components/portfolio/PortfolioExposure';
 import { SystemHealth } from './components/system/SystemHealth';
 import { MarketRegimes } from './components/market/MarketRegimes';
@@ -18,7 +19,8 @@ import {
   RefreshCw,
   Settings,
   Zap,
-  BarChart3
+  BarChart3,
+  BarChart
 } from 'lucide-react';
 import './App.css';
 import './styles/pipstop-theme.css';
@@ -26,7 +28,7 @@ import './styles/lumitrade-theme.css';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { InstitutionalThemeToggle } from './components/ui/InstitutionalThemeToggle';
 
-type TabType = 'momentum' | 'graphs' | 'portfolio' | 'rds-portfolio' | 'market' | 'system' | 'strategies';
+type TabType = 'momentum' | 'momentum-scanner' | 'graphs' | 'portfolio' | 'rds-portfolio' | 'market' | 'system' | 'strategies';
 
 interface TabConfig {
   id: TabType;
@@ -41,6 +43,12 @@ const tabs: TabConfig[] = [
     label: 'Momentum Grid',
     icon: <TrendingUp className="w-5 h-5" />,
     description: 'Real-time momentum analysis of all 28 currency pairs ranked by strength'
+  },
+  {
+    id: 'momentum-scanner',
+    label: 'Momentum Scanner',
+    icon: <BarChart className="w-5 h-5" />,
+    description: '5-timeframe momentum analysis for all 28 pairs - 15m, 60m, 4h, 24h, 48h with currency filtering'
   },
   {
     id: 'graphs',
@@ -85,6 +93,12 @@ function AppContent() {
   const [isConnected, setIsConnected] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
 
+  // Debug: Log available tabs
+  React.useEffect(() => {
+    console.log('🔍 Available tabs:', tabs.map(t => ({ id: t.id, label: t.label })));
+    console.log('🎯 Current active tab:', activeTab);
+  }, [activeTab]);
+
   // Simulate connection status (replace with actual WebSocket status)
   React.useEffect(() => {
     const checkConnection = () => {
@@ -103,6 +117,8 @@ function AppContent() {
     switch (activeTab) {
       case 'momentum':
         return <MomentumGrid columns={7} showFilters={true} autoRefresh={true} />;
+      case 'momentum-scanner':
+        return <MomentumScanner refreshInterval={300000} />;
       case 'graphs':
         // Enhanced version with trade overlays
         return <CurrencyPairGraphsWithTrades timeframe="H1" chartHeight={400} />;
