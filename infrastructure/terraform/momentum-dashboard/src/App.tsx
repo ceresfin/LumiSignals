@@ -46,7 +46,7 @@ const tabs: TabConfig[] = [
     id: 'graphs',
     label: 'Graphs',
     icon: <BarChart3 className="w-5 h-5" />,
-    description: 'Candlestick charts with active trade overlays - 100 H1 candles per pair'
+    description: 'Candlestick charts with active trade overlays - 500 H1 candles per pair from tiered storage'
   },
   {
     id: 'portfolio',

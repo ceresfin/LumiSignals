@@ -62,6 +62,10 @@ export const CurrencyPairGraphsWithTrades: React.FC<CurrencyPairGraphsWithTrades
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [currentPrices, setCurrentPrices] = useState<Record<string, number>>({});
+  const [userInteractedCharts, setUserInteractedCharts] = useState<Set<string>>(new Set());
+  const [preserveUserState, setPreserveUserState] = useState(true);
+  const [sortedPairs, setSortedPairs] = useState<string[]>(CURRENCY_PAIRS);
+  const [hasInitialSort, setHasInitialSort] = useState(false);
 
   // Fetch available strategies from active trades
   useEffect(() => {
@@ -145,14 +149,14 @@ export const CurrencyPairGraphsWithTrades: React.FC<CurrencyPairGraphsWithTrades
     return () => clearInterval(interval);
   }, [timeframe]);
   
-  // Sort currency pairs by proximity to institutional levels
-  const sortedCurrencyPairs = useMemo(() => {
-    if (Object.keys(currentPrices).length === 0) {
-      return CURRENCY_PAIRS; // Return original order if no prices yet
+  // Perform sorting calculation
+  const calculateSortedPairs = (prices: Record<string, number>) => {
+    if (Object.keys(prices).length === 0) {
+      return CURRENCY_PAIRS;
     }
     
     const pairsWithDistance = CURRENCY_PAIRS.map(pair => {
-      const price = currentPrices[pair];
+      const price = prices[pair];
       if (!price) {
         return { pair, type: 'penny' as const, distance: Infinity, hierarchyScore: 3 };
       }
@@ -167,15 +171,43 @@ export const CurrencyPairGraphsWithTrades: React.FC<CurrencyPairGraphsWithTrades
     });
     
     // Sort by hierarchy first (dime < quarter < penny), then by distance
-    return pairsWithDistance
+    const sorted = [...pairsWithDistance]
       .sort((a, b) => {
         if (a.hierarchyScore !== b.hierarchyScore) {
           return a.hierarchyScore - b.hierarchyScore;
         }
         return a.distance - b.distance;
-      })
-      .map(item => item.pair);
-  }, [currentPrices]);
+      });
+    
+    return sorted.map(item => item.pair);
+  };
+
+  // Do initial sort when prices are first loaded
+  useEffect(() => {
+    if (!hasInitialSort && Object.keys(currentPrices).length > 0) {
+      const sorted = calculateSortedPairs(currentPrices);
+      setSortedPairs(sorted);
+      setHasInitialSort(true);
+    }
+  }, [currentPrices, hasInitialSort]);
+
+  // Calculate rankings for display (based on current sorted order)
+  const sortRankings = useMemo(() => {
+    return new Map(sortedPairs.map((pair, index) => [pair, index + 1]));
+  }, [sortedPairs]);
+  
+  // Handler for when user interacts with a chart
+  const handleChartInteraction = (currencyPair: string) => {
+    setUserInteractedCharts(prev => new Set(prev).add(currencyPair));
+  };
+
+  // Handler for manual re-sort
+  const handleResort = () => {
+    const sorted = calculateSortedPairs(currentPrices);
+    setSortedPairs(sorted);
+    // Clear user interactions when resorting
+    setUserInteractedCharts(new Set());
+  };
 
   return (
     <div className="p-8">
@@ -289,28 +321,40 @@ export const CurrencyPairGraphsWithTrades: React.FC<CurrencyPairGraphsWithTrades
         )}
       </div>
 
-      {/* Institutional Level Proximity Indicator */}
+      {/* Institutional Level Proximity Indicator and Resort Button */}
       {Object.keys(currentPrices).length > 0 && (
-        <div className="mb-4 text-center text-sm text-gray-600 dark:text-gray-400">
-          <span className="inline-flex items-center gap-2">
+        <div className="mb-4 flex items-center justify-center gap-6">
+          <span className="inline-flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
             <span className="text-blue-500">●</span> Closest to Dimes
             <span className="mx-2">→</span>
             <span className="text-green-500">●</span> Closest to Quarters
             <span className="mx-2">→</span>
             <span className="text-pink-500">●</span> Closest to Pennies
           </span>
+          <button
+            onClick={handleResort}
+            className="px-4 py-2 bg-gray-800 text-white text-sm rounded-lg hover:bg-gray-700 transition-colors flex items-center gap-2"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            Re-sort Charts
+          </button>
         </div>
       )}
       
       {/* Currency Pair Charts Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {sortedCurrencyPairs.map((pair) => (
+        {sortedPairs.map((pair) => (
           <LightweightTradingViewChartWithTrades
             key={pair}
             currencyPair={pair}
             timeframe={timeframe}
             height={chartHeight}
             selectedStrategies={selectedStrategies}
+            sortRank={sortRankings.get(pair)}
+            onUserInteraction={() => handleChartInteraction(pair)}
+            preserveZoom={preserveUserState && userInteractedCharts.has(pair)}
           />
         ))}
       </div>

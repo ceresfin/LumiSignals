@@ -810,10 +810,15 @@ class DashboardDataProvider:
                 logger.warning(f"Could not scan Redis keys: {e}")
             
             # Try multiple possible Redis key formats
-            # Based on actual Redis data found: market_data:USD_JPY:M5:current and market_data:USD_JPY:M5:historical
+            # NEW: Tiered storage keys from Data Orchestrator (500 candlesticks)
+            # OLD: Legacy keys from previous system
             possible_keys = [
+                # NEW TIERED STORAGE KEYS - check these first for 500 candlesticks
+                f"tiered:{currency_pair}:{timeframe}:cold",      # 500 candles bootstrap
+                f"tiered:{currency_pair}:{timeframe}:warm",      # 450 older candles
+                f"tiered:{currency_pair}:{timeframe}:hot",       # 50 most recent candles
                 f"market_data:{currency_pair}:{timeframe}:historical",
-                f"market_data:{currency_pair}:{timeframe}:current",
+                f"market_data:{currency_pair}:{timeframe}:current", 
                 f"market_data:{currency_pair}:M5:historical",  # Fallback to M5 data for any timeframe
                 f"market_data:{currency_pair}:M5:current",
                 f"candlesticks:{currency_pair}:{timeframe}",
@@ -830,6 +835,36 @@ class DashboardDataProvider:
             for redis_key in possible_keys:
                 logger.info(f"Trying Redis key: {redis_key}")
                 try:
+                    # SPECIAL HANDLING FOR TIERED STORAGE KEYS
+                    if redis_key.startswith('tiered:'):
+                        logger.info(f"🎯 Attempting tiered storage key: {redis_key}")
+                        
+                        # For tiered storage, use Redis Lists (LRANGE)
+                        tier_data = self.redis_client.lrange(redis_key, 0, -1)  # Get all items
+                        if tier_data:
+                            try:
+                                tier_candles = []
+                                for item in tier_data:
+                                    if isinstance(item, bytes):
+                                        item = item.decode('utf-8')
+                                    candle_data = json.loads(item)
+                                    tier_candles.append(candle_data)
+                                
+                                if tier_candles:
+                                    # For cold tier, get up to 'count' candles
+                                    # For warm/hot tier, get all and let aggregation handle it
+                                    if redis_key.endswith(':cold'):
+                                        candlestick_data = tier_candles[-count:]  # Get last N candles
+                                        logger.info(f"✅ Found {len(candlestick_data)} candles from cold tier: {redis_key}")
+                                    else:
+                                        candlestick_data = tier_candles
+                                        logger.info(f"✅ Found {len(candlestick_data)} candles from tier: {redis_key}")
+                                    used_key = redis_key
+                                    break
+                            except json.JSONDecodeError as je:
+                                logger.warning(f"Failed to parse tiered storage data from {redis_key}: {je}")
+                        continue
+                    
                     # Try as string first (current Redis format)
                     string_data = self.redis_client.get(redis_key)
                     if string_data:
@@ -1034,16 +1069,17 @@ def lambda_handler(event, context):
     http_method = event.get('httpMethod', 'GET')
     path = event.get('path', '/')
     
-    # CORS headers
+    # Enhanced CORS headers to fix pipstop.org access - allow any origin for now
     response = {
         'statusCode': 200,
         'headers': {
             'Content-Type': 'application/json',
             'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-Requested-With',
+            'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-Requested-With,Accept,Origin',
             'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS,HEAD',
             'Access-Control-Max-Age': '86400',
-            'Access-Control-Allow-Credentials': 'false'
+            'Access-Control-Allow-Credentials': 'false',
+            'Vary': 'Origin'
         }
     }
     

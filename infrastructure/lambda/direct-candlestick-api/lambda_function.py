@@ -207,95 +207,100 @@ class DirectCandlestickAPI:
             except Exception as e:
                 logger.warning(f"Could not list Redis keys for {currency_pair}: {e}")
             
-            # Try multiple Redis key patterns - prioritize direct timeframe data
-            possible_keys = [
-                # First priority: Direct timeframe data (H1, M5, etc.)
-                (f"market_data:{currency_pair}:{timeframe}:historical", f"market_data:{currency_pair}:{timeframe}:current"),
-                (f"candlestick:{currency_pair}:{timeframe}", None),
-                (f"ohlc:{currency_pair}:{timeframe}", None),
-            ]
+            # Use tiered storage system - hot/warm/cold tiers for 500 candlestick support
+            tiered_keys = {
+                'hot': f"market_data:{currency_pair}:{timeframe}:hot",
+                'warm': f"market_data:{currency_pair}:{timeframe}:warm", 
+                'cold': f"market_data:{currency_pair}:{timeframe}:cold"
+            }
             
-            # Only add M5 fallback if requesting H1 (for backward compatibility during transition)
-            if timeframe == "H1":
-                possible_keys.append((f"market_data:{currency_pair}:M5:historical", f"market_data:{currency_pair}:M5:current"))
-                logger.info(f"H1 requested for {currency_pair} - will try direct H1 first, M5 aggregation as fallback")
+            logger.info(f"Using tiered storage for {currency_pair} {timeframe} - targeting {count} candles")
             
             # Test connection
             redis_conn.ping()
             
-            current_data = None
-            historical_data = None
-            used_keys = None
-            
-            # Try each key pattern until we find data
-            for historical_key, current_key in possible_keys:
-                historical_data = redis_conn.get(historical_key)
-                if current_key:
-                    current_data = redis_conn.get(current_key)
-                
-                if historical_data or current_data:
-                    used_keys = (historical_key, current_key)
-                    logger.info(f"Found data for {currency_pair} using keys: {historical_key}, {current_key}")
-                    break
-            
-            if not used_keys:
-                logger.info(f"No data found for {currency_pair} in any key pattern")
-            
             candles = []
+            sources_used = []
             
-            # Parse historical data
-            if historical_data:
-                try:
-                    parsed_historical = json.loads(historical_data.decode('utf-8'))
-                    if isinstance(parsed_historical, dict) and 'candles' in parsed_historical:
-                        candles.extend(parsed_historical['candles'])
-                    elif isinstance(parsed_historical, list):
-                        candles.extend(parsed_historical)
-                except json.JSONDecodeError as e:
-                    logger.warning(f"Failed to parse historical data for {currency_pair}: {e}")
+            # Smart tiered retrieval - collect from hot, warm, cold as needed
+            try:
+                # Step 1: Try hot tier (most recent 50 candles)
+                hot_data = redis_conn.lrange(tiered_keys['hot'], 0, -1)
+                if hot_data:
+                    hot_candles = []
+                    for item in hot_data:
+                        try:
+                            candle = json.loads(item.decode('utf-8'))
+                            hot_candles.append(candle)
+                        except json.JSONDecodeError:
+                            continue
+                    candles.extend(hot_candles)
+                    sources_used.append(f"hot({len(hot_candles)})")
+                    logger.info(f"Retrieved {len(hot_candles)} candles from hot tier")
+                
+                # Step 2: Try warm tier if we need more candles
+                if len(candles) < count:
+                    needed = count - len(candles)
+                    warm_data = redis_conn.lrange(tiered_keys['warm'], 0, needed - 1)
+                    if warm_data:
+                        warm_candles = []
+                        for item in warm_data:
+                            try:
+                                candle = json.loads(item.decode('utf-8'))
+                                warm_candles.append(candle)
+                            except json.JSONDecodeError:
+                                continue
+                        candles.extend(warm_candles)
+                        sources_used.append(f"warm({len(warm_candles)})")
+                        logger.info(f"Retrieved {len(warm_candles)} candles from warm tier")
+                
+                # Step 3: Try cold tier if still need more candles
+                if len(candles) < count:
+                    cold_data = redis_conn.get(tiered_keys['cold'])
+                    if cold_data:
+                        try:
+                            cold_parsed = json.loads(cold_data.decode('utf-8'))
+                            if isinstance(cold_parsed, dict) and 'candles' in cold_parsed:
+                                cold_candles = cold_parsed['candles']
+                                # Take only what we need from cold tier
+                                needed = count - len(candles)
+                                candles.extend(cold_candles[-needed:])
+                                sources_used.append(f"cold({min(len(cold_candles), needed)})")
+                                logger.info(f"Retrieved {min(len(cold_candles), needed)} candles from cold tier")
+                        except json.JSONDecodeError as e:
+                            logger.warning(f"Failed to parse cold tier data: {e}")
+                
+                logger.info(f"Tiered retrieval for {currency_pair}: {', '.join(sources_used)}")
+                
+            except Exception as e:
+                logger.warning(f"Tiered storage retrieval failed, trying fallback: {e}")
+                
+                # Fallback to old key patterns if tiered storage fails
+                fallback_keys = [
+                    (f"market_data:{currency_pair}:{timeframe}:historical", f"market_data:{currency_pair}:{timeframe}:current"),
+                ]
+                
+                for historical_key, current_key in fallback_keys:
+                    historical_data = redis_conn.get(historical_key)
+                    if historical_data:
+                        try:
+                            parsed = json.loads(historical_data.decode('utf-8'))
+                            if isinstance(parsed, dict) and 'candles' in parsed:
+                                candles.extend(parsed['candles'])
+                            elif isinstance(parsed, list):
+                                candles.extend(parsed)
+                            sources_used.append("fallback_historical")
+                            break
+                        except json.JSONDecodeError:
+                            continue
             
-            # Parse current data
-            if current_data:
-                try:
-                    parsed_current = json.loads(current_data.decode('utf-8'))
-                    if isinstance(parsed_current, dict):
-                        # Extract current candle info
-                        current_candle = {
-                            "time": parsed_current.get('timestamp'),
-                            "open": parsed_current.get('open'),
-                            "high": parsed_current.get('high'), 
-                            "low": parsed_current.get('low'),
-                            "close": parsed_current.get('close'),
-                            "volume": parsed_current.get('volume', 0)
-                        }
-                        if current_candle["time"]:
-                            candles.append(current_candle)
-                except json.JSONDecodeError as e:
-                    logger.warning(f"Failed to parse current data for {currency_pair}: {e}")
-            
-            # Check what type of data we retrieved
-            data_source = "UNKNOWN"
-            if used_keys:
-                if timeframe in used_keys[0]:
-                    data_source = f"DIRECT_{timeframe}"
-                    logger.info(f"✅ Using direct {timeframe} data for {currency_pair} from {used_keys[0]}")
-                elif 'M5' in used_keys[0] and timeframe == 'H1':
-                    data_source = "AGGREGATED_M5_TO_H1"
-                    logger.info(f"⚠️ No direct H1 data found for {currency_pair}, falling back to M5 aggregation")
-                    
-                    # Only aggregate if we have M5 data and requested H1
-                    logger.info(f"Before aggregation: {len(candles)} M5 candles for {currency_pair}")
-                    if candles:
-                        first_time = candles[0].get('time', 'unknown')
-                        last_time = candles[-1].get('time', 'unknown') if len(candles) > 1 else first_time
-                        logger.info(f"M5 time range: {first_time} to {last_time}")
-                    
-                    candles = self.aggregate_m5_to_h1(candles)
-                    logger.info(f"After aggregation: {len(candles)} H1 candles for {currency_pair}")
-                    
-                    if candles:
-                        h1_times = [c.get('time', 'unknown') for c in candles[:10]]
-                        logger.info(f"H1 candle times: {h1_times}")
+            # Determine data source based on what tiers were used
+            if sources_used:
+                data_source = f"REDIS_FARGATE_TIERED_{timeframe}"
+                logger.info(f"✅ Using tiered storage for {currency_pair}: {', '.join(sources_used)}")
+            else:
+                data_source = f"REDIS_FARGATE_FALLBACK_{timeframe}"
+                logger.info(f"⚠️ Used fallback storage for {currency_pair}")
             
             # Sort by time and limit to requested count
             if candles:
@@ -329,7 +334,8 @@ class DirectCandlestickAPI:
                     "count_requested": count,
                     "count_returned": len(formatted_candles),
                     "shard_index": shard_index,
-                    "data_source": f"REDIS_FARGATE_{data_source}",
+                    "data_source": data_source,
+                    "sources_used": sources_used,
                     "timestamp": datetime.now().isoformat()
                 }
             }
@@ -357,12 +363,26 @@ def lambda_handler(event, context):
     - count: number of candles (default 50)
     """
     
-    # CORS headers for all responses
+    # CORS headers for all responses - Allow multiple pipstop.org variants
+    origin = event.get('headers', {}).get('origin', '') or event.get('headers', {}).get('Origin', '')
+    allowed_origins = [
+        'https://pipstop.org',
+        'https://www.pipstop.org', 
+        'http://pipstop.org',
+        'http://www.pipstop.org',
+        'https://pipstop.org/',
+        'https://www.pipstop.org/'
+    ]
+    
+    # Default to first allowed origin if origin not in list or empty
+    cors_origin = origin if origin in allowed_origins else 'https://pipstop.org'
+    
     cors_headers = {
-        'Access-Control-Allow-Origin': 'https://pipstop.org',
-        'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token',
-        'Access-Control-Allow-Methods': 'GET,OPTIONS',
-        'Access-Control-Allow-Credentials': 'false'
+        'Access-Control-Allow-Origin': cors_origin,
+        'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,x-api-key',
+        'Access-Control-Allow-Methods': 'GET,OPTIONS,POST',
+        'Access-Control-Allow-Credentials': 'false',
+        'Access-Control-Max-Age': '86400'
     }
     
     # Handle OPTIONS preflight request

@@ -41,6 +41,9 @@ interface LightweightTradingViewChartWithTradesProps {
   timeframe?: string;
   height?: number;
   selectedStrategies?: string[];
+  sortRank?: number;
+  onUserInteraction?: () => void;
+  preserveZoom?: boolean;
 }
 
 interface InstitutionalLevel {
@@ -172,7 +175,10 @@ export const LightweightTradingViewChartWithTrades: React.FC<LightweightTradingV
   currencyPair,
   timeframe = 'H1',
   height = 300,
-  selectedStrategies = []
+  selectedStrategies = [],
+  sortRank,
+  onUserInteraction,
+  preserveZoom = false
 }) => {
   console.log(`🚀 TradingViewChartWithTrades mounted for ${currencyPair}, strategies:`, selectedStrategies);
   
@@ -204,6 +210,7 @@ export const LightweightTradingViewChartWithTrades: React.FC<LightweightTradingV
     showQuarters: false, 
     showDimes: false
   });
+  const [zoomState, setZoomState] = useState<{from: number | null, to: number | null}>({from: null, to: null});
 
   // Clean up chart on unmount
   useEffect(() => {
@@ -292,6 +299,25 @@ export const LightweightTradingViewChartWithTrades: React.FC<LightweightTradingV
 
     chartRef.current = chart;
     candlestickSeriesRef.current = candlestickSeries;
+
+    // Add user interaction tracking
+    if (onUserInteraction) {
+      // Track when user scrolls, zooms, or pans
+      chart.timeScale().subscribeVisibleTimeRangeChange(() => {
+        onUserInteraction();
+        // Save current zoom state
+        const timeScale = chart.timeScale();
+        const visibleRange = timeScale.getVisibleRange();
+        if (visibleRange) {
+          setZoomState({ from: visibleRange.from as number, to: visibleRange.to as number });
+        }
+      });
+
+      // Track crosshair interactions
+      chart.subscribeCrosshairMove(() => {
+        onUserInteraction();
+      });
+    }
 
     // Handle resize
     const handleResize = () => {
@@ -607,6 +633,13 @@ export const LightweightTradingViewChartWithTrades: React.FC<LightweightTradingV
       close: candle.close,
     }));
 
+    // Save current zoom state before updating data if preserveZoom is true
+    let savedVisibleRange: any = null;
+    if (preserveZoom && chartRef.current) {
+      const timeScale = chartRef.current.timeScale();
+      savedVisibleRange = timeScale.getVisibleRange();
+    }
+
     candlestickSeriesRef.current.setData(tvData);
 
     // Update current price and price change
@@ -635,7 +668,13 @@ export const LightweightTradingViewChartWithTrades: React.FC<LightweightTradingV
         visible: true,
         autoScale: true,
       });
-      chartRef.current.timeScale().fitContent();
+      
+      // Restore zoom state if preserveZoom is true, otherwise fit content
+      if (preserveZoom && savedVisibleRange) {
+        chartRef.current.timeScale().setVisibleRange(savedVisibleRange);
+      } else if (!preserveZoom || !savedVisibleRange) {
+        chartRef.current.timeScale().fitContent();
+      }
       
       if (activeTrades.length > 0) {
         // Calculate price range including trade levels
@@ -763,9 +802,9 @@ export const LightweightTradingViewChartWithTrades: React.FC<LightweightTradingV
           await new Promise(resolve => setTimeout(resolve, Math.min(1000 * retryCount, 5000)));
         }
 
-        // Fetch 100 candlesticks from Redis via Lambda API
-        console.log(`🎯 TRADINGVIEW WITH TRADES: ${currencyPair} requesting 100 candles`);
-        const response = await api.getCandlestickData(currencyPair, timeframe, 100);
+        // Fetch 500 candlesticks from Data Orchestrator via RDS API (to avoid Mixed Content)
+        console.log(`🎯 TRADINGVIEW WITH TRADES: ${currencyPair} requesting 500 candles from Data Orchestrator via RDS API`);
+        const response = await api.getCandlestickDataFromRDS(currencyPair, timeframe, 500);
         
         if (!mounted) return;
         
@@ -790,7 +829,7 @@ export const LightweightTradingViewChartWithTrades: React.FC<LightweightTradingV
           );
           
           if (formattedData.length > 0) {
-            console.log(`📊 Received ${formattedData.length} candlesticks for ${currencyPair} (requested 100)`);
+            console.log(`📊 Received ${formattedData.length} candlesticks for ${currencyPair} (requested 500 from Data Orchestrator via RDS API)`);
             setCandlestickData(formattedData);
             setError(null);
           } else {
@@ -997,8 +1036,22 @@ export const LightweightTradingViewChartWithTrades: React.FC<LightweightTradingV
 
   return (
     <div className="bg-gray-900 p-4 rounded-lg border border-gray-700 shadow-lg hover:shadow-xl transition-all duration-200 relative">
+      {/* Sort Rank Badge */}
+      {sortRank && (
+        <div className="absolute top-2 left-2 z-10">
+          <div className={`flex items-center justify-center w-8 h-8 rounded-full text-xs font-bold text-white ${
+            sortRank <= 3 ? 'bg-blue-600' : 
+            sortRank <= 10 ? 'bg-green-600' : 
+            sortRank <= 20 ? 'bg-pink-600' : 
+            'bg-gray-600'
+          }`}>
+            {sortRank}
+          </div>
+        </div>
+      )}
+      
       <div className="flex items-center justify-between mb-4">
-        <div>
+        <div className={sortRank ? 'ml-10' : ''}>
           <h3 className="text-lg font-semibold text-white">{currencyPair.replace('_', '/')}</h3>
           <p className="text-sm text-gray-400">
             {timeframe} • {candlestickData.length} candles

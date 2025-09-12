@@ -254,9 +254,10 @@ class ApiService {
     return this.makeRequest('GET', '/portfolio/currency-exposure');
   }
 
-  // Trading endpoints
+  // Trading endpoints - CORS FIX: Redirect to working RDS API
   async getActiveTrades(): Promise<ApiResponse<any>> {
-    return this.makeRequest('GET', '/trades/active');
+    console.log('🚨 CORS FIX: Redirecting getActiveTrades() to working RDS API with proper CORS');
+    return this.getActiveTradesFromRDS();
   }
 
   async getTradeHistory(limit?: number): Promise<ApiResponse<any>> {
@@ -335,50 +336,61 @@ class ApiService {
 
   // Get candlestick data directly from Redis (bypasses Lambda strategies) - FORCE UPDATE 2025-08-05
   async getCandlestickDataFromRDS(currencyPair: string, timeframe: string = 'H1', count: number = 50): Promise<ApiResponse<any>> {
-    console.log(`🎯 FETCHING CANDLESTICK DATA from RDS API for ${currencyPair} ${timeframe}`);
-    const params = new URLSearchParams({
-      currency_pair: currencyPair,
-      timeframe: timeframe,
-      count: count.toString()
-    });
-    return this.makeRDSRequest('GET', `/candlestick-data?${params.toString()}`);
+    console.log(`⚠️ DEPRECATED: RDS API has no candlestick data. Redirecting to Direct Candlestick API for ${currencyPair} ${timeframe}`);
+    
+    // CORS FIX: RDS API returns empty data, redirect to working Direct Candlestick API
+    return this.getCandlestickData(currencyPair, timeframe, count);
   }
 
   async getCandlestickData(currencyPair: string, timeframe: string = 'H1', count: number = 50): Promise<ApiResponse<any>> {
-    console.log(`🚀 FORCING DIRECT candlestick API for ${currencyPair} ${timeframe} - NEW VERSION`);
+    console.log(`🚀 SURGICAL FIX v2: Using working Direct Candlestick API for ${currencyPair} ${timeframe} (${count} candles)`);
     
-    // FORCED OVERRIDE: Use direct API instead of old dashboard API
+    // SURGICAL FIX v2: Use the working Direct Candlestick API that has proper Redis shard access
+    // This API connects to all 4 Redis shards and has the actual candlestick data
     try {
+      console.log(`📡 Direct Candlestick API call: ${currencyPair}`);
+      
+      // Use the working Direct Candlestick API with proper path format
       const directUrl = `https://4kctdba5vc.execute-api.us-east-1.amazonaws.com/prod/candlestick/${currencyPair}/${timeframe}?count=${count}`;
-      console.log(`📡 Direct API call: ${directUrl}`);
       
       const response = await fetch(directUrl, {
         method: 'GET',
         headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': 'direct-candlestick-api-2025'
-        }
+          'Accept': 'application/json'
+          // Removed x-api-key header to avoid CORS preflight issues
+          // API works without authentication
+        },
+        mode: 'cors', // Explicitly enable CORS
+        credentials: 'omit' // Don't send credentials
       });
       
       if (!response.ok) {
-        throw new Error(`Direct API failed: ${response.status}`);
+        throw new Error(`Direct Candlestick API failed: ${response.status}`);
       }
       
       const data = await response.json();
-      console.log(`✅ Direct API success for ${currencyPair}: ${data.data?.length || 0} candles`);
       
-      return {
-        success: data.success,
-        data: data.data,
-        timestamp: data.metadata?.timestamp || new Date().toISOString()
-      };
+      if (data.success && data.data && data.data.length > 0) {
+        console.log(`✅ Direct Candlestick API success for ${currencyPair}: ${data.data.length} candles`);
+        return {
+          success: data.success,
+          data: data.data,
+          timestamp: data.metadata?.timestamp || new Date().toISOString()
+        };
+      } else {
+        console.log(`⚠️ Direct Candlestick API returned no data for ${currencyPair} (${data.data?.length || 0} candles)`);
+        throw new Error(`No candlestick data available for ${currencyPair}`);
+      }
     } catch (error) {
-      console.error(`❌ Direct API failed for ${currencyPair}:`, error);
-      // Fallback to original method
-      const params = new URLSearchParams({
-        count: count.toString()
-      });
-      return this.makeCandlestickRequest('GET', `/candlestick/${currencyPair}/${timeframe}?${params.toString()}`);
+      console.error(`❌ Direct Candlestick API failed for ${currencyPair}:`, error);
+      
+      // Return detailed error with helpful debugging info
+      return {
+        success: false,
+        data: [],
+        error: `Candlestick API error for ${currencyPair}: ${error.message}. Check browser console for CORS/network issues.`,
+        timestamp: new Date().toISOString()
+      };
     }
   }
 

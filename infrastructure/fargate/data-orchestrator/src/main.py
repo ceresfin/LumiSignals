@@ -501,43 +501,28 @@ async def main():
     """Main entry point for Fargate Data Orchestrator"""
     global orchestrator
     
-    print("DEBUG: Entered main() function")
-    
     # Log deployment information first
     log_deployment_info()
     
     logger.info("🚀 Starting LumiSignals Fargate Data Orchestrator")
     logger.info("📡 Architecture: Single OANDA API → Redis Cluster → 100+ Lambda Strategies")
-    print("DEBUG: Logger messages sent")
     
     try:
         # Load configuration
-        print("DEBUG: About to initialize Settings()")
         settings = Settings()
-        print("DEBUG: Settings initialized successfully")
-        print(f"DEBUG: Redis nodes count: {len(settings.redis_cluster_nodes)}")
         
         logger.info("Configuration loaded", 
                    redis_nodes=len(settings.redis_cluster_nodes),
                    oanda_environment=settings.oanda_environment)
-        print("DEBUG: Configuration logged")
         
         # Initialize Redis manager (auto-detects cluster vs manual mode)
         logger.info("🔗 Initializing Redis connection...")
-        print("DEBUG: About to create Redis Manager (auto-detecting mode)")
         redis_manager = create_redis_manager(settings)
-        print("DEBUG: Redis Manager created, about to initialize")
         await redis_manager.initialize()
-        print("DEBUG: RedisManager initialized successfully")
         
         # Initialize enhanced database manager if credentials are available
-        print("DEBUG: About to check database credentials")
-        print(f"DEBUG: settings.parsed_database_host = '{settings.parsed_database_host}'")
-        print(f"DEBUG: settings.parsed_database_username = '{settings.parsed_database_username}'")
-        print(f"DEBUG: settings.parsed_database_name = '{settings.parsed_database_name}'")
         database_manager = None
         if settings.parsed_database_host:
-            print(f"DEBUG: Database host found ({settings.parsed_database_host}), initializing Enhanced DatabaseManager")
             logger.info("📊 Initializing Enhanced PostgreSQL database connection with Distance to Entry support...")
             
             # Create enhanced database manager for comprehensive OANDA data
@@ -557,7 +542,6 @@ async def main():
             database_manager = enhanced_db_manager
             logger.info(f"✅ Enhanced database manager initialized for host: {settings.parsed_database_host}")
             logger.info("🎯 Ready to store OANDA Distance to Entry and all 31 Airtable fields")
-            print("DEBUG: Enhanced DatabaseManager created successfully")
             
             # Run cleanup on startup to move inactive trades to closed_trades
             logger.info("🧹 Running startup cleanup to move inactive trades to closed_trades...")
@@ -569,41 +553,30 @@ async def main():
                 import traceback
                 logger.error(f"Cleanup traceback: {traceback.format_exc()}")
         else:
-            print("DEBUG: No database host found, skipping database")
+            pass
             logger.warning("⚠️ No database credentials found - running without PostgreSQL storage")
         
         # Initialize health monitor
-        print("DEBUG: About to initialize health monitor")
         logger.info("💊 Initializing health monitoring...")
         health_monitor = HealthMonitor(redis_manager)
-        print("DEBUG: HealthMonitor created successfully")
         
         # Initialize data orchestrator
-        print("DEBUG: About to create DataOrchestrator")
         logger.info("🎼 Initializing data orchestrator...")
         orchestrator = DataOrchestrator(settings, redis_manager, health_monitor, database_manager)
-        print("DEBUG: DataOrchestrator created, about to initialize")
         await orchestrator.initialize()
-        print("DEBUG: DataOrchestrator initialized successfully")
         
         # Set up signal handlers for graceful shutdown
-        print("DEBUG: About to set up signal handlers")
         signal.signal(signal.SIGTERM, graceful_shutdown)
         signal.signal(signal.SIGINT, graceful_shutdown)
-        print("DEBUG: Signal handlers set up successfully")
         
         logger.info("✅ Fargate Data Orchestrator fully initialized")
         logger.info("📊 Now serving as single OANDA API connection point")
         logger.info("⚡ Distributing 2-minute candlestick data to Redis cluster")
-        print("DEBUG: About to start orchestrator and server tasks")
         
         # Start the orchestrator
-        print("DEBUG: Creating orchestrator task")
         orchestrator_task = asyncio.create_task(orchestrator.start())
-        print("DEBUG: Orchestrator task created")
         
         # Start FastAPI health server
-        print("DEBUG: Creating Uvicorn server config")
         config = uvicorn.Config(
             app=app,
             host="0.0.0.0",
@@ -612,17 +585,13 @@ async def main():
             access_log=False
         )
         server = uvicorn.Server(config)
-        print("DEBUG: Creating server task")
         server_task = asyncio.create_task(server.serve())
-        print("DEBUG: Server task created, about to wait for tasks")
         
         # Wait for either task to complete
-        print("DEBUG: Starting asyncio.wait for both tasks")
         done, pending = await asyncio.wait(
             [orchestrator_task, server_task],
             return_when=asyncio.FIRST_COMPLETED
         )
-        print("DEBUG: asyncio.wait completed")
         
         # Cancel remaining tasks
         for task in pending:
@@ -646,23 +615,18 @@ async def main():
 
 
 if __name__ == "__main__":
-    print("DEBUG: Application starting...")
-    print(f"DEBUG: Command line args: {sys.argv}")
-    
     # Check if running in Fargate
     if len(sys.argv) > 1 and sys.argv[1] == "--health-only":
-        print("DEBUG: Starting health-only mode")
         # Start only health server for testing
         uvicorn.run(app, host="0.0.0.0", port=8080)
     else:
-        print("DEBUG: Starting full orchestrator")
         try:
             # Start full orchestrator
             asyncio.run(main())
         except Exception as e:
-            print(f"ERROR: Failed to start main orchestrator: {e}")
+            logger.error(f"Failed to start main orchestrator: {e}")
             import traceback
-            traceback.print_exc()
+            logger.error(f"Traceback: {traceback.format_exc()}")
             # Fallback to health-only mode
-            print("DEBUG: Falling back to health-only mode")
+            logger.info("Falling back to health-only mode")
             uvicorn.run(app, host="0.0.0.0", port=8080)

@@ -396,7 +396,10 @@ class DataOrchestrator:
     
     async def perform_bootstrap_collection(self):
         """Perform bootstrap collection of 500 candles for all pairs/timeframes on startup"""
+        print("DEBUG: perform_bootstrap_collection() method called")
         logger.info("🚀 Starting bootstrap collection of 500 candles for all currency pairs")
+        print(f"DEBUG: Timeframes configured: {self.settings.timeframes}")
+        print(f"DEBUG: All supported timeframes: {self.settings.get_all_supported_timeframes()}")
         
         try:
             # Group currency pairs by Redis shard for efficient processing
@@ -790,7 +793,7 @@ class DataOrchestrator:
             batch_tasks = []
             for pair in batch:
                 task = asyncio.create_task(
-                    self._collect_pair_timeframe_data(pair, timeframe),
+                    self._collect_pair_timeframe_data(pair, timeframe, is_bootstrap=False),
                     name=f"collect_{pair}_{timeframe}"
                 )
                 batch_tasks.append(task)
@@ -835,11 +838,12 @@ class DataOrchestrator:
                 logger.warning(f"No candlestick data received for {currency_pair} {timeframe}")
                 return None
             
-            # Process and format data
-            processed_data = self._process_candlestick_data(candlestick_data, currency_pair, timeframe)
+            # Process and format data - pass is_bootstrap flag to handle 500 candles properly
+            processed_data = self._process_candlestick_data(candlestick_data, currency_pair, timeframe, is_bootstrap)
             
             logger.debug(f"Collected {timeframe} data for {currency_pair}", 
-                        candles=len(candlestick_data.get('candles', [])))
+                        candles=len(candlestick_data.get('candles', [])),
+                        is_bootstrap=is_bootstrap)
             
             return processed_data
             
@@ -902,7 +906,7 @@ class DataOrchestrator:
         except Exception as e:
             logger.error("Failed to collect current pricing", error=str(e))
     
-    def _process_candlestick_data(self, raw_data: Dict[str, Any], currency_pair: str, timeframe: str) -> Dict[str, Any]:
+    def _process_candlestick_data(self, raw_data: Dict[str, Any], currency_pair: str, timeframe: str, is_bootstrap: bool = False) -> Dict[str, Any]:
         """Process raw OANDA candlestick data into Redis format with proper time handling"""
         try:
             candles = raw_data.get('candles', [])
@@ -935,16 +939,23 @@ class DataOrchestrator:
             
             # Add historical candles for strategies that need them
             historical_candles = []
-            # For different timeframes, store different amounts of history
-            history_count = {
-                'M5': 50,   # 50 * 5min = 4+ hours
-                'M15': 32,  # 32 * 15min = 8 hours
-                'M30': 24,  # 24 * 30min = 12 hours
-                'H1': 24,   # 24 * 1hour = 1 day
-                'H4': 30,   # 30 * 4hour = 5 days
-                'D': 30,    # 30 * 1day = 1 month
-                'W': 52     # 52 * 1week = 1 year
-            }.get(timeframe, 20)
+            
+            # During bootstrap, use ALL candles (500 for bootstrap)
+            # During regular collection, use limited history based on timeframe
+            if is_bootstrap:
+                history_count = len(candles)  # Use all candles during bootstrap
+                logger.debug(f"Bootstrap mode: processing all {history_count} candles for {currency_pair} {timeframe}")
+            else:
+                # For different timeframes, store different amounts of history
+                history_count = {
+                    'M5': 50,   # 50 * 5min = 4+ hours
+                    'M15': 32,  # 32 * 15min = 8 hours
+                    'M30': 24,  # 24 * 30min = 12 hours
+                    'H1': 24,   # 24 * 1hour = 1 day
+                    'H4': 30,   # 30 * 4hour = 5 days
+                    'D': 30,    # 30 * 1day = 1 month
+                    'W': 52     # 52 * 1week = 1 year
+                }.get(timeframe, 20)
             
             for candle in candles[-history_count:]:  # Last N candles based on timeframe
                 mid = candle.get('mid', {})
