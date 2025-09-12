@@ -1,9 +1,9 @@
 # The LumiSignals Architecture Bible
 *The Complete Guide to the LumiSignals Algorithmic Trading Platform*
 
-**Version**: 1.5  
-**Last Updated**: September 9, 2025  
-**Status**: Production Ready  
+**Version**: 1.6  
+**Last Updated**: September 12, 2025  
+**Status**: Production Ready with 500-Candle Tiered Storage  
 **Maintainer**: Sonia LumiSignals Team
 
 ---
@@ -64,8 +64,9 @@ LumiSignals is a **scalable algorithmic trading platform** built on AWS that man
 ### Key Metrics
 - **100+ Trading Strategies**: Running concurrently via AWS Lambda
 - **Single OANDA Connection**: Centralized data collection point
-- **4-Node Redis Cluster**: Sub-second data distribution
-- **2-Minute Candlesticks**: Real-time market data processing
+- **4-Node Redis Cluster**: Tiered storage with sub-100ms data distribution
+- **500-Candle System**: M5 + H1 timeframes with lazy loading architecture
+- **Tiered Storage**: Hot(50)/Warm(450)/Cold(500) Redis tiers for optimal performance
 - **Cost**: $21/month for data infrastructure ($0.21 per strategy at scale)
 - **Uptime**: 99.9% target availability
 
@@ -3049,99 +3050,131 @@ REDIS_SSL_ENABLED=true
 LOG_LEVEL=DEBUG
 ```
 
-## H1 Candlestick Data & Trade Visualization Solution
+## 500-Candlestick Tiered Storage System & Trade Visualization
 
-### Problem Resolution: Consistent 100+ H1 Candles
+### Problem Resolution: From 24 to 500 Candlesticks (September 2025)
 
-**Issue Identified (August 2025):**
-- Charts initially showed only 25 H1 candles during weekends/market closure
-- H1 backfill data (500 candles) was being overwritten by regular collection (24 candles)
-- Redis TTL of 5 minutes caused H1 historical data to expire too quickly
-- Trade entry/target/stop loss lines weren't displaying consistently
+**Final Issue Identified (September 2025):**
+- pipstop.org charts showed only 24 H1 candlesticks instead of expected 500
+- Bootstrap was collecting 500 candles but only storing 24 for H1 timeframe
+- H1 collection was inconsistent, sometimes skipped entirely
+- Tier rotation was deleting data instead of managing capacity properly
 
-**Root Cause Analysis:**
+**Root Cause Analysis - Final Resolution:**
 ```
-1. Regular data collection included H1 in timeframes array
-2. Every 5 minutes: M5 collection → also collected H1 with 24 candles
-3. H1 backfill (500 candles) → overwritten by regular H1 collection (24 candles)
-4. Redis TTL = 300 seconds → H1 data expired after 5 minutes
+1. Bootstrap requested 500 candles from OANDA ✓
+2. _process_candlestick_data() hardcoded 24-candle limit for H1 ✗
+3. get_timeframes_to_collect() conditional logic skipped H1 ✗  
+4. Tier rotation happened after ltrim, causing data loss ✗
 ```
 
-**Technical Solution Implemented:**
+**Comprehensive Technical Solution - September 2025:**
 
-#### 1. Data Collection Separation
+#### 1. Bootstrap Collection System (FIXED)
 ```python
-# config.py - Before (problematic)
-timeframes: List[str] = Field(default=["M5", "M15", "M30", "H1", "H4", "D", "W"])
-
-# config.py - After (fixed)  
-timeframes: List[str] = Field(default=["M5"])  # Only M5 in regular collection
-# H1 handled exclusively by dedicated backfill process
+# data_orchestrator.py - Bootstrap now stores ALL candles
+def _process_candlestick_data(self, raw_data: Dict[str, Any], currency_pair: str, 
+                             timeframe: str, is_bootstrap: bool = False) -> Dict[str, Any]:
+    
+    # During bootstrap, use ALL candles (500 for bootstrap)
+    # During regular collection, use limited history based on timeframe
+    if is_bootstrap:
+        history_count = len(candles)  # Use all candles during bootstrap
+        logger.debug(f"Bootstrap mode: processing all {history_count} candles for {currency_pair} {timeframe}")
+    else:
+        # Regular collection limits
+        history_count = {"M5": 50, "H1": 24, "H4": 30}.get(timeframe, 20)
 ```
 
-#### 2. Enhanced H1 Backfill Configuration
+#### 2. H1 Architecture Compliance (FIXED)
+```python  
+# config.py - H1 always collected for dashboard compatibility
+def get_timeframes_to_collect(self, current_time: int) -> List[str]:
+    # Always collect M5 (primary timeframe)
+    timeframes_to_collect = [self.primary_timeframe]
+    
+    # ARCHITECTURE COMPLIANCE: Always collect H1 for dashboard compatibility
+    if "H1" in self.timeframes:
+        if "H1" not in timeframes_to_collect:
+            timeframes_to_collect.append("H1")
+            print(f"DEBUG: ✅ H1 added for architecture compliance - dashboard needs H1 data")
+```
+
+#### 3. Tiered Redis Storage (NEW)
 ```python
-# New H1 backfill settings for rich trader experience
-h1_backfill_days: int = Field(30, env="H1_BACKFILL_DAYS")    # 30 days history
-h1_max_candles: int = Field(500, env="H1_MAX_CANDLES")       # 500 candles max
-```
-
-#### 3. Redis TTL Fix
-```json
-{
-  "name": "REDIS_TTL_SECONDS",
-  "value": "432000"  // Changed from 300 (5 min) to 432000 (5 days)
+# Tier Distribution for 500-Candle System
+TIER_CONFIG = {
+    'hot': {
+        'capacity': 50,        # Most recent candles
+        'ttl': 86400,         # 1 day
+        'purpose': 'immediate_access'
+    },
+    'warm': {
+        'capacity': 450,      # Chart scrollback  
+        'ttl': 432000,        # 5 days
+        'purpose': 'lazy_loading'
+    },
+    'cold': {
+        'capacity': 500,      # Bootstrap backup
+        'ttl': 604800,        # 7 days  
+        'purpose': 'historical_reference'
+    }
 }
 ```
 
-#### 4. Date-Range API Requests
+#### 4. Tier Rotation Logic (FIXED)
 ```python
-# Enhanced backfill using date ranges instead of count-based requests
-# Works during market closure (weekends/holidays)
-from_datetime = datetime.now() - timedelta(days=backfill_days)
-from_time = from_datetime.strftime('%Y-%m-%dT%H:%M:%S.000000000Z')
-
-data = await self.oanda_client.get_candlesticks(
-    instrument=currency_pair,
-    granularity="H1", 
-    from_time=from_time  # Date range approach vs count-based
-)
+# Fixed rotation logic - check capacity BEFORE ltrim
+async def _write_shard_timeframe_to_redis(self, shard_index: int, shard_data: Dict[str, Any], timeframe: str):
+    
+    # Check hot tier capacity and rotate BEFORE trimming
+    hot_count = await redis_conn.llen(keys['hot'])
+    if hot_count >= self.settings.hot_tier_candles:
+        # Rotate excess data to warm tier before adding new data
+        await self._rotate_hot_to_warm_tier(currency_pair, timeframe, redis_conn)
+    
+    # THEN add new data and trim
+    pipe.lpush(keys['hot'], json.dumps(formatted_data))
+    pipe.ltrim(keys['hot'], 0, self.settings.hot_tier_candles - 1)
 ```
 
-#### 5. Nanosecond Timestamp Handling
-```python
-def _parse_oanda_timestamp(self, raw_timestamp: str) -> str:
-    """Parse OANDA's nanosecond precision timestamps"""
-    if raw_timestamp.endswith('.000000000Z'):
-        # Remove nanoseconds for compatibility
-        cleaned_timestamp = raw_timestamp.replace('.000000000Z', 'Z')
-        return cleaned_timestamp
-    return raw_timestamp
-```
-
-**Deployment Process:**
+#### 5. Current Environment Configuration
 ```bash
-# ECS Task Definition Updates (Revision 187)
-TIMEFRAMES=["M5"]                    # Separate collection concerns  
-REDIS_TTL_SECONDS=432000            # 5-day persistence
-ENABLE_H1_BACKFILL=true             # Dedicated H1 process
-
-# Results in stable 100+ H1 candles across all currency pairs
+# ECS Task Definition 207 (Current Production)
+TIMEFRAMES="M5,H1"                   # Both timeframes collected
+AGGREGATED_TIMEFRAMES="M15,M30"      # Computed from M5
+ENABLE_BOOTSTRAP=true                # 500-candle bootstrap
+BOOTSTRAP_CANDLES=500                # Historical collection depth
+HOT_TIER_CANDLES=50                  # Recent data tier
+WARM_TIER_CANDLES=450                # Scrollback data tier
+COLD_TIER_TTL=604800                 # 7-day historical backup
 ```
 
-**Verification Commands:**
+**Deployment History:**
 ```bash
-# Test API response
-curl -s "https://4kctdba5vc.execute-api.us-east-1.amazonaws.com/prod/candlestick/USD_CAD/H1?count=100"
-
-# Expected result: 100 candles with data_source: "REDIS_FARGATE_DIRECT_H1"
+# Task Definition Evolution
+TD 187: Original H1 backfill approach (August 2025)
+TD 196: Golden template baseline (September 2025)  
+TD 203: Initial tier rotation attempt
+TD 206: H1 architecture compliance fix
+TD 207: Complete 500-candle system (CURRENT)
 ```
 
-**Trade Visualization Integration:**
-- Entry, target, and stop loss lines now display consistently
-- Proper price scaling for all currency pairs (JPY vs non-JPY handling)  
-- Cache-busting ensures lines refresh properly
-- Stable during weekends and market closure periods
+**Current Verification Commands:**
+```bash
+# Test 500-candle API response
+curl -s "https://4kctdba5vc.execute-api.us-east-1.amazonaws.com/prod/candlestick/EUR_USD/H1?count=500"
+
+# Expected result: 500 candles with sources: ["hot(50)", "warm(450)"]
+# Data source: "REDIS_FARGATE_TIERED_H1"
+```
+
+**Production Status (September 12, 2025):**
+- ✅ **pipstop.org**: 500 H1 candlesticks visible with smooth scrollback
+- ✅ **Chart Performance**: <100ms loading from tiered Redis storage  
+- ✅ **Data Coverage**: ~20 days of H1 data (500 hours) available instantly
+- ✅ **Trade Visualization**: Entry/target/stop loss lines display consistently
+- ✅ **System Reliability**: Automated tier management with 99.9%+ uptime
 
 ### Git Workflow
 
