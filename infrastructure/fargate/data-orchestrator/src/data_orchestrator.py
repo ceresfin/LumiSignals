@@ -393,6 +393,225 @@ class DataOrchestrator:
         except Exception as e:
             logger.error(f"❌ Failed to backfill H1 data for {currency_pair}: {e}")
             return 0
+    
+    async def perform_bootstrap_collection(self):
+        """Perform bootstrap collection of 500 candles for all pairs/timeframes on startup"""
+        logger.info("🚀 Starting bootstrap collection of 500 candles for all currency pairs")
+        
+        try:
+            # Group currency pairs by Redis shard for efficient processing
+            shard_groups = self._group_pairs_by_shard()
+            
+            # Process each timeframe separately to ensure all pairs get bootstrap data
+            bootstrap_tasks = []
+            total_tasks = 0
+            
+            for timeframe in self.settings.get_all_supported_timeframes():
+                # Skip aggregated timeframes during bootstrap - they'll be computed from M5
+                if timeframe in self.settings.aggregated_timeframes:
+                    logger.info(f"⚠️ Skipping aggregated timeframe {timeframe} during bootstrap (will be computed from M5)")
+                    continue
+                
+                logger.info(f"🔄 Bootstrapping {timeframe} data for all currency pairs")
+                
+                for shard_index, pairs in shard_groups.items():
+                    task = asyncio.create_task(
+                        self._bootstrap_shard_timeframe(shard_index, pairs, timeframe),
+                        name=f"bootstrap_shard_{shard_index}_{timeframe}"
+                    )
+                    bootstrap_tasks.append(task)
+                    total_tasks += 1
+            
+            logger.info(f"🚀 Starting {total_tasks} bootstrap collection tasks")
+            
+            # Execute bootstrap collection in batches to avoid overwhelming OANDA
+            batch_size = 6  # Conservative batch size for bootstrap
+            for i in range(0, len(bootstrap_tasks), batch_size):
+                batch = bootstrap_tasks[i:i + batch_size]
+                batch_number = (i // batch_size) + 1
+                total_batches = (len(bootstrap_tasks) + batch_size - 1) // batch_size
+                
+                logger.info(f"📦 Processing bootstrap batch {batch_number}/{total_batches} ({len(batch)} tasks)")
+                
+                # Wait for batch completion
+                batch_results = await asyncio.gather(*batch, return_exceptions=True)
+                
+                # Check for batch errors
+                for j, result in enumerate(batch_results):
+                    task_name = batch[j].get_name()
+                    if isinstance(result, Exception):
+                        logger.error(f"Bootstrap task {task_name} failed: {result}")
+                    else:
+                        logger.debug(f"Bootstrap task {task_name} completed successfully")
+                
+                # Rate limiting between batches to be respectful to OANDA
+                if i + batch_size < len(bootstrap_tasks):
+                    logger.info("⏳ Waiting 3 seconds between bootstrap batches...")
+                    await asyncio.sleep(3)
+            
+            logger.info("✅ Bootstrap collection completed successfully")
+            
+            # After bootstrap, process aggregated timeframes once
+            logger.info("🔄 Computing aggregated timeframes from bootstrap M5 data")
+            current_time = int(time.time())
+            await self._process_aggregated_timeframes(current_time)
+            
+        except Exception as e:
+            logger.error(f"❌ Bootstrap collection failed: {e}")
+            raise
+    
+    async def _bootstrap_shard_timeframe(self, shard_index: int, currency_pairs: List[str], timeframe: str):
+        """Bootstrap a specific timeframe for all pairs in a shard"""
+        logger.debug(f"Bootstrapping shard {shard_index} for {timeframe}", pairs=currency_pairs)
+        
+        bootstrap_data = {}
+        
+        # Process pairs in smaller batches during bootstrap for stability
+        batch_size = min(3, self.settings.batch_size)  # Use smaller batches for bootstrap
+        
+        for i in range(0, len(currency_pairs), batch_size):
+            batch = currency_pairs[i:i + batch_size]
+            
+            # Rate limiting
+            await self.rate_limiter.acquire()
+            
+            # Collect bootstrap data for batch
+            batch_tasks = []
+            for pair in batch:
+                task = asyncio.create_task(
+                    self._collect_pair_timeframe_data(pair, timeframe, is_bootstrap=True),
+                    name=f"bootstrap_{pair}_{timeframe}"
+                )
+                batch_tasks.append(task)
+            
+            # Wait for batch completion
+            batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
+            
+            # Process batch results
+            for j, result in enumerate(batch_results):
+                pair = batch[j]
+                if isinstance(result, Exception):
+                    logger.error(f"Bootstrap failed for {pair} {timeframe}", error=str(result))
+                    continue
+                
+                if result:
+                    bootstrap_data[pair] = result
+                    logger.debug(f"Bootstrap completed for {pair} {timeframe}")
+        
+        # Write bootstrap data to Redis using the same storage pattern
+        if bootstrap_data:
+            await self._write_bootstrap_data_to_redis(shard_index, bootstrap_data, timeframe)
+        
+        logger.debug(f"Bootstrap shard {shard_index} {timeframe} completed", 
+                    pairs_processed=len(bootstrap_data))
+    
+    async def _write_bootstrap_data_to_redis(self, shard_index: int, bootstrap_data: Dict[str, Any], timeframe: str):
+        """Write bootstrap data to Redis using tiered storage (hot, warm, cold tiers)"""
+        try:
+            # Get Redis connection for this shard
+            redis_conn = await self.redis_manager.get_connection(shard_index)
+            
+            # Prepare batch operations
+            pipe = redis_conn.pipeline()
+            
+            for currency_pair, data in bootstrap_data.items():
+                # Get all Redis keys for this pair/timeframe
+                keys = self.settings.get_redis_keys_for_pair_timeframe(currency_pair, timeframe)
+                
+                # Extract candles from processed data
+                historical_candles = data.get('historical_candles', [])
+                
+                if historical_candles and len(historical_candles) > 0:
+                    # Sort candles by time (oldest to newest) for proper tier distribution
+                    sorted_candles = sorted(historical_candles, 
+                                          key=lambda x: x.get('time', ''))
+                    
+                    # Distribute candles across tiers
+                    total_candles = len(sorted_candles)
+                    
+                    # Split into hot and warm tiers
+                    if total_candles >= self.settings.hot_tier_candles:
+                        # Hot tier: most recent candles
+                        hot_candles = sorted_candles[-self.settings.hot_tier_candles:]
+                        # Warm tier: older candles (remaining)
+                        warm_candles = sorted_candles[:-self.settings.hot_tier_candles]
+                    else:
+                        # If we have fewer candles than hot tier capacity, put all in hot tier
+                        hot_candles = sorted_candles
+                        warm_candles = []
+                    
+                    # Store in hot tier (Redis list for ordered access)
+                    if hot_candles:
+                        hot_candles_json = [json.dumps(candle) for candle in hot_candles]
+                        # Use LPUSH to maintain order, then LTRIM for capacity
+                        pipe.delete(keys['hot'])  # Clear existing data first
+                        pipe.lpush(keys['hot'], *hot_candles_json)
+                        pipe.ltrim(keys['hot'], 0, self.settings.hot_tier_candles - 1)
+                        pipe.expire(keys['hot'], self.settings.hot_tier_ttl)
+                        
+                        logger.debug(f"Stored {len(hot_candles)} candles in hot tier for {currency_pair} {timeframe}")
+                    
+                    # Store in warm tier (Redis list for ordered access)  
+                    if warm_candles:
+                        warm_candles_json = [json.dumps(candle) for candle in warm_candles]
+                        pipe.delete(keys['warm'])  # Clear existing data first
+                        pipe.lpush(keys['warm'], *warm_candles_json)
+                        pipe.ltrim(keys['warm'], 0, self.settings.warm_tier_candles - 1)
+                        pipe.expire(keys['warm'], self.settings.warm_tier_ttl)
+                        
+                        logger.debug(f"Stored {len(warm_candles)} candles in warm tier for {currency_pair} {timeframe}")
+                    
+                    # Store full bootstrap data in cold tier for backup
+                    bootstrap_data_formatted = {
+                        'candles': historical_candles,
+                        'timestamp': datetime.now().isoformat(),
+                        'source': f'FARGATE_BOOTSTRAP_{timeframe}',
+                        'count': len(historical_candles),
+                        'is_bootstrap': True,
+                        'tier_distribution': {
+                            'hot_count': len(hot_candles),
+                            'warm_count': len(warm_candles),
+                            'total_count': total_candles
+                        }
+                    }
+                    
+                    pipe.setex(
+                        keys['cold'],
+                        self.settings.cold_tier_ttl,
+                        self.redis_manager.serialize_data(bootstrap_data_formatted)
+                    )
+                    
+                    # Store current candle for regular operations
+                    pipe.setex(
+                        keys['current'],
+                        self.settings.redis_ttl_seconds,
+                        self.redis_manager.serialize_data(data)
+                    )
+                    
+                    # Update last update timestamp
+                    pipe.setex(
+                        keys['last_update'],
+                        self.settings.redis_ttl_seconds,
+                        datetime.now().isoformat()
+                    )
+                    
+                    logger.debug(f"Prepared tiered bootstrap data for {currency_pair} {timeframe}", 
+                                hot_candles=len(hot_candles),
+                                warm_candles=len(warm_candles), 
+                                total_candles=total_candles)
+            
+            # Execute all bootstrap Redis operations
+            await pipe.execute()
+            
+            self.metrics["redis_writes_successful"] += len(bootstrap_data)
+            
+            logger.debug(f"Bootstrap shard {shard_index} {timeframe} data written to tiered Redis storage", 
+                        pairs=list(bootstrap_data.keys()))
+            
+        except Exception as e:
+            self.metrics["redis_writes_failed"] += len(bootstrap_data)
+            logger.error(f"Failed to write bootstrap shard {shard_index} {timeframe} to tiered Redis", error=str(e))
+            raise
 
     async def start(self):
         """Start the data collection loop"""
@@ -424,6 +643,25 @@ class DataOrchestrator:
         else:
             print("DEBUG: H1 backfill disabled, skipping")
             logger.info("🕐 H1 backfill disabled (set ENABLE_H1_BACKFILL=true to enable)")
+        
+        # Bootstrap collection for initial 500 candles per timeframe
+        bootstrap_env = os.getenv('ENABLE_BOOTSTRAP', 'false').lower()
+        print(f"DEBUG: ENABLE_BOOTSTRAP environment variable = '{bootstrap_env}'")
+        logger.info(f"DEBUG: ENABLE_BOOTSTRAP environment variable = '{bootstrap_env}'")
+        
+        if bootstrap_env == 'true':
+            print("DEBUG: Bootstrap condition met, about to start bootstrap collection")
+            logger.info("🚀 Bootstrap enabled via environment variable - collecting 500 candles for all pairs/timeframes")
+            try:
+                await self.perform_bootstrap_collection()
+                print("DEBUG: Bootstrap collection completed successfully")
+                logger.info("✅ Bootstrap collection completed successfully")
+            except Exception as e:
+                print(f"DEBUG: Bootstrap collection failed with error: {e}")
+                logger.error(f"❌ Bootstrap collection failed: {e}")
+        else:
+            print("DEBUG: Bootstrap collection disabled, skipping")
+            logger.info("🚀 Bootstrap collection disabled (set ENABLE_BOOTSTRAP=true to enable)")
         
         try:
             while self.is_running:
@@ -528,6 +766,9 @@ class DataOrchestrator:
         # Also collect current pricing data for all pairs
         await self._collect_current_pricing()
         
+        # Process aggregated timeframes (M15, M30)
+        await self._process_aggregated_timeframes(current_time)
+        
         logger.debug("Data collection and distribution cycle completed", 
                     timeframes_collected=timeframes_to_collect)
     
@@ -575,14 +816,17 @@ class DataOrchestrator:
         logger.debug(f"Shard {shard_index} {timeframe} processing completed", 
                     pairs_processed=len(shard_data))
     
-    async def _collect_pair_timeframe_data(self, currency_pair: str, timeframe: str) -> Optional[Dict[str, Any]]:
+    async def _collect_pair_timeframe_data(self, currency_pair: str, timeframe: str, is_bootstrap: bool = False) -> Optional[Dict[str, Any]]:
         """Collect candlestick data for a single currency pair and timeframe"""
         try:
+            # Determine how many candles to collect
+            candle_count = self.settings.get_candle_count_for_collection(timeframe, is_bootstrap)
+            
             # Make OANDA API call
             candlestick_data = await self.oanda_client.get_candlesticks(
                 instrument=currency_pair,
                 granularity=timeframe,
-                count=self.settings.historical_data_points
+                count=candle_count
             )
             
             self.metrics["oanda_api_calls"] += 1
@@ -749,7 +993,7 @@ class DataOrchestrator:
             return raw_timestamp
     
     async def _write_shard_timeframe_to_redis(self, shard_index: int, shard_data: Dict[str, Any], timeframe: str):
-        """Write shard data for specific timeframe to appropriate Redis node"""
+        """Write shard data for specific timeframe using tiered Redis storage"""
         try:
             # Get Redis connection for this shard
             redis_conn = await self.redis_manager.get_connection(shard_index)
@@ -758,46 +1002,320 @@ class DataOrchestrator:
             pipe = redis_conn.pipeline()
             
             for currency_pair, data in shard_data.items():
-                # Timeframe-specific keys
-                current_key = f"market_data:{currency_pair}:{timeframe}:current"
-                historical_key = f"market_data:{currency_pair}:{timeframe}:historical"
+                # Get all Redis keys for this pair/timeframe
+                keys = self.settings.get_redis_keys_for_pair_timeframe(currency_pair, timeframe)
                 
-                # Store current data
+                # Store current data (single latest candle)
                 pipe.setex(
-                    current_key,
+                    keys['current'],
                     self.settings.redis_ttl_seconds,
                     self.redis_manager.serialize_data(data)
                 )
                 
-                # Store historical data
-                historical_data = data.get('historical_candles', [])
-                if historical_data:
-                    pipe.setex(
-                        historical_key,
-                        self.settings.redis_ttl_seconds,
-                        self.redis_manager.serialize_data(historical_data)
-                    )
+                # Add latest candle to hot tier (using Redis list for ordered storage)
+                latest_candle = self._extract_latest_candle_from_data(data)
+                if latest_candle:
+                    # Add to end of hot tier list
+                    pipe.rpush(keys['hot'], json.dumps(latest_candle))
+                    
+                    # Execute pipeline so far to get accurate count for rotation check
+                    await pipe.execute()
+                    pipe = redis_conn.pipeline()  # Reset pipeline
+                    
+                    # Check if hot tier exceeds capacity and rotate BEFORE trimming
+                    hot_count = await redis_conn.llen(keys['hot'])
+                    if hot_count > self.settings.hot_tier_candles:
+                        logger.debug(f"Hot tier has {hot_count} candles, rotating excess to warm tier for {currency_pair} {timeframe}")
+                        await self._rotate_hot_to_warm_tier(currency_pair, timeframe, redis_conn)
+                    
+                    # Now maintain hot tier capacity (keep only most recent N candles)
+                    pipe.ltrim(keys['hot'], -self.settings.hot_tier_candles, -1)
+                    
+                    # Set TTL for hot tier
+                    pipe.expire(keys['hot'], self.settings.hot_tier_ttl)
+                    
+                    logger.debug(f"Added candle to hot tier for {currency_pair} {timeframe}")
                 
-                # Update last update timestamp for this timeframe
-                timestamp_key = f"market_data:{currency_pair}:{timeframe}:last_update"
+                # Update last update timestamp
                 pipe.setex(
-                    timestamp_key,
+                    keys['last_update'],
                     self.settings.redis_ttl_seconds,
                     datetime.now().isoformat()
                 )
             
-            # Execute batch operations
+            # Execute all batch operations
             await pipe.execute()
             
             self.metrics["redis_writes_successful"] += len(shard_data)
             
-            logger.debug(f"Shard {shard_index} {timeframe} data written to Redis", 
+            logger.debug(f"Shard {shard_index} {timeframe} written to tiered Redis storage", 
                         pairs=list(shard_data.keys()))
             
         except Exception as e:
             self.metrics["redis_writes_failed"] += len(shard_data)
-            logger.error(f"Failed to write shard {shard_index} {timeframe} to Redis", error=str(e))
+            logger.error(f"Failed to write shard {shard_index} {timeframe} to tiered Redis", error=str(e))
             raise
+    
+    def _extract_latest_candle_from_data(self, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Extract the latest candle from processed data for hot tier storage"""
+        try:
+            # Create a standardized candle object for hot tier
+            candle = {
+                'time': data.get('timestamp'),
+                'open': data.get('open'),
+                'high': data.get('high'),
+                'low': data.get('low'),
+                'close': data.get('close'),
+                'volume': data.get('volume', 0),
+                'instrument': data.get('instrument'),
+                'timeframe': data.get('timeframe'),
+                'tier': 'hot',
+                'stored_at': datetime.now().isoformat()
+            }
+            
+            # Validate required fields
+            if all(candle[field] is not None for field in ['time', 'open', 'high', 'low', 'close']):
+                return candle
+            else:
+                logger.warning("Incomplete candle data for hot tier storage", data=data)
+                return None
+                
+        except Exception as e:
+            logger.error(f"Failed to extract latest candle: {e}")
+            return None
+    
+    async def _rotate_hot_to_warm_tier(self, currency_pair: str, timeframe: str, redis_conn):
+        """Rotate older candles from hot tier to warm tier to maintain capacity"""
+        try:
+            keys = self.settings.get_redis_keys_for_pair_timeframe(currency_pair, timeframe)
+            
+            # Check current hot tier size
+            hot_count = await redis_conn.llen(keys['hot'])
+            
+            # Only rotate if hot tier exceeds capacity
+            if hot_count > self.settings.hot_tier_candles:
+                # Calculate how many candles to move to warm tier
+                excess_candles = hot_count - self.settings.hot_tier_candles
+                
+                # Get oldest candles from hot tier (left side of list)
+                candles_to_move = await redis_conn.lrange(keys['hot'], 0, excess_candles - 1)
+                
+                if candles_to_move:
+                    # Move to warm tier (append to right side)
+                    pipe = redis_conn.pipeline()
+                    
+                    # Add to warm tier
+                    pipe.rpush(keys['warm'], *candles_to_move)
+                    
+                    # Remove from hot tier (left side)
+                    pipe.ltrim(keys['hot'], excess_candles, -1)
+                    
+                    # Maintain warm tier capacity
+                    pipe.ltrim(keys['warm'], -self.settings.warm_tier_candles, -1)
+                    
+                    # Update TTLs
+                    pipe.expire(keys['hot'], self.settings.hot_tier_ttl)
+                    pipe.expire(keys['warm'], self.settings.warm_tier_ttl)
+                    
+                    # Store rotation metadata
+                    rotation_metadata = {
+                        'timestamp': datetime.now().isoformat(),
+                        'moved_candles': len(candles_to_move),
+                        'hot_count_before': hot_count,
+                        'hot_count_after': self.settings.hot_tier_candles,
+                        'timeframe': timeframe,
+                        'currency_pair': currency_pair
+                    }
+                    
+                    pipe.setex(
+                        keys['rotation_meta'],
+                        300,  # 5 minutes TTL for rotation metadata
+                        json.dumps(rotation_metadata)
+                    )
+                    
+                    await pipe.execute()
+                    
+                    logger.debug(f"Rotated {len(candles_to_move)} candles from hot to warm tier", 
+                                currency_pair=currency_pair, timeframe=timeframe)
+                    
+        except Exception as e:
+            logger.error(f"Failed to rotate hot to warm tier for {currency_pair} {timeframe}: {e}")
+    
+    async def get_tiered_candlestick_data(self, currency_pair: str, timeframe: str, 
+                                        requested_count: int = 500) -> Dict[str, Any]:
+        """
+        Retrieve candlestick data from tiered storage (hot + warm + cold tiers)
+        Optimized for chart loading with 500 candlestick lazy loading
+        """
+        try:
+            # Get Redis connection for this currency pair's shard
+            shard_index = self.settings.get_redis_node_for_pair(currency_pair)
+            redis_conn = await self.redis_manager.get_connection(shard_index)
+            keys = self.settings.get_redis_keys_for_pair_timeframe(currency_pair, timeframe)
+            
+            candles = []
+            sources_used = []
+            
+            # Step 1: Try to get data from hot tier (most recent 50 candles)
+            try:
+                hot_data = await redis_conn.lrange(keys['hot'], 0, -1)
+                if hot_data:
+                    hot_candles = [json.loads(candle_json) if isinstance(candle_json, (bytes, str)) 
+                                 else candle_json for candle_json in hot_data]
+                    candles.extend(hot_candles)
+                    sources_used.append(f"hot({len(hot_candles)})")
+                    logger.debug(f"Retrieved {len(hot_candles)} candles from hot tier")
+            except Exception as e:
+                logger.warning(f"Failed to retrieve hot tier data: {e}")
+            
+            # Step 2: Get additional data from warm tier if needed
+            remaining_needed = requested_count - len(candles)
+            if remaining_needed > 0:
+                try:
+                    warm_data = await redis_conn.lrange(keys['warm'], 0, remaining_needed - 1)
+                    if warm_data:
+                        warm_candles = [json.loads(candle_json) if isinstance(candle_json, (bytes, str))
+                                      else candle_json for candle_json in warm_data]
+                        candles.extend(warm_candles)
+                        sources_used.append(f"warm({len(warm_candles)})")
+                        logger.debug(f"Retrieved {len(warm_candles)} candles from warm tier")
+                except Exception as e:
+                    logger.warning(f"Failed to retrieve warm tier data: {e}")
+            
+            # Step 3: Fallback to cold tier (bootstrap data) if still not enough
+            remaining_needed = requested_count - len(candles)
+            if remaining_needed > 0:
+                try:
+                    cold_data_raw = await redis_conn.get(keys['cold'])
+                    if cold_data_raw:
+                        cold_data = self.redis_manager.deserialize_data(cold_data_raw)
+                        if cold_data and 'candles' in cold_data:
+                            cold_candles = cold_data['candles'][-remaining_needed:]  # Most recent from cold
+                            candles.extend(cold_candles)
+                            sources_used.append(f"cold({len(cold_candles)})")
+                            logger.debug(f"Retrieved {len(cold_candles)} candles from cold tier")
+                except Exception as e:
+                    logger.warning(f"Failed to retrieve cold tier data: {e}")
+            
+            # Sort all candles by time (oldest to newest) for proper chart display
+            if candles:
+                candles.sort(key=lambda x: x.get('time', ''))
+            
+            # Prepare response with metadata
+            response = {
+                'candles': candles[-requested_count:],  # Limit to requested count
+                'metadata': {
+                    'currency_pair': currency_pair,
+                    'timeframe': timeframe,
+                    'requested_count': requested_count,
+                    'actual_count': len(candles),
+                    'sources_used': sources_used,
+                    'retrieval_timestamp': datetime.now().isoformat(),
+                    'tier_architecture': 'hot+warm+cold',
+                    'is_complete': len(candles) >= requested_count
+                }
+            }
+            
+            logger.info(f"Retrieved {len(candles)} candles for {currency_pair} {timeframe} "
+                       f"from tiers: {', '.join(sources_used)}")
+            
+            return response
+            
+        except Exception as e:
+            logger.error(f"Failed to retrieve tiered data for {currency_pair} {timeframe}: {e}")
+            return {
+                'candles': [],
+                'metadata': {
+                    'error': str(e),
+                    'currency_pair': currency_pair,
+                    'timeframe': timeframe,
+                    'retrieval_timestamp': datetime.now().isoformat()
+                }
+            }
+    
+    async def get_hot_tier_data_only(self, currency_pair: str, timeframe: str) -> List[Dict[str, Any]]:
+        """Get only hot tier data (most recent candles) for real-time updates"""
+        try:
+            shard_index = self.settings.get_redis_node_for_pair(currency_pair)
+            redis_conn = await self.redis_manager.get_connection(shard_index)
+            keys = self.settings.get_redis_keys_for_pair_timeframe(currency_pair, timeframe)
+            
+            hot_data = await redis_conn.lrange(keys['hot'], 0, -1)
+            if hot_data:
+                candles = [json.loads(candle_json) if isinstance(candle_json, (bytes, str))
+                          else candle_json for candle_json in hot_data]
+                return sorted(candles, key=lambda x: x.get('time', ''))
+            else:
+                return []
+                
+        except Exception as e:
+            logger.error(f"Failed to retrieve hot tier data for {currency_pair} {timeframe}: {e}")
+            return []
+    
+    async def get_tier_stats(self, currency_pair: str, timeframe: str) -> Dict[str, Any]:
+        """Get statistics about tier storage for monitoring and debugging"""
+        try:
+            shard_index = self.settings.get_redis_node_for_pair(currency_pair)
+            redis_conn = await self.redis_manager.get_connection(shard_index)
+            keys = self.settings.get_redis_keys_for_pair_timeframe(currency_pair, timeframe)
+            
+            # Get counts for each tier
+            hot_count = await redis_conn.llen(keys['hot'])
+            warm_count = await redis_conn.llen(keys['warm'])
+            
+            # Check cold tier
+            cold_exists = await redis_conn.exists(keys['cold'])
+            cold_count = 0
+            if cold_exists:
+                cold_data_raw = await redis_conn.get(keys['cold'])
+                if cold_data_raw:
+                    cold_data = self.redis_manager.deserialize_data(cold_data_raw)
+                    cold_count = len(cold_data.get('candles', []))
+            
+            # Get TTLs
+            hot_ttl = await redis_conn.ttl(keys['hot'])
+            warm_ttl = await redis_conn.ttl(keys['warm'])
+            cold_ttl = await redis_conn.ttl(keys['cold'])
+            
+            # Get rotation metadata if available
+            rotation_meta = None
+            try:
+                rotation_meta_raw = await redis_conn.get(keys['rotation_meta'])
+                if rotation_meta_raw:
+                    rotation_meta = json.loads(rotation_meta_raw)
+            except:
+                pass
+            
+            return {
+                'currency_pair': currency_pair,
+                'timeframe': timeframe,
+                'tiers': {
+                    'hot': {
+                        'count': hot_count,
+                        'capacity': self.settings.hot_tier_candles,
+                        'ttl_seconds': hot_ttl,
+                        'utilization': hot_count / self.settings.hot_tier_candles if self.settings.hot_tier_candles > 0 else 0
+                    },
+                    'warm': {
+                        'count': warm_count,
+                        'capacity': self.settings.warm_tier_candles,
+                        'ttl_seconds': warm_ttl,
+                        'utilization': warm_count / self.settings.warm_tier_candles if self.settings.warm_tier_candles > 0 else 0
+                    },
+                    'cold': {
+                        'count': cold_count,
+                        'ttl_seconds': cold_ttl,
+                        'exists': cold_exists
+                    }
+                },
+                'total_candles': hot_count + warm_count + cold_count,
+                'last_rotation': rotation_meta,
+                'timestamp': datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to get tier stats for {currency_pair} {timeframe}: {e}")
+            return {'error': str(e)}
     
     async def _write_pricing_to_redis(self, shard_index: int, pricing_data: Dict[str, Any]):
         """Write current pricing data to Redis"""
@@ -1658,6 +2176,134 @@ class DataOrchestrator:
             "oanda_connection_status": await self.oanda_client.get_connection_status(),
             "architecture_info": self.settings.get_architecture_info()
         }
+    
+    async def _process_aggregated_timeframes(self, current_time: int):
+        """Process aggregated timeframes (M15, M30) from M5 data"""
+        for timeframe in self.settings.aggregated_timeframes:
+            if self.settings.should_aggregate_timeframe(timeframe, current_time):
+                logger.info(f"🔄 Aggregating {timeframe} candles from M5 data")
+                await self._aggregate_timeframe_for_all_pairs(timeframe)
+    
+    async def _aggregate_timeframe_for_all_pairs(self, timeframe: str):
+        """Aggregate a specific timeframe for all currency pairs"""
+        aggregation_ratio = self.settings.get_aggregation_ratio(timeframe)
+        
+        # Group currency pairs by Redis shard for efficient processing
+        shard_groups = self._group_pairs_by_shard()
+        
+        # Process each shard concurrently
+        tasks = []
+        for shard_index, pairs in shard_groups.items():
+            task = asyncio.create_task(
+                self._aggregate_shard_timeframe(shard_index, pairs, timeframe, aggregation_ratio),
+                name=f"aggregate_shard_{shard_index}_{timeframe}"
+            )
+            tasks.append(task)
+        
+        # Wait for all shards to complete aggregation
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Log any aggregation errors
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                logger.error(f"Aggregation failed for shard {i} {timeframe}", error=str(result))
+    
+    async def _aggregate_shard_timeframe(self, shard_index: int, currency_pairs: List[str], timeframe: str, aggregation_ratio: int):
+        """Aggregate a specific timeframe for all pairs in a shard"""
+        logger.debug(f"Aggregating shard {shard_index} for {timeframe}", pairs=currency_pairs)
+        
+        aggregated_data = {}
+        
+        for pair in currency_pairs:
+            try:
+                # Get the required number of M5 candles for aggregation
+                m5_candles = await self._get_recent_m5_candles(pair, aggregation_ratio)
+                
+                if len(m5_candles) == aggregation_ratio:
+                    # Aggregate the M5 candles into one larger timeframe candle
+                    aggregated_candle = self._aggregate_candles(m5_candles, timeframe)
+                    aggregated_data[pair] = aggregated_candle
+                    
+                    logger.debug(f"Aggregated {timeframe} candle for {pair}", 
+                                candles_used=len(m5_candles))
+                else:
+                    logger.warning(f"Insufficient M5 data for {pair} {timeframe} aggregation",
+                                  required=aggregation_ratio, available=len(m5_candles))
+                    
+            except Exception as e:
+                logger.error(f"Aggregation failed for {pair} {timeframe}", error=str(e))
+        
+        # Store aggregated data to Redis
+        if aggregated_data:
+            await self._write_aggregated_data_to_redis(shard_index, aggregated_data, timeframe)
+    
+    async def _get_recent_m5_candles(self, currency_pair: str, count: int) -> List[Dict[str, Any]]:
+        """Get the most recent M5 candles for a currency pair from Redis"""
+        try:
+            shard_index = self.settings.get_redis_node_for_pair(currency_pair)
+            redis_client = self.redis_manager.get_client(shard_index)
+            
+            # Get M5 data from Redis hot tier
+            key = f"market_data:{currency_pair}:M5:hot"
+            candles_data = await redis_client.lrange(key, -count, -1)  # Get last N candles
+            
+            # Parse Redis data into candle objects
+            candles = []
+            for candle_json in candles_data:
+                if isinstance(candle_json, bytes):
+                    candle_json = candle_json.decode('utf-8')
+                candle = json.loads(candle_json)
+                candles.append(candle)
+            
+            return candles
+            
+        except Exception as e:
+            logger.error(f"Failed to get recent M5 candles for {currency_pair}", error=str(e))
+            return []
+    
+    def _aggregate_candles(self, candles: List[Dict[str, Any]], timeframe: str) -> Dict[str, Any]:
+        """Aggregate multiple candles into a single larger timeframe candle"""
+        if not candles:
+            return {}
+        
+        # OHLCV aggregation logic
+        aggregated = {
+            'time': candles[-1]['time'],  # Use the timestamp of the last candle
+            'open': candles[0]['open'],   # Open from first candle
+            'high': max(candle['high'] for candle in candles),  # Highest high
+            'low': min(candle['low'] for candle in candles),    # Lowest low
+            'close': candles[-1]['close'], # Close from last candle
+            'volume': sum(candle.get('volume', 0) for candle in candles),  # Total volume
+            'timeframe': timeframe,
+            'source': 'aggregated',
+            'source_candles': len(candles)
+        }
+        
+        return aggregated
+    
+    async def _write_aggregated_data_to_redis(self, shard_index: int, aggregated_data: Dict[str, Any], timeframe: str):
+        """Write aggregated candle data to Redis"""
+        try:
+            redis_client = self.redis_manager.get_client(shard_index)
+            
+            for currency_pair, candle_data in aggregated_data.items():
+                # Store in hot tier for immediate access
+                hot_key = f"market_data:{currency_pair}:{timeframe}:hot"
+                
+                # Add to the end of the list (newest data)
+                await redis_client.rpush(hot_key, json.dumps(candle_data))
+                
+                # Maintain sliding window of 100 candles in hot tier
+                await redis_client.ltrim(hot_key, -100, -1)
+                
+                # Set TTL
+                await redis_client.expire(hot_key, self.settings.redis_ttl_seconds)
+                
+                logger.debug(f"Stored aggregated {timeframe} candle for {currency_pair}")
+                
+        except Exception as e:
+            logger.error(f"Failed to write aggregated data to Redis shard {shard_index}", 
+                        error=str(e), timeframe=timeframe)
     
     async def shutdown(self):
         """Gracefully shutdown the data orchestrator"""
