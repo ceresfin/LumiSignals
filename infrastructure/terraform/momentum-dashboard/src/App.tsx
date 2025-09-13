@@ -8,6 +8,7 @@ import { MarketRegimes } from './components/market/MarketRegimes';
 import StrategyDashboard from './components/strategies/StrategyDashboard';
 import { CurrencyPairGraphs } from './components/charts/CurrencyPairGraphs';
 import { CurrencyPairGraphsWithTrades } from './components/charts/CurrencyPairGraphsWithTrades';
+import { CurrencyPairGraphsAnalytics } from './components/charts/CurrencyPairGraphsAnalytics';
 import PortfolioOverview from './components/portfolio/PortfolioOverview';
 import { 
   TrendingUp, 
@@ -20,7 +21,8 @@ import {
   Settings,
   Zap,
   BarChart3,
-  BarChart
+  BarChart,
+  LineChart
 } from 'lucide-react';
 import './App.css';
 import './styles/pipstop-theme.css';
@@ -28,7 +30,7 @@ import './styles/lumitrade-theme.css';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { InstitutionalThemeToggle } from './components/ui/InstitutionalThemeToggle';
 
-type TabType = 'momentum' | 'momentum-scanner' | 'graphs' | 'portfolio' | 'rds-portfolio' | 'market' | 'system' | 'strategies';
+type TabType = 'momentum' | 'momentum-scanner' | 'graphs' | 'analytics' | 'portfolio' | 'rds-portfolio' | 'market' | 'system' | 'strategies';
 
 interface TabConfig {
   id: TabType;
@@ -55,6 +57,12 @@ const tabs: TabConfig[] = [
     label: 'Graphs',
     icon: <BarChart3 className="w-5 h-5" />,
     description: 'Candlestick charts with active trade overlays - 500 H1 candles per pair from tiered storage'
+  },
+  {
+    id: 'analytics',
+    label: 'Analytics',
+    icon: <LineChart className="w-5 h-5" />,
+    description: 'Advanced M5 analytics with Fibonacci, momentum, sentiment, and institutional levels'
   },
   {
     id: 'portfolio',
@@ -122,6 +130,9 @@ function AppContent() {
       case 'graphs':
         // Enhanced version with trade overlays
         return <CurrencyPairGraphsWithTrades timeframe="H1" chartHeight={400} />;
+      case 'analytics':
+        // Advanced analytics with M5 data and backend analysis
+        return <CurrencyPairGraphsAnalytics timeframe="M5" chartHeight={400} />;
       case 'strategies':
         return <StrategyDashboard />;
       case 'portfolio':
