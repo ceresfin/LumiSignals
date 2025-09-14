@@ -21,8 +21,7 @@ import {
   Settings,
   Zap,
   BarChart3,
-  BarChart,
-  LineChart
+  BarChart
 } from 'lucide-react';
 import './App.css';
 import './styles/pipstop-theme.css';
@@ -58,12 +57,13 @@ const tabs: TabConfig[] = [
     icon: <BarChart3 className="w-5 h-5" />,
     description: 'Candlestick charts with active trade overlays - 500 H1 candles per pair from tiered storage'
   },
-  {
-    id: 'analytics',
-    label: 'Analytics',
-    icon: <LineChart className="w-5 h-5" />,
-    description: 'Advanced M5 analytics with Fibonacci, momentum, sentiment, and institutional levels'
-  },
+  // TEMPORARILY DISABLED: Analytics tab to focus on debugging Graphs tab
+  // {
+  //   id: 'analytics',
+  //   label: 'Analytics',
+  //   icon: <BarChart3 className="w-5 h-5" />,
+  //   description: 'Advanced M5 candlestick analysis with backend analytics overlays'
+  // },
   {
     id: 'portfolio',
     label: 'Portfolio & Risk',
@@ -107,16 +107,22 @@ function AppContent() {
     console.log('🎯 Current active tab:', activeTab);
   }, [activeTab]);
 
+  // TEMPORARILY DISABLED: 5-second connection check causes remounts every 5 seconds
   // Simulate connection status (replace with actual WebSocket status)
-  React.useEffect(() => {
-    const checkConnection = () => {
-      // This would be replaced with actual WebSocket connection status
-      setIsConnected(Math.random() > 0.1); // 90% uptime simulation
-    };
+  // React.useEffect(() => {
+  //   const checkConnection = () => {
+  //     // This would be replaced with actual WebSocket connection status
+  //     setIsConnected(Math.random() > 0.1); // 90% uptime simulation
+  //   };
 
-    checkConnection();
-    const interval = setInterval(checkConnection, 5000);
-    return () => clearInterval(interval);
+  //   checkConnection();
+  //   const interval = setInterval(checkConnection, 5000);
+  //   return () => clearInterval(interval);
+  // }, []);
+  
+  // Set connection to true once and leave it
+  React.useEffect(() => {
+    setIsConnected(true);
   }, []);
 
   const currentTab = tabs.find(tab => tab.id === activeTab);
@@ -131,7 +137,6 @@ function AppContent() {
         // Enhanced version with trade overlays
         return <CurrencyPairGraphsWithTrades timeframe="H1" chartHeight={400} />;
       case 'analytics':
-        // Advanced analytics with M5 data and backend analysis
         return <CurrencyPairGraphsAnalytics timeframe="M5" chartHeight={400} />;
       case 'strategies':
         return <StrategyDashboard />;

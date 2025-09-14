@@ -818,9 +818,9 @@ export const LightweightTradingViewChartWithTrades: React.FC<LightweightTradingV
           await new Promise(resolve => setTimeout(resolve, Math.min(1000 * retryCount, 5000)));
         }
 
-        // Fetch 500 candlesticks from Data Orchestrator via RDS API (to avoid Mixed Content)
-        console.log(`🎯 TRADINGVIEW WITH TRADES: ${currencyPair} requesting 500 candles from Data Orchestrator via RDS API`);
-        const response = await api.getCandlestickDataFromRDS(currencyPair, timeframe, 500);
+        // Fetch 500 candlesticks directly from working API
+        console.log(`🎯 TRADINGVIEW WITH TRADES: ${currencyPair} requesting 500 candles from Direct API`);
+        const response = await api.getCandlestickData(currencyPair, timeframe, 500);
         
         if (!mounted) return;
         

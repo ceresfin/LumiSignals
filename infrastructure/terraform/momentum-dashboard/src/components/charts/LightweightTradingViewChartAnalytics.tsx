@@ -13,7 +13,7 @@ import { TrendingUp, TrendingDown, AlertCircle, ArrowUp, ArrowDown, Activity, Za
 import { api } from '../../services/api';
 
 interface CandlestickData {
-  time: string;
+  datetime: string;
   open: number;
   high: number;
   low: number;
@@ -212,7 +212,7 @@ const calculateInstitutionalLevels = (currentPrice: number, isJPYPair: boolean):
   return levels.sort((a, b) => a.price - b.price);
 };
 
-export const LightweightTradingViewChartAnalytics: React.FC<LightweightTradingViewChartAnalyticsProps> = ({
+const LightweightTradingViewChartAnalyticsComponent: React.FC<LightweightTradingViewChartAnalyticsProps> = ({
   currencyPair,
   timeframe = 'M5',
   height = 300,
@@ -221,7 +221,6 @@ export const LightweightTradingViewChartAnalytics: React.FC<LightweightTradingVi
   onUserInteraction,
   preserveZoom = false
 }) => {
-  console.log(`🚀 TradingViewChartAnalytics mounted for ${currencyPair}, analytics:`, selectedAnalytics);
   
   // Determine if this is a JPY pair for proper decimal formatting
   const isJPYPair = currencyPair.includes('JPY');
@@ -234,11 +233,13 @@ export const LightweightTradingViewChartAnalytics: React.FC<LightweightTradingVi
   const markersRef = useRef<any[]>([]);
   const currentTimeRangeRef = useRef<{ from: Time | null, to: Time | null }>({ from: null, to: null });
 
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(true); // Back to normal loading behavior
   const [error, setError] = useState<string | null>(null);
   const [currentPrice, setCurrentPrice] = useState<number | null>(null);
   const [hasUserInteracted, setHasUserInteracted] = useState(false);
   const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(null);
+  const [dataLoaded, setDataLoaded] = useState(false); // Track if we've successfully loaded data
+  const chartDataRef = useRef<TVCandlestickData[]>([]); // Store chart data in ref to survive remounts
 
   // Format price based on currency pair type
   const formatPrice = (price: number): string => {
@@ -299,9 +300,15 @@ export const LightweightTradingViewChartAnalytics: React.FC<LightweightTradingVi
     });
   };
 
-  // Initialize chart
+  // Initialize chart (only once)
   useEffect(() => {
     if (!chartContainerRef.current) return;
+    
+    // Check if we already have a chart instance
+    if (chartRef.current) {
+      console.log(`🔍 CHART REUSE: Reusing existing chart for ${currencyPair}`);
+      return;
+    }
 
     const isDarkMode = document.documentElement.classList.contains('dark');
     
@@ -387,6 +394,7 @@ export const LightweightTradingViewChartAnalytics: React.FC<LightweightTradingVi
     window.addEventListener('resize', handleResize);
 
     return () => {
+      console.log(`🔍 CHART CLEANUP: Destroying chart for ${currencyPair}`);
       window.removeEventListener('resize', handleResize);
       chart.remove();
     };
@@ -399,35 +407,50 @@ export const LightweightTradingViewChartAnalytics: React.FC<LightweightTradingVi
         setLoading(true);
         setError(null);
 
-        // Fetch M5 candlestick data (200 candles for better analysis)
-        const candleResponse = await api.getCandlestickData(currencyPair, timeframe, 200);
+        const candleResponse = await api.getCandlestickData(currencyPair, timeframe, 50);
         
         if (candleResponse.success && candleResponse.data) {
-          const chartData: TVCandlestickData[] = candleResponse.data.map((candle: CandlestickData) => ({
-            time: (new Date(candle.time).getTime() / 1000) as Time,
-            open: parseFloat(candle.open.toString()),
-            high: parseFloat(candle.high.toString()),
-            low: parseFloat(candle.low.toString()),
-            close: parseFloat(candle.close.toString()),
-          }));
+          console.log(`🔍 TIMESTAMP DEBUG: First candle for ${currencyPair}:`, candleResponse.data[0]);
+          console.log(`🔍 TIMESTAMP DEBUG: candle.time format:`, candleResponse.data[0]?.time, 'type:', typeof candleResponse.data[0]?.time);
+          const chartData: TVCandlestickData[] = [];
+          
+          // Process all 50 candles
+          const candles = candleResponse.data;
+          
+          for (let i = 0; i < candles.length; i++) {
+            const candle = candles[i];
+            const timestamp = new Date(candle.datetime).getTime() / 1000;
+            
+            chartData.push({
+              time: timestamp as Time,
+              open: parseFloat(candle.open.toString()),
+              high: parseFloat(candle.high.toString()),
+              low: parseFloat(candle.low.toString()),
+              close: parseFloat(candle.close.toString()),
+            });
+          }
+          
+          console.log(`🔍 CHART DEBUG: Processed ${chartData.length} candles from ${candleResponse.data.length} available`);
 
           if (candlestickSeriesRef.current && chartData.length > 0) {
+            console.log(`🔍 CHART DEBUG: Setting ${chartData.length} candles to chart for ${currencyPair}`);
             candlestickSeriesRef.current.setData(chartData);
+            console.log(`🔍 CHART DEBUG: Chart data set successfully for ${currencyPair}`);
+            
+            // Verify data was actually set
+            setTimeout(() => {
+              if (candlestickSeriesRef.current) {
+                console.log(`🔍 CHART VERIFY (100ms): ${currencyPair} chart still exists`);
+              } else {
+                console.log(`🔍 CHART VERIFY (100ms): ${currencyPair} chart was destroyed!`);
+              }
+            }, 100);
+            
+            setDataLoaded(true); // Mark data as loaded to prevent future overwrites
             
             // Set current price
             const latestCandle = chartData[chartData.length - 1];
             setCurrentPrice(latestCandle.close);
-
-            // Auto-fit content if no user interaction
-            if (chartRef.current && !preserveZoom) {
-              chartRef.current.timeScale().fitContent();
-            } else if (chartRef.current && preserveZoom && currentTimeRangeRef.current.from && currentTimeRangeRef.current.to) {
-              // Restore previous zoom level
-              chartRef.current.timeScale().setVisibleRange({
-                from: currentTimeRangeRef.current.from,
-                to: currentTimeRangeRef.current.to
-              });
-            }
 
             // TODO: Fetch analytics data from backend
             // For now, simulate with calculated institutional levels
@@ -447,11 +470,10 @@ export const LightweightTradingViewChartAnalytics: React.FC<LightweightTradingVi
             });
           }
         } else {
-          setError('Failed to load candlestick data');
+          console.log(`🔍 CHART DEBUG: candleResponse failed for ${currencyPair} - success: ${candleResponse.success}, data length: ${candleResponse.data?.length || 'no data'}`);
         }
       } catch (err) {
         console.error('Error fetching data:', err);
-        setError('Error loading chart data');
       } finally {
         setLoading(false);
       }
@@ -459,11 +481,23 @@ export const LightweightTradingViewChartAnalytics: React.FC<LightweightTradingVi
 
     fetchData();
     
-    // Refresh data every minute
-    const interval = setInterval(fetchData, 60000);
-    
-    return () => clearInterval(interval);
-  }, [currencyPair, timeframe, preserveZoom]);
+    // Removed 60-second refresh to prevent remounting and API conflicts  
+    // Removed preserveZoom from deps - it shouldn't trigger data refetch
+  }, [currencyPair, timeframe]);
+
+  // Handle zoom changes separately (without refetching data)
+  useEffect(() => {
+    if (chartRef.current && dataLoaded) {
+      if (!preserveZoom) {
+        chartRef.current.timeScale().fitContent();
+      } else if (currentTimeRangeRef.current.from && currentTimeRangeRef.current.to) {
+        chartRef.current.timeScale().setVisibleRange({
+          from: currentTimeRangeRef.current.from,
+          to: currentTimeRangeRef.current.to
+        });
+      }
+    }
+  }, [preserveZoom, dataLoaded]);
 
   // Update analytics overlays when data or selection changes
   useEffect(() => {
@@ -571,5 +605,36 @@ export const LightweightTradingViewChartAnalytics: React.FC<LightweightTradingVi
     </div>
   );
 };
+
+// Memoize to prevent unnecessary remounts when props haven't actually changed
+export const LightweightTradingViewChartAnalytics = React.memo(LightweightTradingViewChartAnalyticsComponent, (prevProps, nextProps) => {
+  console.log(`🎯 MEMO CHECK for ${nextProps.currencyPair} at ${new Date().toISOString().split('T')[1].split('.')[0]}`);
+  
+  // Debug what's changing between renders
+  const currencyPairSame = prevProps.currencyPair === nextProps.currencyPair;
+  const timeframeSame = prevProps.timeframe === nextProps.timeframe;
+  const heightSame = prevProps.height === nextProps.height;
+  const preserveZoomSame = prevProps.preserveZoom === nextProps.preserveZoom;
+  const sortRankSame = prevProps.sortRank === nextProps.sortRank;
+  const analyticsLengthSame = prevProps.selectedAnalytics.length === nextProps.selectedAnalytics.length;
+  const analyticsContentSame = prevProps.selectedAnalytics.every((item, index) => item === nextProps.selectedAnalytics[index]);
+  const onUserInteractionSame = prevProps.onUserInteraction === nextProps.onUserInteraction;
+  
+  const shouldNotRemount = currencyPairSame && timeframeSame && heightSame && preserveZoomSame && sortRankSame && analyticsLengthSame && analyticsContentSame && onUserInteractionSame;
+  
+  if (!shouldNotRemount) {
+    console.log(`🔍 MEMO DEBUG: ${nextProps.currencyPair} remounting because:
+      currencyPair: ${currencyPairSame ? 'same' : 'DIFFERENT'} (${prevProps.currencyPair} → ${nextProps.currencyPair})
+      timeframe: ${timeframeSame ? 'same' : 'DIFFERENT'} (${prevProps.timeframe} → ${nextProps.timeframe})
+      height: ${heightSame ? 'same' : 'DIFFERENT'} (${prevProps.height} → ${nextProps.height})
+      preserveZoom: ${preserveZoomSame ? 'same' : 'DIFFERENT'} (${prevProps.preserveZoom} → ${nextProps.preserveZoom})
+      sortRank: ${sortRankSame ? 'same' : 'DIFFERENT'} (${prevProps.sortRank} → ${nextProps.sortRank})
+      analyticsLength: ${analyticsLengthSame ? 'same' : 'DIFFERENT'} (${prevProps.selectedAnalytics.length} → ${nextProps.selectedAnalytics.length})
+      analyticsContent: ${analyticsContentSame ? 'same' : 'DIFFERENT'}
+      onUserInteraction: ${onUserInteractionSame ? 'same' : 'DIFFERENT'}`);
+  }
+  
+  return shouldNotRemount;
+});
 
 export default LightweightTradingViewChartAnalytics;

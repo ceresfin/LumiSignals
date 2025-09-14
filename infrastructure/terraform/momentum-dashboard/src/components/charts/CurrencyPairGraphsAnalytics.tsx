@@ -57,15 +57,18 @@ export const CurrencyPairGraphsAnalytics: React.FC<CurrencyPairGraphsAnalyticsPr
   timeframe = 'M5', // Changed to M5 for 5-minute data
   chartHeight = 400
 }) => {
-  const [availableAnalytics, setAvailableAnalytics] = useState<string[]>(['fibonacci', 'momentum', 'sentiment', 'levels']);
-  const [selectedAnalytics, setSelectedAnalytics] = useState<string[]>(['fibonacci', 'momentum', 'sentiment', 'levels']);
+  console.log(`🚀 ANALYTICS PARENT: Rendering at ${new Date().toISOString().split('T')[1].split('.')[0]}`);
+  // Stable reference to prevent remounting - defined outside state to avoid recreating
+  const defaultAnalytics = React.useMemo(() => ['fibonacci', 'momentum', 'sentiment', 'levels'], []);
+  const [availableAnalytics, setAvailableAnalytics] = useState<string[]>(defaultAnalytics);
+  const [selectedAnalytics, setSelectedAnalytics] = useState<string[]>(defaultAnalytics);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [currentPrices, setCurrentPrices] = useState<Record<string, number>>({});
   const [userInteractedCharts, setUserInteractedCharts] = useState<Set<string>>(new Set());
   const [preserveUserState, setPreserveUserState] = useState(true);
   const [sortedPairs, setSortedPairs] = useState<string[]>(CURRENCY_PAIRS);
-  const [hasInitialSort, setHasInitialSort] = useState(false);
+  const [hasInitialSort, setHasInitialSort] = useState(true); // Start true to show charts immediately
 
   // Initialize available analytics
   useEffect(() => {
@@ -90,34 +93,36 @@ export const CurrencyPairGraphsAnalytics: React.FC<CurrencyPairGraphsAnalyticsPr
     setSelectedAnalytics([]);
   };
   
+  // TEMPORARILY DISABLED: Price fetching causes remounts due to failed API calls
+  // This was causing Mount #2 and #3 when price fetches fail
   // Fetch current prices for all pairs (using M5 timeframe)
-  useEffect(() => {
-    const fetchPrices = async () => {
-      const prices: Record<string, number> = {};
+  // useEffect(() => {
+  //   const fetchPrices = async () => {
+  //     const prices: Record<string, number> = {};
       
-      // Fetch candlestick data for each pair to get current price
-      const pricePromises = CURRENCY_PAIRS.map(async (pair) => {
-        try {
-          const response = await api.getCandlestickData(pair, timeframe, 1);
-          if (response.success && response.data && response.data.length > 0) {
-            const latestCandle = response.data[response.data.length - 1];
-            prices[pair] = parseFloat(latestCandle.close);
-          }
-        } catch (error) {
-          console.error(`Failed to fetch price for ${pair}:`, error);
-        }
-      });
+  //     // Fetch candlestick data for each pair to get current price
+  //     const pricePromises = CURRENCY_PAIRS.map(async (pair) => {
+  //       try {
+  //         console.log(`🔍 PRICE DEBUG: Starting 1-candle price fetch for ${pair} ${timeframe} at ${new Date().toISOString()}`);
+  //         const response = await api.getCandlestickData(pair, timeframe, 1);
+  //         console.log(`🔍 PRICE DEBUG: 1-candle price fetch completed for ${pair} - success: ${response.success}, candles: ${response.data?.length || 0}`);
+  //         if (response.success && response.data && response.data.length > 0) {
+  //           const latestCandle = response.data[response.data.length - 1];
+  //           prices[pair] = parseFloat(latestCandle.close);
+  //         }
+  //       } catch (error) {
+  //         console.error(`Failed to fetch price for ${pair}:`, error);
+  //         // Don't update state on error to prevent remounts
+  //       }
+  //     });
       
-      await Promise.all(pricePromises);
-      setCurrentPrices(prices);
-    };
+  //     await Promise.all(pricePromises);
+  //     setCurrentPrices(prices);
+  //   };
     
-    fetchPrices();
-    // Refresh prices every minute
-    const interval = setInterval(fetchPrices, 60000);
-    
-    return () => clearInterval(interval);
-  }, [timeframe]);
+  //   fetchPrices();
+  //   // Removed 60-second refresh to prevent chart remounting
+  // }, [timeframe]);
   
   // Perform sorting calculation
   const calculateSortedPairs = (prices: Record<string, number>) => {
@@ -152,32 +157,37 @@ export const CurrencyPairGraphsAnalytics: React.FC<CurrencyPairGraphsAnalyticsPr
     return sorted.map(item => item.pair);
   };
 
+  // TEMPORARILY DISABLED: Sorting to test if it's causing remounts
   // Do initial sort when prices are first loaded
-  useEffect(() => {
-    if (!hasInitialSort && Object.keys(currentPrices).length > 0) {
-      const sorted = calculateSortedPairs(currentPrices);
-      setSortedPairs(sorted);
-      setHasInitialSort(true);
-    }
-  }, [currentPrices, hasInitialSort]);
+  // useEffect(() => {
+  //   if (Object.keys(currentPrices).length > 0) {
+  //     const sorted = calculateSortedPairs(currentPrices);
+  //     setSortedPairs(sorted);
+  //   }
+  // }, [currentPrices]);
 
   // Calculate rankings for display (based on current sorted order)
   const sortRankings = useMemo(() => {
     return new Map(sortedPairs.map((pair, index) => [pair, index + 1]));
   }, [sortedPairs]);
   
-  // Handler for when user interacts with a chart
-  const handleChartInteraction = (currencyPair: string) => {
+  // Handler for when user interacts with a chart - memoized to prevent remounting
+  const handleChartInteraction = React.useCallback((currencyPair: string) => {
     setUserInteractedCharts(prev => new Set(prev).add(currencyPair));
+  }, []);
+
+  // TEMPORARILY DISABLED: Handler for manual re-sort
+  const handleResort = () => {
+    // const sorted = calculateSortedPairs(currentPrices);
+    // setSortedPairs(sorted);
+    // // Clear user interactions when resorting
+    // setUserInteractedCharts(new Set());
+    console.log('Sorting temporarily disabled for debugging');
   };
 
-  // Handler for manual re-sort
-  const handleResort = () => {
-    const sorted = calculateSortedPairs(currentPrices);
-    setSortedPairs(sorted);
-    // Clear user interactions when resorting
-    setUserInteractedCharts(new Set());
-  };
+  // Debug parent renders
+  console.log(`🔍 PARENT RENDER: CurrencyPairGraphsAnalytics at ${new Date().toISOString().split('T')[1].split('.')[0]}`);
+  console.log(`🔍 PARENT STATE: selectedAnalytics=${selectedAnalytics.length}, sortedPairs=${sortedPairs.length}, loading=${loading}`);
 
   return (
     <div className="p-8">
@@ -344,16 +354,16 @@ export const CurrencyPairGraphsAnalytics: React.FC<CurrencyPairGraphsAnalyticsPr
       {/* Currency Pair Charts Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {sortedPairs.map((pair) => (
-          <LightweightTradingViewChartAnalytics
-            key={pair}
-            currencyPair={pair}
-            timeframe={timeframe}
-            height={chartHeight}
-            selectedAnalytics={selectedAnalytics}
-            sortRank={sortRankings.get(pair)}
-            onUserInteraction={() => handleChartInteraction(pair)}
-            preserveZoom={preserveUserState && userInteractedCharts.has(pair)}
-          />
+            <LightweightTradingViewChartAnalytics
+              key={`chart-${pair}`}
+              currencyPair={pair}
+              timeframe={timeframe}
+              height={chartHeight}
+              selectedAnalytics={selectedAnalytics}
+              sortRank={sortRankings.get(pair)}
+              onUserInteraction={handleChartInteraction}
+              preserveZoom={preserveUserState && userInteractedCharts.has(pair)}
+            />
         ))}
       </div>
 

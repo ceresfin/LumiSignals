@@ -67,39 +67,12 @@ export const CurrencyPairGraphsWithTrades: React.FC<CurrencyPairGraphsWithTrades
   const [sortedPairs, setSortedPairs] = useState<string[]>(CURRENCY_PAIRS);
   const [hasInitialSort, setHasInitialSort] = useState(false);
 
-  // Fetch available strategies from active trades
+  // TEMPORARILY DISABLED: Active trades API calls to eliminate CORS errors
   useEffect(() => {
-    const fetchStrategies = async () => {
-      try {
-        setLoading(true);
-        const response = await api.getActiveTradesFromRDS();
-        
-        console.log('📊 Raw strategy response:', response);
-        if (response.success && response.data) {
-          console.log('📊 Response data:', response.data);
-          // Extract unique strategies from active trades
-          const strategies = [...new Set(response.data.map((trade: any) => {
-            console.log('🎯 Trade object:', trade);
-            return trade.strategy_name || trade.strategy || trade.Strategy || trade.STRATEGY;
-          }))];
-          console.log('📊 Extracted strategies:', strategies);
-          setAvailableStrategies(strategies.filter(s => s)); // Remove empty/null strategies
-        } else {
-          console.log('❌ Strategy fetch failed:', response);
-        }
-      } catch (error) {
-        console.error('Failed to fetch strategies:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchStrategies();
-    
-    // Refresh strategies every minute
-    const interval = setInterval(fetchStrategies, 60000);
-    
-    return () => clearInterval(interval);
+    console.log('🔧 Active trades API disabled for debugging - no trade overlays will show');
+    setLoading(false);
+    // Empty strategies array - no trade overlays
+    setAvailableStrategies([]);
   }, []);
 
   const toggleStrategy = (strategy: string) => {
