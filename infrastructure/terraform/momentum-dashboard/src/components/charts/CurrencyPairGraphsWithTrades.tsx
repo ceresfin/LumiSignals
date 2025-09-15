@@ -70,7 +70,7 @@ export const CurrencyPairGraphsWithTrades: React.FC<CurrencyPairGraphsWithTrades
 
   // CRITICAL FIX: Centralize active trades fetching to prevent 28 simultaneous API calls
   useEffect(() => {
-    console.log('🚨 CRITICAL FIX: Centralizing active trades API to stop preflight spam');
+    console.log('🚨🚨🚨 VERSION 3.0 - CRITICAL FIX ACTIVE: Centralizing active trades API to stop preflight spam');
     
     const fetchActiveTrades = async () => {
       try {
