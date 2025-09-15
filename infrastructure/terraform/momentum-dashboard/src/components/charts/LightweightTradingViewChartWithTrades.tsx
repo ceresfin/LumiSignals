@@ -44,6 +44,7 @@ interface LightweightTradingViewChartWithTradesProps {
   sortRank?: number;
   onUserInteraction?: () => void;
   preserveZoom?: boolean;
+  activeTrades?: ActiveTrade[]; // CRITICAL FIX: Pass trades as props instead of fetching in each component
 }
 
 interface InstitutionalLevel {
@@ -178,7 +179,8 @@ const LightweightTradingViewChartWithTradesComponent: React.FC<LightweightTradin
   selectedStrategies = [],
   sortRank,
   onUserInteraction,
-  preserveZoom = false
+  preserveZoom = false,
+  activeTrades = [] // CRITICAL FIX: Use passed trades instead of fetching
 }) => {
   console.log(`🚀 TradingViewChartWithTrades mounted for ${currencyPair}, strategies:`, selectedStrategies);
   
@@ -220,7 +222,6 @@ const LightweightTradingViewChartWithTradesComponent: React.FC<LightweightTradin
   const markersRef = useRef<any[]>([]);
   
   const [candlestickData, setCandlestickData] = useState<CandlestickData[]>([]);
-  const [activeTrades, setActiveTrades] = useState<ActiveTrade[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [currentPrice, setCurrentPrice] = useState<number | null>(null);
@@ -779,48 +780,7 @@ const LightweightTradingViewChartWithTradesComponent: React.FC<LightweightTradin
     }
   }, [candlestickData, activeTrades, selectedStrategies, institutionalSettings]);
 
-  // Fetch active trades
-  useEffect(() => {
-    console.log(`🔍 Setting up active trades fetch for ${currencyPair}`);
-    
-    const fetchActiveTrades = async () => {
-      try {
-        console.log(`📡 Fetching active trades for ${currencyPair}...`);
-        const response = await api.getActiveTradesFromRDS();
-        
-        if (response.success && response.data) {
-          console.log(`✅ Got ${response.data.length} total trades, filtering for ${currencyPair}`);
-          
-          // Filter trades for this currency pair
-          const pairTrades = response.data.filter((trade: ActiveTrade) => 
-            trade.instrument === currencyPair
-          );
-          
-          console.log(`🎯 Found ${pairTrades.length} trades for ${currencyPair}:`, pairTrades.map(t => ({
-            id: t.trade_id,
-            instrument: t.instrument,
-            strategy: t.strategy_name,
-            direction: t.direction
-          })));
-          
-          setActiveTrades(pairTrades);
-        } else {
-          console.log(`⚠️ RDS API returned unsuccessful response for ${currencyPair}:`, response.error);
-          setActiveTrades([]);
-        }
-      } catch (err) {
-        console.error(`❌ Error fetching active trades for ${currencyPair}:`, err);
-        setActiveTrades([]);
-      }
-    };
-
-    fetchActiveTrades();
-    
-    // Refresh trades every 30 seconds
-    const interval = setInterval(fetchActiveTrades, 30000);
-    
-    return () => clearInterval(interval);
-  }, [currencyPair]);
+  // CRITICAL FIX: Active trades now passed as props - no more individual API calls per chart!
 
   // Fetch candlestick data
   useEffect(() => {
@@ -1133,7 +1093,7 @@ const LightweightTradingViewChartWithTradesComponent: React.FC<LightweightTradin
   );
 };
 
-// EMERGENCY FIX: React.memo to prevent unnecessary re-renders and infinite re-mounting
+// CRITICAL FIX: React.memo to prevent unnecessary re-renders and infinite re-mounting
 export const LightweightTradingViewChartWithTrades = React.memo(LightweightTradingViewChartWithTradesComponent, (prevProps, nextProps) => {
   // Custom comparison to prevent re-renders when props are functionally the same
   return (
@@ -1142,7 +1102,8 @@ export const LightweightTradingViewChartWithTrades = React.memo(LightweightTradi
     prevProps.height === nextProps.height &&
     prevProps.sortRank === nextProps.sortRank &&
     prevProps.preserveZoom === nextProps.preserveZoom &&
-    JSON.stringify(prevProps.selectedStrategies) === JSON.stringify(nextProps.selectedStrategies)
+    JSON.stringify(prevProps.selectedStrategies) === JSON.stringify(nextProps.selectedStrategies) &&
+    JSON.stringify(prevProps.activeTrades) === JSON.stringify(nextProps.activeTrades)
   );
 });
 

@@ -66,13 +66,41 @@ export const CurrencyPairGraphsWithTrades: React.FC<CurrencyPairGraphsWithTrades
   const [preserveUserState, setPreserveUserState] = useState(true);
   const [sortedPairs, setSortedPairs] = useState<string[]>(CURRENCY_PAIRS);
   const [hasInitialSort, setHasInitialSort] = useState(false);
+  const [allActiveTrades, setAllActiveTrades] = useState<any[]>([]);
 
-  // TEMPORARILY DISABLED: Active trades API calls to eliminate CORS errors
+  // CRITICAL FIX: Centralize active trades fetching to prevent 28 simultaneous API calls
   useEffect(() => {
-    console.log('🔧 Active trades API disabled for debugging - no trade overlays will show');
-    setLoading(false);
-    // Empty strategies array - no trade overlays
-    setAvailableStrategies([]);
+    console.log('🚨 CRITICAL FIX: Centralizing active trades API to stop preflight spam');
+    
+    const fetchActiveTrades = async () => {
+      try {
+        const response = await api.getActiveTradesFromRDS();
+        if (response.success && response.data) {
+          console.log(`✅ Centralized active trades: ${response.data.length} total trades loaded`);
+          setAllActiveTrades(response.data);
+          
+          // Extract unique strategies from trades
+          const strategies = [...new Set(response.data.map((trade: any) => trade.strategy_name))];
+          setAvailableStrategies(strategies);
+        } else {
+          console.log('⚠️ No active trades data available');
+          setAllActiveTrades([]);
+          setAvailableStrategies([]);
+        }
+      } catch (error) {
+        console.error('❌ Error fetching centralized active trades:', error);
+        setAllActiveTrades([]);
+        setAvailableStrategies([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchActiveTrades();
+    
+    // Refresh every 30 seconds (single call for all charts)
+    const interval = setInterval(fetchActiveTrades, 30000);
+    return () => clearInterval(interval);
   }, []);
 
   const toggleStrategy = (strategy: string) => {
@@ -365,6 +393,7 @@ export const CurrencyPairGraphsWithTrades: React.FC<CurrencyPairGraphsWithTrades
             sortRank={sortRankings.get(pair)}
             onUserInteraction={chartInteractionCallbacks[pair]}
             preserveZoom={preserveZoomSettings[pair]}
+            activeTrades={allActiveTrades.filter((trade: any) => trade.instrument === pair)}
           />
         ))}
       </div>
