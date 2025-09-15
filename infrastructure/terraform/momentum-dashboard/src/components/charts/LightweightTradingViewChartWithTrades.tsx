@@ -661,14 +661,34 @@ const LightweightTradingViewChartWithTradesComponent: React.FC<LightweightTradin
     
     if (!candlestickSeriesRef.current || candlestickData.length === 0) return;
 
-    // Convert data to TradingView format
-    const tvData: TVCandlestickData[] = candlestickData.map(candle => ({
-      time: (new Date(candle.time).getTime() / 1000) as any, // Convert to Unix timestamp
-      open: candle.open,
-      high: candle.high,
-      low: candle.low,
-      close: candle.close,
-    }));
+    // Convert data to TradingView format with OANDA timestamp handling
+    const tvData: TVCandlestickData[] = candlestickData.map(candle => {
+      try {
+        // Convert timestamp to Unix timestamp for TradingView
+        const timestamp = new Date(candle.time).getTime() / 1000;
+        
+        // Validate timestamp is reasonable (not NaN, not too far in past/future)
+        if (isNaN(timestamp) || timestamp < 946684800 || timestamp > Date.now() / 1000 + 86400) {
+          console.warn(`Invalid timestamp for ${currencyPair}:`, candle.time);
+          return null;
+        }
+        
+        return {
+          time: timestamp as any,
+          open: candle.open,
+          high: candle.high,
+          low: candle.low,
+          close: candle.close,
+        };
+      } catch (error) {
+        console.error(`Timestamp conversion error for ${currencyPair}:`, candle.time, error);
+        return null;
+      }
+    }).filter((candle): candle is TVCandlestickData => 
+      candle !== null && 
+      candle.time && 
+      candle.open > 0 && candle.high > 0 && candle.low > 0 && candle.close > 0
+    );
 
     // Save current zoom state before updating data if preserveZoom is true
     let savedVisibleRange: any = null;
@@ -811,17 +831,28 @@ const LightweightTradingViewChartWithTradesComponent: React.FC<LightweightTradin
         const data = response;
         
         if (data.success && data.data && Array.isArray(data.data) && data.data.length > 0) {
-          // Convert Lambda response format to component format
-          const formattedData = data.data.map((candle: any) => ({
-            time: candle.datetime || candle.time,
-            open: parseFloat(candle.open),
-            high: parseFloat(candle.high),
-            low: parseFloat(candle.low),
-            close: parseFloat(candle.close),
-            volume: candle.volume || 0
-          })).filter(candle => 
+          // Convert Lambda response format to component format with OANDA timestamp handling
+          const formattedData = data.data.map((candle: any) => {
+            // Handle OANDA nanosecond timestamps - convert to ISO string
+            let timeValue = candle.datetime || candle.time || candle.timestamp;
+            if (typeof timeValue === 'string' && timeValue.includes('.')) {
+              // OANDA format: "2024-01-01T12:00:00.000000000Z" - keep only milliseconds
+              timeValue = timeValue.replace(/(\.\d{3})\d*Z?$/, '$1Z');
+            }
+            
+            return {
+              time: timeValue,
+              open: parseFloat(candle.open),
+              high: parseFloat(candle.high),
+              low: parseFloat(candle.low),
+              close: parseFloat(candle.close),
+              volume: candle.volume || 0
+            };
+          }).filter(candle => 
+            candle.time && 
             !isNaN(candle.open) && !isNaN(candle.high) && 
-            !isNaN(candle.low) && !isNaN(candle.close)
+            !isNaN(candle.low) && !isNaN(candle.close) &&
+            candle.open > 0 && candle.high > 0 && candle.low > 0 && candle.close > 0
           );
           
           if (formattedData.length > 0) {
