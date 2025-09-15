@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 """
+BACKUP DATE: 2025-09-15
+API ENDPOINT: https://4kctdba5vc.execute-api.us-east-1.amazonaws.com/prod
+
 Direct Candlestick API - Bypasses Lambda strategies for pure data serving
 Provides direct access to Fargate-collected candlestick data from Redis
 
@@ -101,102 +104,98 @@ class DirectCandlestickAPI:
                     else:
                         candle_time = datetime.fromisoformat(candle_time_str)
                     
+                    # Get hour boundary
                     hour_boundary = candle_time.replace(minute=0, second=0, microsecond=0)
                     
-                    # Group candles by hour
-                    if current_hour_boundary is None or hour_boundary != current_hour_boundary:
-                        # Complete the previous hour if exists
-                        if current_hour_group:
-                            h1_candle = self.create_h1_candle(current_hour_group, current_hour_boundary)
-                            h1_candles.append(h1_candle)
-                        
-                        # Start new hour
-                        current_hour_group = [candle]
+                    # Check if we're still in the same hour
+                    if current_hour_boundary is None:
                         current_hour_boundary = hour_boundary
-                    else:
+                    
+                    if hour_boundary == current_hour_boundary:
                         current_hour_group.append(candle)
+                    else:
+                        # Process completed hour group
+                        if current_hour_group:
+                            h1_candle = self._merge_candles_to_h1(current_hour_group, current_hour_boundary)
+                            if h1_candle:
+                                h1_candles.append(h1_candle)
                         
+                        # Start new hour group
+                        current_hour_boundary = hour_boundary
+                        current_hour_group = [candle]
+                
             except Exception as e:
-                logger.debug(f"Error processing candle timestamp: {e}")
+                logger.warning(f"Failed to process candle during aggregation: {e}")
                 continue
         
-        # Handle the last group
+        # Don't forget the last group
         if current_hour_group and current_hour_boundary:
-            h1_candle = self.create_h1_candle(current_hour_group, current_hour_boundary)
-            h1_candles.append(h1_candle)
-        
-        logger.info(f"Aggregated {len(sorted_candles)} M5 candles → {len(h1_candles)} H1 candles")
-        
-        # Enhanced debugging
-        if len(sorted_candles) > 0 and len(h1_candles) < 10:
-            logger.info(f"LOW H1 OUTPUT DEBUG:")
-            logger.info(f"- M5 candles: {len(sorted_candles)}")
-            logger.info(f"- H1 candles: {len(h1_candles)}")
-            logger.info(f"- Expected H1: ~{len(sorted_candles) // 12}")
-            logger.info(f"- First M5 candle: {sorted_candles[0] if sorted_candles else 'None'}")
-            logger.info(f"- Last M5 candle: {sorted_candles[-1] if sorted_candles else 'None'}")
-            
-            # Show unique hour boundaries found
-            unique_hours = set()
-            for candle in sorted_candles[:50]:  # Check first 50
-                try:
-                    candle_time_str = candle.get('time') or candle.get('timestamp')
-                    if candle_time_str:
-                        if candle_time_str.endswith('Z'):
-                            if '.000000000Z' in candle_time_str:
-                                candle_time_str = candle_time_str.replace('.000000000Z', 'Z')
-                            candle_time = datetime.fromisoformat(candle_time_str.replace('Z', '+00:00'))
-                        else:
-                            candle_time = datetime.fromisoformat(candle_time_str)
-                        hour_boundary = candle_time.replace(minute=0, second=0, microsecond=0)
-                        unique_hours.add(hour_boundary.isoformat())
-                except:
-                    continue
-            logger.info(f"- Unique hour boundaries found: {len(unique_hours)}")
-            if unique_hours:
-                sorted_hours = sorted(unique_hours)
-                logger.info(f"- Hour range: {sorted_hours[0]} to {sorted_hours[-1]}")
+            h1_candle = self._merge_candles_to_h1(current_hour_group, current_hour_boundary)
+            if h1_candle:
+                h1_candles.append(h1_candle)
         
         return h1_candles
     
-    def create_h1_candle(self, m5_group, hour_boundary):
-        """Create a single H1 candle from a group of M5 candles"""
+    def _merge_candles_to_h1(self, candles, hour_boundary):
+        """Merge multiple candles into a single H1 candle"""
+        if not candles:
+            return None
+        
         try:
+            # Sort to ensure correct order
+            sorted_candles = sorted(candles, key=lambda x: x.get('time', x.get('timestamp', '')))
+            
+            first_candle = sorted_candles[0]
+            last_candle = sorted_candles[-1]
+            
+            # Calculate OHLC
+            open_price = float(first_candle.get('open', 0))
+            close_price = float(last_candle.get('close', 0))
+            high_price = max(float(c.get('high', 0)) for c in sorted_candles)
+            low_price = min(float(c.get('low', float('inf'))) for c in sorted_candles if float(c.get('low', 0)) > 0)
+            
+            # Sum volume
+            total_volume = sum(int(c.get('volume', 0)) for c in sorted_candles)
+            
+            # Use hour boundary as timestamp
+            timestamp = hour_boundary.isoformat() + 'Z'
+            
             return {
-                'time': hour_boundary.isoformat(),
-                'timestamp': int(hour_boundary.timestamp()),
-                'datetime': hour_boundary.isoformat(),
-                'open': float(m5_group[0].get('open', 0)),
-                'high': max(float(c.get('high', 0)) for c in m5_group),
-                'low': min(float(c.get('low', 0)) for c in m5_group),
-                'close': float(m5_group[-1].get('close', 0)),
-                'volume': sum(int(c.get('volume', 0)) for c in m5_group)
+                'time': timestamp,
+                'timestamp': timestamp,
+                'open': open_price,
+                'high': high_price,
+                'low': low_price,
+                'close': close_price,
+                'volume': total_volume
             }
+            
         except Exception as e:
-            logger.error(f"Error creating H1 candle: {e}")
-            return {}
+            logger.warning(f"Failed to merge candles to H1: {e}")
+            return None
     
-    def get_candlestick_data(self, currency_pair: str, timeframe: str = "H1", count: int = 50) -> Dict[str, Any]:
+    def get_candlestick_data(self, currency_pair: str, timeframe: str = 'H1', count: int = 50) -> Dict[str, Any]:
         """
-        Get candlestick data directly from Redis
+        Get candlestick data from Redis
         
         Args:
-            currency_pair: e.g., 'EUR_USD', 'GBP_CAD'
-            timeframe: e.g., 'M5', 'M15', 'H1', 'H4'
-            count: number of candles to return
+            currency_pair: Currency pair (e.g., 'EUR_USD')
+            timeframe: Timeframe (M5, H1, etc.)
+            count: Number of candles to retrieve
             
         Returns:
-            Dictionary with candlestick data
+            Dict with success status and candlestick data
         """
         try:
-            # Get appropriate Redis connection
+            # Get Redis shard for this currency pair
             shard_index = self.get_shard_for_pair(currency_pair)
             redis_conn = self.redis_connections.get(shard_index)
             
             if not redis_conn:
+                logger.error(f"No Redis connection for shard {shard_index}")
                 return {
                     "success": False,
-                    "error": f"No Redis connection for shard {shard_index}",
+                    "error": f"No Redis connection for currency pair {currency_pair}",
                     "data": []
                 }
             
@@ -297,51 +296,65 @@ class DirectCandlestickAPI:
             # Determine data source based on what tiers were used
             if sources_used:
                 data_source = f"REDIS_FARGATE_TIERED_{timeframe}"
-                logger.info(f"✅ Using tiered storage for {currency_pair}: {', '.join(sources_used)}")
             else:
-                data_source = f"REDIS_FARGATE_FALLBACK_{timeframe}"
-                logger.info(f"⚠️ Used fallback storage for {currency_pair}")
+                data_source = f"REDIS_FARGATE_{timeframe}"
             
-            # Sort by time and limit to requested count
+            # Handle aggregation for non-native timeframes
+            if timeframe in ['M15', 'M30'] and not candles:
+                logger.info(f"No {timeframe} data, attempting to aggregate from M5")
+                # Try to get M5 data and aggregate
+                m5_result = self.get_candlestick_data(currency_pair, 'M5', count * 12)  # Get more M5 for aggregation
+                if m5_result['success'] and m5_result['data']:
+                    # For now, return M5 data as-is (aggregation can be added later)
+                    candles = m5_result['data'][:count]
+                    data_source = "REDIS_FARGATE_M5_AS_FALLBACK"
+            
+            # Sort by timestamp (newest first) and limit to requested count
             if candles:
-                pre_sort_count = len(candles)
-                candles = sorted(candles, key=lambda x: x.get('time', ''))[-count:]
-                logger.info(f"Limited from {pre_sort_count} to {len(candles)} candles (requested {count})")
-            
-            # Log if we have insufficient data (Fargate should have backfilled this)
-            if len(candles) < count and len(candles) < 50 and timeframe == "H1":
-                logger.warning(f"Insufficient H1 data in Redis ({len(candles)} < {count}). Fargate may need to run backfill.")
-                logger.info(f"Using {len(candles)} available H1 candles from Redis instead of requested {count}")
-            
-            # Format response for dashboard compatibility
-            formatted_candles = []
-            for candle in candles:
-                formatted_candles.append({
-                    "datetime": candle.get('time'),
-                    "open": float(candle.get('open', 0)),
-                    "high": float(candle.get('high', 0)),
-                    "low": float(candle.get('low', 0)),
-                    "close": float(candle.get('close', 0)),
-                    "volume": int(candle.get('volume', 0))
-                })
-            
-            return {
-                "success": True,
-                "data": formatted_candles,
-                "metadata": {
-                    "currency_pair": currency_pair,
-                    "timeframe": timeframe,
-                    "count_requested": count,
-                    "count_returned": len(formatted_candles),
-                    "shard_index": shard_index,
-                    "data_source": data_source,
-                    "sources_used": sources_used,
-                    "timestamp": datetime.now().isoformat()
+                # Remove duplicates based on timestamp
+                unique_candles = {}
+                for candle in candles:
+                    timestamp = candle.get('time') or candle.get('timestamp')
+                    if timestamp:
+                        unique_candles[timestamp] = candle
+                
+                # Sort and limit
+                sorted_candles = sorted(
+                    unique_candles.values(), 
+                    key=lambda x: x.get('time', x.get('timestamp', '')), 
+                    reverse=True
+                )[:count]
+                
+                logger.info(f"Returning {len(sorted_candles)} unique candles for {currency_pair} {timeframe}")
+                
+                return {
+                    "success": True,
+                    "data": sorted_candles,
+                    "metadata": {
+                        "currency_pair": currency_pair,
+                        "timeframe": timeframe,
+                        "count": len(sorted_candles),
+                        "requested_count": count,
+                        "timestamp": datetime.utcnow().isoformat() + 'Z',
+                        "data_source": data_source,
+                        "sources_used": sources_used
+                    }
                 }
-            }
-            
+            else:
+                logger.warning(f"No candlestick data found for {currency_pair} {timeframe}")
+                return {
+                    "success": False,
+                    "error": f"No data available for {currency_pair} {timeframe}",
+                    "data": [],
+                    "metadata": {
+                        "currency_pair": currency_pair,
+                        "timeframe": timeframe,
+                        "timestamp": datetime.utcnow().isoformat() + 'Z'
+                    }
+                }
+                
         except Exception as e:
-            logger.error(f"Error getting candlestick data for {currency_pair}: {e}")
+            logger.error(f"Error retrieving candlestick data: {e}")
             return {
                 "success": False,
                 "error": str(e),
@@ -363,46 +376,27 @@ def lambda_handler(event, context):
     - count: number of candles (default 50)
     """
     
-    # CORS headers for all responses - OVERRIDE API Gateway CORS
-    # API Gateway may have its own CORS settings that return wildcard (*)
-    # We need to ensure our specific origin is returned to fix browser CORS errors
-    
-    # Log incoming request details for debugging
-    logger.info(f"Incoming request - Method: {event.get('httpMethod')}, Path: {event.get('path')}")
-    logger.info(f"Headers: {json.dumps(event.get('headers', {}))}")
-    
+    # CORS headers for all responses - Allow multiple pipstop.org variants
     origin = event.get('headers', {}).get('origin', '') or event.get('headers', {}).get('Origin', '')
-    
-    # Clean up origin - remove trailing slashes
-    if origin.endswith('/'):
-        origin = origin.rstrip('/')
-    
-    logger.info(f"Origin header: '{origin}'")
-    
     allowed_origins = [
         'https://pipstop.org',
         'https://www.pipstop.org', 
         'http://pipstop.org',
-        'http://www.pipstop.org'
+        'http://www.pipstop.org',
+        'https://pipstop.org/',
+        'https://www.pipstop.org/'
     ]
     
-    # CRITICAL: Always return specific origin to override API Gateway wildcard CORS
-    if origin and origin in allowed_origins:
-        cors_origin = origin
-    else:
-        cors_origin = 'https://pipstop.org'  # Default to primary domain
+    # Default to first allowed origin if origin not in list or empty
+    cors_origin = origin if origin in allowed_origins else 'https://pipstop.org'
     
-    # These headers will override API Gateway CORS configuration
     cors_headers = {
         'Access-Control-Allow-Origin': cors_origin,
-        'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,x-api-key,Accept,Origin',
+        'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,x-api-key',
         'Access-Control-Allow-Methods': 'GET,OPTIONS,POST',
         'Access-Control-Allow-Credentials': 'false',
-        'Access-Control-Max-Age': '86400',
-        'Vary': 'Origin'  # Important: tells browsers that response varies by origin
+        'Access-Control-Max-Age': '86400'
     }
-    
-    logger.info(f"Setting CORS origin to: {cors_origin}")
     
     # Handle OPTIONS preflight request
     if event.get('httpMethod') == 'OPTIONS':

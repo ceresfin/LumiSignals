@@ -355,15 +355,14 @@ class ApiService {
       console.log(`📡 Direct Candlestick API call: ${currencyPair}`);
       
       // Use the working Direct Candlestick API with proper path format
-      const directUrl = `https://4kctdba5vc.execute-api.us-east-1.amazonaws.com/prod/candlestick/${currencyPair}/${timeframe}?count=${count}`;
+      // Add timestamp to bypass any cached CORS responses
+      const timestamp = Date.now();
+      const directUrl = `https://4kctdba5vc.execute-api.us-east-1.amazonaws.com/prod/candlestick/${currencyPair}/${timeframe}?count=${count}&_t=${timestamp}`;
       
       const response = await fetch(directUrl, {
         method: 'GET',
-        headers: {
-          'Accept': 'application/json'
-          // Removed x-api-key header to avoid CORS preflight issues
-          // API works without authentication
-        },
+        // No custom headers to ensure this is a "simple" CORS request
+        // This avoids the OPTIONS preflight request entirely
         mode: 'cors', // Explicitly enable CORS
         credentials: 'omit' // Don't send credentials
       });
