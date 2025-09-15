@@ -1,7 +1,70 @@
-import React, { useState, useEffect, useMemo, useCallback, startTransition } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, startTransition, useRef } from 'react';
 import { LightweightTradingViewChartWithTrades } from './LightweightTradingViewChartWithTrades';
 import { api } from '../../services/api';
 import { ChevronDown, Filter, TrendingUp, Target, Shield } from 'lucide-react';
+
+// Lazy loading wrapper component
+interface LazyChartWrapperProps {
+  currencyPair: string;
+  timeframe: string;
+  height: number;
+  selectedStrategies: string[];
+  sortRank?: number;
+  onUserInteraction: () => void;
+  preserveZoom: boolean;
+  activeTrades: any[];
+}
+
+const LazyChartWrapper: React.FC<LazyChartWrapperProps> = (props) => {
+  const [isVisible, setIsVisible] = useState(false);
+  const [hasLoaded, setHasLoaded] = useState(false);
+  const elementRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const element = elementRef.current;
+    if (!element) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting && !hasLoaded) {
+          setIsVisible(true);
+          setHasLoaded(true);
+          console.log(`📈 LAZY LOAD: ${props.currencyPair} chart coming into view`);
+        }
+      },
+      {
+        rootMargin: '100px', // Start loading 100px before the chart comes into view
+        threshold: 0.1
+      }
+    );
+
+    observer.observe(element);
+
+    return () => {
+      observer.unobserve(element);
+    };
+  }, [hasLoaded, props.currencyPair]);
+
+  return (
+    <div ref={elementRef} style={{ minHeight: props.height }}>
+      {isVisible ? (
+        <LightweightTradingViewChartWithTrades {...props} />
+      ) : (
+        <div 
+          className="flex items-center justify-center bg-gray-100 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700"
+          style={{ height: props.height }}
+        >
+          <div className="text-center">
+            <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mb-2"></div>
+            <p className="text-sm text-gray-600 dark:text-gray-400">
+              Loading {props.currencyPair}...
+            </p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
 
 // All 28 currency pairs from the LumiSignals trading system
 const CURRENCY_PAIRS = [
@@ -444,7 +507,7 @@ export const CurrencyPairGraphsWithTrades: React.FC<CurrencyPairGraphsWithTrades
       {/* Currency Pair Charts Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {sortedPairs.map((pair) => (
-          <LightweightTradingViewChartWithTrades
+          <LazyChartWrapper
             key={pair}
             currencyPair={pair}
             timeframe={timeframe}
