@@ -182,6 +182,26 @@ export const LightweightTradingViewChartWithTrades: React.FC<LightweightTradingV
 }) => {
   console.log(`🚀 TradingViewChartWithTrades mounted for ${currencyPair}, strategies:`, selectedStrategies);
   
+  // Generate unique component ID for tracking
+  const componentId = useRef(Math.random().toString(36).substr(2, 9));
+  
+  // DIAGNOSTIC: Track component mounting and unmounting with detailed timing
+  useEffect(() => {
+    const mountTime = Date.now();
+    console.log(`🟢 MOUNT: ${currencyPair} - ID: ${componentId.current} - Time: ${mountTime} - Strategies: ${selectedStrategies.length}`);
+    
+    return () => {
+      const unmountTime = Date.now();
+      const duration = unmountTime - mountTime;
+      console.log(`🔴 UNMOUNT: ${currencyPair} - ID: ${componentId.current} - Time: ${unmountTime} - Duration: ${duration}ms`);
+      
+      // Log abnormally short lifespans (less than 1 second indicates rapid re-mounting)
+      if (duration < 1000) {
+        console.warn(`⚠️ RAPID UNMOUNT: ${currencyPair} component lived only ${duration}ms - possible re-mount loop`);
+      }
+    };
+  }, [currencyPair, selectedStrategies.length]);
+
   // Determine if this is a JPY pair for proper decimal formatting
   const isJPYPair = currencyPair.includes('JPY');
   const decimalPlaces = isJPYPair ? 3 : 5; // JPY: 3 decimals (e.g. 150.123), Others: 5 decimals (e.g. 1.37402)
@@ -819,7 +839,7 @@ export const LightweightTradingViewChartWithTrades: React.FC<LightweightTradingV
         }
 
         // Fetch 500 candlesticks directly from working API
-        console.log(`🎯 TRADINGVIEW WITH TRADES: ${currencyPair} requesting 500 candles from Direct API`);
+        console.log(`🎯 API CALL: ${currencyPair} - ID: ${componentId.current} - requesting 500 candles from Direct API - Time: ${Date.now()}`);
         const response = await api.getCandlestickData(currencyPair, timeframe, 500);
         
         if (!mounted) return;
@@ -845,7 +865,7 @@ export const LightweightTradingViewChartWithTrades: React.FC<LightweightTradingV
           );
           
           if (formattedData.length > 0) {
-            console.log(`📊 Received ${formattedData.length} candlesticks for ${currencyPair} (requested 500 from Data Orchestrator via RDS API)`);
+            console.log(`📊 API SUCCESS: ${currencyPair} - ID: ${componentId.current} - received ${formattedData.length} candlesticks - Time: ${Date.now()}`);
             setCandlestickData(formattedData);
             setError(null);
           } else {
@@ -857,7 +877,8 @@ export const LightweightTradingViewChartWithTrades: React.FC<LightweightTradingV
       } catch (err: any) {
         if (!mounted) return;
         
-        console.error(`Error fetching candlestick data for ${currencyPair}:`, err);
+        console.error(`❌ API ERROR: ${currencyPair} - ID: ${componentId.current} - ${err.message} - Time: ${Date.now()}`);
+        console.error(`Full error for ${currencyPair}:`, err);
         
         // Retry logic for common errors
         if (retryCount < 2 && (
