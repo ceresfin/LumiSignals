@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { LightweightTradingViewChartWithTrades } from './LightweightTradingViewChartWithTrades';
 import { api } from '../../services/api';
 import { ChevronDown, Filter, TrendingUp, Target, Shield } from 'lucide-react';
@@ -185,10 +185,28 @@ export const CurrencyPairGraphsWithTrades: React.FC<CurrencyPairGraphsWithTrades
     return new Map(sortedPairs.map((pair, index) => [pair, index + 1]));
   }, [sortedPairs]);
   
-  // Handler for when user interacts with a chart
-  const handleChartInteraction = (currencyPair: string) => {
+  // Handler for when user interacts with a chart - memoized to prevent re-renders
+  const handleChartInteraction = useCallback((currencyPair: string) => {
     setUserInteractedCharts(prev => new Set(prev).add(currencyPair));
-  };
+  }, []);
+  
+  // Memoized interaction callbacks for each pair to prevent re-renders
+  const chartInteractionCallbacks = useMemo(() => {
+    const callbacks: Record<string, () => void> = {};
+    sortedPairs.forEach(pair => {
+      callbacks[pair] = () => handleChartInteraction(pair);
+    });
+    return callbacks;
+  }, [sortedPairs, handleChartInteraction]);
+  
+  // Memoized preserve zoom settings for each pair to prevent re-renders
+  const preserveZoomSettings = useMemo(() => {
+    const settings: Record<string, boolean> = {};
+    sortedPairs.forEach(pair => {
+      settings[pair] = preserveUserState && userInteractedCharts.has(pair);
+    });
+    return settings;
+  }, [sortedPairs, preserveUserState, userInteractedCharts]);
 
   // Handler for manual re-sort
   const handleResort = () => {
@@ -342,8 +360,8 @@ export const CurrencyPairGraphsWithTrades: React.FC<CurrencyPairGraphsWithTrades
             height={chartHeight}
             selectedStrategies={selectedStrategies}
             sortRank={sortRankings.get(pair)}
-            onUserInteraction={() => handleChartInteraction(pair)}
-            preserveZoom={preserveUserState && userInteractedCharts.has(pair)}
+            onUserInteraction={chartInteractionCallbacks[pair]}
+            preserveZoom={preserveZoomSettings[pair]}
           />
         ))}
       </div>

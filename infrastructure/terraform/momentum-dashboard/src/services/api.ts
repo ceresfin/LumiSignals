@@ -347,13 +347,9 @@ class ApiService {
   }
 
   async getCandlestickData(currencyPair: string, timeframe: string = 'H1', count: number = 50): Promise<ApiResponse<any>> {
-    console.log(`🚀 SURGICAL FIX v2: Using working Direct Candlestick API for ${currencyPair} ${timeframe} (${count} candles)`);
+    console.log(`🚀 Direct Candlestick API call: ${currencyPair} ${timeframe} (${count} candles)`);
     
-    // SURGICAL FIX v2: Use the working Direct Candlestick API that has proper Redis shard access
-    // This API connects to all 4 Redis shards and has the actual candlestick data
     try {
-      console.log(`📡 Direct Candlestick API call: ${currencyPair}`);
-      
       // Use the working Direct Candlestick API with proper path format
       // Add timestamp to bypass any cached CORS responses
       const timestamp = Date.now();
@@ -364,7 +360,8 @@ class ApiService {
         // No custom headers to ensure this is a "simple" CORS request
         // This avoids the OPTIONS preflight request entirely
         mode: 'cors', // Explicitly enable CORS
-        credentials: 'omit' // Don't send credentials
+        credentials: 'omit', // Don't send credentials
+        signal: AbortSignal.timeout(10000) // 10 second timeout to prevent hanging requests
       });
       
       if (!response.ok) {
