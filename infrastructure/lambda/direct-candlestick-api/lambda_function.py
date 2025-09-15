@@ -325,6 +325,34 @@ class DirectCandlestickAPI:
                     "volume": int(candle.get('volume', 0))
                 })
             
+            # CRITICAL FIX: Deduplicate timestamps using exact frontend logic
+            # Copy of frontend deduplication from LightweightTradingViewChartWithTrades.tsx lines 812-825
+            time_set = set()
+            duplicate_timestamps = []
+            for candle in formatted_candles:
+                timestamp = candle.get('datetime')
+                if timestamp in time_set:
+                    duplicate_timestamps.append(timestamp)
+                time_set.add(timestamp)
+            
+            if duplicate_timestamps:
+                logger.info(f"🚨 LAMBDA DEDUP: Found {len(duplicate_timestamps)} duplicate timestamps for {currency_pair}")
+                # Remove duplicates by keeping only the last occurrence of each timestamp (same as frontend)
+                unique_candles = []
+                seen_times = set()
+                for i in range(len(formatted_candles) - 1, -1, -1):  # Reverse iteration like frontend
+                    candle = formatted_candles[i]
+                    timestamp = candle.get('datetime')
+                    if timestamp not in seen_times:
+                        seen_times.add(timestamp)
+                        unique_candles.insert(0, candle)  # Insert at beginning to maintain order
+                
+                duplicates_removed = len(formatted_candles) - len(unique_candles)
+                logger.info(f"🔧 LAMBDA DEDUP: Removed {duplicates_removed} duplicate candles for {currency_pair}")
+                formatted_candles = unique_candles
+            else:
+                logger.info(f"✅ LAMBDA DEDUP: No duplicates found for {currency_pair}")
+            
             return {
                 "success": True,
                 "data": formatted_candles,
