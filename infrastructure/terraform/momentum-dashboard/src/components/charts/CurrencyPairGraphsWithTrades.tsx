@@ -98,20 +98,36 @@ export const CurrencyPairGraphsWithTrades: React.FC<CurrencyPairGraphsWithTrades
     const fetchPrices = async () => {
       const prices: Record<string, number> = {};
       
-      // Fetch candlestick data for each pair to get current price
-      const pricePromises = CURRENCY_PAIRS.map(async (pair) => {
-        try {
-          const response = await api.getCandlestickData(pair, timeframe, 1);
-          if (response.success && response.data && response.data.length > 0) {
-            const latestCandle = response.data[response.data.length - 1];
-            prices[pair] = parseFloat(latestCandle.close);
-          }
-        } catch (error) {
-          console.error(`Failed to fetch price for ${pair}:`, error);
-        }
-      });
+      // Batch requests to avoid overwhelming Lambda with 28 concurrent calls
+      // Process 5 currency pairs at a time to prevent 500 errors
+      const batchSize = 5;
+      const batches = [];
       
-      await Promise.all(pricePromises);
+      for (let i = 0; i < CURRENCY_PAIRS.length; i += batchSize) {
+        batches.push(CURRENCY_PAIRS.slice(i, i + batchSize));
+      }
+      
+      // Process each batch sequentially
+      for (const batch of batches) {
+        const batchPromises = batch.map(async (pair) => {
+          try {
+            const response = await api.getCandlestickData(pair, timeframe, 1);
+            if (response.success && response.data && response.data.length > 0) {
+              const latestCandle = response.data[response.data.length - 1];
+              prices[pair] = parseFloat(latestCandle.close);
+            }
+          } catch (error) {
+            console.error(`Failed to fetch price for ${pair}:`, error);
+          }
+        });
+        
+        // Wait for this batch to complete before starting the next
+        await Promise.all(batchPromises);
+        
+        // Small delay between batches to be gentle on the API
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      
       setCurrentPrices(prices);
     };
     
