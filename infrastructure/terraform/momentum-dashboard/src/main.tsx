@@ -4,7 +4,7 @@ import AppRouter from './AppRouter.tsx'
 import './App.css'
 
 // EMERGENCY VERSION CHECK
-console.log('🚨🚨🚨 LUMISIGNALS VERSION 3.0 - PREFLIGHT FIX LOADED - ' + new Date().toISOString());
+console.log('🚨🚨🚨 LUMISIGNALS VERSION 3.3 - TIMEFRAME NORMALIZATION FIX - ' + new Date().toISOString());
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <AppRouter />

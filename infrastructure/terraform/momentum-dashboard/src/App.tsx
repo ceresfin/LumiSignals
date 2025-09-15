@@ -1,5 +1,5 @@
 // Main LumiSignals Momentum Dashboard - "Pilot's Cockpit" Design
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { MomentumGrid } from './components/momentum/MomentumGrid';
 import { MomentumScanner } from './components/momentum/MomentumScanner';
 import { PortfolioExposure } from './components/portfolio/PortfolioExposure';
@@ -127,6 +127,11 @@ function AppContent() {
 
   const currentTab = tabs.find(tab => tab.id === activeTab);
 
+  // Memoize the graphs component to prevent unnecessary re-renders
+  const graphsComponent = useMemo(() => (
+    <CurrencyPairGraphsWithTrades timeframe="H1" chartHeight={400} />
+  ), []); // Empty deps - component never changes
+
   const renderTabContent = () => {
     switch (activeTab) {
       case 'momentum':
@@ -134,8 +139,8 @@ function AppContent() {
       case 'momentum-scanner':
         return <MomentumScanner refreshInterval={300000} />;
       case 'graphs':
-        // Enhanced version with trade overlays
-        return <CurrencyPairGraphsWithTrades timeframe="H1" chartHeight={400} />;
+        // Return memoized component to prevent re-mounting
+        return graphsComponent;
       case 'analytics':
         return <CurrencyPairGraphsAnalytics timeframe="M5" chartHeight={400} />;
       case 'strategies':

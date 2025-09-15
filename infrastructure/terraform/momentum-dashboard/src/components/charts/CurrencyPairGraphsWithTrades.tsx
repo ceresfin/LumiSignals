@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, startTransition } from 'react';
 import { LightweightTradingViewChartWithTrades } from './LightweightTradingViewChartWithTrades';
 import { api } from '../../services/api';
 import { ChevronDown, Filter, TrendingUp, Target, Shield } from 'lucide-react';
@@ -68,38 +68,84 @@ export const CurrencyPairGraphsWithTrades: React.FC<CurrencyPairGraphsWithTrades
   const [hasInitialSort, setHasInitialSort] = useState(false);
   const [allActiveTrades, setAllActiveTrades] = useState<any[]>([]);
 
+  // DEBUG: Track render count and object reference changes
+  const renderCount = React.useRef(0);
+  const prevRefs = React.useRef<any>({});
+  renderCount.current++;
+  
+  console.log(`🔍 PARENT RENDER #${renderCount.current}:`, {
+    timeframe,
+    chartHeight,
+    allActiveTradesLength: allActiveTrades.length,
+    availableStrategiesLength: availableStrategies.length,
+    selectedStrategiesLength: selectedStrategies.length,
+    sortedPairsLength: sortedPairs.length,
+    loading,
+    hasInitialSort,
+    renderTime: Date.now()
+  });
+  
+  // DEBUG: Check which object references are changing
+  const currentRefs = {
+    allActiveTrades,
+    sortedPairs,
+    userInteractedCharts,
+    availableStrategies,
+    selectedStrategies
+  };
+  
+  Object.keys(currentRefs).forEach(key => {
+    if (prevRefs.current[key] !== currentRefs[key as keyof typeof currentRefs]) {
+      console.log(`🔄 REFERENCE CHANGED: ${key} (render #${renderCount.current})`);
+    }
+  });
+  prevRefs.current = currentRefs;
+
   // CRITICAL FIX: Centralize active trades fetching to prevent 28 simultaneous API calls
   useEffect(() => {
-    console.log('🚨🚨🚨 VERSION 3.0 - CRITICAL FIX ACTIVE: Centralizing active trades API to stop preflight spam');
+    console.log('🚨🚨🚨 VERSION 3.1 - BATCHED STATE UPDATES: Fixing infinite re-renders');
     
     const fetchActiveTrades = async () => {
       try {
         const response = await api.getActiveTradesFromRDS();
         if (response.success && response.data) {
           console.log(`✅ Centralized active trades: ${response.data.length} total trades loaded`);
-          setAllActiveTrades(response.data);
           
           // Extract unique strategies from trades
           const strategies = [...new Set(response.data.map((trade: any) => trade.strategy_name))];
-          setAvailableStrategies(strategies);
+          
+          // CRITICAL FIX: Batch all state updates to prevent multiple re-renders
+          startTransition(() => {
+            setAllActiveTrades(response.data);
+            setAvailableStrategies(strategies);
+            setLoading(false);
+          });
         } else {
           console.log('⚠️ No active trades data available');
-          setAllActiveTrades([]);
-          setAvailableStrategies([]);
+          
+          // CRITICAL FIX: Batch state updates for error case too
+          startTransition(() => {
+            setAllActiveTrades([]);
+            setAvailableStrategies([]);
+            setLoading(false);
+          });
         }
       } catch (error) {
         console.error('❌ Error fetching centralized active trades:', error);
-        setAllActiveTrades([]);
-        setAvailableStrategies([]);
-      } finally {
-        setLoading(false);
+        
+        // CRITICAL FIX: Batch state updates for error case
+        startTransition(() => {
+          setAllActiveTrades([]);
+          setAvailableStrategies([]);
+          setLoading(false);
+        });
       }
     };
 
     fetchActiveTrades();
     
-    // Refresh every 30 seconds (single call for all charts)
-    const interval = setInterval(fetchActiveTrades, 30000);
+    // Refresh every 15 minutes (single call for all charts)
+    const interval = setInterval(fetchActiveTrades, 900000);
     return () => clearInterval(interval);
   }, []);
 
@@ -218,7 +264,12 @@ export const CurrencyPairGraphsWithTrades: React.FC<CurrencyPairGraphsWithTrades
   
   // Handler for when user interacts with a chart - memoized to prevent re-renders
   const handleChartInteraction = useCallback((currencyPair: string) => {
-    setUserInteractedCharts(prev => new Set(prev).add(currencyPair));
+    setUserInteractedCharts(prev => {
+      if (prev.has(currencyPair)) {
+        return prev; // Return same Set if currency pair already exists
+      }
+      return new Set(prev).add(currencyPair); // Only create new Set if needed
+    });
   }, []);
   
   // Memoized interaction callbacks for each pair to prevent re-renders
@@ -238,6 +289,15 @@ export const CurrencyPairGraphsWithTrades: React.FC<CurrencyPairGraphsWithTrades
     });
     return settings;
   }, [sortedPairs, preserveUserState, userInteractedCharts]);
+
+  // CRITICAL FIX: Memoize filtered trades to prevent new arrays on every render
+  const filteredTradesByPair = useMemo(() => {
+    const tradesByPair: Record<string, any[]> = {};
+    sortedPairs.forEach(pair => {
+      tradesByPair[pair] = allActiveTrades.filter((trade: any) => trade.instrument === pair);
+    });
+    return tradesByPair;
+  }, [sortedPairs, allActiveTrades]);
 
   // Handler for manual re-sort
   const handleResort = () => {
@@ -393,7 +453,7 @@ export const CurrencyPairGraphsWithTrades: React.FC<CurrencyPairGraphsWithTrades
             sortRank={sortRankings.get(pair)}
             onUserInteraction={chartInteractionCallbacks[pair]}
             preserveZoom={preserveZoomSettings[pair]}
-            activeTrades={allActiveTrades.filter((trade: any) => trade.instrument === pair)}
+            activeTrades={filteredTradesByPair[pair] || []}
           />
         ))}
       </div>
