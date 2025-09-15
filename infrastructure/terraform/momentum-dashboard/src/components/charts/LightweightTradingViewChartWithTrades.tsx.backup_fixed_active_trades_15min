@@ -259,20 +259,6 @@ const LightweightTradingViewChartWithTradesComponent: React.FC<LightweightTradin
         background: { type: ColorType.Solid, color: '#1E1E1E' },
         textColor: '#B3B3B3',
       },
-      localization: {
-        timeFormatter: (timestamp: number) => {
-          // Convert Unix timestamp to EST/EDT for both crosshair AND x-axis
-          const date = new Date(timestamp * 1000);
-          return date.toLocaleString('en-US', { 
-            timeZone: 'America/New_York',
-            month: 'short',
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit',
-            hour12: false
-          });
-        },
-      },
       grid: {
         vertLines: {
           color: '#333333',
@@ -339,46 +325,23 @@ const LightweightTradingViewChartWithTradesComponent: React.FC<LightweightTradin
 
     chartRef.current = chart;
     candlestickSeriesRef.current = candlestickSeries;
-    
-    // Track when chart was created to prevent false interaction triggers
-    const chartCreatedTime = Date.now();
 
-    // Add user interaction tracking with debouncing to prevent false triggers
+    // Add user interaction tracking
     if (onUserInteraction) {
-      let isUserInteracting = false;
-      let interactionTimeout: NodeJS.Timeout;
-      
-      // Only track actual user interactions, not programmatic updates
-      const handleInteraction = () => {
-        if (!isUserInteracting) {
-          isUserInteracting = true;
-          onUserInteraction();
-        }
-        // Reset flag after a delay
-        clearTimeout(interactionTimeout);
-        interactionTimeout = setTimeout(() => {
-          isUserInteracting = false;
-        }, 1000);
-      };
-      
       // Track when user scrolls, zooms, or pans
       chart.timeScale().subscribeVisibleTimeRangeChange(() => {
-        // Only trigger if chart has been rendered for more than 2 seconds
-        // This prevents false triggers during initial data load
-        if (Date.now() - chartCreatedTime > 2000) {
-          handleInteraction();
-          // Save current zoom state
-          const timeScale = chart.timeScale();
-          const visibleRange = timeScale.getVisibleRange();
-          if (visibleRange) {
-            setZoomState({ from: visibleRange.from as number, to: visibleRange.to as number });
-          }
+        onUserInteraction();
+        // Save current zoom state
+        const timeScale = chart.timeScale();
+        const visibleRange = timeScale.getVisibleRange();
+        if (visibleRange) {
+          setZoomState({ from: visibleRange.from as number, to: visibleRange.to as number });
         }
       });
 
-      // Track crosshair interactions (these are always user-initiated)
+      // Track crosshair interactions
       chart.subscribeCrosshairMove(() => {
-        handleInteraction();
+        onUserInteraction();
       });
     }
 
@@ -596,7 +559,7 @@ const LightweightTradingViewChartWithTradesComponent: React.FC<LightweightTradin
           
           // Try to find candle closest to entry time
           for (const candle of candlestickData.slice(-20)) { // Check last 20 candles
-            const candleTime = candle.time as number; // candle.time is already Unix timestamp
+            const candleTime = new Date(candle.time).getTime() / 1000;
             const timeDiff = Math.abs(candleTime - entryTime);
             if (timeDiff < bestTimeDiff) {
               bestTimeDiff = timeDiff;
@@ -605,7 +568,7 @@ const LightweightTradingViewChartWithTradesComponent: React.FC<LightweightTradin
           }
           
           const marker = {
-            time: bestCandle.time as Time, // bestCandle.time is already Unix timestamp
+            time: (new Date(bestCandle.time).getTime() / 1000) as Time,
             position: trade.direction === 'Long' ? 'belowBar' : 'aboveBar',
             color: colorScheme.entry,
             shape: trade.direction === 'Long' ? 'arrowUp' : 'arrowDown',
@@ -704,47 +667,17 @@ const LightweightTradingViewChartWithTradesComponent: React.FC<LightweightTradin
         // CRITICAL FIX: Robust timestamp conversion for OANDA nanosecond timestamps
         let timeValue = candle.time;
         
-        // Ensure we have a valid ISO string + timeframe normalization
+        // Ensure we have a valid ISO string
         if (typeof timeValue === 'string') {
           // Final cleanup for any remaining nanoseconds
           timeValue = timeValue.replace(/(\.\d{3})\d*(Z?)$/, '$1Z');
           if (!timeValue.endsWith('Z') && !timeValue.includes('+') && !timeValue.includes('-')) {
             timeValue += 'Z';
           }
-          
-          // NORMALIZE: Ensure consistent timeframe boundaries for TradingView display
-          const date = new Date(timeValue);
-          switch(timeframe) {
-            case 'M5':
-              date.setMinutes(Math.floor(date.getMinutes() / 5) * 5, 0, 0);
-              break;
-            case 'M15': 
-              date.setMinutes(Math.floor(date.getMinutes() / 15) * 15, 0, 0);
-              break;
-            case 'M30':
-              date.setMinutes(Math.floor(date.getMinutes() / 30) * 30, 0, 0);
-              break;
-            case 'H1':
-              date.setMinutes(0, 0, 0);
-              break;
-            case 'D1':
-              date.setHours(0, 0, 0, 0);
-              break;
-            default:
-              date.setMinutes(0, 0, 0);
-          }
-          timeValue = date.toISOString();
         }
         
         // Convert to Unix timestamp for TradingView (seconds since epoch)
-        let timestamp: number;
-        if (typeof timeValue === 'number') {
-          // timeValue is already a Unix timestamp in seconds
-          timestamp = timeValue;
-        } else {
-          // timeValue is an ISO string, convert to Unix timestamp
-          timestamp = new Date(timeValue).getTime() / 1000;
-        }
+        const timestamp = new Date(timeValue).getTime() / 1000;
         
         // Validate timestamp is reasonable (after year 2000, not more than 1 day in future)
         if (isNaN(timestamp) || timestamp < 946684800 || timestamp > Date.now() / 1000 + 86400) {
@@ -968,9 +901,8 @@ const LightweightTradingViewChartWithTradesComponent: React.FC<LightweightTradin
 
   // CRITICAL FIX: Active trades now passed as props - no more individual API calls per chart!
 
-  // Fetch candlestick data ONCE on mount (no auto-refresh to prevent re-renders)
+  // Fetch candlestick data
   useEffect(() => {
-    console.log(`🔍 CANDLESTICK FETCH TRIGGERED for ${currencyPair} - Deps: currencyPair=${currencyPair}, timeframe=${timeframe}`);
     let mounted = true;
     
     const fetchCandlestickData = async (retryCount = 0) => {
@@ -1007,17 +939,8 @@ const LightweightTradingViewChartWithTradesComponent: React.FC<LightweightTradin
             // Handle OANDA nanosecond timestamps - convert to ISO string
             let timeValue = candle.datetime || candle.time || candle.timestamp;
             
-            // CRITICAL FIX: Handle both Unix timestamps and ISO strings
-            if (typeof timeValue === 'number') {
-              // timeValue is already a Unix timestamp in seconds, use directly
-              return {
-                time: timeValue as Time,
-                open: parseFloat(candle.open),
-                high: parseFloat(candle.high),
-                low: parseFloat(candle.low),
-                close: parseFloat(candle.close)
-              };
-            } else if (typeof timeValue === 'string') {
+            // CRITICAL FIX: Robust nanosecond timestamp handling
+            if (typeof timeValue === 'string') {
               // OANDA format: "2024-01-01T12:00:00.000000000Z" 
               // Remove nanoseconds completely and ensure proper Z suffix
               timeValue = timeValue.replace(/(\.\d{3})\d*(Z?)$/, '$1Z');
@@ -1026,31 +949,6 @@ const LightweightTradingViewChartWithTradesComponent: React.FC<LightweightTradin
               if (!timeValue.endsWith('Z') && !timeValue.includes('+') && !timeValue.includes('-')) {
                 timeValue += 'Z';
               }
-              
-              // NORMALIZE: Round to timeframe boundaries to prevent micro-differences causing re-renders
-              const date = new Date(timeValue);
-              switch(timeframe) {
-                case 'M5':
-                  date.setMinutes(Math.floor(date.getMinutes() / 5) * 5, 0, 0);
-                  break;
-                case 'M15': 
-                  date.setMinutes(Math.floor(date.getMinutes() / 15) * 15, 0, 0);
-                  break;
-                case 'M30':
-                  date.setMinutes(Math.floor(date.getMinutes() / 30) * 30, 0, 0);
-                  break;
-                case 'H1':
-                  date.setMinutes(0, 0, 0); // Force to :00:00.000
-                  break;
-                case 'D1':
-                  date.setHours(0, 0, 0, 0); // Force to 00:00:00.000
-                  break;
-                default:
-                  // For unknown timeframes, round to hour boundary as fallback
-                  date.setMinutes(0, 0, 0);
-              }
-              timeValue = date.toISOString();
-            }
               
               // EMERGENCY: Additional validation - ensure timeValue is valid ISO format
               try {
@@ -1067,6 +965,7 @@ const LightweightTradingViewChartWithTradesComponent: React.FC<LightweightTradin
                 console.error(`🚨 TIMESTAMP PARSE ERROR for ${currencyPair}:`, e, timeValue);
                 return null; // Skip unparseable timestamp
               }
+            }
             
             // Parse and validate price data
             const open = parseFloat(candle.open);
@@ -1084,7 +983,7 @@ const LightweightTradingViewChartWithTradesComponent: React.FC<LightweightTradin
             }
             
             return {
-              time: (typeof timeValue === 'number' ? timeValue : new Date(timeValue).getTime() / 1000) as Time, // Handle both formats
+              time: timeValue,
               open,
               high,
               low,
@@ -1094,7 +993,7 @@ const LightweightTradingViewChartWithTradesComponent: React.FC<LightweightTradin
           }).filter((candle): candle is NonNullable<typeof candle> => 
             candle !== null && 
             candle.time && 
-            typeof candle.time === 'number' &&
+            typeof candle.time === 'string' &&
             !isNaN(candle.open) && !isNaN(candle.high) && 
             !isNaN(candle.low) && !isNaN(candle.close) &&
             candle.open > 0 && candle.high > 0 && candle.low > 0 && candle.close > 0
@@ -1138,18 +1037,18 @@ const LightweightTradingViewChartWithTradesComponent: React.FC<LightweightTradin
       }
     };
 
-    // Add random delay to stagger API calls for different pairs (prevents Lambda overload)
+    // Add random delay to stagger API calls for different pairs
     const randomDelay = Math.random() * 2000;
     const delayedFetch = setTimeout(() => fetchCandlestickData(), randomDelay);
     
-    // DISABLED: Auto-refresh interval to prevent infinite re-mounting cycle
-    // const refreshInterval = (5 + Math.random() * 2) * 60 * 1000; // 5-7 minutes
-    // const interval = setInterval(() => fetchCandlestickData(), refreshInterval);
+    // Refresh every 5 minutes with random offset
+    const refreshInterval = (5 + Math.random() * 2) * 60 * 1000; // 5-7 minutes
+    const interval = setInterval(() => fetchCandlestickData(), refreshInterval);
     
     return () => {
       mounted = false;
       clearTimeout(delayedFetch);
-      // clearInterval(interval);
+      clearInterval(interval);
     };
   }, [currencyPair, timeframe]);
 
