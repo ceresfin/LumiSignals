@@ -130,6 +130,7 @@ export const CurrencyPairGraphsWithTrades: React.FC<CurrencyPairGraphsWithTrades
   const [sortedPairs, setSortedPairs] = useState<string[]>(CURRENCY_PAIRS);
   const [hasInitialSort, setHasInitialSort] = useState(false);
   const [allActiveTrades, setAllActiveTrades] = useState<any[]>([]);
+  const [selectedTimeframe, setSelectedTimeframe] = useState<string>(timeframe || 'H1');
 
   // DEBUG: Track render count and object reference changes
   const renderCount = React.useRef(0);
@@ -482,6 +483,28 @@ export const CurrencyPairGraphsWithTrades: React.FC<CurrencyPairGraphsWithTrades
         )}
       </div>
 
+      {/* Timeframe Selector */}
+      <div className="mb-4 flex items-center justify-center">
+        <div className="flex items-center gap-4 bg-white dark:bg-gray-800 rounded-lg p-3 border border-gray-200 dark:border-gray-700">
+          <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Timeframe:</span>
+          <select
+            value={selectedTimeframe}
+            onChange={(e) => setSelectedTimeframe(e.target.value)}
+            className="px-3 py-1.5 bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md text-sm text-gray-700 dark:text-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          >
+            <option value="M5">5 Minutes</option>
+            <option value="M15">15 Minutes</option>
+            <option value="M30">30 Minutes</option>
+            <option value="H1">1 Hour</option>
+            <option value="H4">4 Hours</option>
+            <option value="D1">Daily</option>
+          </select>
+          <span className="text-xs text-gray-500 dark:text-gray-400">
+            Current: {selectedTimeframe}
+          </span>
+        </div>
+      </div>
+
       {/* Institutional Level Proximity Indicator and Resort Button */}
       {Object.keys(currentPrices).length > 0 && (
         <div className="mb-4 flex items-center justify-center gap-6">
@@ -508,9 +531,9 @@ export const CurrencyPairGraphsWithTrades: React.FC<CurrencyPairGraphsWithTrades
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {sortedPairs.map((pair) => (
           <LazyChartWrapper
-            key={pair}
+            key={`${pair}-${selectedTimeframe}`}
             currencyPair={pair}
-            timeframe={timeframe}
+            timeframe={selectedTimeframe}
             height={chartHeight}
             selectedStrategies={selectedStrategies}
             sortRank={sortRankings.get(pair)}
