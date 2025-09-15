@@ -661,16 +661,58 @@ const LightweightTradingViewChartWithTradesComponent: React.FC<LightweightTradin
     
     if (!candlestickSeriesRef.current || candlestickData.length === 0) return;
 
-    // Convert data to TradingView format with OANDA timestamp handling
+    // Convert data to TradingView format with ROBUST OANDA timestamp handling
     const tvData: TVCandlestickData[] = candlestickData.map(candle => {
       try {
-        // Convert timestamp to Unix timestamp for TradingView
-        const timestamp = new Date(candle.time).getTime() / 1000;
+        // CRITICAL FIX: Robust timestamp conversion for OANDA nanosecond timestamps
+        let timeValue = candle.time;
         
-        // Validate timestamp is reasonable (not NaN, not too far in past/future)
+        // Ensure we have a valid ISO string
+        if (typeof timeValue === 'string') {
+          // Final cleanup for any remaining nanoseconds
+          timeValue = timeValue.replace(/(\.\d{3})\d*(Z?)$/, '$1Z');
+          if (!timeValue.endsWith('Z') && !timeValue.includes('+') && !timeValue.includes('-')) {
+            timeValue += 'Z';
+          }
+        }
+        
+        // Convert to Unix timestamp for TradingView (seconds since epoch)
+        const timestamp = new Date(timeValue).getTime() / 1000;
+        
+        // Validate timestamp is reasonable (after year 2000, not more than 1 day in future)
         if (isNaN(timestamp) || timestamp < 946684800 || timestamp > Date.now() / 1000 + 86400) {
-          console.warn(`Invalid timestamp for ${currencyPair}:`, candle.time);
+          console.error(`🚨 INVALID UNIX TIMESTAMP for ${currencyPair}:`, {
+            original: candle.time,
+            processed: timeValue,
+            timestamp,
+            timestampDate: new Date(timestamp * 1000).toISOString()
+          });
           return null;
+        }
+        
+        // Additional validation: ensure all OHLC values are valid
+        if (!candle.open || !candle.high || !candle.low || !candle.close ||
+            isNaN(candle.open) || isNaN(candle.high) || isNaN(candle.low) || isNaN(candle.close) ||
+            candle.open <= 0 || candle.high <= 0 || candle.low <= 0 || candle.close <= 0) {
+          console.error(`🚨 INVALID OHLC DATA for ${currencyPair}:`, {
+            open: candle.open,
+            high: candle.high,
+            low: candle.low,
+            close: candle.close,
+            time: timeValue
+          });
+          return null;
+        }
+        
+        // EMERGENCY DEBUG: Only log first few candles to avoid spam
+        if (candlestickData.length < 3) {
+          console.log(`✅ VALID CANDLE for ${currencyPair}:`, {
+            time: timestamp,
+            timeISO: new Date(timestamp * 1000).toISOString(),
+            open: candle.open,
+            close: candle.close,
+            originalTime: candle.time
+          });
         }
         
         return {
@@ -681,12 +723,18 @@ const LightweightTradingViewChartWithTradesComponent: React.FC<LightweightTradin
           close: candle.close,
         };
       } catch (error) {
-        console.error(`Timestamp conversion error for ${currencyPair}:`, candle.time, error);
+        console.error(`🚨 TIMESTAMP CONVERSION ERROR for ${currencyPair}:`, {
+          originalTime: candle.time,
+          error: error,
+          candle: candle
+        });
         return null;
       }
     }).filter((candle): candle is TVCandlestickData => 
       candle !== null && 
-      candle.time && 
+      typeof candle.time === 'number' &&
+      !isNaN(candle.time) &&
+      candle.time > 0 &&
       candle.open > 0 && candle.high > 0 && candle.low > 0 && candle.close > 0
     );
 
@@ -697,7 +745,58 @@ const LightweightTradingViewChartWithTradesComponent: React.FC<LightweightTradin
       savedVisibleRange = timeScale.getVisibleRange();
     }
 
-    candlestickSeriesRef.current.setData(tvData);
+    // EMERGENCY DEBUG: Log data before sending to TradingView
+    console.log(`🔍 EMERGENCY DEBUG: ${currencyPair} - About to set ${tvData.length} candles to TradingView`);
+    console.log(`🔍 First 3 candles:`, tvData.slice(0, 3));
+    console.log(`🔍 Last 3 candles:`, tvData.slice(-3));
+    
+    // Check for duplicate timestamps which cause lightweight-charts to fail
+    const timeSet = new Set();
+    const duplicateTimestamps = [];
+    for (const candle of tvData) {
+      if (timeSet.has(candle.time)) {
+        duplicateTimestamps.push(candle.time);
+      }
+      timeSet.add(candle.time);
+    }
+    
+    if (duplicateTimestamps.length > 0) {
+      console.error(`🚨 DUPLICATE TIMESTAMPS DETECTED for ${currencyPair}:`, duplicateTimestamps);
+      console.error(`🚨 This will cause lightweight-charts to fail with "Value is null" error`);
+      // Remove duplicates by keeping only the last occurrence of each timestamp
+      const uniqueCandles = [];
+      const seenTimes = new Set();
+      for (let i = tvData.length - 1; i >= 0; i--) {
+        const candle = tvData[i];
+        if (!seenTimes.has(candle.time)) {
+          seenTimes.add(candle.time);
+          uniqueCandles.unshift(candle);
+        }
+      }
+      console.log(`🔧 FIXED: Removed ${tvData.length - uniqueCandles.length} duplicate candles for ${currencyPair}`);
+      tvData.length = 0;
+      tvData.push(...uniqueCandles);
+    }
+    
+    // Check for any invalid data
+    const invalidCandles = tvData.filter(candle => 
+      !candle.time || isNaN(candle.time) || 
+      !candle.open || !candle.high || !candle.low || !candle.close ||
+      candle.open <= 0 || candle.high <= 0 || candle.low <= 0 || candle.close <= 0
+    );
+    
+    if (invalidCandles.length > 0) {
+      console.error(`🚨 INVALID CANDLES DETECTED for ${currencyPair}:`, invalidCandles);
+      return; // Don't send invalid data to TradingView
+    }
+    
+    try {
+      candlestickSeriesRef.current.setData(tvData);
+      console.log(`✅ TradingView data set successfully for ${currencyPair}`);
+    } catch (error) {
+      console.error(`❌ TradingView setData failed for ${currencyPair}:`, error);
+      console.error(`❌ Failed data sample:`, tvData.slice(0, 5));
+    }
 
     // Update current price and price change
     if (candlestickData.length > 0) {
@@ -831,25 +930,70 @@ const LightweightTradingViewChartWithTradesComponent: React.FC<LightweightTradin
         const data = response;
         
         if (data.success && data.data && Array.isArray(data.data) && data.data.length > 0) {
-          // Convert Lambda response format to component format with OANDA timestamp handling
+          // EMERGENCY DEBUG: Show raw API response format
+          console.log(`🔍 RAW OANDA DATA SAMPLE for ${currencyPair} (first 3):`, data.data.slice(0, 3));
+          console.log(`🔍 RAW OANDA DATA SAMPLE for ${currencyPair} (last 3):`, data.data.slice(-3));
+          
+          // Convert Lambda response format to component format with ROBUST OANDA timestamp handling
           const formattedData = data.data.map((candle: any) => {
             // Handle OANDA nanosecond timestamps - convert to ISO string
             let timeValue = candle.datetime || candle.time || candle.timestamp;
-            if (typeof timeValue === 'string' && timeValue.includes('.')) {
-              // OANDA format: "2024-01-01T12:00:00.000000000Z" - keep only milliseconds
-              timeValue = timeValue.replace(/(\.\d{3})\d*Z?$/, '$1Z');
+            
+            // CRITICAL FIX: Robust nanosecond timestamp handling
+            if (typeof timeValue === 'string') {
+              // OANDA format: "2024-01-01T12:00:00.000000000Z" 
+              // Remove nanoseconds completely and ensure proper Z suffix
+              timeValue = timeValue.replace(/(\.\d{3})\d*(Z?)$/, '$1Z');
+              
+              // Fallback: if no Z suffix, add it
+              if (!timeValue.endsWith('Z') && !timeValue.includes('+') && !timeValue.includes('-')) {
+                timeValue += 'Z';
+              }
+              
+              // EMERGENCY: Additional validation - ensure timeValue is valid ISO format
+              try {
+                const testDate = new Date(timeValue);
+                if (isNaN(testDate.getTime())) {
+                  console.error(`🚨 INVALID TIMESTAMP for ${currencyPair}:`, {
+                    original: candle.datetime || candle.time || candle.timestamp,
+                    processed: timeValue,
+                    candle: candle
+                  });
+                  return null; // Skip invalid timestamp
+                }
+              } catch (e) {
+                console.error(`🚨 TIMESTAMP PARSE ERROR for ${currencyPair}:`, e, timeValue);
+                return null; // Skip unparseable timestamp
+              }
+            }
+            
+            // Parse and validate price data
+            const open = parseFloat(candle.open);
+            const high = parseFloat(candle.high);
+            const low = parseFloat(candle.low);
+            const close = parseFloat(candle.close);
+            
+            // Validate all price values are valid numbers > 0
+            if (isNaN(open) || isNaN(high) || isNaN(low) || isNaN(close) ||
+                open <= 0 || high <= 0 || low <= 0 || close <= 0) {
+              console.error(`🚨 INVALID PRICE DATA for ${currencyPair}:`, {
+                open, high, low, close, candle
+              });
+              return null; // Skip invalid price data
             }
             
             return {
               time: timeValue,
-              open: parseFloat(candle.open),
-              high: parseFloat(candle.high),
-              low: parseFloat(candle.low),
-              close: parseFloat(candle.close),
+              open,
+              high,
+              low,
+              close,
               volume: candle.volume || 0
             };
-          }).filter(candle => 
+          }).filter((candle): candle is NonNullable<typeof candle> => 
+            candle !== null && 
             candle.time && 
+            typeof candle.time === 'string' &&
             !isNaN(candle.open) && !isNaN(candle.high) && 
             !isNaN(candle.low) && !isNaN(candle.close) &&
             candle.open > 0 && candle.high > 0 && candle.low > 0 && candle.close > 0
@@ -857,6 +1001,8 @@ const LightweightTradingViewChartWithTradesComponent: React.FC<LightweightTradin
           
           if (formattedData.length > 0) {
             console.log(`📊 API SUCCESS: ${currencyPair} - ID: ${componentId.current} - received ${formattedData.length} candlesticks - Time: ${Date.now()}`);
+            console.log(`🔍 RAW API DATA SAMPLE for ${currencyPair}:`, data.data.slice(0, 3));
+            console.log(`🔍 FORMATTED DATA SAMPLE for ${currencyPair}:`, formattedData.slice(0, 3));
             setCandlestickData(formattedData);
             setError(null);
           } else {
