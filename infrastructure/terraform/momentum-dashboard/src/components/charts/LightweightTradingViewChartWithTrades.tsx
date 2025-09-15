@@ -171,7 +171,7 @@ const calculateInstitutionalLevels = (currentPrice: number, isJPYPair: boolean):
   return levels.sort((a, b) => a.price - b.price);
 };
 
-export const LightweightTradingViewChartWithTrades: React.FC<LightweightTradingViewChartWithTradesProps> = ({
+const LightweightTradingViewChartWithTradesComponent: React.FC<LightweightTradingViewChartWithTradesProps> = ({
   currencyPair,
   timeframe = 'H1',
   height = 300,
@@ -1132,5 +1132,18 @@ export const LightweightTradingViewChartWithTrades: React.FC<LightweightTradingV
     </div>
   );
 };
+
+// EMERGENCY FIX: React.memo to prevent unnecessary re-renders and infinite re-mounting
+export const LightweightTradingViewChartWithTrades = React.memo(LightweightTradingViewChartWithTradesComponent, (prevProps, nextProps) => {
+  // Custom comparison to prevent re-renders when props are functionally the same
+  return (
+    prevProps.currencyPair === nextProps.currencyPair &&
+    prevProps.timeframe === nextProps.timeframe &&
+    prevProps.height === nextProps.height &&
+    prevProps.sortRank === nextProps.sortRank &&
+    prevProps.preserveZoom === nextProps.preserveZoom &&
+    JSON.stringify(prevProps.selectedStrategies) === JSON.stringify(nextProps.selectedStrategies)
+  );
+});
 
 export default LightweightTradingViewChartWithTrades;

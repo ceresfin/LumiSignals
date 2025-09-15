@@ -93,8 +93,11 @@ export const CurrencyPairGraphsWithTrades: React.FC<CurrencyPairGraphsWithTrades
     setSelectedStrategies([]);
   };
   
-  // Fetch current prices for all pairs
+  // EMERGENCY FIX: Temporarily disable price fetching to stop infinite re-mounting
   useEffect(() => {
+    console.log('🚨 EMERGENCY: Price fetching DISABLED to stop infinite re-mounting');
+    return;
+    
     const fetchPrices = async () => {
       const prices: Record<string, number> = {};
       
