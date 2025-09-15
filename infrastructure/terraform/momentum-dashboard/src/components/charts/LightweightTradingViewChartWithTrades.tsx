@@ -259,6 +259,18 @@ const LightweightTradingViewChartWithTradesComponent: React.FC<LightweightTradin
         background: { type: ColorType.Solid, color: '#1E1E1E' },
         textColor: '#B3B3B3',
       },
+      localization: {
+        timeFormatter: (timestamp: number) => {
+          // Convert Unix timestamp to EST/EDT
+          const date = new Date(timestamp * 1000);
+          return date.toLocaleString('en-US', { 
+            timeZone: 'America/New_York',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false
+          });
+        },
+      },
       grid: {
         vertLines: {
           color: '#333333',
@@ -582,7 +594,7 @@ const LightweightTradingViewChartWithTradesComponent: React.FC<LightweightTradin
           
           // Try to find candle closest to entry time
           for (const candle of candlestickData.slice(-20)) { // Check last 20 candles
-            const candleTime = new Date(candle.time).getTime() / 1000;
+            const candleTime = candle.time as number; // candle.time is already Unix timestamp
             const timeDiff = Math.abs(candleTime - entryTime);
             if (timeDiff < bestTimeDiff) {
               bestTimeDiff = timeDiff;
@@ -591,7 +603,7 @@ const LightweightTradingViewChartWithTradesComponent: React.FC<LightweightTradin
           }
           
           const marker = {
-            time: (new Date(bestCandle.time).getTime() / 1000) as Time,
+            time: bestCandle.time as Time, // bestCandle.time is already Unix timestamp
             position: trade.direction === 'Long' ? 'belowBar' : 'aboveBar',
             color: colorScheme.entry,
             shape: trade.direction === 'Long' ? 'arrowUp' : 'arrowDown',
@@ -723,7 +735,14 @@ const LightweightTradingViewChartWithTradesComponent: React.FC<LightweightTradin
         }
         
         // Convert to Unix timestamp for TradingView (seconds since epoch)
-        const timestamp = new Date(timeValue).getTime() / 1000;
+        let timestamp: number;
+        if (typeof timeValue === 'number') {
+          // timeValue is already a Unix timestamp in seconds
+          timestamp = timeValue;
+        } else {
+          // timeValue is an ISO string, convert to Unix timestamp
+          timestamp = new Date(timeValue).getTime() / 1000;
+        }
         
         // Validate timestamp is reasonable (after year 2000, not more than 1 day in future)
         if (isNaN(timestamp) || timestamp < 946684800 || timestamp > Date.now() / 1000 + 86400) {
@@ -986,8 +1005,17 @@ const LightweightTradingViewChartWithTradesComponent: React.FC<LightweightTradin
             // Handle OANDA nanosecond timestamps - convert to ISO string
             let timeValue = candle.datetime || candle.time || candle.timestamp;
             
-            // CRITICAL FIX: Robust nanosecond timestamp handling + timeframe-aware normalization
-            if (typeof timeValue === 'string') {
+            // CRITICAL FIX: Handle both Unix timestamps and ISO strings
+            if (typeof timeValue === 'number') {
+              // timeValue is already a Unix timestamp in seconds, use directly
+              return {
+                time: timeValue as Time,
+                open: parseFloat(candle.open),
+                high: parseFloat(candle.high),
+                low: parseFloat(candle.low),
+                close: parseFloat(candle.close)
+              };
+            } else if (typeof timeValue === 'string') {
               // OANDA format: "2024-01-01T12:00:00.000000000Z" 
               // Remove nanoseconds completely and ensure proper Z suffix
               timeValue = timeValue.replace(/(\.\d{3})\d*(Z?)$/, '$1Z');
@@ -1054,7 +1082,7 @@ const LightweightTradingViewChartWithTradesComponent: React.FC<LightweightTradin
             }
             
             return {
-              time: timeValue,
+              time: (typeof timeValue === 'number' ? timeValue : new Date(timeValue).getTime() / 1000) as Time, // Handle both formats
               open,
               high,
               low,
@@ -1064,7 +1092,7 @@ const LightweightTradingViewChartWithTradesComponent: React.FC<LightweightTradin
           }).filter((candle): candle is NonNullable<typeof candle> => 
             candle !== null && 
             candle.time && 
-            typeof candle.time === 'string' &&
+            typeof candle.time === 'number' &&
             !isNaN(candle.open) && !isNaN(candle.high) && 
             !isNaN(candle.low) && !isNaN(candle.close) &&
             candle.open > 0 && candle.high > 0 && candle.low > 0 && candle.close > 0
