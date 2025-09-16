@@ -533,8 +533,34 @@ class ApiService {
     try {
       console.log('🔍 Fetching all signal analytics from backend...');
       
-      // TODO: Replace with actual Lambda endpoint once available
-      // For now, returning mock data structure
+      // Use Lambda Function URL for direct access - Lambda handles CORS
+      const lambdaEndpoint = 'https://hqsiypravhxr5lhhkajvstmnpi0mxckg.lambda-url.us-east-1.on.aws/analytics/all-signals';
+      
+      try {
+        const response = await fetch(lambdaEndpoint, {
+          method: 'GET',
+          mode: 'cors',
+          credentials: 'omit'
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success) {
+            console.log('✅ Successfully fetched signal analytics from Lambda');
+            return {
+              success: true,
+              data: data.data,
+              metadata: data.metadata
+            };
+          }
+        }
+        
+        console.warn('⚠️ Lambda endpoint failed, falling back to mock data');
+      } catch (error) {
+        console.warn('⚠️ Failed to fetch from Lambda endpoint, using mock data:', error);
+      }
+      
+      // Fallback to mock data if Lambda fails
       const mockData: Record<string, any> = {};
       const currencyPairs = [
         'EUR_USD', 'GBP_USD', 'USD_CAD', 'AUD_USD', 'USD_JPY', 'NZD_USD', 'USD_CHF',

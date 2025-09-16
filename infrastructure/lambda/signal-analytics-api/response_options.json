@@ -1,0 +1,1 @@
+{"statusCode": 200, "headers": {"Access-Control-Allow-Origin": "https://pipstop.org", "Access-Control-Allow-Headers": "Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,x-api-key,Accept,Origin", "Access-Control-Allow-Methods": "GET,OPTIONS,POST", "Access-Control-Allow-Credentials": "false", "Access-Control-Max-Age": "86400", "Vary": "Origin"}, "body": ""}
