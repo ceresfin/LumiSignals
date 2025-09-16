@@ -16,6 +16,7 @@ Future modules (planned):
 
 # Core module imports
 from . import momentum
+from . import fibonacci
 
 # Package metadata
 __version__ = "1.0.0"
@@ -26,6 +27,7 @@ __description__ = "Shared trading infrastructure for LumiSignals Lambda function
 # Define what gets imported with "from lumisignals_trading_core import *"
 __all__ = [
     'momentum',
+    'fibonacci',
 ]
 
 # Quick access to most commonly used classes
@@ -36,13 +38,20 @@ from .momentum import (
     is_market_currently_open
 )
 
+from .fibonacci import (
+    analyze_fibonacci_levels,
+    detect_swing_points,
+    find_significant_swings,
+    generate_fibonacci_levels
+)
+
 # Layer information
 LAYER_INFO = {
     'name': 'lumisignals-trading-core',
     'version': __version__,
     'description': __description__,
     'author': __author__,
-    'modules': ['momentum'],
+    'modules': ['momentum', 'fibonacci'],
     'primary_classes': [
         'MarketAwareMomentumCalculator',
         'ForexMarketSchedule'

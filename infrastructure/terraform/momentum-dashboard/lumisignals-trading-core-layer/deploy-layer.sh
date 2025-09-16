@@ -35,7 +35,7 @@ fi
 # Create deployment package
 echo "🗜️  Creating deployment package..."
 cd build
-zip -r ../lumisignals-trading-core-layer.zip python/
+python3 ../create_zip.py
 cd ..
 
 # Get package size

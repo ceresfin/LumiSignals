@@ -18,11 +18,176 @@ import json
 import os
 import logging
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
+import redis
+import boto3
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Redis cluster configuration (matches Fargate configuration)
+REDIS_NODES = [
+    "lumisignals-main-vpc-trading-shard-1-001.wo9apa.0001.use1.cache.amazonaws.com:6379",
+    "lumisignals-main-vpc-trading-shard-2-001.wo9apa.0001.use1.cache.amazonaws.com:6379", 
+    "lumisignals-main-vpc-trading-shard-3-001.wo9apa.0001.use1.cache.amazonaws.com:6379",
+    "lumisignals-main-vpc-trading-shard-4-001.wo9apa.0001.use1.cache.amazonaws.com:6379"
+]
+
+# Currency pair to shard mapping (matches Fargate sharding)
+SHARD_MAPPING = {
+    # Shard 0: Major USD pairs
+    "EUR_USD": 0, "GBP_USD": 0, "USD_JPY": 0, "USD_CAD": 0, 
+    "AUD_USD": 0, "NZD_USD": 0, "USD_CHF": 0,
+    
+    # Shard 1: EUR cross pairs + GBP_JPY
+    "EUR_GBP": 1, "EUR_JPY": 1, "EUR_CAD": 1, "EUR_AUD": 1, 
+    "EUR_NZD": 1, "EUR_CHF": 1, "GBP_JPY": 1,
+    
+    # Shard 2: GBP and AUD cross pairs
+    "GBP_CAD": 2, "GBP_AUD": 2, "GBP_NZD": 2, "GBP_CHF": 2,
+    "AUD_JPY": 2, "AUD_CAD": 2, "AUD_NZD": 2,
+    
+    # Shard 3: Remaining cross pairs
+    "AUD_CHF": 3, "NZD_JPY": 3, "NZD_CAD": 3, "NZD_CHF": 3,
+    "CAD_JPY": 3, "CAD_CHF": 3, "CHF_JPY": 3
+}
+
+# Initialize Redis connections
+redis_connections = {}
+
+def init_redis_connections():
+    """Initialize Redis connections to all shards"""
+    global redis_connections
+    for i, node in enumerate(REDIS_NODES):
+        try:
+            host, port = node.split(':')
+            redis_connections[i] = redis.Redis(
+                host=host,
+                port=int(port),
+                decode_responses=False,  # Keep as bytes for JSON parsing
+                socket_connect_timeout=30,
+                socket_timeout=30,
+                retry_on_timeout=True,
+                health_check_interval=30
+            )
+            logger.info(f"Connected to Redis shard {i}: {node}")
+        except Exception as e:
+            logger.error(f"Failed to connect to Redis shard {i}: {e}")
+
+def get_redis_client_for_instrument(instrument: str):
+    """Get the correct Redis client for an instrument based on sharding"""
+    if not redis_connections:
+        init_redis_connections()
+    
+    shard_id = SHARD_MAPPING.get(instrument, 0)
+    return redis_connections.get(shard_id)
+
+def get_redis_candles(redis_key: str, instrument: str) -> List[Dict]:
+    """Get candlestick data from Redis"""
+    try:
+        redis_client = get_redis_client_for_instrument(instrument)
+        if not redis_client:
+            logger.error(f"No Redis client available for instrument {instrument}")
+            return []
+        
+        # Get data from Redis LIST (stored as individual JSON entries)
+        raw_candles = redis_client.lrange(redis_key, 0, -1)
+        if not raw_candles:
+            logger.warning(f"No data found for key: {redis_key}")
+            return []
+        
+        # Parse each JSON entry
+        candles = []
+        for raw_candle in raw_candles:
+            try:
+                # Handle both string and bytes
+                if isinstance(raw_candle, bytes):
+                    raw_candle = raw_candle.decode('utf-8')
+                candle = json.loads(raw_candle)
+                candles.append(candle)
+            except Exception as e:
+                logger.error(f"Failed to parse candle: {e}")
+        
+        logger.info(f"Retrieved {len(candles)} candles from {redis_key}")
+        return candles
+        
+    except Exception as e:
+        logger.error(f"Error retrieving Redis data for {redis_key}: {e}")
+        return []
+
+def get_current_price(instrument: str) -> float:
+    """Get current price from Redis"""
+    try:
+        redis_client = get_redis_client_for_instrument(instrument)
+        if not redis_client:
+            return None
+        
+        pricing_key = f"market_data:{instrument}:pricing:current"
+        price_data = redis_client.get(pricing_key)
+        
+        if price_data:
+            # Handle bytes
+            if isinstance(price_data, bytes):
+                price_data = price_data.decode('utf-8')
+            pricing = json.loads(price_data)
+            # Return mid price (average of bid/ask)
+            return (pricing.get('bid', 0) + pricing.get('ask', 0)) / 2
+        
+        return None
+        
+    except Exception as e:
+        logger.error(f"Error getting current price for {instrument}: {e}")
+        return None
+
+def get_tiered_price_data(instrument: str, timeframe: str = 'H1') -> Dict[str, Any]:
+    """
+    Get all price data tiers for an instrument/timeframe
+    This is the centralized data retrieval function that all analytics will use
+    """
+    try:
+        logger.info(f"Retrieving tiered price data for {instrument} {timeframe}")
+        
+        # Get data from all tiers
+        hot_data = get_redis_candles(f"market_data:{instrument}:{timeframe}:hot", instrument)
+        warm_data = get_redis_candles(f"market_data:{instrument}:{timeframe}:warm", instrument) 
+        cold_data = get_redis_candles(f"market_data:{instrument}:{timeframe}:historical", instrument)
+        current_price = get_current_price(instrument)
+        
+        # Combine hot + warm for complete dataset (500 candles total)
+        combined_data = hot_data + warm_data
+        
+        # If we don't have enough data, fall back to cold tier
+        if len(combined_data) < 100:
+            logger.warning(f"Insufficient hot+warm data ({len(combined_data)} candles), using cold tier")
+            combined_data = cold_data
+        
+        result = {
+            'hot': hot_data,
+            'warm': warm_data, 
+            'cold': cold_data,
+            'combined': combined_data,
+            'current_price': current_price,
+            'instrument': instrument,
+            'timeframe': timeframe,
+            'total_candles': len(combined_data)
+        }
+        
+        logger.info(f"Retrieved tiered data: hot={len(hot_data)}, warm={len(warm_data)}, cold={len(cold_data)}, current_price={current_price}")
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error retrieving tiered price data for {instrument} {timeframe}: {e}")
+        return {
+            'hot': [],
+            'warm': [],
+            'cold': [],
+            'combined': [],
+            'current_price': None,
+            'instrument': instrument,
+            'timeframe': timeframe,
+            'total_candles': 0
+        }
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
@@ -101,7 +266,8 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         
         # Route to appropriate handler
         if path == '/analytics/all-signals' and http_method == 'GET':
-            return handle_all_signals(query_parameters, cors_headers)
+            timeframe = query_parameters.get('timeframe', 'H1')
+            return handle_all_signals(query_parameters, cors_headers, timeframe)
         elif path.startswith('/analytics/momentum/') and http_method == 'GET':
             instrument = path_parameters.get('instrument')
             return handle_momentum_analysis(instrument, query_parameters, cors_headers)
@@ -131,7 +297,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             })
         }
 
-def handle_all_signals(query_parameters: Dict[str, str], cors_headers: Dict[str, str]) -> Dict[str, Any]:
+def handle_all_signals(query_parameters: Dict[str, str], cors_headers: Dict[str, str], timeframe: str = 'H1') -> Dict[str, Any]:
     """
     Handle GET /analytics/all-signals
     Returns comprehensive signal analytics for all currency pairs
@@ -172,8 +338,8 @@ def handle_all_signals(query_parameters: Dict[str, str], cors_headers: Dict[str,
         
         for pair in currency_pairs:
             try:
-                # Generate analytics for each pair
-                signal_data[pair] = generate_pair_analytics(pair)
+                # Generate analytics for each pair with specified timeframe
+                signal_data[pair] = generate_pair_analytics(pair, timeframe)
                 
             except Exception as e:
                 logger.error(f"Error generating analytics for {pair}: {str(e)}")
@@ -210,47 +376,108 @@ def handle_all_signals(query_parameters: Dict[str, str], cors_headers: Dict[str,
             })
         }
 
-def generate_pair_analytics(instrument: str) -> Dict[str, Any]:
+def analyze_fibonacci_tiered(price_data: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Generate comprehensive analytics for a single currency pair
+    Analyze Fibonacci levels using tiered price data
     """
     try:
-        # In production, this would use real OANDA data
-        # For now, we'll generate realistic sample data based on the instrument
+        from lumisignals_trading_core.fibonacci import analyze_fibonacci_levels
         
-        # Determine if this is a JPY pair for proper price scaling
+        instrument = price_data['instrument']
+        current_price = price_data['current_price']
+        combined_candles = price_data['combined']
+        
+        # Convert Redis candle format to analysis format if needed
+        formatted_candles = []
+        for candle in combined_candles:
+            formatted_candles.append({
+                'high': float(candle.get('high', candle.get('h', 0))),
+                'low': float(candle.get('low', candle.get('l', 0))),
+                'close': float(candle.get('close', candle.get('c', 0))),
+                'timestamp': candle.get('timestamp', candle.get('time', ''))
+            })
+        
+        # Use real analysis with actual market data
+        if current_price and len(formatted_candles) > 10:
+            result = analyze_fibonacci_levels(instrument, current_price, formatted_candles)
+            logger.info(f"Generated real Fibonacci data for {instrument} with {len(formatted_candles)} candles, current_price={current_price}")
+            return result
+        else:
+            logger.warning(f"Insufficient data for {instrument}: current_price={current_price}, candles={len(formatted_candles)}")
+            raise Exception("Insufficient data for analysis")
+            
+    except Exception as e:
+        logger.warning(f"Fibonacci analysis failed for {price_data['instrument']}: {e}")
+        # Fallback to basic analysis
+        return create_fallback_fibonacci(price_data)
+
+def create_fallback_fibonacci(price_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Create fallback Fibonacci analysis when real analysis fails"""
+    instrument = price_data['instrument']
+    current_price = price_data['current_price']
+    
+    # Use current price if available, otherwise estimate
+    if not current_price:
         is_jpy_pair = 'JPY' in instrument
-        base_price = 150.0 if is_jpy_pair else 1.1000
-        price_range = 5.0 if is_jpy_pair else 0.0500
+        current_price = 150.0 if is_jpy_pair else 1.1000
+    
+    # Create reasonable high/low based on current price
+    price_range = current_price * 0.05  # 5% range
+    high = current_price + (price_range * 0.7)
+    low = current_price - (price_range * 0.3)
+    
+    return {
+        'levels': [0.0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0],
+        'high': high,
+        'low': low,
+        'direction': 'neutral',
+        'current_retracement': 0.5,
+        'key_level': 0.618,
+        'fallback': True,
+        'message': f'Using fallback analysis for {instrument}'
+    }
+
+def generate_pair_analytics(instrument: str, timeframe: str = 'H1') -> Dict[str, Any]:
+    """
+    Generate comprehensive analytics for a single currency pair using centralized data retrieval
+    """
+    try:
+        logger.info(f"Generating analytics for {instrument} {timeframe}")
         
-        # Generate Fibonacci levels
-        high = base_price + (price_range * 0.7)
-        low = base_price - (price_range * 0.3)
+        # GET ALL DATA ONCE - This is the key improvement
+        price_data = get_tiered_price_data(instrument, timeframe)
         
-        fibonacci_data = {
-            'levels': [0.0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0],
-            'high': high,
-            'low': low,
-            'direction': 'bullish',
-            'current_retracement': 0.382,
-            'key_level': 0.618
-        }
+        if price_data['total_candles'] == 0:
+            logger.warning(f"No price data available for {instrument} {timeframe}")
+            return create_error_analytics(instrument, f"No price data available for {timeframe}")
         
-        # Generate Supply/Demand zones
+        # RUN ALL ANALYTICS WITH SAME DATA
+        fibonacci_data = analyze_fibonacci_tiered(price_data)
+        
+        # Future analytics will use the same price_data:
+        # rsi_data = analyze_rsi_tiered(price_data)
+        # ma_data = analyze_moving_averages_tiered(price_data)
+        # sentiment_data = analyze_sentiment_tiered(price_data)
+        
+        # Generate other analytics (using mock data for now - will be replaced with tiered analysis)
+        current_price = price_data['current_price'] or 1.1000
+        price_range = current_price * 0.05
+        
+        # Generate Supply/Demand zones (future: analyze_supply_demand_tiered(price_data))
         supply_demand_data = {
             'zones': [
                 {
                     'type': 'supply',
-                    'start': high - (price_range * 0.1),
-                    'end': high,
+                    'start': current_price + (price_range * 0.5),
+                    'end': current_price + (price_range * 0.7),
                     'strength': 0.85,
                     'touches': 2,
                     'freshness': 0.9
                 },
                 {
                     'type': 'demand',
-                    'start': low,
-                    'end': low + (price_range * 0.1),
+                    'start': current_price - (price_range * 0.7),
+                    'end': current_price - (price_range * 0.5),
                     'strength': 0.92,
                     'touches': 1,
                     'freshness': 1.0
@@ -258,7 +485,7 @@ def generate_pair_analytics(instrument: str) -> Dict[str, Any]:
             ]
         }
         
-        # Generate momentum analysis (would use MarketAwareMomentumCalculator in production)
+        # Generate momentum analysis (future: analyze_momentum_tiered(price_data))
         momentum_data = {
             'overall_bias': 'BULLISH',
             'confidence': 0.73,
@@ -272,7 +499,7 @@ def generate_pair_analytics(instrument: str) -> Dict[str, Any]:
             }
         }
         
-        # Generate consensus signal
+        # Generate consensus signal (future: analyze_consensus_tiered(price_data))
         consensus_data = {
             'trading_ready': True,
             'signal': 'BULLISH',
@@ -281,7 +508,7 @@ def generate_pair_analytics(instrument: str) -> Dict[str, Any]:
             'strength': 'STRONG'
         }
         
-        # Generate other signals
+        # Generate trend analysis (future: analyze_trend_tiered(price_data))
         trend_data = {
             'direction': 'up',
             'strength': 0.72,
@@ -293,13 +520,15 @@ def generate_pair_analytics(instrument: str) -> Dict[str, Any]:
             }
         }
         
+        # Generate RSI/SMA analysis (future: analyze_rsi_sma_tiered(price_data))
         rsi_sma_data = {
             'rsi': 62,
-            'sma': base_price * 0.999,
+            'sma': current_price * 0.999,
             'quadrant': 'bullish',
             'rsi_level': 'neutral'
         }
         
+        # Generate sentiment analysis (future: analyze_sentiment_tiered(price_data))
         adam_button_data = {
             'sentiment': 'neutral',
             'strength': 'moderate',
@@ -313,6 +542,7 @@ def generate_pair_analytics(instrument: str) -> Dict[str, Any]:
             'direction': 'bullish'
         }
         
+        # Generate candlestick analysis (future: analyze_candlestick_tiered(price_data))
         candlestick_data = {
             'patterns': [
                 {
@@ -326,6 +556,7 @@ def generate_pair_analytics(instrument: str) -> Dict[str, Any]:
         
         return {
             'instrument': instrument,
+            'timeframe': timeframe,
             'fibonacci': fibonacci_data,
             'supplyDemand': supply_demand_data,
             'momentum': momentum_data,
@@ -335,6 +566,9 @@ def generate_pair_analytics(instrument: str) -> Dict[str, Any]:
             'adamButton': adam_button_data,
             'scotiabank': scotiabank_data,
             'candlestick': candlestick_data,
+            'data_source': 'redis_tiered',
+            'total_candles': price_data['total_candles'],
+            'current_price': current_price,
             'generated_at': datetime.utcnow().isoformat() + 'Z'
         }
         

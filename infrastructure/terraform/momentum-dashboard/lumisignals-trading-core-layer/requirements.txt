@@ -7,6 +7,9 @@ pytz>=2023.3
 # HTTP requests for OANDA API integration
 requests>=2.31.0
 
+# Numerical computing for Fibonacci analysis
+numpy>=1.24.0
+
 # JSON handling (included in Python standard library, but explicit for clarity)
 # json - standard library
 
