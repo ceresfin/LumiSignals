@@ -527,6 +527,91 @@ class ApiService {
       portfolioOverview,
     };
   }
+
+  // Get all signal analytics for all currency pairs
+  async getAllSignalAnalytics(): Promise<ApiResponse<Record<string, any>>> {
+    try {
+      console.log('🔍 Fetching all signal analytics from backend...');
+      
+      // TODO: Replace with actual Lambda endpoint once available
+      // For now, returning mock data structure
+      const mockData: Record<string, any> = {};
+      const currencyPairs = [
+        'EUR_USD', 'GBP_USD', 'USD_CAD', 'AUD_USD', 'USD_JPY', 'NZD_USD', 'USD_CHF',
+        'EUR_GBP', 'EUR_JPY', 'GBP_JPY', 'AUD_JPY', 'EUR_CAD', 'GBP_CAD', 'AUD_CAD',
+        'EUR_AUD', 'EUR_CHF', 'GBP_CHF', 'AUD_CHF', 'CAD_CHF', 'NZD_CHF', 'CHF_JPY',
+        'NZD_JPY', 'CAD_JPY', 'EUR_NZD', 'GBP_NZD', 'AUD_NZD', 'NZD_CAD', 'GBP_AUD'
+      ];
+
+      currencyPairs.forEach(pair => {
+        mockData[pair] = {
+          fibonacci: {
+            levels: [0.236, 0.382, 0.5, 0.618, 0.786],
+            high: 1.1234,
+            low: 1.0987,
+            direction: 'bullish'
+          },
+          supplyDemand: {
+            zones: [
+              { type: 'supply', start: 1.1200, end: 1.1250, strength: 0.8 },
+              { type: 'demand', start: 1.0950, end: 1.1000, strength: 0.9 }
+            ]
+          },
+          momentum: {
+            value: 0.65,
+            direction: 'bullish',
+            strength: 'strong'
+          },
+          trend: {
+            direction: 'up',
+            strength: 0.72,
+            timeframes: {
+              '5m': 'up',
+              '15m': 'up',
+              '1h': 'neutral',
+              '4h': 'up'
+            }
+          },
+          rsiSma: {
+            rsi: 62,
+            sma: 1.1100,
+            quadrant: 'bullish'
+          },
+          adamButton: {
+            sentiment: 'neutral',
+            lastUpdate: new Date().toISOString()
+          },
+          scotiabank: {
+            flow: 'buying',
+            strength: 'moderate',
+            volume: 250000000
+          },
+          candlestick: {
+            patterns: [
+              { name: 'hammer', timestamp: new Date().toISOString(), reliability: 0.75 }
+            ]
+          }
+        };
+      });
+
+      // Simulate API call with actual endpoint when available
+      // const response: AxiosResponse<any> = await this.client.get('/analytics/all-signals');
+      
+      return {
+        success: true,
+        data: mockData,
+        timestamp: new Date().toISOString(),
+      };
+    } catch (error: any) {
+      console.error('❌ Error fetching signal analytics:', error);
+      return {
+        success: false,
+        data: {},
+        error: error.message || 'Failed to fetch signal analytics',
+        timestamp: new Date().toISOString(),
+      };
+    }
+  }
 }
 
 // Create and export a singleton instance

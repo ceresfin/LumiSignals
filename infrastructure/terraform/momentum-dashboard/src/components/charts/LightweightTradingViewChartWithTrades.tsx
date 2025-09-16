@@ -36,6 +36,13 @@ interface ActiveTrade {
   open_time: string;
 }
 
+interface SignalToggle {
+  id: string;
+  label: string;
+  enabled: boolean;
+  group: 'priceAction' | 'sentiment' | 'structure';
+}
+
 interface LightweightTradingViewChartWithTradesProps {
   currencyPair: string;
   timeframe?: string;
@@ -45,6 +52,8 @@ interface LightweightTradingViewChartWithTradesProps {
   onUserInteraction?: () => void;
   preserveZoom?: boolean;
   activeTrades?: ActiveTrade[]; // CRITICAL FIX: Pass trades as props instead of fetching in each component
+  enabledSignals?: SignalToggle[];
+  signalData?: any;
 }
 
 interface InstitutionalLevel {
@@ -180,7 +189,9 @@ const LightweightTradingViewChartWithTradesComponent: React.FC<LightweightTradin
   sortRank,
   onUserInteraction,
   preserveZoom = false,
-  activeTrades = [] // CRITICAL FIX: Use passed trades instead of fetching
+  activeTrades = [], // CRITICAL FIX: Use passed trades instead of fetching
+  enabledSignals = [],
+  signalData = {}
 }) => {
   console.log(`🚀 TradingViewChartWithTrades mounted for ${currencyPair}, strategies:`, selectedStrategies);
   
@@ -423,10 +434,152 @@ const LightweightTradingViewChartWithTradesComponent: React.FC<LightweightTradin
           candlestickSeriesRef.current.setMarkers([]);
         }
         markersRef.current = [];
+        
+        // Clear signal overlays
+        clearSignalOverlays();
       } catch (e) {
         console.warn('Error clearing chart overlays:', e);
       }
     }
+  };
+  
+  // Signal overlay references
+  const signalOverlaysRef = useRef<{
+    fibonacciLines: IPriceLine[];
+    supplyDemandRects: any[];
+  }>({
+    fibonacciLines: [],
+    supplyDemandRects: []
+  });
+  
+  // Clear signal overlays
+  const clearSignalOverlays = () => {
+    if (candlestickSeriesRef.current) {
+      // Clear Fibonacci lines
+      signalOverlaysRef.current.fibonacciLines.forEach(line => {
+        try {
+          candlestickSeriesRef.current?.removePriceLine(line);
+        } catch (e) {
+          console.warn('Error removing Fibonacci line:', e);
+        }
+      });
+      signalOverlaysRef.current.fibonacciLines = [];
+    }
+  };
+  
+  // Add Fibonacci overlay
+  const addFibonacciOverlay = (fibData: any) => {
+    if (!candlestickSeriesRef.current || !fibData) return;
+    
+    console.log('📐 Adding Fibonacci overlay:', fibData);
+    
+    const { levels, high, low } = fibData;
+    const range = high - low;
+    
+    // Standard Fibonacci retracement levels with colors
+    const fibLevels = [
+      { level: 0.0, color: '#FF0000', label: '0.0%' },
+      { level: 0.236, color: '#FF7F00', label: '23.6%' },
+      { level: 0.382, color: '#FFFF00', label: '38.2%' },
+      { level: 0.5, color: '#00FF00', label: '50.0%' },
+      { level: 0.618, color: '#0000FF', label: '61.8%' },
+      { level: 0.786, color: '#4B0082', label: '78.6%' },
+      { level: 1.0, color: '#9400D3', label: '100.0%' }
+    ];
+    
+    fibLevels.forEach(({ level, color, label }) => {
+      const price = low + (range * level);
+      
+      try {
+        const priceLine = candlestickSeriesRef.current.createPriceLine({
+          price,
+          color,
+          lineWidth: 1,
+          lineStyle: 2, // Dashed
+          axisLabelVisible: true,
+          title: `Fib ${label}`
+        });
+        
+        signalOverlaysRef.current.fibonacciLines.push(priceLine);
+      } catch (e) {
+        console.warn('Error adding Fibonacci line:', e);
+      }
+    });
+  };
+  
+  // Add Supply/Demand overlay
+  const addSupplyDemandOverlay = (zones: any[]) => {
+    if (!candlestickSeriesRef.current || !zones || zones.length === 0) return;
+    
+    console.log('📊 Adding Supply/Demand zones:', zones);
+    
+    zones.forEach(zone => {
+      const { type, start, end, strength } = zone;
+      const color = type === 'supply' ? 'rgba(255, 0, 0, 0.1)' : 'rgba(0, 255, 0, 0.1)';
+      const borderColor = type === 'supply' ? 'rgba(255, 0, 0, 0.3)' : 'rgba(0, 255, 0, 0.3)';
+      
+      // Create top and bottom lines for the zone
+      try {
+        const topLine = candlestickSeriesRef.current.createPriceLine({
+          price: end,
+          color: borderColor,
+          lineWidth: 2,
+          lineStyle: 0, // Solid
+          axisLabelVisible: false,
+          title: ''
+        });
+        
+        const bottomLine = candlestickSeriesRef.current.createPriceLine({
+          price: start,
+          color: borderColor,
+          lineWidth: 2,
+          lineStyle: 0, // Solid
+          axisLabelVisible: false,
+          title: ''
+        });
+        
+        signalOverlaysRef.current.fibonacciLines.push(topLine, bottomLine);
+      } catch (e) {
+        console.warn('Error adding supply/demand zone:', e);
+      }
+    });
+  };
+  
+  // Add signal overlays based on enabled signals
+  const addSignalOverlays = () => {
+    if (!enabledSignals || !signalData || enabledSignals.length === 0) {
+      console.log(`📊 No signals to overlay for ${currencyPair}`);
+      return;
+    }
+    
+    console.log(`📊 Adding signal overlays for ${currencyPair}:`, {
+      enabledSignals: enabledSignals.map(s => s.id),
+      hasData: !!signalData
+    });
+    
+    // Clear previous signal overlays
+    clearSignalOverlays();
+    
+    enabledSignals.forEach(signal => {
+      switch (signal.id) {
+        case 'fibonacci':
+          if (signalData.fibonacci) {
+            addFibonacciOverlay(signalData.fibonacci);
+          }
+          break;
+          
+        case 'supply-demand':
+          if (signalData.supplyDemand?.zones) {
+            addSupplyDemandOverlay(signalData.supplyDemand.zones);
+          }
+          break;
+          
+        // TODO: Add other signal overlays as they're implemented
+        default:
+          console.log(`📊 Signal overlay not yet implemented: ${signal.id}`);
+          break;
+      }
+    });
   };
 
   // Add trade overlays
@@ -881,6 +1034,10 @@ const LightweightTradingViewChartWithTradesComponent: React.FC<LightweightTradin
     console.log(`🎯 Calling addTradeOverlays for ${currencyPair}`);
     addTradeOverlays();
     
+    // Add signal overlays if enabled
+    console.log(`🎯 Calling addSignalOverlays for ${currencyPair}`);
+    addSignalOverlays();
+    
     // Add institutional levels if enabled
     addInstitutionalLevels();
     
@@ -1152,6 +1309,20 @@ const LightweightTradingViewChartWithTradesComponent: React.FC<LightweightTradin
       // clearInterval(interval);
     };
   }, [currencyPair, timeframe]);
+  
+  // Update signal overlays when enabled signals or signal data changes
+  useEffect(() => {
+    if (!candlestickSeriesRef.current || !enabledSignals || !signalData) return;
+    
+    console.log(`🔄 Signal overlay update for ${currencyPair}:`, {
+      enabledSignalsCount: enabledSignals?.length || 0,
+      hasSignalData: !!signalData,
+      enabledSignalIds: enabledSignals?.map(s => s.id) || []
+    });
+    
+    // Add signal overlays
+    addSignalOverlays();
+  }, [enabledSignals, signalData, currencyPair]);
 
   // Render institutional level controls
   const renderInstitutionalControls = () => {

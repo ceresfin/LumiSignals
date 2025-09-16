@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, startTransition, useRef } from 'react';
 import { LightweightTradingViewChartWithTrades } from './LightweightTradingViewChartWithTrades';
+import { SignalControlPanel, SignalToggle } from './SignalControlPanel';
 import { api } from '../../services/api';
 import { ChevronDown, Filter, TrendingUp, Target, Shield } from 'lucide-react';
 
@@ -13,6 +14,8 @@ interface LazyChartWrapperProps {
   onUserInteraction: () => void;
   preserveZoom: boolean;
   activeTrades: any[];
+  enabledSignals?: SignalToggle[];
+  signalData?: any;
 }
 
 const LazyChartWrapper: React.FC<LazyChartWrapperProps> = (props) => {
@@ -48,7 +51,11 @@ const LazyChartWrapper: React.FC<LazyChartWrapperProps> = (props) => {
   return (
     <div ref={elementRef} style={{ minHeight: props.height }}>
       {isVisible ? (
-        <LightweightTradingViewChartWithTrades {...props} />
+        <LightweightTradingViewChartWithTrades 
+          {...props} 
+          enabledSignals={props.enabledSignals}
+          signalData={props.signalData}
+        />
       ) : (
         <div 
           className="flex items-center justify-center bg-gray-100 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700"
@@ -131,6 +138,27 @@ export const CurrencyPairGraphsWithTrades: React.FC<CurrencyPairGraphsWithTrades
   const [hasInitialSort, setHasInitialSort] = useState(false);
   const [allActiveTrades, setAllActiveTrades] = useState<any[]>([]);
   const [selectedTimeframe, setSelectedTimeframe] = useState<string>(timeframe || 'H1');
+  
+  // Signal Control state
+  const [signals, setSignals] = useState<SignalToggle[]>([
+    // Price Action signals
+    { id: 'trend-multi', label: 'Trend (Multi-timeframe)', enabled: false, group: 'priceAction' },
+    { id: 'momentum', label: 'Momentum', enabled: false, group: 'priceAction' },
+    { id: 'rsi-sma', label: 'RSI/SMA Quadrant', enabled: false, group: 'priceAction' },
+    
+    // Sentiment signals
+    { id: 'adam-button', label: 'Adam Button', enabled: false, group: 'sentiment' },
+    { id: 'scotiabank', label: 'Scotiabank', enabled: false, group: 'sentiment' },
+    
+    // Structure signals
+    { id: 'fibonacci', label: 'Fibonacci', enabled: false, group: 'structure' },
+    { id: 'supply-demand', label: 'Untouched Supply and Demand', enabled: false, group: 'structure' },
+    { id: 'candlestick', label: 'Candlestick Formations', enabled: false, group: 'structure' },
+  ]);
+  
+  // Signal data from backend
+  const [signalData, setSignalData] = useState<Record<string, any>>({});
+  const [isRefreshingSignals, setIsRefreshingSignals] = useState(false);
 
   // DEBUG: Track render count and object reference changes
   const renderCount = React.useRef(0);
@@ -370,6 +398,42 @@ export const CurrencyPairGraphsWithTrades: React.FC<CurrencyPairGraphsWithTrades
     // Clear user interactions when resorting
     setUserInteractedCharts(new Set());
   };
+  
+  // Signal Control handlers
+  const handleToggleSignal = (id: string) => {
+    setSignals(prev => prev.map(signal => 
+      signal.id === id ? { ...signal, enabled: !signal.enabled } : signal
+    ));
+  };
+  
+  const handleClearAllSignals = () => {
+    setSignals(prev => prev.map(signal => ({ ...signal, enabled: false })));
+  };
+  
+  const handleRefreshSignals = async () => {
+    const enabledSignals = signals.filter(s => s.enabled);
+    if (enabledSignals.length === 0) {
+      console.log('No signals enabled, skipping refresh');
+      return;
+    }
+    
+    setIsRefreshingSignals(true);
+    console.log('🔄 Refreshing signals for enabled indicators:', enabledSignals.map(s => s.label));
+    
+    try {
+      const response = await api.getAllSignalAnalytics();
+      if (response.success && response.data) {
+        console.log('✅ Signal data received:', Object.keys(response.data).length, 'currency pairs');
+        setSignalData(response.data);
+      } else {
+        console.error('❌ Failed to fetch signal data:', response.error);
+      }
+    } catch (error) {
+      console.error('❌ Error refreshing signals:', error);
+    } finally {
+      setIsRefreshingSignals(false);
+    }
+  };
 
   return (
     <div className="p-8">
@@ -505,6 +569,15 @@ export const CurrencyPairGraphsWithTrades: React.FC<CurrencyPairGraphsWithTrades
         </div>
       </div>
 
+      {/* Signal Control Panel */}
+      <SignalControlPanel
+        signals={signals}
+        onToggleSignal={handleToggleSignal}
+        onClearAll={handleClearAllSignals}
+        onRefreshSignals={handleRefreshSignals}
+        isRefreshing={isRefreshingSignals}
+      />
+
       {/* Institutional Level Proximity Indicator and Resort Button */}
       {Object.keys(currentPrices).length > 0 && (
         <div className="mb-4 flex items-center justify-center gap-6">
@@ -529,19 +602,26 @@ export const CurrencyPairGraphsWithTrades: React.FC<CurrencyPairGraphsWithTrades
       
       {/* Currency Pair Charts Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {sortedPairs.map((pair) => (
-          <LazyChartWrapper
-            key={`${pair}-${selectedTimeframe}`}
-            currencyPair={pair}
-            timeframe={selectedTimeframe}
-            height={chartHeight}
-            selectedStrategies={selectedStrategies}
-            sortRank={sortRankings.get(pair)}
-            onUserInteraction={chartInteractionCallbacks[pair]}
-            preserveZoom={preserveZoomSettings[pair]}
-            activeTrades={filteredTradesByPair[pair] || []}
-          />
-        ))}
+        {sortedPairs.map((pair) => {
+          const enabledSignals = signals.filter(s => s.enabled);
+          const pairSignalData = signalData[pair] || {};
+          
+          return (
+            <LazyChartWrapper
+              key={`${pair}-${selectedTimeframe}`}
+              currencyPair={pair}
+              timeframe={selectedTimeframe}
+              height={chartHeight}
+              selectedStrategies={selectedStrategies}
+              sortRank={sortRankings.get(pair)}
+              onUserInteraction={chartInteractionCallbacks[pair]}
+              preserveZoom={preserveZoomSettings[pair]}
+              activeTrades={filteredTradesByPair[pair] || []}
+              enabledSignals={enabledSignals}
+              signalData={pairSignalData}
+            />
+          );
+        })}
       </div>
 
       {/* Architecture Information */}
