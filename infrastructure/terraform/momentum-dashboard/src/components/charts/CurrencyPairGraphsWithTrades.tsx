@@ -151,7 +151,8 @@ export const CurrencyPairGraphsWithTrades: React.FC<CurrencyPairGraphsWithTrades
     { id: 'scotiabank', label: 'Scotiabank', enabled: false, group: 'sentiment' },
     
     // Structure signals
-    { id: 'fibonacci', label: 'Fibonacci', enabled: false, group: 'structure' },
+    { id: 'fibonacci-fixed', label: 'Fibonacci (Fixed)', enabled: false, group: 'structure' },
+    { id: 'fibonacci-atr', label: 'Fibonacci (ATR)', enabled: false, group: 'structure' },
     { id: 'supply-demand', label: 'Untouched Supply and Demand', enabled: false, group: 'structure' },
     { id: 'candlestick', label: 'Candlestick Formations', enabled: false, group: 'structure' },
   ]);

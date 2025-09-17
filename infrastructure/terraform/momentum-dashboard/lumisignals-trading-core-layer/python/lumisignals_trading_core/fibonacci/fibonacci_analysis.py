@@ -3,11 +3,17 @@
 LumiSignals Trading Core - Fibonacci Analysis Implementation
 
 Automatic Fibonacci level detection and confluence analysis.
+
+Supports two modes:
+- 'fixed': Timeframe-aware fixed pip thresholds
+- 'atr': Dynamic ATR-based thresholds
 """
 
 import numpy as np
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional, Union
+from .atr_calculator import calculate_atr, get_atr_multipliers_by_strategy
+from .timeframe_config import get_timeframe_parameters, get_timeframe_fibonacci_ratios
 
 def detect_swing_points(price_data: List[Dict], window: int = 5, min_strength: int = 3) -> Dict[str, List]:
     """
@@ -113,6 +119,56 @@ def find_significant_swings(swing_points: Dict, min_pip_distance: int = 100, is_
                     last_swing = swing
     
     return significant_swings
+
+def find_significant_swings_timeframe(swing_points: Dict, timeframe: str = 'H1', is_jpy: bool = False) -> List[Dict]:
+    """
+    Find significant swings using timeframe-specific thresholds.
+    """
+    params = get_timeframe_parameters(timeframe)
+    min_pip_distance = params['min_pip_distance']
+    return find_significant_swings(swing_points, min_pip_distance, is_jpy)
+
+def find_significant_swings_atr(swing_points: Dict, price_data: List[Dict], atr_multiplier: float = 2.0, is_jpy: bool = False) -> Dict[str, Any]:
+    """
+    Find significant swings using ATR-based thresholds.
+    """
+    # Calculate ATR
+    atr_analysis = calculate_atr(price_data, period=14)
+    current_atr = atr_analysis['current_atr']
+    
+    if current_atr == 0:
+        return {
+            'significant_swings': [],
+            'total_swings': 0,
+            'atr_analysis': atr_analysis,
+            'message': 'Unable to calculate ATR'
+        }
+    
+    # Calculate swing threshold in pips
+    pip_value = 0.01 if is_jpy else 0.0001
+    swing_threshold_price = current_atr * atr_multiplier
+    min_pip_distance = int(swing_threshold_price / pip_value)
+    
+    # Use existing function with ATR-based threshold
+    significant_swings = find_significant_swings(swing_points, min_pip_distance, is_jpy)
+    
+    # Add ATR metrics
+    for i, swing in enumerate(significant_swings):
+        if i > 0:
+            prev_swing = significant_swings[i-1]
+            swing_size = abs(swing['price'] - prev_swing['price'])
+            swing['atr_multiple'] = swing_size / current_atr if current_atr > 0 else 0
+        else:
+            swing['atr_multiple'] = 0
+    
+    return {
+        'significant_swings': significant_swings,
+        'total_swings': len(significant_swings),
+        'swing_threshold': swing_threshold_price,
+        'current_atr': current_atr,
+        'atr_multiplier': atr_multiplier,
+        'min_pip_distance': min_pip_distance
+    }
 
 def generate_fibonacci_levels(high_price: float, low_price: float, direction: str = 'retracement') -> Dict[str, Dict]:
     """
@@ -352,7 +408,7 @@ def create_sample_price_data(current_price: float = 1.2187, periods: int = 50, i
     
     return price_data
 
-def analyze_fibonacci_levels(instrument: str, current_price: float = None, price_data: List[Dict] = None) -> Dict[str, Any]:
+def analyze_fibonacci_levels(instrument: str, current_price: float = None, price_data: List[Dict] = None, mode: str = 'fixed', timeframe: str = 'H1') -> Dict[str, Any]:
     """
     Main function to analyze Fibonacci levels for an instrument.
     
@@ -377,15 +433,48 @@ def analyze_fibonacci_levels(instrument: str, current_price: float = None, price
     if current_price is None and price_data:
         current_price = price_data[-1]['close']
     
-    # Detect swing points
-    swing_points = detect_swing_points(price_data, window=3)
-    
-    # Find significant swings
-    significant_swings = find_significant_swings(
-        swing_points, 
-        min_pip_distance=50 if not is_jpy else 50, 
-        is_jpy=is_jpy
-    )
+    # Get mode-specific parameters
+    if mode == 'atr':
+        # ATR-based analysis
+        strategy = 'balanced'  # Can be made configurable later
+        strategy_params = get_atr_multipliers_by_strategy(strategy)
+        window = strategy_params['window']
+        atr_multiplier = strategy_params['swing_multiplier']
+        
+        # Detect swing points with ATR-appropriate window
+        swing_points = detect_swing_points(price_data, window=window)
+        
+        # Find significant swings using ATR
+        atr_result = find_significant_swings_atr(swing_points, price_data, atr_multiplier, is_jpy)
+        significant_swings = atr_result.get('significant_swings', [])
+        
+        # Add ATR info to result
+        atr_info = {
+            'mode': 'atr',
+            'strategy': strategy,
+            'current_atr': atr_result.get('current_atr', 0),
+            'swing_threshold': atr_result.get('swing_threshold', 0),
+            'atr_multiplier': atr_multiplier,
+            'min_pip_distance': atr_result.get('min_pip_distance', 0)
+        }
+    else:  # mode == 'fixed'
+        # Timeframe-based analysis
+        params = get_timeframe_parameters(timeframe)
+        window = params['window']
+        
+        # Detect swing points with timeframe-appropriate window
+        swing_points = detect_swing_points(price_data, window=window)
+        
+        # Find significant swings using timeframe thresholds
+        significant_swings = find_significant_swings_timeframe(swing_points, timeframe, is_jpy)
+        
+        # Add timeframe info to result
+        atr_info = {
+            'mode': 'fixed',
+            'timeframe': timeframe,
+            'min_pip_distance': params['min_pip_distance'],
+            'description': params['description']
+        }
     
     # Generate Fibonacci analysis
     fibonacci_analysis = auto_generate_fibonacci_from_swings(significant_swings, current_price)
@@ -413,7 +502,9 @@ def analyze_fibonacci_levels(instrument: str, current_price: float = None, price
             'key_level': 0.618,
             'detailed_levels': key_levels,
             'swing_range_pips': most_relevant['swing_range_pips'],
-            'relevance_score': most_relevant['relevance_score']
+            'relevance_score': most_relevant['relevance_score'],
+            'mode': mode,
+            'mode_info': atr_info
         }
     else:
         # Fallback basic levels
@@ -424,5 +515,7 @@ def analyze_fibonacci_levels(instrument: str, current_price: float = None, price
             'direction': 'neutral',
             'current_retracement': 0.5,
             'key_level': 0.618,
-            'message': 'Using fallback Fibonacci levels - insufficient swing data'
+            'message': 'Using fallback Fibonacci levels - insufficient swing data',
+            'mode': mode,
+            'mode_info': atr_info if 'atr_info' in locals() else {'mode': mode}
         }

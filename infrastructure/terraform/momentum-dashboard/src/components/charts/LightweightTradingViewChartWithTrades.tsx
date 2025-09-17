@@ -471,20 +471,32 @@ const LightweightTradingViewChartWithTradesComponent: React.FC<LightweightTradin
   const addFibonacciOverlay = (fibData: any) => {
     if (!candlestickSeriesRef.current || !fibData) return;
     
-    console.log('📐 Adding Fibonacci overlay:', fibData);
+    const mode = fibData.mode || 'standard'; // 'fixed', 'atr', or 'standard'
+    console.log(`📐 Adding Fibonacci overlay (${mode} mode):`, fibData);
     
     const { levels, high, low } = fibData;
     const range = high - low;
     
     // Standard Fibonacci retracement levels with colors
-    const fibLevels = [
-      { level: 0.0, color: '#FF0000', label: '0.0%' },
-      { level: 0.236, color: '#FF7F00', label: '23.6%' },
-      { level: 0.382, color: '#FFFF00', label: '38.2%' },
-      { level: 0.5, color: '#00FF00', label: '50.0%' },
-      { level: 0.618, color: '#0000FF', label: '61.8%' },
-      { level: 0.786, color: '#4B0082', label: '78.6%' },
-      { level: 1.0, color: '#9400D3', label: '100.0%' }
+    // Use different styling for ATR vs Fixed mode
+    const fibLevels = mode === 'atr' ? [
+      // ATR mode uses warmer colors (reds/oranges)
+      { level: 0.0, color: '#FF0066', label: '0.0% (ATR)' },
+      { level: 0.236, color: '#FF6600', label: '23.6% (ATR)' },
+      { level: 0.382, color: '#FF9900', label: '38.2% (ATR)' },
+      { level: 0.5, color: '#FFCC00', label: '50.0% (ATR)' },
+      { level: 0.618, color: '#FF9966', label: '61.8% (ATR)' },
+      { level: 0.786, color: '#FF6666', label: '78.6% (ATR)' },
+      { level: 1.0, color: '#FF3366', label: '100.0% (ATR)' }
+    ] : [
+      // Fixed mode uses cooler colors (blues/purples)
+      { level: 0.0, color: '#0099FF', label: '0.0%' },
+      { level: 0.236, color: '#0066FF', label: '23.6%' },
+      { level: 0.382, color: '#3366FF', label: '38.2%' },
+      { level: 0.5, color: '#6666FF', label: '50.0%' },
+      { level: 0.618, color: '#9966FF', label: '61.8%' },
+      { level: 0.786, color: '#CC66FF', label: '78.6%' },
+      { level: 1.0, color: '#FF66FF', label: '100.0%' }
     ];
     
     fibLevels.forEach(({ level, color, label }) => {
@@ -494,8 +506,8 @@ const LightweightTradingViewChartWithTradesComponent: React.FC<LightweightTradin
         const priceLine = candlestickSeriesRef.current.createPriceLine({
           price,
           color,
-          lineWidth: 1,
-          lineStyle: 2, // Dashed
+          lineWidth: mode === 'atr' ? 2 : 1, // ATR lines are thicker
+          lineStyle: mode === 'atr' ? 0 : 2, // ATR solid, Fixed dashed
           axisLabelVisible: true,
           title: `Fib ${label}`
         });
@@ -563,8 +575,23 @@ const LightweightTradingViewChartWithTradesComponent: React.FC<LightweightTradin
     enabledSignals.forEach(signal => {
       switch (signal.id) {
         case 'fibonacci':
+          // Legacy support for old single fibonacci toggle
           if (signalData.fibonacci) {
             addFibonacciOverlay(signalData.fibonacci);
+          }
+          break;
+          
+        case 'fibonacci-fixed':
+          // New fixed mode fibonacci
+          if (signalData.fibonacci?.fibonacci_fixed) {
+            addFibonacciOverlay(signalData.fibonacci.fibonacci_fixed);
+          }
+          break;
+          
+        case 'fibonacci-atr':
+          // New ATR mode fibonacci
+          if (signalData.fibonacci?.fibonacci_atr) {
+            addFibonacciOverlay(signalData.fibonacci.fibonacci_atr);
           }
           break;
           

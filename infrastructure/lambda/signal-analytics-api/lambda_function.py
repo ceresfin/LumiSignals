@@ -390,24 +390,50 @@ def analyze_fibonacci_tiered(price_data: Dict[str, Any]) -> Dict[str, Any]:
         # Convert Redis candle format to analysis format if needed
         formatted_candles = []
         for candle in combined_candles:
+            # Redis format uses 'o', 'h', 'l', 'c' keys
             formatted_candles.append({
-                'high': float(candle.get('high', candle.get('h', 0))),
-                'low': float(candle.get('low', candle.get('l', 0))),
-                'close': float(candle.get('close', candle.get('c', 0))),
-                'timestamp': candle.get('timestamp', candle.get('time', ''))
+                'high': float(candle.get('h', candle.get('high', 0))),
+                'low': float(candle.get('l', candle.get('low', 0))),
+                'close': float(candle.get('c', candle.get('close', 0))),
+                'open': float(candle.get('o', candle.get('open', 0))),
+                'timestamp': candle.get('time', candle.get('timestamp', ''))
             })
         
-        # Use real analysis with actual market data
+        # Use real analysis with actual market data - generate both fixed and ATR modes
         if current_price and len(formatted_candles) > 10:
-            result = analyze_fibonacci_levels(instrument, current_price, formatted_candles)
-            logger.info(f"Generated real Fibonacci data for {instrument} with {len(formatted_candles)} candles, current_price={current_price}")
-            return result
+            # Get both Fibonacci modes
+            result_fixed = analyze_fibonacci_levels(instrument, current_price, formatted_candles, mode='fixed', timeframe='H1')
+            result_atr = analyze_fibonacci_levels(instrument, current_price, formatted_candles, mode='atr', timeframe='H1')
+            
+            logger.info(f"Fibonacci analysis for {instrument}: Fixed levels={result_fixed.get('levels', [])} ATR levels={result_atr.get('levels', [])}")
+            
+            # Check if either mode got a real analysis or used fallback
+            fixed_fallback = 'message' in result_fixed and 'fallback' in result_fixed.get('message', '').lower()
+            atr_fallback = 'message' in result_atr and 'fallback' in result_atr.get('message', '').lower()
+            
+            if fixed_fallback:
+                result_fixed['fallback'] = True
+                result_fixed['message'] = f'Using fallback fixed analysis for {instrument}'
+                
+            if atr_fallback:
+                result_atr['fallback'] = True
+                result_atr['message'] = f'Using fallback ATR analysis for {instrument}'
+            
+            # Return both results
+            return {
+                'fibonacci_fixed': result_fixed,
+                'fibonacci_atr': result_atr,
+                'mode': 'dual',
+                'has_fallback': fixed_fallback or atr_fallback
+            }
         else:
             logger.warning(f"Insufficient data for {instrument}: current_price={current_price}, candles={len(formatted_candles)}")
             raise Exception("Insufficient data for analysis")
             
     except Exception as e:
-        logger.warning(f"Fibonacci analysis failed for {price_data['instrument']}: {e}")
+        logger.error(f"Fibonacci analysis error for {price_data['instrument']}: {str(e)}")
+        combined_candles = price_data.get('combined', [])
+        logger.error(f"Candle sample: {combined_candles[0] if combined_candles else 'No candles'}")
         # Fallback to basic analysis
         return create_fallback_fibonacci(price_data)
 
@@ -426,7 +452,8 @@ def create_fallback_fibonacci(price_data: Dict[str, Any]) -> Dict[str, Any]:
     high = current_price + (price_range * 0.7)
     low = current_price - (price_range * 0.3)
     
-    return {
+    # Create fallback for both modes
+    fallback_result = {
         'levels': [0.0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0],
         'high': high,
         'low': low,
@@ -435,6 +462,13 @@ def create_fallback_fibonacci(price_data: Dict[str, Any]) -> Dict[str, Any]:
         'key_level': 0.618,
         'fallback': True,
         'message': f'Using fallback analysis for {instrument}'
+    }
+    
+    return {
+        'fibonacci_fixed': {**fallback_result, 'mode': 'fixed'},
+        'fibonacci_atr': {**fallback_result, 'mode': 'atr'},
+        'mode': 'dual',
+        'has_fallback': True
     }
 
 def generate_pair_analytics(instrument: str, timeframe: str = 'H1') -> Dict[str, Any]:

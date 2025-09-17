@@ -1,9 +1,1 @@
-{
-  "httpMethod": "GET",
-  "path": "/analytics/all-signals",
-  "headers": {
-    "origin": "https://pipstop.org"
-  },
-  "queryStringParameters": null,
-  "pathParameters": null
-}
+{"requestContext": {"http": {"method": "GET", "path": "/analytics/all-signals"}}, "queryStringParameters": {"timeframe": "H1"}}
