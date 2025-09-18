@@ -532,16 +532,22 @@ class DataOrchestrator:
                     # Distribute candles across tiers
                     total_candles = len(sorted_candles)
                     
-                    # Split into hot and warm tiers
-                    if total_candles >= self.settings.hot_tier_candles:
-                        # Hot tier: most recent candles
-                        hot_candles = sorted_candles[-self.settings.hot_tier_candles:]
-                        # Warm tier: older candles (remaining)
-                        warm_candles = sorted_candles[:-self.settings.hot_tier_candles]
+                    # FIXED: Split into chronologically separated tiers (no overlap)
+                    if total_candles >= self.settings.hot_tier_candles + self.settings.warm_tier_candles:
+                        # Complete 3-tier distribution with chronological separation
+                        hot_candles = sorted_candles[-self.settings.hot_tier_candles:]  # Most recent 50
+                        warm_candles = sorted_candles[-(self.settings.hot_tier_candles + self.settings.warm_tier_candles):-self.settings.hot_tier_candles]  # Previous 450
+                        cold_candles = sorted_candles[:-(self.settings.hot_tier_candles + self.settings.warm_tier_candles)]  # Oldest remaining
+                    elif total_candles >= self.settings.hot_tier_candles:
+                        # 2-tier distribution: hot + warm (no cold tier needed)
+                        hot_candles = sorted_candles[-self.settings.hot_tier_candles:]  # Most recent
+                        warm_candles = sorted_candles[:-self.settings.hot_tier_candles]  # Older candles
+                        cold_candles = []
                     else:
-                        # If we have fewer candles than hot tier capacity, put all in hot tier
+                        # Single tier: everything in hot tier
                         hot_candles = sorted_candles
                         warm_candles = []
+                        cold_candles = []
                     
                     # Store in hot tier (Redis list for ordered access)
                     if hot_candles:
@@ -564,19 +570,39 @@ class DataOrchestrator:
                         
                         logger.debug(f"Stored {len(warm_candles)} candles in warm tier for {currency_pair} {timeframe}")
                     
-                    # Store full bootstrap data in cold tier for backup
-                    bootstrap_data_formatted = {
-                        'candles': historical_candles,
-                        'timestamp': datetime.now().isoformat(),
-                        'source': f'FARGATE_BOOTSTRAP_{timeframe}',
-                        'count': len(historical_candles),
-                        'is_bootstrap': True,
-                        'tier_distribution': {
-                            'hot_count': len(hot_candles),
-                            'warm_count': len(warm_candles),
-                            'total_count': total_candles
+                    # FIXED: Store only chronologically separated data in cold tier
+                    if cold_candles:
+                        # Cold tier gets only the oldest candles (no overlap)
+                        bootstrap_data_formatted = {
+                            'candles': cold_candles,
+                            'timestamp': datetime.now().isoformat(),
+                            'source': f'FARGATE_BOOTSTRAP_{timeframe}',
+                            'count': len(cold_candles),
+                            'is_bootstrap': True,
+                            'tier_distribution': {
+                                'hot_count': len(hot_candles),
+                                'warm_count': len(warm_candles),
+                                'cold_count': len(cold_candles),
+                                'total_count': total_candles,
+                                'no_overlap': True
+                            }
                         }
-                    }
+                    else:
+                        # No cold tier data needed for smaller datasets
+                        bootstrap_data_formatted = {
+                            'candles': [],
+                            'timestamp': datetime.now().isoformat(),
+                            'source': f'FARGATE_BOOTSTRAP_{timeframe}',
+                            'count': 0,
+                            'is_bootstrap': True,
+                            'tier_distribution': {
+                                'hot_count': len(hot_candles),
+                                'warm_count': len(warm_candles),
+                                'cold_count': 0,
+                                'total_count': total_candles,
+                                'no_overlap': True
+                            }
+                        }
                     
                     pipe.setex(
                         keys['cold'],
@@ -1096,7 +1122,7 @@ class DataOrchestrator:
             return None
     
     async def _rotate_hot_to_warm_tier(self, currency_pair: str, timeframe: str, redis_conn):
-        """Rotate older candles from hot tier to warm tier to maintain capacity"""
+        """FIXED: Rotate older candles from hot tier to warm tier maintaining chronological order"""
         try:
             keys = self.settings.get_redis_keys_for_pair_timeframe(currency_pair, timeframe)
             
@@ -1112,17 +1138,24 @@ class DataOrchestrator:
                 candles_to_move = await redis_conn.lrange(keys['hot'], 0, excess_candles - 1)
                 
                 if candles_to_move:
-                    # Move to warm tier (append to right side)
                     pipe = redis_conn.pipeline()
                     
-                    # Add to warm tier
+                    # FIXED: Add to end of warm tier to maintain chronological order
+                    # Old hot candles (older than current hot) go to end of warm tier
                     pipe.rpush(keys['warm'], *candles_to_move)
                     
                     # Remove from hot tier (left side)
                     pipe.ltrim(keys['hot'], excess_candles, -1)
                     
-                    # Maintain warm tier capacity
-                    pipe.ltrim(keys['warm'], -self.settings.warm_tier_candles, -1)
+                    # FIXED: Maintain warm tier capacity by removing oldest data (right side)
+                    # This pushes oldest warm data toward cold tier
+                    warm_count_after = await redis_conn.llen(keys['warm']) + len(candles_to_move)
+                    if warm_count_after > self.settings.warm_tier_candles:
+                        # Before trimming warm tier, check if we need to move data to cold tier
+                        await self._rotate_warm_to_cold_tier(currency_pair, timeframe, redis_conn, pipe)
+                    
+                    # Trim warm tier to capacity (remove from right side - oldest)
+                    pipe.ltrim(keys['warm'], 0, self.settings.warm_tier_candles - 1)
                     
                     # Update TTLs
                     pipe.expire(keys['hot'], self.settings.hot_tier_ttl)
@@ -1135,7 +1168,8 @@ class DataOrchestrator:
                         'hot_count_before': hot_count,
                         'hot_count_after': self.settings.hot_tier_candles,
                         'timeframe': timeframe,
-                        'currency_pair': currency_pair
+                        'currency_pair': currency_pair,
+                        'rotation_type': 'hot_to_warm_chronological'
                     }
                     
                     pipe.setex(
@@ -1146,11 +1180,84 @@ class DataOrchestrator:
                     
                     await pipe.execute()
                     
-                    logger.debug(f"Rotated {len(candles_to_move)} candles from hot to warm tier", 
+                    logger.info(f"✅ FIXED ROTATION: Moved {len(candles_to_move)} candles from hot to warm tier (chronological)", 
                                 currency_pair=currency_pair, timeframe=timeframe)
                     
         except Exception as e:
             logger.error(f"Failed to rotate hot to warm tier for {currency_pair} {timeframe}: {e}")
+    
+    async def _rotate_warm_to_cold_tier(self, currency_pair: str, timeframe: str, redis_conn, pipe=None):
+        """NEW: Rotate oldest candles from warm tier to cold tier to maintain lifecycle"""
+        try:
+            keys = self.settings.get_redis_keys_for_pair_timeframe(currency_pair, timeframe)
+            
+            # Check current warm tier size
+            warm_count = await redis_conn.llen(keys['warm'])
+            
+            # Only rotate if warm tier will exceed capacity after new additions
+            if warm_count >= self.settings.warm_tier_candles:
+                # Calculate how many candles to move to cold tier
+                excess_candles = warm_count - self.settings.warm_tier_candles + 1
+                
+                # Get oldest candles from warm tier (right side of list - oldest data)
+                candles_to_move = await redis_conn.lrange(keys['warm'], -excess_candles, -1)
+                
+                if candles_to_move and len(candles_to_move) > 0:
+                    # Use existing pipeline if provided, otherwise create new one
+                    if pipe is None:
+                        pipe = redis_conn.pipeline()
+                        execute_pipe = True
+                    else:
+                        execute_pipe = False
+                    
+                    # Get existing cold tier data
+                    existing_cold_data = await redis_conn.get(keys['cold'])
+                    if existing_cold_data:
+                        try:
+                            existing_cold = json.loads(existing_cold_data.decode('utf-8'))
+                            existing_candles = existing_cold.get('candles', [])
+                        except:
+                            existing_candles = []
+                    else:
+                        existing_candles = []
+                    
+                    # Parse candles to move
+                    new_cold_candles = []
+                    for candle_json in candles_to_move:
+                        try:
+                            candle = json.loads(candle_json.decode('utf-8') if isinstance(candle_json, bytes) else candle_json)
+                            new_cold_candles.append(candle)
+                        except:
+                            continue
+                    
+                    # Combine and sort all cold tier candles chronologically
+                    all_cold_candles = existing_candles + new_cold_candles
+                    all_cold_candles.sort(key=lambda x: x.get('time', ''))
+                    
+                    # Update cold tier with combined data
+                    cold_tier_data = {
+                        'candles': all_cold_candles,
+                        'timestamp': datetime.now().isoformat(),
+                        'source': f'FARGATE_ROTATION_{timeframe}',
+                        'count': len(all_cold_candles),
+                        'is_bootstrap': False,
+                        'last_rotation': datetime.now().isoformat()
+                    }
+                    
+                    pipe.setex(
+                        keys['cold'],
+                        self.settings.cold_tier_ttl,
+                        json.dumps(cold_tier_data)
+                    )
+                    
+                    if execute_pipe:
+                        await pipe.execute()
+                    
+                    logger.info(f"✅ LIFECYCLE: Moved {len(new_cold_candles)} candles from warm to cold tier", 
+                                currency_pair=currency_pair, timeframe=timeframe)
+                    
+        except Exception as e:
+            logger.error(f"Failed to rotate warm to cold tier for {currency_pair} {timeframe}: {e}")
     
     async def get_tiered_candlestick_data(self, currency_pair: str, timeframe: str, 
                                         requested_count: int = 500) -> Dict[str, Any]:
