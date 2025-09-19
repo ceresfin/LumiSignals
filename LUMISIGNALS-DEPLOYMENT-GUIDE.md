@@ -38,6 +38,9 @@ cd infrastructure/fargate/data-orchestrator
 - ✅ **OANDA Secrets**: 3 individual OANDA secrets properly configured
 - ✅ **Proven Working**: Currently running comprehensive orchestrator successfully
 
+**🔑 CRITICAL DEPLOYMENT PROCESS**: 
+When creating new deployments, use TD 196's **configuration** (CPU, memory, IAM roles, secrets) but **UPDATE the container image** to the latest available image. The golden template's container image is from September 9th and should NOT be reused for new deployments.
+
 **Complete Configuration**:
 ```json
 {
@@ -142,15 +145,21 @@ cd infrastructure/fargate/data-orchestrator
 
 ### Method 2: Manual AWS CLI Commands
 
+**IMPORTANT**: When using the golden template (TD 196), use its configuration but UPDATE the container image to the latest available image, not the old golden template image.
+
 ```bash
-# 1. Build and push container
-TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-IMAGE_TAG="816945674467.dkr.ecr.us-east-1.amazonaws.com/lumisignals/institutional-orchestrator-postgresql17:manual-${TIMESTAMP}"
+# 1. Get the latest container image (OR build new one if you have code changes)
+LATEST_IMAGE=$(aws ecr describe-images --repository-name lumisignals/institutional-orchestrator-postgresql17 --region us-east-1 --query "sort_by(imageDetails, &imagePushedAt)[-1].imageTags[0]" --output text)
+IMAGE_TAG="816945674467.dkr.ecr.us-east-1.amazonaws.com/lumisignals/institutional-orchestrator-postgresql17:${LATEST_IMAGE}"
+echo "Using latest image: ${IMAGE_TAG}"
 
-docker build --no-cache --build-arg VERSION="manual-${TIMESTAMP}" --build-arg CACHEBUST="${TIMESTAMP}" -t "${IMAGE_TAG}" .
-docker push "${IMAGE_TAG}"
+# Alternative: Build NEW container if you have code changes
+# TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+# IMAGE_TAG="816945674467.dkr.ecr.us-east-1.amazonaws.com/lumisignals/institutional-orchestrator-postgresql17:manual-${TIMESTAMP}"
+# docker build --no-cache --build-arg VERSION="manual-${TIMESTAMP}" --build-arg CACHEBUST="${TIMESTAMP}" -t "${IMAGE_TAG}" .
+# docker push "${IMAGE_TAG}"
 
-# 2. Create task definition using TD 196 template
+# 2. Create task definition using TD 196 golden template configuration + latest image
 aws ecs register-task-definition \
 --family lumisignals-data-orchestrator \
 --task-role-arn arn:aws:iam::816945674467:role/lumisignals-ecs-task-role \
