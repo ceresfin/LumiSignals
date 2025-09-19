@@ -27,8 +27,8 @@ def get_timeframe_parameters(timeframe: str) -> dict:
             'description': '4-Hour - Significant intraday moves'
         },
         'H1': {
-            'min_pip_distance': 3,
-            'window': 2,
+            'min_pip_distance': 15,
+            'window': 6,
             'min_strength': 1,
             'description': '1-Hour - Hourly momentum shifts'
         },
@@ -45,7 +45,7 @@ def get_timeframe_parameters(timeframe: str) -> dict:
             'description': '15-Minute - Scalping swings'
         },
         'M5': {
-            'min_pip_distance': 2,
+            'min_pip_distance': 4,
             'window': 2,
             'min_strength': 1,
             'description': '5-Minute - Micro swings'

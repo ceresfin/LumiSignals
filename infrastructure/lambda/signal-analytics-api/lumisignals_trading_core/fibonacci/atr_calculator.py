@@ -73,7 +73,7 @@ def get_atr_multipliers_by_strategy(strategy: str = 'balanced') -> Dict[str, Any
             'noise_level': 'Very Low'
         },
         'balanced': {
-            'swing_multiplier': 1.0,
+            'swing_multiplier': 1.5,
             'window': 2,
             'description': 'Balanced - Good sensitivity vs noise ratio',
             'use_case': 'H1-H4 swing trading',

@@ -381,7 +381,7 @@ def analyze_fibonacci_tiered(price_data: Dict[str, Any]) -> Dict[str, Any]:
     Analyze Fibonacci levels using tiered price data
     """
     try:
-        from lumisignals_trading_core.fibonacci import analyze_fibonacci_levels
+        from lumisignals_trading_core.fibonacci.improved_fibonacci_analysis import analyze_fibonacci_levels_improved
         
         instrument = price_data['instrument']
         current_price = price_data['current_price']
@@ -399,32 +399,36 @@ def analyze_fibonacci_tiered(price_data: Dict[str, Any]) -> Dict[str, Any]:
                 'timestamp': candle.get('time', candle.get('timestamp', ''))
             })
         
-        # Use real analysis with actual market data - generate both fixed and ATR modes
+        # Use real analysis with actual market data - Fixed mode only
         if current_price and len(formatted_candles) > 10:
-            # Get both Fibonacci modes
-            result_fixed = analyze_fibonacci_levels(instrument, current_price, formatted_candles, mode='fixed', timeframe='H1')
-            result_atr = analyze_fibonacci_levels(instrument, current_price, formatted_candles, mode='atr', timeframe='H1')
+            # Get Fixed mode Fibonacci analysis only
+            result_fixed = analyze_fibonacci_levels_improved(instrument, current_price, formatted_candles, mode='fixed', timeframe=price_data['timeframe'])
             
-            logger.info(f"Fibonacci analysis for {instrument}: Fixed levels={result_fixed.get('levels', [])} ATR levels={result_atr.get('levels', [])}")
+            logger.info(f"Fibonacci analysis for {instrument}: Fixed levels={result_fixed.get('levels', [])}")
             
-            # Check if either mode got a real analysis or used fallback
-            fixed_fallback = 'message' in result_fixed and 'fallback' in result_fixed.get('message', '').lower()
-            atr_fallback = 'message' in result_atr and 'fallback' in result_atr.get('message', '').lower()
+            # Check if Fixed mode encountered errors
+            fixed_fallback = 'error' in result_fixed
             
             if fixed_fallback:
+                result_fixed = create_fallback_fibonacci_mode(price_data, 'fixed')
                 result_fixed['fallback'] = True
-                result_fixed['message'] = f'Using fallback fixed analysis for {instrument}'
-                
-            if atr_fallback:
-                result_atr['fallback'] = True
-                result_atr['message'] = f'Using fallback ATR analysis for {instrument}'
+                result_fixed['message'] = f'Fixed mode error: {result_fixed.get("error", "Unknown")}'
             
-            # Return both results
+            # Return simplified single-mode result
             return {
-                'fibonacci_fixed': result_fixed,
-                'fibonacci_atr': result_atr,
-                'mode': 'dual',
-                'has_fallback': fixed_fallback or atr_fallback
+                'levels': result_fixed.get('levels', []),
+                'high': result_fixed.get('high', 0),
+                'low': result_fixed.get('low', 0),
+                'direction': result_fixed.get('direction', 'neutral'),
+                'current_retracement': result_fixed.get('current_retracement', 0.5),
+                'key_level': result_fixed.get('key_level', 0.618),
+                'detailed_levels': result_fixed.get('detailed_levels', []),
+                'swing_range_pips': result_fixed.get('swing_range_pips', 0),
+                'relevance_score': result_fixed.get('relevance_score', 0),
+                'mode': 'fixed',
+                'mode_info': result_fixed.get('mode_info', {}),
+                'swing_analysis': result_fixed.get('swing_analysis', {}),
+                'has_fallback': fixed_fallback
             }
         else:
             logger.warning(f"Insufficient data for {instrument}: current_price={current_price}, candles={len(formatted_candles)}")
@@ -434,8 +438,24 @@ def analyze_fibonacci_tiered(price_data: Dict[str, Any]) -> Dict[str, Any]:
         logger.error(f"Fibonacci analysis error for {price_data['instrument']}: {str(e)}")
         combined_candles = price_data.get('combined', [])
         logger.error(f"Candle sample: {combined_candles[0] if combined_candles else 'No candles'}")
-        # Fallback to basic analysis
-        return create_fallback_fibonacci(price_data)
+        # Fallback to basic analysis - Fixed mode only
+        fallback_result = create_fallback_fibonacci_mode(price_data, 'fixed')
+        return {
+            'levels': fallback_result.get('levels', []),
+            'high': fallback_result.get('high', 0),
+            'low': fallback_result.get('low', 0),
+            'direction': fallback_result.get('direction', 'neutral'),
+            'current_retracement': fallback_result.get('current_retracement', 0.5),
+            'key_level': fallback_result.get('key_level', 0.618),
+            'detailed_levels': fallback_result.get('detailed_levels', []),
+            'swing_range_pips': fallback_result.get('swing_range_pips', 0),
+            'relevance_score': 0.1,  # Low relevance for fallback
+            'mode': 'fixed',
+            'mode_info': {'mode': 'fixed', 'fallback': True},
+            'swing_analysis': {},
+            'has_fallback': True,
+            'message': 'Using fallback Fixed Fibonacci analysis'
+        }
 
 def analyze_swing_points_tiered(price_data: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -524,8 +544,8 @@ def create_fallback_swing(price_data: Dict[str, Any]) -> Dict[str, Any]:
         'message': f'Using fallback swing analysis for {instrument}'
     }
 
-def create_fallback_fibonacci(price_data: Dict[str, Any]) -> Dict[str, Any]:
-    """Create fallback Fibonacci analysis when real analysis fails"""
+def create_fallback_fibonacci_mode(price_data: Dict[str, Any], mode: str) -> Dict[str, Any]:
+    """Create fallback Fibonacci analysis for specific mode when improved analysis fails"""
     instrument = price_data['instrument']
     current_price = price_data['current_price']
     
@@ -534,50 +554,48 @@ def create_fallback_fibonacci(price_data: Dict[str, Any]) -> Dict[str, Any]:
         is_jpy_pair = 'JPY' in instrument
         current_price = 150.0 if is_jpy_pair else 1.1000
     
-    # Create different ranges for Fixed vs ATR modes to make them visually distinct
-    
-    # Fixed mode: Narrower range with H1 timeframe levels
-    fixed_price_range = current_price * 0.04  # 4% range (more conservative)
-    fixed_high = current_price + (fixed_price_range * 0.6)
-    fixed_low = current_price - (fixed_price_range * 0.4)
-    
-    # ATR mode: Wider range simulating volatile market conditions
-    atr_price_range = current_price * 0.06  # 6% range (more aggressive)
-    atr_high = current_price + (atr_price_range * 0.8)
-    atr_low = current_price - (atr_price_range * 0.2)
-    
-    # Fixed mode fallback - H1 timeframe specific levels
-    fixed_result = {
-        'levels': [0.0, 0.236, 0.382, 0.5, 0.618, 1.0],  # H1 levels (no 0.786)
-        'high': fixed_high,
-        'low': fixed_low,
-        'direction': 'neutral',
-        'current_retracement': 0.382,  # Different default
-        'key_level': 0.618,
-        'fallback': True,
-        'mode': 'fixed',
-        'message': f'Using fallback fixed analysis for {instrument}'
-    }
-    
-    # ATR mode fallback - All standard levels
-    atr_result = {
-        'levels': [0.0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0],  # All levels
-        'high': atr_high,
-        'low': atr_low,
-        'direction': 'neutral',
-        'current_retracement': 0.5,  # Different default
-        'key_level': 0.618,
-        'fallback': True,
-        'mode': 'atr',
-        'message': f'Using fallback ATR analysis for {instrument}'
-    }
-    
-    return {
-        'fibonacci_fixed': fixed_result,
-        'fibonacci_atr': atr_result,
-        'mode': 'dual',
-        'has_fallback': True
-    }
+    if mode == 'fixed':
+        # H1 timeframe specific levels (fewer levels, more conservative range)
+        price_range = current_price * 0.04  # 4% range
+        high_price = current_price + (price_range * 0.6)
+        low_price = current_price - (price_range * 0.4)
+        
+        return {
+            'levels': [0.0, 0.236, 0.382, 0.5, 0.618, 1.0],  # H1 levels (no 0.786)
+            'high': high_price,
+            'low': low_price,
+            'direction': 'neutral',
+            'current_retracement': 0.382,
+            'key_level': 0.618,
+            'mode': 'fixed',
+            'detailed_levels': [
+                {'ratio': r, 'price': high_price - ((high_price - low_price) * r), 'description': f'{r:.1%} Retracement'}
+                for r in [0.0, 0.236, 0.382, 0.5, 0.618, 1.0]
+            ],
+            'swing_range_pips': int((high_price - low_price) * (10000 if 'JPY' not in instrument else 100))
+        }
+    else:  # mode == 'atr'
+        # ATR mode with full levels and wider range
+        price_range = current_price * 0.06  # 6% range
+        high_price = current_price + (price_range * 0.8)
+        low_price = current_price - (price_range * 0.2)
+        
+        return {
+            'levels': [0.0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0],  # All levels
+            'high': high_price,
+            'low': low_price,
+            'direction': 'neutral',
+            'current_retracement': 0.5,
+            'key_level': 0.618,
+            'mode': 'atr',
+            'detailed_levels': [
+                {'ratio': r, 'price': high_price - ((high_price - low_price) * r), 'description': f'{r:.1%} Retracement'}
+                for r in [0.0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0]
+            ],
+            'swing_range_pips': int((high_price - low_price) * (10000 if 'JPY' not in instrument else 100))
+        }
+
+# Removed old dual-mode fallback function - now using create_fallback_fibonacci_mode() for Fixed mode only
 
 def generate_pair_analytics(instrument: str, timeframe: str = 'H1') -> Dict[str, Any]:
     """
