@@ -229,20 +229,19 @@ class Settings(BaseSettings):
         # Always collect M5 (primary timeframe)
         timeframes_to_collect = [self.primary_timeframe]
         
-        # ARCHITECTURE COMPLIANCE: Always collect H1 for dashboard compatibility
-        # The Architecture Bible specifies H1 data for pipstop.org dashboard
-        # Fix: Explicitly ensure H1 is always collected when configured
-        if "H1" in self.timeframes:
+        # FIXED: H1 collection timing - only collect when there's new H1 data (every hour)
+        # This matches M5's efficient collection pattern but at H1's natural interval
+        if "H1" in self.timeframes and self.should_collect_timeframe("H1", current_time):
             if "H1" not in timeframes_to_collect:
                 timeframes_to_collect.append("H1")
-                print(f"DEBUG: ✅ H1 added for architecture compliance - dashboard needs H1 data")
+                print(f"DEBUG: ✅ H1 added at hourly boundary for new data collection")
             else:
                 print(f"DEBUG: ℹ️ H1 already in collection list")
         
-        # Add other timeframes based on their intervals (excluding H1 which is always collected)
+        # Add other timeframes based on their intervals
         for timeframe in self.timeframes:
             if (timeframe != self.primary_timeframe and 
-                timeframe != "H1" and 
+                timeframe != "H1" and  # H1 handled above with proper timing
                 self.should_collect_timeframe(timeframe, current_time)):
                 timeframes_to_collect.append(timeframe)
         

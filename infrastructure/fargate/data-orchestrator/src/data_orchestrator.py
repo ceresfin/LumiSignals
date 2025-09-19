@@ -278,89 +278,35 @@ class DataOrchestrator:
             print(f"DEBUG: Traceback: {traceback.format_exc()}")
 
     async def _backfill_pair_h1_data(self, currency_pair: str) -> int:
-        """Backfill H1 data for a specific currency pair using date-range approach"""
+        """Backfill H1 data for a specific currency pair using count-based approach (matches M5 success pattern)"""
         try:
-            # Calculate date range for extensive historical data using configurable settings
-            # This provides rich scrollback experience for traders analyzing patterns
-            # Accounts for weekends, holidays, and gives plenty of historical context
-            backfill_days = self.settings.h1_backfill_days
-            max_candles = self.settings.h1_max_candles
+            # Use the same successful count-based approach as M5 instead of date-range
+            # This ensures consistent 500 candles like M5's proven bootstrap method
+            candle_count = self.settings.get_candle_count_for_collection("H1", is_bootstrap=True)  # Returns 500
             
-            # Generate proper OANDA timestamp format for API request
-            from_datetime = datetime.now() - timedelta(days=backfill_days)
-            from_time = from_datetime.strftime('%Y-%m-%dT%H:%M:%S.000000000Z')  # OANDA format with nanoseconds
+            logger.info(f"🕐 Requesting H1 historical data for {currency_pair} using count-based approach ({candle_count} candles)")
             
-            logger.info(f"🕐 Requesting H1 historical data for {currency_pair} from {from_time} ({backfill_days} days, max {max_candles} candles)")
-            
-            # Fetch H1 candles using date range (works during market closure)
+            # Fetch H1 candles using count-based request (matches M5 bootstrap success pattern)
             data = await self.oanda_client.get_candlesticks(
                 instrument=currency_pair,
                 granularity="H1", 
-                from_time=from_time
+                count=candle_count  # Use count parameter like M5, not date range
             )
-            
-            # Debug logging for OANDA response
-            if data:
-                candle_count = len(data.get('candles', []))
-                logger.info(f"📊 OANDA returned {candle_count} H1 candles for {currency_pair}")
-            else:
-                logger.warning(f"⚠️ OANDA returned no data for {currency_pair} H1 request")
             
             if not data or 'candles' not in data:
                 logger.warning(f"No H1 data received for {currency_pair}")
                 return 0
             
-            candles = data['candles']
-            if not candles:
+            # Use the same simple processing as M5 bootstrap - no complex filtering
+            # Process data using the same method as M5 for consistency
+            processed_data = self._process_candlestick_data(data, currency_pair, "H1", is_bootstrap=True)
+            
+            if not processed_data or 'historical_candles' not in processed_data:
+                logger.warning(f"Failed to process H1 data for {currency_pair}")
                 return 0
             
-            # Filter out incomplete candles and format data with proper time handling
-            formatted_candles = []
-            for candle in candles:
-                if candle.get('complete') and candle.get('mid'):
-                    mid = candle['mid']
-                    
-                    # Parse OANDA timestamp with nanosecond precision handling
-                    raw_time = candle['time']
-                    formatted_time = self._parse_oanda_timestamp(raw_time)
-                    
-                    formatted_candle = {
-                        'time': formatted_time,
-                        'open': float(mid.get('o', 0)),
-                        'high': float(mid.get('h', 0)),
-                        'low': float(mid.get('l', 0)),
-                        'close': float(mid.get('c', 0)),
-                        'volume': int(candle.get('volume', 0)),
-                        '_raw_time': raw_time,  # Keep original for debugging
-                        '_parsed_dt': dt.isoformat() if 'dt' in locals() else None
-                    }
-                    formatted_candles.append(formatted_candle)
-            
-            # Sort by time using proper datetime comparison for accuracy
-            # Provide more data for traders who want to scroll back and analyze patterns
-            def get_sort_key(candle):
-                try:
-                    time_str = candle['time']
-                    if time_str.endswith('Z'):
-                        return datetime.fromisoformat(time_str.replace('Z', '+00:00'))
-                    return datetime.fromisoformat(time_str)
-                except Exception as e:
-                    logger.warning(f"Failed to parse time for sorting {candle.get('time')}: {e}")
-                    return datetime.min  # Put unparseable dates at the beginning
-            
-            formatted_candles.sort(key=get_sort_key, reverse=True)
-            
-            # Keep configurable amount of historical data for smooth scrolling experience
-            # This enables rich scrollback in TradingView charts
-            max_candles = self.settings.h1_max_candles
-            if len(formatted_candles) > max_candles:
-                formatted_candles = formatted_candles[:max_candles]
-                logger.info(f"📊 Limited to {max_candles} candles from {len(formatted_candles)} available (configured limit)")
-                
-            formatted_candles.reverse()  # Restore chronological order
-            
-            if not formatted_candles:
-                return 0
+            formatted_candles = processed_data['historical_candles']
+            logger.info(f"📊 Processed {len(formatted_candles)} H1 candles for {currency_pair} using M5-style processing")
             
             # Store in Redis under H1 timeframe
             shard_index = self.settings.get_redis_node_for_pair(currency_pair)
