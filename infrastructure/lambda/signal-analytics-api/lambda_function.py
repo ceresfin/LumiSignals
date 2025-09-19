@@ -437,6 +437,93 @@ def analyze_fibonacci_tiered(price_data: Dict[str, Any]) -> Dict[str, Any]:
         # Fallback to basic analysis
         return create_fallback_fibonacci(price_data)
 
+def analyze_swing_points_tiered(price_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Analyze swing points using tiered price data and robust swing detection
+    """
+    try:
+        from lumisignals_trading_core.swing.swing_detection import analyze_swing_structure
+        
+        instrument = price_data['instrument']
+        timeframe = price_data['timeframe']
+        combined_candles = price_data['combined']
+        
+        # Convert Redis candle format to analysis format if needed
+        formatted_candles = []
+        for candle in combined_candles:
+            # Redis format uses 'o', 'h', 'l', 'c' keys
+            formatted_candles.append({
+                'high': float(candle.get('h', candle.get('high', 0))),
+                'low': float(candle.get('l', candle.get('low', 0))),
+                'close': float(candle.get('c', candle.get('close', 0))),
+                'open': float(candle.get('o', candle.get('open', 0))),
+                'timestamp': candle.get('time', candle.get('timestamp', ''))
+            })
+        
+        # Use robust swing detection from trading core
+        if len(formatted_candles) > 10:
+            current_price = formatted_candles[-1]['close'] if formatted_candles else 0
+            swing_analysis = analyze_swing_structure(instrument, formatted_candles, timeframe, current_price)
+            
+            logger.info(f"Swing analysis for {instrument}: {len(swing_analysis.get('swing_analysis', {}).get('validated_highs', []))} highs, {len(swing_analysis.get('swing_analysis', {}).get('validated_lows', []))} lows")
+            
+            return {
+                'swing_analysis': swing_analysis.get('swing_analysis', {}),
+                'fibonacci_swings': swing_analysis.get('fibonacci_swings', []),
+                'success': swing_analysis.get('success', False),
+                'total_candles': len(formatted_candles),
+                'timeframe': timeframe
+            }
+        else:
+            logger.warning(f"Insufficient data for swing analysis: {len(formatted_candles)} candles")
+            raise Exception("Insufficient data for swing analysis")
+            
+    except Exception as e:
+        logger.error(f"Swing analysis error for {price_data['instrument']}: {str(e)}")
+        # Fallback to basic swing analysis
+        return create_fallback_swing(price_data)
+
+def create_fallback_swing(price_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Create fallback swing analysis when robust analysis fails"""
+    instrument = price_data['instrument']
+    current_price = price_data['current_price']
+    
+    # Use current price if available, otherwise estimate
+    if not current_price:
+        is_jpy_pair = 'JPY' in instrument
+        current_price = 150.0 if is_jpy_pair else 1.1000
+    
+    # Create reasonable high/low based on current price
+    price_range = current_price * 0.03  # 3% range for swings
+    
+    fallback_swing = {
+        'validated_highs': [
+            {
+                'price': current_price + (price_range * 0.8),
+                'index': 30,
+                'confidence': 1.0,
+                'method': 'fallback'
+            }
+        ],
+        'validated_lows': [
+            {
+                'price': current_price - (price_range * 0.8),
+                'index': 15,
+                'confidence': 1.0,
+                'method': 'fallback'
+            }
+        ],
+        'total_validated_swings': 2
+    }
+    
+    return {
+        'swing_analysis': fallback_swing,
+        'fibonacci_swings': [],
+        'success': False,
+        'fallback': True,
+        'message': f'Using fallback swing analysis for {instrument}'
+    }
+
 def create_fallback_fibonacci(price_data: Dict[str, Any]) -> Dict[str, Any]:
     """Create fallback Fibonacci analysis when real analysis fails"""
     instrument = price_data['instrument']
@@ -447,26 +534,47 @@ def create_fallback_fibonacci(price_data: Dict[str, Any]) -> Dict[str, Any]:
         is_jpy_pair = 'JPY' in instrument
         current_price = 150.0 if is_jpy_pair else 1.1000
     
-    # Create reasonable high/low based on current price
-    price_range = current_price * 0.05  # 5% range
-    high = current_price + (price_range * 0.7)
-    low = current_price - (price_range * 0.3)
+    # Create different ranges for Fixed vs ATR modes to make them visually distinct
     
-    # Create fallback for both modes
-    fallback_result = {
-        'levels': [0.0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0],
-        'high': high,
-        'low': low,
+    # Fixed mode: Narrower range with H1 timeframe levels
+    fixed_price_range = current_price * 0.04  # 4% range (more conservative)
+    fixed_high = current_price + (fixed_price_range * 0.6)
+    fixed_low = current_price - (fixed_price_range * 0.4)
+    
+    # ATR mode: Wider range simulating volatile market conditions
+    atr_price_range = current_price * 0.06  # 6% range (more aggressive)
+    atr_high = current_price + (atr_price_range * 0.8)
+    atr_low = current_price - (atr_price_range * 0.2)
+    
+    # Fixed mode fallback - H1 timeframe specific levels
+    fixed_result = {
+        'levels': [0.0, 0.236, 0.382, 0.5, 0.618, 1.0],  # H1 levels (no 0.786)
+        'high': fixed_high,
+        'low': fixed_low,
         'direction': 'neutral',
-        'current_retracement': 0.5,
+        'current_retracement': 0.382,  # Different default
         'key_level': 0.618,
         'fallback': True,
-        'message': f'Using fallback analysis for {instrument}'
+        'mode': 'fixed',
+        'message': f'Using fallback fixed analysis for {instrument}'
+    }
+    
+    # ATR mode fallback - All standard levels
+    atr_result = {
+        'levels': [0.0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0],  # All levels
+        'high': atr_high,
+        'low': atr_low,
+        'direction': 'neutral',
+        'current_retracement': 0.5,  # Different default
+        'key_level': 0.618,
+        'fallback': True,
+        'mode': 'atr',
+        'message': f'Using fallback ATR analysis for {instrument}'
     }
     
     return {
-        'fibonacci_fixed': {**fallback_result, 'mode': 'fixed'},
-        'fibonacci_atr': {**fallback_result, 'mode': 'atr'},
+        'fibonacci_fixed': fixed_result,
+        'fibonacci_atr': atr_result,
         'mode': 'dual',
         'has_fallback': True
     }
@@ -487,6 +595,7 @@ def generate_pair_analytics(instrument: str, timeframe: str = 'H1') -> Dict[str,
         
         # RUN ALL ANALYTICS WITH SAME DATA
         fibonacci_data = analyze_fibonacci_tiered(price_data)
+        swing_data = analyze_swing_points_tiered(price_data)
         
         # Future analytics will use the same price_data:
         # rsi_data = analyze_rsi_tiered(price_data)
@@ -592,6 +701,7 @@ def generate_pair_analytics(instrument: str, timeframe: str = 'H1') -> Dict[str,
             'instrument': instrument,
             'timeframe': timeframe,
             'fibonacci': fibonacci_data,
+            'swing': swing_data,
             'supplyDemand': supply_demand_data,
             'momentum': momentum_data,
             'consensus': consensus_data,

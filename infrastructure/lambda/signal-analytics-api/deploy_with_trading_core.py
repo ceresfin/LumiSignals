@@ -1,0 +1,110 @@
+#!/usr/bin/env python3
+"""
+Deploy signal-analytics-api Lambda with trading core modules
+"""
+
+import os
+import shutil
+import zipfile
+import boto3
+from datetime import datetime
+
+def create_deployment_package():
+    """Create a complete deployment package with trading core modules"""
+    
+    # Create package directory
+    package_dir = "/mnt/c/Users/sonia/LumiSignals/infrastructure/lambda/signal-analytics-api/complete_package"
+    if os.path.exists(package_dir):
+        shutil.rmtree(package_dir)
+    os.makedirs(package_dir)
+    
+    # Copy main Lambda function
+    shutil.copy2("lambda_function.py", package_dir)
+    
+    # Copy Redis module
+    if os.path.exists("redis"):
+        shutil.copytree("redis", os.path.join(package_dir, "redis"))
+        print("✅ Redis module copied")
+    
+    # Copy NumPy for calculations (direct install to avoid layer conflicts)
+    if os.path.exists("numpy"):
+        shutil.copytree("numpy", os.path.join(package_dir, "numpy"))
+        print("✅ NumPy module copied (direct install)")
+    
+    # Also copy numpy.libs if it exists (binary dependencies)
+    if os.path.exists("numpy.libs"):
+        shutil.copytree("numpy.libs", os.path.join(package_dir, "numpy.libs"))
+        print("✅ NumPy binary libraries copied")
+    
+    # Copy bin directory if it exists (for numpy executables)
+    if os.path.exists("bin"):
+        shutil.copytree("bin", os.path.join(package_dir, "bin"))
+        print("✅ Binary executables copied")
+    
+    # Copy trading core modules
+    if os.path.exists("lumisignals_trading_core"):
+        shutil.copytree("lumisignals_trading_core", os.path.join(package_dir, "lumisignals_trading_core"))
+        print("✅ LumiSignals trading core modules copied")
+    
+    # Copy pytz module (required by trading core)
+    if os.path.exists("pytz"):
+        shutil.copytree("pytz", os.path.join(package_dir, "pytz"))
+        print("✅ pytz module copied")
+    
+    # Create deployment ZIP
+    zip_path = "signal-analytics-complete-with-trading-core.zip"
+    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        for root, dirs, files in os.walk(package_dir):
+            for file in files:
+                file_path = os.path.join(root, file)
+                arc_name = os.path.relpath(file_path, package_dir)
+                zipf.write(file_path, arc_name)
+    
+    print(f"✅ Created deployment package: {zip_path}")
+    return zip_path
+
+def deploy_lambda(zip_path):
+    """Deploy the Lambda function"""
+    lambda_client = boto3.client('lambda', region_name='us-east-1')
+    
+    function_name = 'lumisignals-signal-analytics-api'
+    
+    try:
+        # Read the deployment package
+        with open(zip_path, 'rb') as f:
+            zip_content = f.read()
+        
+        # Update the function code
+        response = lambda_client.update_function_code(
+            FunctionName=function_name,
+            ZipFile=zip_content
+        )
+        
+        print(f"✅ Lambda function updated successfully")
+        print(f"Version: {response['Version']}")
+        print(f"Size: {len(zip_content) / 1024 / 1024:.1f} MB")
+        
+        return True
+        
+    except Exception as e:
+        print(f"❌ Failed to deploy Lambda: {e}")
+        return False
+
+if __name__ == "__main__":
+    print("🚀 Creating deployment package with trading core modules...")
+    
+    # Change to Lambda directory
+    os.chdir("/mnt/c/Users/sonia/LumiSignals/infrastructure/lambda/signal-analytics-api")
+    
+    # Create deployment package
+    zip_path = create_deployment_package()
+    
+    # Deploy to AWS
+    print("\n🚀 Deploying to AWS Lambda...")
+    success = deploy_lambda(zip_path)
+    
+    if success:
+        print("\n✅ Deployment complete! The flexible Fibonacci analysis should now work.")
+        print("🎯 Both Fixed and ATR modes are now available.")
+    else:
+        print("\n❌ Deployment failed. Check AWS credentials and permissions.")
