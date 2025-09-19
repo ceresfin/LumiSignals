@@ -81,7 +81,6 @@ export const SignalControlPanel: React.FC<SignalControlPanelProps> = ({
                     onChange={() => onToggleSignal(toggle.id)}
                   />
                   <div className="w-9 h-5 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-lumitrade-sage"></div>
-                  <div className="absolute top-[2px] left-[2px] bg-white rounded-full h-4 w-4 transform transition-transform peer-checked:translate-x-full"></div>
                 </div>
                 <span className="text-xs text-gray-400 group-hover:text-gray-200 transition-colors select-none">
                   {toggle.label}
@@ -105,7 +104,6 @@ export const SignalControlPanel: React.FC<SignalControlPanelProps> = ({
                     onChange={() => onToggleSignal(toggle.id)}
                   />
                   <div className="w-9 h-5 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-lumitrade-dusty-rose"></div>
-                  <div className="absolute top-[2px] left-[2px] bg-white rounded-full h-4 w-4 transform transition-transform peer-checked:translate-x-full"></div>
                 </div>
                 <span className="text-xs text-gray-400 group-hover:text-gray-200 transition-colors select-none">
                   {toggle.label}
@@ -129,7 +127,6 @@ export const SignalControlPanel: React.FC<SignalControlPanelProps> = ({
                     onChange={() => onToggleSignal(toggle.id)}
                   />
                   <div className="w-9 h-5 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-lumitrade-gold"></div>
-                  <div className="absolute top-[2px] left-[2px] bg-white rounded-full h-4 w-4 transform transition-transform peer-checked:translate-x-full"></div>
                 </div>
                 <span className="text-xs text-gray-400 group-hover:text-gray-200 transition-colors select-none">
                   {toggle.label}

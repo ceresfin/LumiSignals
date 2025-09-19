@@ -151,8 +151,7 @@ export const CurrencyPairGraphsWithTrades: React.FC<CurrencyPairGraphsWithTrades
     { id: 'scotiabank', label: 'Scotiabank', enabled: false, group: 'sentiment' },
     
     // Structure signals
-    { id: 'fibonacci-fixed', label: 'Fibonacci (Fixed)', enabled: false, group: 'structure' },
-    { id: 'fibonacci-atr', label: 'Fibonacci (ATR)', enabled: false, group: 'structure' },
+    { id: 'fibonacci', label: 'Fibonacci Levels', enabled: false, group: 'structure' },
     { id: 'supply-demand', label: 'Untouched Supply and Demand', enabled: false, group: 'structure' },
     { id: 'candlestick', label: 'Candlestick Formations', enabled: false, group: 'structure' },
   ]);
@@ -401,14 +400,61 @@ export const CurrencyPairGraphsWithTrades: React.FC<CurrencyPairGraphsWithTrades
   };
   
   // Signal Control handlers
-  const handleToggleSignal = (id: string) => {
-    setSignals(prev => prev.map(signal => 
+  const handleToggleSignal = async (id: string) => {
+    // Update the toggle state
+    const newSignals = signals.map(signal => 
       signal.id === id ? { ...signal, enabled: !signal.enabled } : signal
-    ));
+    );
+    setSignals(newSignals);
+    
+    // Get the specific signal that was toggled
+    const toggledSignal = newSignals.find(s => s.id === id);
+    const wasEnabled = toggledSignal?.enabled;
+    
+    // Check how many signals are now enabled
+    const enabledSignals = newSignals.filter(s => s.enabled);
+    
+    if (wasEnabled) {
+      // Signal was just enabled - fetch data if we don't have it
+      if (!signalData || Object.keys(signalData).length === 0) {
+        console.log('🔄 Fetching signal data for newly enabled signal:', toggledSignal?.label);
+        setIsRefreshingSignals(true);
+        
+        try {
+          const response = await api.getAllSignalAnalytics();
+          if (response.success && response.data) {
+            console.log('✅ Signal data fetched:', Object.keys(response.data).length, 'currency pairs');
+            setSignalData(response.data);
+          } else {
+            console.error('❌ Failed to fetch signal data:', response.error);
+          }
+        } catch (error) {
+          console.error('❌ Error fetching signals:', error);
+        } finally {
+          setIsRefreshingSignals(false);
+        }
+      }
+    } else {
+      // Signal was just disabled
+      console.log('🔕 Signal disabled:', toggledSignal?.label);
+      // Don't clear signalData here - let the chart component handle clearing overlays
+      // This allows smooth enable/disable without refetching data each time
+    }
+    
+    // Only clear all data if NO signals are enabled
+    if (enabledSignals.length === 0) {
+      console.log('🧹 All signals disabled - clearing signal data');
+      setSignalData({});
+    }
   };
   
   const handleClearAllSignals = () => {
+    // Disable all signals
     setSignals(prev => prev.map(signal => ({ ...signal, enabled: false })));
+    
+    // Clear signal data immediately to remove overlays
+    console.log('🧹 Clearing all signals and overlays');
+    setSignalData({});
   };
   
   const handleRefreshSignals = async () => {

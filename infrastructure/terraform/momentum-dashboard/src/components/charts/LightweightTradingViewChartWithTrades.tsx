@@ -575,23 +575,9 @@ const LightweightTradingViewChartWithTradesComponent: React.FC<LightweightTradin
     enabledSignals.forEach(signal => {
       switch (signal.id) {
         case 'fibonacci':
-          // Legacy support for old single fibonacci toggle
+          // Current simplified Fixed-mode-only Fibonacci
           if (signalData.fibonacci) {
             addFibonacciOverlay(signalData.fibonacci);
-          }
-          break;
-          
-        case 'fibonacci-fixed':
-          // New fixed mode fibonacci
-          if (signalData.fibonacci?.fibonacci_fixed) {
-            addFibonacciOverlay(signalData.fibonacci.fibonacci_fixed);
-          }
-          break;
-          
-        case 'fibonacci-atr':
-          // New ATR mode fibonacci
-          if (signalData.fibonacci?.fibonacci_atr) {
-            addFibonacciOverlay(signalData.fibonacci.fibonacci_atr);
           }
           break;
           
@@ -1339,7 +1325,7 @@ const LightweightTradingViewChartWithTradesComponent: React.FC<LightweightTradin
   
   // Update signal overlays when enabled signals or signal data changes
   useEffect(() => {
-    if (!candlestickSeriesRef.current || !enabledSignals || !signalData) return;
+    if (!candlestickSeriesRef.current) return;
     
     console.log(`🔄 Signal overlay update for ${currencyPair}:`, {
       enabledSignalsCount: enabledSignals?.length || 0,
@@ -1347,8 +1333,17 @@ const LightweightTradingViewChartWithTradesComponent: React.FC<LightweightTradin
       enabledSignalIds: enabledSignals?.map(s => s.id) || []
     });
     
-    // Add signal overlays
-    addSignalOverlays();
+    // Clear overlays if no signals are enabled
+    if (!enabledSignals || enabledSignals.length === 0) {
+      console.log(`🧹 Clearing all signal overlays for ${currencyPair} - no signals enabled`);
+      clearSignalOverlays();
+      return;
+    }
+    
+    // Only add overlays if we have signal data
+    if (signalData) {
+      addSignalOverlays();
+    }
   }, [enabledSignals, signalData, currencyPair]);
 
   // Render institutional level controls
