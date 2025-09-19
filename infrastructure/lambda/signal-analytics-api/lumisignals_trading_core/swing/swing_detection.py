@@ -9,6 +9,9 @@ import numpy as np
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional, Tuple
 from ..fibonacci.atr_calculator import calculate_atr
+import logging
+
+logger = logging.getLogger(__name__)
 
 class SwingPoint:
     """Represents a detected swing point with metadata."""
@@ -113,16 +116,18 @@ class EnhancedSwingDetector:
         
     def _get_adaptive_thresholds(self) -> Dict[str, float]:
         """Get adaptive thresholds based on timeframe and market conditions."""
-        base_thresholds = {
-            'M5': {'min_pips': 4, 'window': 2, 'strength_req': 2},
-            'M15': {'min_pips': 6, 'window': 2, 'strength_req': 2},
-            'M30': {'min_pips': 8, 'window': 2, 'strength_req': 3},
-            'H1': {'min_pips': 12, 'window': 3, 'strength_req': 3},  # Reduced from 20
-            'H4': {'min_pips': 25, 'window': 3, 'strength_req': 3},  # Reduced from 35
-            'D1': {'min_pips': 50, 'window': 4, 'strength_req': 4}   # Reduced from 75
-        }
+        # Import the configuration from timeframe_config
+        from ..fibonacci.timeframe_config import get_timeframe_parameters
         
-        return base_thresholds.get(self.timeframe, base_thresholds['H1'])
+        # Get configured parameters for this timeframe
+        config_params = get_timeframe_parameters(self.timeframe)
+        
+        # Use configured values with proper key mapping
+        return {
+            'min_pips': config_params.get('min_pip_distance', 10),
+            'window': config_params.get('window', 2),
+            'strength_req': config_params.get('min_strength', 2)
+        }
     
     def detect_swing_points_enhanced(self, price_data: List[Dict], 
                                    volume_confirmation: bool = True) -> List[SwingPoint]:
@@ -159,7 +164,7 @@ class EnhancedSwingDetector:
                 if volume_confirmation and avg_volume > 0:
                     volume_confirmed = volumes[i] >= avg_volume * 0.8
                 
-                if strength >= 0.3 and volume_confirmed:  # Lower threshold for more sensitivity
+                if strength >= 0.1 and volume_confirmed:  # Reduced to 0.1 for extreme low volatility
                     swing = SwingPoint(
                         price=highs[i],
                         timestamp=timestamps[i],
@@ -184,7 +189,7 @@ class EnhancedSwingDetector:
                 if volume_confirmation and avg_volume > 0:
                     volume_confirmed = volumes[i] >= avg_volume * 0.8
                 
-                if strength >= 0.3 and volume_confirmed:
+                if strength >= 0.1 and volume_confirmed:  # Reduced to 0.1 for extreme low volatility
                     swing = SwingPoint(
                         price=lows[i],
                         timestamp=timestamps[i],
@@ -305,8 +310,13 @@ def analyze_swing_structure(instrument: str, price_data: List[Dict],
     """
     detector = EnhancedSwingDetector(timeframe)
     
+    # Log detection parameters
+    logger.info(f"Swing detection for {instrument} {timeframe}: thresholds={detector.adaptive_thresholds}, candles={len(price_data)}")
+    
     # Detect swing points
     swings = detector.detect_swing_points_enhanced(price_data, volume_confirmation=True)
+    
+    logger.info(f"Swing detection results for {instrument}: {len(swings)} swings found")
     
     # Get recent swing levels
     swing_levels = detector.get_recent_swing_levels(swings, current_price or 0.0)

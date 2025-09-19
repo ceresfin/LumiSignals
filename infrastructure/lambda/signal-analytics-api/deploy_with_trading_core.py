@@ -26,20 +26,19 @@ def create_deployment_package():
         shutil.copytree("redis", os.path.join(package_dir, "redis"))
         print("✅ Redis module copied")
     
-    # Copy NumPy for calculations (direct install to avoid layer conflicts)
-    if os.path.exists("numpy"):
-        shutil.copytree("numpy", os.path.join(package_dir, "numpy"))
-        print("✅ NumPy module copied (direct install)")
-    
-    # Also copy numpy.libs if it exists (binary dependencies)
-    if os.path.exists("numpy.libs"):
-        shutil.copytree("numpy.libs", os.path.join(package_dir, "numpy.libs"))
-        print("✅ NumPy binary libraries copied")
-    
-    # Copy bin directory if it exists (for numpy executables)
-    if os.path.exists("bin"):
-        shutil.copytree("bin", os.path.join(package_dir, "bin"))
-        print("✅ Binary executables copied")
+    # Install numpy properly using pip to avoid source file issues
+    print("📦 Installing numpy via pip...")
+    import subprocess
+    subprocess.run([
+        "pip", "install", "--target", package_dir, 
+        "--platform", "manylinux2014_x86_64", 
+        "--implementation", "cp",
+        "--python-version", "3.11",
+        "--only-binary=:all:",
+        "--upgrade",
+        "numpy==1.26.4"
+    ], check=True)
+    print("✅ NumPy installed via pip")
     
     # Copy trading core modules
     if os.path.exists("lumisignals_trading_core"):
