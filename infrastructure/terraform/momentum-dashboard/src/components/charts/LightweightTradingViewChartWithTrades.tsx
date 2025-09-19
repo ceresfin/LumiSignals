@@ -480,23 +480,31 @@ const LightweightTradingViewChartWithTradesComponent: React.FC<LightweightTradin
     // Standard Fibonacci retracement levels with colors
     // Use different styling for ATR vs Fixed mode
     const fibLevels = mode === 'atr' ? [
-      // ATR mode uses warmer colors (reds/oranges)
+      // ATR mode uses warmer colors (reds/oranges) - Retracements
       { level: 0.0, color: '#FF0066', label: '0.0% (ATR)' },
       { level: 0.236, color: '#FF6600', label: '23.6% (ATR)' },
       { level: 0.382, color: '#FF9900', label: '38.2% (ATR)' },
       { level: 0.5, color: '#FFCC00', label: '50.0% (ATR)' },
       { level: 0.618, color: '#FF9966', label: '61.8% (ATR)' },
       { level: 0.786, color: '#FF6666', label: '78.6% (ATR)' },
-      { level: 1.0, color: '#FF3366', label: '100.0% (ATR)' }
+      { level: 1.0, color: '#FF3366', label: '100.0% (ATR)' },
+      // Extension levels (beyond 100%) - Darker reds
+      { level: 1.272, color: '#CC0033', label: '127.2% Ext (ATR)' },
+      { level: 1.618, color: '#990033', label: '161.8% Ext (ATR)' },
+      { level: 2.618, color: '#660033', label: '261.8% Ext (ATR)' }
     ] : [
-      // Fixed mode uses cooler colors (blues/purples)
+      // Fixed mode uses cooler colors (blues/purples) - Retracements
       { level: 0.0, color: '#0099FF', label: '0.0%' },
       { level: 0.236, color: '#0066FF', label: '23.6%' },
       { level: 0.382, color: '#3366FF', label: '38.2%' },
       { level: 0.5, color: '#6666FF', label: '50.0%' },
       { level: 0.618, color: '#9966FF', label: '61.8%' },
       { level: 0.786, color: '#CC66FF', label: '78.6%' },
-      { level: 1.0, color: '#FF66FF', label: '100.0%' }
+      { level: 1.0, color: '#FF66FF', label: '100.0%' },
+      // Extension levels (beyond 100%) - Use warmer colors to distinguish
+      { level: 1.272, color: '#FF9900', label: '127.2% Ext' },
+      { level: 1.618, color: '#FF6600', label: '161.8% Ext' },
+      { level: 2.618, color: '#FF3300', label: '261.8% Ext' }
     ];
     
     fibLevels.forEach(({ level, color, label }) => {
