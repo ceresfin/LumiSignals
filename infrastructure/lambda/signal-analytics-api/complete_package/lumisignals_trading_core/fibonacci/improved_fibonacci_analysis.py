@@ -451,44 +451,41 @@ def generate_enhanced_trade_setups(fibonacci_data: Dict, current_price: float,
     swing_range = high_price - low_price
     direction = fibonacci_data['direction']
     
-    # ONE TRUE LOGIC: Use actual current retracement to determine trade setups
-    # Get the corrected current retracement from fibonacci_data
+    # FIBONACCI ENTRY LOGIC: Generate entries AT specific Fibonacci levels
+    # Get the corrected current retracement for context
     current_retracement = fibonacci_data.get('current_retracement', 0.0)
     
-    # Determine appropriate trading levels based on current position
-    if current_retracement <= 0.236:
-        # Very close to swing low - look for deeper retracement levels
-        relevant_levels = [0.236, 0.382]
-    elif current_retracement <= 0.382:
-        # Shallow retracement - continuation zone
-        relevant_levels = [0.382, 0.500]
-    elif current_retracement <= 0.618:
-        # Mid-range retracement - continuation zone
-        relevant_levels = [0.500, 0.618]
-    elif current_retracement <= 0.786:
-        # Deep retracement - still continuation but watch for reversal
-        relevant_levels = [0.618, 0.786]
-    else:
-        # Very deep retracement - reversal zone
-        relevant_levels = [0.786, 0.886]
+    # Define key Fibonacci levels with their trading purpose
+    fibonacci_entries = [
+        {'level': 0.382, 'type': 'Trend Continuation', 'description': 'Shallow continuation entry'},
+        {'level': 0.500, 'type': 'Trend Continuation', 'description': 'Mid-level continuation entry'},
+        {'level': 0.618, 'type': 'Trend Continuation', 'description': 'Golden Ratio - BEST continuation entry'},
+        {'level': 0.786, 'type': 'Trend Continuation', 'description': 'Deep continuation entry'},
+        {'level': 0.886, 'type': 'Trend Reversal', 'description': 'Deep reversal entry'}
+    ]
     
-    # Generate setups only for relevant levels near current position
-    for level in relevant_levels:
+    # Generate setups for ALL relevant Fibonacci levels (not just near current price)
+    for fib_entry in fibonacci_entries:
+        level = fib_entry['level']
         if level in levels:
-            # Calculate entry price
+            # Calculate entry price AT the specific Fibonacci level
             entry_price = high_price - (swing_range * level)
             
-            # Distance filter
+            # Distance filter - be more generous for Fibonacci level entries
             distance_to_entry = abs(current_price - entry_price)
-            if distance_to_entry <= max_distance:
+            
+            # Allow wider distance for golden ratio and key levels
+            max_distance_for_level = max_distance * 2 if level == 0.618 else max_distance
+            
+            if distance_to_entry <= max_distance_for_level:
                 
-                # Generate trade setup using ONE TRUE LOGIC
+                # Generate trade setup using Fibonacci level logic
                 setup = create_enhanced_setup(
                     level, entry_price, high_price, low_price,
                     current_price, direction, instrument, timeframe,
                     include_confluence, institutional_levels,
                     pip_value, decimal_places, distance_to_entry,
-                    current_retracement  # Pass actual retracement for unified logic
+                    current_retracement, fib_entry['type']  # Pass predefined setup type
                 )
                 
                 if setup:
@@ -505,7 +502,7 @@ def create_enhanced_setup(level: float, entry_price: float, high_price: float,
                          instrument: str, timeframe: str, include_confluence: bool,
                          institutional_levels: Dict, pip_value: float, 
                          decimal_places: int, distance_to_entry: float,
-                         current_retracement: float) -> Dict:
+                         current_retracement: float, setup_type_predefined: str) -> Dict:
     """
     Create a single enhanced trade setup with detailed breakdowns.
     """
@@ -513,24 +510,23 @@ def create_enhanced_setup(level: float, entry_price: float, high_price: float,
     # Determine trade direction based on Fibonacci level and trend
     swing_range = high_price - low_price
     
-    # ONE TRUE LOGIC: Determine trade type based on ACTUAL current retracement position
-    # Use current_retracement (where price actually is) not level (potential entry)
-    if current_retracement <= 0.786:  # Continuation zone: 0% to 78.6%
-        setup_type_override = 'Trend Continuation'
+    # Use predefined setup type from Fibonacci level entry logic
+    setup_type_override = setup_type_predefined
+    
+    # Determine trade direction based on setup type and trend
+    if setup_type_predefined == 'Trend Continuation':
         if direction in ['uptrend', 'bullish']:
             trade_direction = 'BUY'
             trade_type = 'long'
         else:  # downtrend
             trade_direction = 'SELL'
             trade_type = 'short'
-    else:  # Reversal zone: >78.6%
-        setup_type_override = 'Trend Reversal'
+    else:  # Trend Reversal
         if direction in ['uptrend', 'bullish']:
-            # In uptrend but deep retracement - expect reversal (sell the high)
+            # In uptrend expecting reversal - sell the high
             trade_direction = 'SELL'
             trade_type = 'short'
-        else:  # downtrend
-            # In downtrend but deep retracement - expect reversal (buy the low)
+        else:  # downtrend expecting reversal - buy the low
             trade_direction = 'BUY'
             trade_type = 'long'
     
@@ -584,7 +580,7 @@ def create_enhanced_setup(level: float, entry_price: float, high_price: float,
         'strategy': strategy_name,
         'setup_type': setup_type,
         'direction': trade_direction,
-        'fibonacci_level': f'{current_retracement:.1%} Retracement',
+        'fibonacci_level': f'{level:.1%} Retracement',
         'entry_price': round(entry_price, decimal_places),
         'stop_loss': round(stop_loss, decimal_places),
         'target_price': round(targets[0], decimal_places) if targets else 0,
