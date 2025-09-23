@@ -90,6 +90,79 @@ def get_trade_setups(timeframe, instruments=None, use_all_pairs=True):
     
     return all_setups, errors
 
+def get_fibonacci_level_description(fib_level, setup_type):
+    """Get descriptive text for Fibonacci level and trade type"""
+    level_map = {
+        '0.0%': '0.0% (Swing Low/High)',
+        '23.6%': '23.6% Retracement',
+        '38.2%': '38.2% Retracement', 
+        '50.0%': '50.0% Retracement',
+        '61.8%': '61.8% Retracement (Golden Ratio)',
+        '78.6%': '78.6% Retracement',
+        '88.6%': '88.6% Retracement',
+        '100.0%': '100.0% (Full Retracement)',
+        '127.2%': '127.2% Extension',
+        '138.2%': '138.2% Extension',
+        '161.8%': '161.8% Extension (Golden Ratio)',
+        '200.0%': '200.0% Extension',
+        '261.8%': '261.8% Extension'
+    }
+    
+    description = level_map.get(fib_level, f"{fib_level}")
+    
+    # Add trade type context
+    if 'Reversal' in setup_type:
+        trade_context = "Trend Reversal"
+    elif 'Continuation' in setup_type:
+        trade_context = "Trend Continuation"
+    elif 'Extension' in setup_type:
+        trade_context = "Trend Extension"
+    else:
+        trade_context = "Trend Analysis"
+    
+    return f"{description} - {trade_context}"
+
+def get_stop_target_levels(setup):
+    """Show actual Fibonacci levels for stops and targets from Lambda function"""
+    # Get stop Fibonacci level details
+    stop_fibonacci_level = setup.get('stop_fibonacci_level', 'Unknown')
+    risk_pips = setup.get('risk_pips', 0)
+    stop_info = f"{stop_fibonacci_level} ({risk_pips:.0f} pip risk)"
+    
+    # Get target Fibonacci level details
+    targets = setup.get('targets', [])
+    target_fibonacci_levels = setup.get('target_fibonacci_levels', [])
+    
+    if len(targets) == 1:
+        target_fib = target_fibonacci_levels[0] if target_fibonacci_levels else "Unknown"
+        target_info = f"{target_fib}"
+    elif len(targets) > 1:
+        target_info = f"{target_fibonacci_levels[0] if target_fibonacci_levels else 'Unknown'} (Primary)"
+        
+        # Add other targets
+        other_targets = []
+        for i in range(1, len(targets)):
+            target_fib = target_fibonacci_levels[i] if i < len(target_fibonacci_levels) else "Unknown"
+            rr = setup.get('risk_reward_ratios', [])[i] if i < len(setup.get('risk_reward_ratios', [])) else 0
+            other_targets.append(f"T{i+1}: {target_fib} (R:R {rr})")
+        
+        if other_targets:
+            target_info += f" | {' | '.join(other_targets)}"
+    else:
+        target_info = "No targets"
+    
+    return stop_info, target_info
+
+def get_trend_direction_description(direction):
+    """Convert direction to descriptive text"""
+    direction_map = {
+        'BUY': ('Upward', 'Buy'),
+        'SELL': ('Downward', 'Sell'),
+        'LONG': ('Upward', 'Buy'),
+        'SHORT': ('Downward', 'Sell')
+    }
+    return direction_map.get(direction.upper(), ('Unknown', direction))
+
 def print_setups_summary(setups, timeframe, show_details=True):
     """Print formatted summary of trade setups"""
     if not setups:
@@ -103,14 +176,43 @@ def print_setups_summary(setups, timeframe, show_details=True):
     
     if show_details:
         for i, setup in enumerate(setups, 1):
-            print(f"\n🔸 {timeframe} Setup #{i}: {setup.get('instrument')}")
-            print(f"   Direction: {setup.get('direction')} at {setup.get('fibonacci_level')}")
-            print(f"   Entry: {setup.get('entry_price')}")
-            print(f"   Target: {setup.get('target_price')}")
-            print(f"   Stop: {setup.get('stop_loss')}")
-            print(f"   R:R: {setup.get('risk_reward_ratio')}")
-            print(f"   Distance: {setup.get('distance_to_entry_pips')} pips")
-            print(f"   Quality: {setup.get('setup_quality')}/100")
+            # Get enhanced descriptions
+            fib_level = setup.get('fibonacci_level', 'Unknown')
+            setup_type = setup.get('setup_type', 'Unknown')
+            direction = setup.get('direction', 'Unknown')
+            
+            fib_description = get_fibonacci_level_description(fib_level, setup_type)
+            trend_dir, trade_signal = get_trend_direction_description(direction)
+            stop_level, target_level = get_stop_target_levels(setup)
+            
+            print(f"\n🔸 Setup #{i}: {setup.get('instrument')}")
+            print(f"  - Fibonacci Level: {fib_description}")
+            print(f"  - Direction: {trend_dir}, Trade Signal: {trade_signal}")
+            print(f"  - Entry: {setup.get('entry_price')} ({fib_level})")
+            print(f"  - Target: {setup.get('target_price')} ({target_level})")
+            print(f"  - Stop Loss: {setup.get('stop_loss')} ({stop_level})")
+            print(f"  - R:R: {setup.get('risk_reward_ratio')}")
+            print(f"  - Distance: {setup.get('distance_to_entry_pips')} pips")
+            print(f"  - Quality: {setup.get('setup_quality')}/100")
+            
+            # Show additional targets if available
+            targets = setup.get('targets', [])
+            if len(targets) > 1:
+                print(f"  - Additional Targets:")
+                risk_reward_ratios = setup.get('risk_reward_ratios', [])
+                reward_pips = setup.get('reward_pips', [])
+                for j, (target, rr, pips) in enumerate(zip(targets[1:], risk_reward_ratios[1:], reward_pips[1:]), 2):
+                    print(f"    Target {j}: {target} (R:R {rr}, +{pips:.0f} pips)")
+            
+            # Show entry reason and invalidation
+            entry_reason = setup.get('entry_reason', '')
+            invalidation = setup.get('invalidation', '')
+            if entry_reason:
+                print(f"  - Entry Reason: {entry_reason}")
+            if invalidation:
+                print(f"  - Invalidation: {invalidation}")
+                
+            print(f"  - Strategy: {setup.get('strategy', 'Unknown')}")
     else:
         # Quick summary
         pairs_with_setups = list(set(setup.get('instrument') for setup in setups))

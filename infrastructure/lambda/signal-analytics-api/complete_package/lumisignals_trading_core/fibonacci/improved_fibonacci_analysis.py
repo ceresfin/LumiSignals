@@ -554,6 +554,59 @@ def create_enhanced_setup(level: float, entry_price: float, high_price: float,
     setup_type = setup_type_override  # Use the type we determined based on level and trend
     strategy_name = generate_strategy_name(level, timeframe, direction, setup_type)
     
+    # Calculate stop loss Fibonacci level and buffer details
+    swing_range = high_price - low_price
+    timeframe_settings = get_timeframe_settings(timeframe)
+    expected_buffer_pips = timeframe_settings['stop_buffer_pips']
+    
+    # Determine what Fibonacci level the stop represents
+    if trade_direction == 'BUY':
+        if level < 0.618:
+            # Stop should be around 78.6% level
+            expected_stop_level = high_price - (swing_range * 0.786)
+            stop_reference = "78.6% Retracement"
+        else:
+            # Stop should be below swing low
+            expected_stop_level = low_price
+            stop_reference = "0.0% (Swing Low)"
+        buffer_pips = (expected_stop_level - stop_loss) / pip_value
+    else:  # SELL
+        if level > 0.382:
+            # Stop should be around 23.6% level
+            expected_stop_level = high_price - (swing_range * 0.236)
+            stop_reference = "23.6% Retracement"
+        else:
+            # Stop should be above swing high
+            expected_stop_level = high_price
+            stop_reference = "100.0% (Swing High)"
+        buffer_pips = (stop_loss - expected_stop_level) / pip_value
+    
+    # Calculate target Fibonacci levels
+    target_fibonacci_levels = []
+    for i, target in enumerate(targets):
+        if trade_direction == 'BUY':
+            if target <= high_price + (10 * pip_value):
+                target_fib = "Break above swing high"
+            elif abs(target - (high_price + (swing_range * 0.272))) < (5 * pip_value):
+                target_fib = "127.2% Extension"
+            elif abs(target - (high_price + (swing_range * 0.618))) < (5 * pip_value):
+                target_fib = "161.8% Extension"
+            else:
+                extension_ratio = (target - high_price) / swing_range
+                target_fib = f"{(1.0 + extension_ratio):.1%} Extension"
+        else:  # SELL
+            if target >= low_price - (10 * pip_value):
+                target_fib = "Break below swing low"
+            elif abs(target - (low_price - (swing_range * 0.272))) < (5 * pip_value):
+                target_fib = "127.2% Extension"
+            elif abs(target - (low_price - (swing_range * 0.618))) < (5 * pip_value):
+                target_fib = "161.8% Extension"
+            else:
+                extension_ratio = (low_price - target) / swing_range
+                target_fib = f"{(1.0 + extension_ratio):.1%} Extension"
+        
+        target_fibonacci_levels.append(target_fib)
+
     # Create setup
     setup = {
         'setup_id': f'fibonacci_{level:.1%}_{timeframe}',
@@ -563,8 +616,10 @@ def create_enhanced_setup(level: float, entry_price: float, high_price: float,
         'fibonacci_level': f'{level:.1%} Retracement',
         'entry_price': round(entry_price, decimal_places),
         'stop_loss': round(stop_loss, decimal_places),
+        'stop_fibonacci_level': f'{stop_reference} + {buffer_pips:.1f} pip buffer',
         'target_price': round(targets[0], decimal_places) if targets else 0,
         'targets': [round(t, decimal_places) for t in targets],
+        'target_fibonacci_levels': target_fibonacci_levels,
         'risk_pips': round(risk_pips, 1),
         'reward_pips': [round(r, 1) for r in reward_pips_array],
         'risk_reward_ratios': risk_reward_ratios,
