@@ -238,10 +238,10 @@ class DirectCandlestickAPI:
                     sources_used.append(f"hot({len(hot_candles)})")
                     logger.info(f"Retrieved {len(hot_candles)} candles from hot tier")
                 
-                # Step 2: Try warm tier if we need more candles
+                # Step 2: Try warm tier if we need more candles - FIX: Get ALL warm data
                 if len(candles) < count:
-                    needed = count - len(candles)
-                    warm_data = redis_conn.lrange(tiered_keys['warm'], 0, needed - 1)
+                    # Get ALL warm data, not just the needed amount
+                    warm_data = redis_conn.lrange(tiered_keys['warm'], 0, -1)
                     if warm_data:
                         warm_candles = []
                         for item in warm_data:
@@ -262,37 +262,68 @@ class DirectCandlestickAPI:
                             cold_parsed = json.loads(cold_data.decode('utf-8'))
                             if isinstance(cold_parsed, dict) and 'candles' in cold_parsed:
                                 cold_candles = cold_parsed['candles']
-                                # Take only what we need from cold tier
-                                needed = count - len(candles)
-                                candles.extend(cold_candles[-needed:])
-                                sources_used.append(f"cold({min(len(cold_candles), needed)})")
-                                logger.info(f"Retrieved {min(len(cold_candles), needed)} candles from cold tier")
+                                # Add ALL cold candles, let the final sort/limit handle it
+                                candles.extend(cold_candles)
+                                sources_used.append(f"cold({len(cold_candles)})")
+                                logger.info(f"Retrieved {len(cold_candles)} candles from cold tier")
+                            elif isinstance(cold_parsed, list):
+                                # Handle case where cold tier is stored as a list directly
+                                candles.extend(cold_parsed)
+                                sources_used.append(f"cold({len(cold_parsed)})")
+                                logger.info(f"Retrieved {len(cold_parsed)} candles from cold tier (list format)")
                         except json.JSONDecodeError as e:
                             logger.warning(f"Failed to parse cold tier data: {e}")
                 
-                logger.info(f"Tiered retrieval for {currency_pair}: {', '.join(sources_used)}")
+                logger.info(f"Tiered retrieval for {currency_pair}: {', '.join(sources_used)} - Total collected: {len(candles)}")
                 
             except Exception as e:
                 logger.warning(f"Tiered storage retrieval failed, trying fallback: {e}")
                 
-                # Fallback to old key patterns if tiered storage fails
+                # Enhanced fallback to multiple key patterns if tiered storage fails
                 fallback_keys = [
-                    (f"market_data:{currency_pair}:{timeframe}:historical", f"market_data:{currency_pair}:{timeframe}:current"),
+                    f"market_data:{currency_pair}:{timeframe}:historical",
+                    f"market_data:{currency_pair}:{timeframe}:current", 
+                    f"market_data:{currency_pair}:{timeframe}",
+                    f"{currency_pair}:{timeframe}:data",
+                    f"{currency_pair}_{timeframe}_data"
                 ]
                 
-                for historical_key, current_key in fallback_keys:
-                    historical_data = redis_conn.get(historical_key)
-                    if historical_data:
-                        try:
-                            parsed = json.loads(historical_data.decode('utf-8'))
+                for fallback_key in fallback_keys:
+                    try:
+                        # Try as a single key (string/hash)
+                        fallback_data = redis_conn.get(fallback_key)
+                        if fallback_data:
+                            parsed = json.loads(fallback_data.decode('utf-8'))
                             if isinstance(parsed, dict) and 'candles' in parsed:
                                 candles.extend(parsed['candles'])
+                                sources_used.append(f"fallback_key({fallback_key})")
+                                logger.info(f"Retrieved {len(parsed['candles'])} candles from fallback key: {fallback_key}")
+                                break
                             elif isinstance(parsed, list):
                                 candles.extend(parsed)
-                            sources_used.append("fallback_historical")
-                            break
-                        except json.JSONDecodeError:
-                            continue
+                                sources_used.append(f"fallback_list({fallback_key})")
+                                logger.info(f"Retrieved {len(parsed)} candles from fallback list: {fallback_key}")
+                                break
+                        
+                        # Try as a list key
+                        fallback_list = redis_conn.lrange(fallback_key, 0, -1)
+                        if fallback_list:
+                            fallback_candles = []
+                            for item in fallback_list:
+                                try:
+                                    candle = json.loads(item.decode('utf-8'))
+                                    fallback_candles.append(candle)
+                                except json.JSONDecodeError:
+                                    continue
+                            if fallback_candles:
+                                candles.extend(fallback_candles)
+                                sources_used.append(f"fallback_lrange({fallback_key})")
+                                logger.info(f"Retrieved {len(fallback_candles)} candles from fallback lrange: {fallback_key}")
+                                break
+                                
+                    except Exception as fallback_error:
+                        logger.debug(f"Fallback key {fallback_key} failed: {fallback_error}")
+                        continue
             
             # Determine data source based on what tiers were used
             if sources_used:

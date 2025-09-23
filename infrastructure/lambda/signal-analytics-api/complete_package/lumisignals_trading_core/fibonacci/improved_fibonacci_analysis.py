@@ -449,8 +449,8 @@ def generate_enhanced_trade_setups(fibonacci_data: Dict, current_price: float,
     swing_range = high_price - low_price
     direction = fibonacci_data['direction']
     
-    # Key trading levels
-    key_levels = [0.382, 0.500, 0.618, 0.786]
+    # Key trading levels (including reversal zone)
+    key_levels = [0.382, 0.500, 0.618, 0.786, 0.886]
     
     for level in key_levels:
         if level in levels:
@@ -490,17 +490,29 @@ def create_enhanced_setup(level: float, entry_price: float, high_price: float,
     # Determine trade direction based on Fibonacci level and trend
     swing_range = high_price - low_price
     
-    # Smart stop loss calculation
-    if direction in ['uptrend', 'bullish'] or level < 0.618:
-        # Long trade setup
-        trade_direction = 'BUY'
-        stop_loss = calculate_smart_stop_loss(entry_price, high_price, low_price, level, 'long', pip_value, timeframe)
-        targets = calculate_smart_targets(entry_price, high_price, low_price, 'long', pip_value)
-    else:
-        # Short trade setup  
-        trade_direction = 'SELL'
-        stop_loss = calculate_smart_stop_loss(entry_price, high_price, low_price, level, 'short', pip_value, timeframe)
-        targets = calculate_smart_targets(entry_price, high_price, low_price, 'short', pip_value)
+    # Determine trade type and direction based on retracement level
+    if direction in ['uptrend', 'bullish']:
+        if level <= 0.786:  # Continuation zone: 38.2%, 50%, 61.8%, 78.6%
+            trade_direction = 'BUY'
+            setup_type_override = 'Trend Continuation'
+            trade_type = 'long'
+        else:  # Reversal zone: 88.6% and beyond
+            trade_direction = 'SELL'
+            setup_type_override = 'Trend Reversal'
+            trade_type = 'short'
+    else:  # downtrend
+        if level <= 0.786:  # Continuation zone
+            trade_direction = 'SELL'
+            setup_type_override = 'Trend Continuation'
+            trade_type = 'short'
+        else:  # Reversal zone: 88.6% and beyond
+            trade_direction = 'BUY'
+            setup_type_override = 'Trend Reversal'
+            trade_type = 'long'
+    
+    # Calculate stop loss and targets based on trade type
+    stop_loss = calculate_smart_stop_loss(entry_price, high_price, low_price, level, trade_type, pip_value, timeframe)
+    targets = calculate_smart_targets(entry_price, high_price, low_price, trade_type, pip_value)
     
     # Calculate risk/reward ratios for all targets
     risk_pips = abs(entry_price - stop_loss) / pip_value
@@ -539,7 +551,7 @@ def create_enhanced_setup(level: float, entry_price: float, high_price: float,
     )
     
     # Generate strategy metadata
-    setup_type = determine_setup_type(level, primary_rr)
+    setup_type = setup_type_override  # Use the type we determined based on level and trend
     strategy_name = generate_strategy_name(level, timeframe, direction, setup_type)
     
     # Create setup
