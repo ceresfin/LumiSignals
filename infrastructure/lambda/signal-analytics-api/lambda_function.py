@@ -384,86 +384,9 @@ def handle_all_signals(query_parameters: Dict[str, str], cors_headers: Dict[str,
             })
         }
 
-def analyze_fibonacci_tiered(price_data: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Analyze Fibonacci levels using tiered price data
-    """
-    try:
-        from lumisignals_trading_core.fibonacci.improved_fibonacci_analysis import analyze_fibonacci_levels_improved
-        
-        instrument = price_data['instrument']
-        current_price = price_data['current_price']
-        combined_candles = price_data['combined']
-        
-        # Convert Redis candle format to analysis format if needed
-        formatted_candles = []
-        for candle in combined_candles:
-            # Redis format uses 'o', 'h', 'l', 'c' keys
-            formatted_candles.append({
-                'high': float(candle.get('h', candle.get('high', 0))),
-                'low': float(candle.get('l', candle.get('low', 0))),
-                'close': float(candle.get('c', candle.get('close', 0))),
-                'open': float(candle.get('o', candle.get('open', 0))),
-                'timestamp': candle.get('time', candle.get('timestamp', ''))
-            })
-        
-        # Use real analysis with actual market data - Fixed mode only
-        if current_price and len(formatted_candles) > 10:
-            # Get Fixed mode Fibonacci analysis only
-            result_fixed = analyze_fibonacci_levels_improved(instrument, current_price, formatted_candles, mode='fixed', timeframe=price_data['timeframe'])
-            
-            logger.info(f"Fibonacci analysis for {instrument}: Fixed levels={result_fixed.get('levels', [])}")
-            
-            # Check if Fixed mode encountered errors
-            fixed_fallback = 'error' in result_fixed
-            
-            if fixed_fallback:
-                result_fixed = create_fallback_fibonacci_mode(price_data, 'fixed')
-                result_fixed['fallback'] = True
-                result_fixed['message'] = f'Fixed mode error: {result_fixed.get("error", "Unknown")}'
-            
-            # Return simplified single-mode result
-            return {
-                'levels': result_fixed.get('levels', []),
-                'high': result_fixed.get('high', 0),
-                'low': result_fixed.get('low', 0),
-                'direction': result_fixed.get('direction', 'neutral'),
-                'current_retracement': result_fixed.get('current_retracement', 0.5),
-                'key_level': result_fixed.get('key_level', 0.618),
-                'detailed_levels': result_fixed.get('detailed_levels', []),
-                'swing_range_pips': result_fixed.get('swing_range_pips', 0),
-                'relevance_score': result_fixed.get('relevance_score', 0),
-                'mode': 'fixed',
-                'mode_info': result_fixed.get('mode_info', {}),
-                'swing_analysis': result_fixed.get('swing_analysis', {}),
-                'has_fallback': fixed_fallback
-            }
-        else:
-            logger.warning(f"Insufficient data for {instrument}: current_price={current_price}, candles={len(formatted_candles)}")
-            raise Exception("Insufficient data for analysis")
-            
-    except Exception as e:
-        logger.error(f"Fibonacci analysis error for {price_data['instrument']}: {str(e)}")
-        combined_candles = price_data.get('combined', [])
-        logger.error(f"Candle sample: {combined_candles[0] if combined_candles else 'No candles'}")
-        # Fallback to basic analysis - Fixed mode only
-        fallback_result = create_fallback_fibonacci_mode(price_data, 'fixed')
-        return {
-            'levels': fallback_result.get('levels', []),
-            'high': fallback_result.get('high', 0),
-            'low': fallback_result.get('low', 0),
-            'direction': fallback_result.get('direction', 'neutral'),
-            'current_retracement': fallback_result.get('current_retracement', 0.5),
-            'key_level': fallback_result.get('key_level', 0.618),
-            'detailed_levels': fallback_result.get('detailed_levels', []),
-            'swing_range_pips': fallback_result.get('swing_range_pips', 0),
-            'relevance_score': 0.1,  # Low relevance for fallback
-            'mode': 'fixed',
-            'mode_info': {'mode': 'fixed', 'fallback': True},
-            'swing_analysis': {},
-            'has_fallback': True,
-            'message': 'Using fallback Fixed Fibonacci analysis'
-        }
+# REMOVED: analyze_fibonacci_tiered() function was causing fallback to broken implementations
+# This function proliferation pattern was creating deployment issues where working code
+# would fall back to broken versions. Using Git for version control instead.
 
 def analyze_swing_points_tiered(price_data: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -569,7 +492,7 @@ def create_fallback_fibonacci_mode(price_data: Dict[str, Any], mode: str) -> Dic
         low_price = current_price - (price_range * 0.4)
         
         return {
-            'levels': [0.0, 0.236, 0.382, 0.5, 0.618, 1.0],  # H1 levels (no 0.786)
+            'levels': [0.0, 0.236, 0.382, 0.5, 0.618, 0.786, 0.886, 1.0],  # H1 levels with deep retracements
             'high': high_price,
             'low': low_price,
             'direction': 'neutral',
@@ -578,7 +501,7 @@ def create_fallback_fibonacci_mode(price_data: Dict[str, Any], mode: str) -> Dic
             'mode': 'fixed',
             'detailed_levels': [
                 {'ratio': r, 'price': high_price - ((high_price - low_price) * r), 'description': f'{r:.1%} Retracement'}
-                for r in [0.0, 0.236, 0.382, 0.5, 0.618, 1.0]
+                for r in [0.0, 0.236, 0.382, 0.5, 0.618, 0.786, 0.886, 1.0]
             ],
             'swing_range_pips': int((high_price - low_price) * (10000 if 'JPY' not in instrument else 100))
         }
@@ -589,7 +512,7 @@ def create_fallback_fibonacci_mode(price_data: Dict[str, Any], mode: str) -> Dic
         low_price = current_price - (price_range * 0.2)
         
         return {
-            'levels': [0.0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0],  # All levels
+            'levels': [0.0, 0.236, 0.382, 0.5, 0.618, 0.786, 0.886, 1.0],  # All levels
             'high': high_price,
             'low': low_price,
             'direction': 'neutral',
@@ -598,7 +521,7 @@ def create_fallback_fibonacci_mode(price_data: Dict[str, Any], mode: str) -> Dic
             'mode': 'atr',
             'detailed_levels': [
                 {'ratio': r, 'price': high_price - ((high_price - low_price) * r), 'description': f'{r:.1%} Retracement'}
-                for r in [0.0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0]
+                for r in [0.0, 0.236, 0.382, 0.5, 0.618, 0.786, 0.886, 1.0]
             ],
             'swing_range_pips': int((high_price - low_price) * (10000 if 'JPY' not in instrument else 100))
         }
@@ -852,9 +775,17 @@ def get_setup_quality(risk_reward_ratio: float, retracement_level: float) -> str
 
 # Removed old dual-mode fallback function - now using create_fallback_fibonacci_mode() for Fixed mode only
 
-def generate_pair_analytics(instrument: str, timeframe: str = 'H1') -> Dict[str, Any]:
+def generate_pair_analytics(instrument: str, timeframe: str = 'H1', 
+                          include_confluence: bool = False,
+                          institutional_levels: Dict = None) -> Dict[str, Any]:
     """
     Generate comprehensive analytics for a single currency pair using centralized data retrieval
+    
+    Args:
+        instrument: Currency pair (e.g., 'EUR_USD')
+        timeframe: Time period for analysis (default: 'H1')
+        include_confluence: Whether to include confluence analysis in trade setups
+        institutional_levels: Dictionary of institutional price levels for confluence
     """
     try:
         logger.info(f"Generating analytics for {instrument} {timeframe}")
@@ -867,12 +798,54 @@ def generate_pair_analytics(instrument: str, timeframe: str = 'H1') -> Dict[str,
             return create_error_analytics(instrument, f"No price data available for {timeframe}")
         
         # RUN ALL ANALYTICS WITH SAME DATA
-        fibonacci_data = analyze_fibonacci_tiered(price_data)
+        current_price = price_data['current_price'] or 1.1000
+        
+        # RUN ENHANCED FIBONACCI ANALYSIS WITH INTEGRATED TRADE SETUPS
+        try:
+            from lumisignals_trading_core.fibonacci.improved_fibonacci_analysis import analyze_fibonacci_levels_improved
+            
+            # Convert Redis candle format to analysis format (h,l,c,o -> high,low,close,open)
+            combined_candles = price_data['combined']
+            formatted_candles = []
+            for candle in combined_candles:
+                formatted_candles.append({
+                    'high': float(candle.get('h', candle.get('high', 0))),
+                    'low': float(candle.get('l', candle.get('low', 0))),
+                    'close': float(candle.get('c', candle.get('close', 0))),
+                    'open': float(candle.get('o', candle.get('open', 0))),
+                    'timestamp': candle.get('time', candle.get('timestamp', ''))
+                })
+            
+            fibonacci_data = analyze_fibonacci_levels_improved(
+                instrument=instrument,
+                current_price=current_price,
+                price_data=formatted_candles,  # Use formatted candles instead of raw Redis data
+                mode='fixed',
+                timeframe=timeframe,
+                include_trade_setups=True,  # Generate trade setups directly in analysis
+                include_confluence=include_confluence,
+                institutional_levels=institutional_levels
+            )
+        except ImportError as e:
+            logger.error(f"Trading core import failed: {e}")
+            import traceback
+            logger.error(f"Import traceback: {traceback.format_exc()}")
+            raise Exception(f"Fibonacci analysis unavailable - import error: {str(e)}")
+        except Exception as e:
+            logger.error(f"Fibonacci analysis failed with error: {e}")
+            import traceback
+            logger.error(f"Analysis traceback: {traceback.format_exc()}")
+            raise Exception(f"Fibonacci analysis failed: {str(e)}")
+        
+        # Run swing analysis
         swing_data = analyze_swing_points_tiered(price_data)
         
-        # Generate Fibonacci trade setups using the real analysis data
-        current_price = price_data['current_price'] or 1.1000
-        trade_setups = generate_fibonacci_trade_setups(fibonacci_data, instrument, current_price)
+        # Extract trade setups from fibonacci data if present, otherwise generate separately
+        if 'trade_setups' in fibonacci_data:
+            trade_setups = fibonacci_data.get('trade_setups', [])
+        else:
+            # Fallback to separate generation if not included in analysis
+            trade_setups = generate_fibonacci_trade_setups(fibonacci_data, instrument, current_price)
         
         # Future analytics will use the same price_data:
         # rsi_data = analyze_rsi_tiered(price_data)
@@ -1140,80 +1113,12 @@ def health_check() -> Dict[str, Any]:
 
 # SAVED FOR LATER: Enhanced version with trading core integration
 # TODO: Integrate features one by one after basic functionality works
-"""
-def generate_pair_analytics_with_setups(instrument: str, timeframe: str = 'H1', 
-                                       include_confluence: bool = False, 
-                                       institutional_levels: Dict = None) -> Dict[str, Any]:
-    # Generate comprehensive analytics with trade setups for a single currency pair
-    try:
-        logger.info(f"Generating enhanced analytics for {instrument} {timeframe}")
-        
-        # GET ALL DATA ONCE
-        price_data = get_tiered_price_data(instrument, timeframe)
-        
-        if price_data['total_candles'] == 0:
-            logger.warning(f"No price data available for {instrument} {timeframe}")
-            return create_error_analytics(instrument, f"No price data available for {timeframe}")
-        
-        current_price = price_data['current_price'] or 1.1000
-        
-        # RUN ENHANCED FIBONACCI ANALYSIS WITH TRADE SETUPS
-        try:
-            from lumisignals_trading_core.fibonacci.improved_fibonacci_analysis import analyze_fibonacci_levels_improved
-            
-            fibonacci_data = analyze_fibonacci_levels_improved(
-                instrument=instrument,
-                current_price=current_price,
-                price_data=price_data['combined'],
-                mode='fixed',
-                timeframe=timeframe,
-                include_trade_setups=True,  # Enable trade setups
-                include_confluence=include_confluence,
-                institutional_levels=institutional_levels
-            )
-        except ImportError:
-            logger.warning("Trading core not available, using fallback Fibonacci analysis")
-            fibonacci_data = analyze_fibonacci_tiered(price_data)
-        
-        # Other analytics (keep existing mock data for now)
-        swing_data = analyze_swing_points_tiered(price_data)
-        
-        # Generate mock analytics (same as before)
-        price_range = current_price * 0.05
-        
-        supply_demand_data = {
-            'zones': [
-                {
-                    'type': 'supply',
-                    'start': current_price + (price_range * 0.5),
-                    'end': current_price + (price_range * 0.7),
-                    'strength': 0.85,
-                    'touches': 2,
-                    'freshness': 0.9
-                }
-            ],
-            'count': 1
-        }
-        
-        # Combine all analytics
-        analytics = {
-            'instrument': instrument,
-            'timeframe': timeframe,
-            'current_price': current_price,
-            'fibonacci': fibonacci_data,
-            'swing': swing_data,
-            'supply_demand': supply_demand_data,
-            'momentum': generate_mock_momentum_data(current_price),
-            'rsi_sma': generate_mock_rsi_sma_data(current_price),
-            'analysis_timestamp': datetime.utcnow().isoformat() + 'Z'
-        }
-        
-        return analytics
-        
-    except Exception as e:
-        logger.error(f"Error generating enhanced analytics for {instrument}: {e}")
-        return create_error_analytics(instrument, str(e))
-"""  # End of saved enhanced function
+
+# REMOVED: generate_pair_analytics_with_setups() function
+# Enhanced features have been integrated into main generate_pair_analytics() function:
+# - Confluence and institutional levels support
+# - Integrated trade setup generation 
+# - Cleaner structure without non-existent helper functions
 
 def convert_analytics_to_trade_format(fibonacci_data: Dict[str, Any], current_price: float, instrument: str) -> Dict[str, Any]:
     """
@@ -1263,7 +1168,7 @@ def convert_analytics_to_trade_format(fibonacci_data: Dict[str, Any], current_pr
         
         # Build extension levels (basic set)
         extension_levels = {}
-        extension_ratios = [1.272, 1.618, 2.000]
+        extension_ratios = [1.272, 1.382, 1.618, 2.000]
         
         for ratio in extension_ratios:
             price = swing_high_price + (swing_range * (ratio - 1.0))
@@ -1322,9 +1227,8 @@ def handle_trade_setups(query_parameters: Dict[str, str], cors_headers: Dict[str
                 if use_confluence:
                     institutional_levels = get_institutional_levels(instrument, 1.1000)  # Will get real price inside function
                 
-                # Use the original working analytics function
-                # TODO: Later integrate advanced features from generate_pair_analytics_with_setups
-                pair_analytics = generate_pair_analytics(instrument, timeframe)
+                # Use enhanced analytics function with integrated trade setups and confluence support
+                pair_analytics = generate_pair_analytics(instrument, timeframe, use_confluence, institutional_levels)
                 
                 if not pair_analytics or 'fibonacci' not in pair_analytics:
                     logger.warning(f"No Fibonacci analysis available for {instrument}")
@@ -1519,7 +1423,7 @@ def create_fibonacci_analysis_from_candles(candles: List[Dict], current_price: f
         
         # Calculate Fibonacci extension levels
         extension_levels = {}
-        extension_ratios = [1.272, 1.618, 2.000, 2.618]
+        extension_ratios = [1.272, 1.382, 1.618, 2.000, 2.618]
         
         for ratio in extension_ratios:
             price = swing_high['price'] + (swing_range * (ratio - 1.0))
