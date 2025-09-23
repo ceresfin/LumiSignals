@@ -451,10 +451,29 @@ def generate_enhanced_trade_setups(fibonacci_data: Dict, current_price: float,
     swing_range = high_price - low_price
     direction = fibonacci_data['direction']
     
-    # Key trading levels (including reversal zone)
-    key_levels = [0.382, 0.500, 0.618, 0.786, 0.886]
+    # ONE TRUE LOGIC: Use actual current retracement to determine trade setups
+    # Get the corrected current retracement from fibonacci_data
+    current_retracement = fibonacci_data.get('current_retracement', 0.0)
     
-    for level in key_levels:
+    # Determine appropriate trading levels based on current position
+    if current_retracement <= 0.236:
+        # Very close to swing low - look for deeper retracement levels
+        relevant_levels = [0.236, 0.382]
+    elif current_retracement <= 0.382:
+        # Shallow retracement - continuation zone
+        relevant_levels = [0.382, 0.500]
+    elif current_retracement <= 0.618:
+        # Mid-range retracement - continuation zone
+        relevant_levels = [0.500, 0.618]
+    elif current_retracement <= 0.786:
+        # Deep retracement - still continuation but watch for reversal
+        relevant_levels = [0.618, 0.786]
+    else:
+        # Very deep retracement - reversal zone
+        relevant_levels = [0.786, 0.886]
+    
+    # Generate setups only for relevant levels near current position
+    for level in relevant_levels:
         if level in levels:
             # Calculate entry price
             entry_price = high_price - (swing_range * level)
@@ -463,12 +482,13 @@ def generate_enhanced_trade_setups(fibonacci_data: Dict, current_price: float,
             distance_to_entry = abs(current_price - entry_price)
             if distance_to_entry <= max_distance:
                 
-                # Generate trade setup
+                # Generate trade setup using ONE TRUE LOGIC
                 setup = create_enhanced_setup(
                     level, entry_price, high_price, low_price,
                     current_price, direction, instrument, timeframe,
                     include_confluence, institutional_levels,
-                    pip_value, decimal_places, distance_to_entry
+                    pip_value, decimal_places, distance_to_entry,
+                    current_retracement  # Pass actual retracement for unified logic
                 )
                 
                 if setup:
@@ -484,7 +504,8 @@ def create_enhanced_setup(level: float, entry_price: float, high_price: float,
                          low_price: float, current_price: float, direction: str,
                          instrument: str, timeframe: str, include_confluence: bool,
                          institutional_levels: Dict, pip_value: float, 
-                         decimal_places: int, distance_to_entry: float) -> Dict:
+                         decimal_places: int, distance_to_entry: float,
+                         current_retracement: float) -> Dict:
     """
     Create a single enhanced trade setup with detailed breakdowns.
     """
@@ -492,24 +513,25 @@ def create_enhanced_setup(level: float, entry_price: float, high_price: float,
     # Determine trade direction based on Fibonacci level and trend
     swing_range = high_price - low_price
     
-    # Determine trade type and direction based on retracement level
-    if direction in ['uptrend', 'bullish']:
-        if level <= 0.786:  # Continuation zone: 38.2%, 50%, 61.8%, 78.6%
+    # ONE TRUE LOGIC: Determine trade type based on ACTUAL current retracement position
+    # Use current_retracement (where price actually is) not level (potential entry)
+    if current_retracement <= 0.786:  # Continuation zone: 0% to 78.6%
+        setup_type_override = 'Trend Continuation'
+        if direction in ['uptrend', 'bullish']:
             trade_direction = 'BUY'
-            setup_type_override = 'Trend Continuation'
             trade_type = 'long'
-        else:  # Reversal zone: 88.6% and beyond
+        else:  # downtrend
             trade_direction = 'SELL'
-            setup_type_override = 'Trend Reversal'
             trade_type = 'short'
-    else:  # downtrend
-        if level <= 0.786:  # Continuation zone
+    else:  # Reversal zone: >78.6%
+        setup_type_override = 'Trend Reversal'
+        if direction in ['uptrend', 'bullish']:
+            # In uptrend but deep retracement - expect reversal (sell the high)
             trade_direction = 'SELL'
-            setup_type_override = 'Trend Continuation'
             trade_type = 'short'
-        else:  # Reversal zone: 88.6% and beyond
+        else:  # downtrend
+            # In downtrend but deep retracement - expect reversal (buy the low)
             trade_direction = 'BUY'
-            setup_type_override = 'Trend Reversal'
             trade_type = 'long'
     
     # Calculate stop loss and targets based on trade type
@@ -556,72 +578,17 @@ def create_enhanced_setup(level: float, entry_price: float, high_price: float,
     setup_type = setup_type_override  # Use the type we determined based on level and trend
     strategy_name = generate_strategy_name(level, timeframe, direction, setup_type)
     
-    # Calculate stop loss Fibonacci level and buffer details
-    swing_range = high_price - low_price
-    timeframe_settings = get_timeframe_settings(timeframe)
-    expected_buffer_pips = timeframe_settings['stop_buffer_pips']
-    
-    # Determine what Fibonacci level the stop represents
-    if trade_direction == 'BUY':
-        if level < 0.618:
-            # Stop should be around 78.6% level
-            expected_stop_level = high_price - (swing_range * 0.786)
-            stop_reference = "78.6% Retracement"
-        else:
-            # Stop should be below swing low
-            expected_stop_level = low_price
-            stop_reference = "0.0% (Swing Low)"
-        buffer_pips = (expected_stop_level - stop_loss) / pip_value
-    else:  # SELL
-        if level > 0.382:
-            # Stop should be around 23.6% level
-            expected_stop_level = high_price - (swing_range * 0.236)
-            stop_reference = "23.6% Retracement"
-        else:
-            # Stop should be above swing high
-            expected_stop_level = high_price
-            stop_reference = "100.0% (Swing High)"
-        buffer_pips = (stop_loss - expected_stop_level) / pip_value
-    
-    # Calculate target Fibonacci levels
-    target_fibonacci_levels = []
-    for i, target in enumerate(targets):
-        if trade_direction == 'BUY':
-            if target <= high_price + (10 * pip_value):
-                target_fib = "Break above swing high"
-            elif abs(target - (high_price + (swing_range * 0.272))) < (5 * pip_value):
-                target_fib = "127.2% Extension"
-            elif abs(target - (high_price + (swing_range * 0.618))) < (5 * pip_value):
-                target_fib = "161.8% Extension"
-            else:
-                extension_ratio = (target - high_price) / swing_range
-                target_fib = f"{(1.0 + extension_ratio):.1%} Extension"
-        else:  # SELL
-            if target >= low_price - (10 * pip_value):
-                target_fib = "Break below swing low"
-            elif abs(target - (low_price - (swing_range * 0.272))) < (5 * pip_value):
-                target_fib = "127.2% Extension"
-            elif abs(target - (low_price - (swing_range * 0.618))) < (5 * pip_value):
-                target_fib = "161.8% Extension"
-            else:
-                extension_ratio = (low_price - target) / swing_range
-                target_fib = f"{(1.0 + extension_ratio):.1%} Extension"
-        
-        target_fibonacci_levels.append(target_fib)
-
     # Create setup
     setup = {
         'setup_id': f'fibonacci_{level:.1%}_{timeframe}',
         'strategy': strategy_name,
         'setup_type': setup_type,
         'direction': trade_direction,
-        'fibonacci_level': f'{level:.1%} Retracement',
+        'fibonacci_level': f'{current_retracement:.1%} Retracement',
         'entry_price': round(entry_price, decimal_places),
         'stop_loss': round(stop_loss, decimal_places),
-        'stop_fibonacci_level': f'{stop_reference} + {buffer_pips:.1f} pip buffer',
         'target_price': round(targets[0], decimal_places) if targets else 0,
         'targets': [round(t, decimal_places) for t in targets],
-        'target_fibonacci_levels': target_fibonacci_levels,
         'risk_pips': round(risk_pips, 1),
         'reward_pips': [round(r, 1) for r in reward_pips_array],
         'risk_reward_ratios': risk_reward_ratios,
@@ -633,7 +600,7 @@ def create_enhanced_setup(level: float, entry_price: float, high_price: float,
         'quality_breakdown': quality_breakdown,
         'confluence': confluence_data,
         'confluence_summary': confluence_summary,
-        'entry_reason': f'{level:.1%} Fibonacci retracement in {direction}',
+        'entry_reason': f'{current_retracement:.1%} Fibonacci retracement in {direction}',
         'invalidation': f'Close {"below" if trade_direction == "BUY" else "above"} {round(stop_loss, decimal_places)}',
         'analysis_timestamp': datetime.utcnow().isoformat() + 'Z'
     }
