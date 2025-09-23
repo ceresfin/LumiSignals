@@ -202,9 +202,11 @@ def find_best_fibonacci_swing_pair(major_swings: Dict, current_price: float) -> 
     pip_value = major_swings['parameters']['pip_value']
     swing_range_pips = abs(best_high['price'] - best_low['price']) / pip_value
     
-    # Calculate current retracement level
+    # Calculate current retracement level using standard Fibonacci convention
+    # Standard: 0% = swing low (end of move), 100% = swing high (start of move)
+    # Retracement = how far price has moved back from the end toward the start
     if best_high['price'] != best_low['price']:
-        current_retracement = (best_high['price'] - current_price) / (best_high['price'] - best_low['price'])
+        current_retracement = (current_price - best_low['price']) / (best_high['price'] - best_low['price'])
         current_retracement = max(0, min(1, current_retracement))  # Clamp between 0-1
     else:
         current_retracement = 0.5
