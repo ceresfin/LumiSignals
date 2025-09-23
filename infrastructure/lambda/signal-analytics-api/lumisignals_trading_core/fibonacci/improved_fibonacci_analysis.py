@@ -258,9 +258,11 @@ def generate_improved_fibonacci_levels(swing_pair: Dict, timeframe: str = 'H1') 
 
 def analyze_fibonacci_levels_improved(instrument: str, current_price: float = None, 
                                     price_data: List[Dict] = None, mode: str = 'fixed', 
-                                    timeframe: str = 'H1') -> Dict[str, Any]:
+                                    timeframe: str = 'H1', include_trade_setups: bool = False,
+                                    include_confluence: bool = False, 
+                                    institutional_levels: Dict = None) -> Dict[str, Any]:
     """
-    Improved Fibonacci analysis with major swing detection.
+    Improved Fibonacci analysis with major swing detection and optional trade setups.
     
     Args:
         instrument: Currency pair (e.g., 'EUR_USD')
@@ -268,9 +270,12 @@ def analyze_fibonacci_levels_improved(instrument: str, current_price: float = No
         price_data: Historical price data
         mode: 'fixed' or 'atr'
         timeframe: Timeframe for analysis
+        include_trade_setups: Generate actionable trade setups with smart stop loss/targets
+        include_confluence: Include institutional level confluence analysis
+        institutional_levels: Dict of institutional levels for confluence
         
     Returns:
-        Improved Fibonacci analysis with major swing levels
+        Enhanced Fibonacci analysis with optional trade setups and detailed breakdowns
     """
     
     # Determine if JPY pair
@@ -362,4 +367,361 @@ def analyze_fibonacci_levels_improved(instrument: str, current_price: float = No
         'method': major_swings['method']
     }
     
+    # Generate trade setups if requested
+    if include_trade_setups:
+        trade_setups = generate_enhanced_trade_setups(
+            fibonacci_result, 
+            current_price, 
+            instrument,
+            timeframe,
+            include_confluence,
+            institutional_levels
+        )
+        fibonacci_result['trade_setups'] = trade_setups
+    
     return fibonacci_result
+
+
+def generate_enhanced_trade_setups(fibonacci_data: Dict, current_price: float, 
+                                 instrument: str, timeframe: str,
+                                 include_confluence: bool = False,
+                                 institutional_levels: Dict = None) -> List[Dict]:
+    """
+    Generate enhanced trade setups with detailed breakdowns.
+    """
+    
+    is_jpy = 'JPY' in instrument
+    pip_value = 0.01 if is_jpy else 0.0001
+    decimal_places = 2 if is_jpy else 4
+    
+    # Distance filter based on timeframe
+    max_distance_pips = 15 if timeframe == 'M5' else 50
+    max_distance = max_distance_pips * pip_value
+    
+    trade_setups = []
+    
+    # Extract Fibonacci data
+    high_price = fibonacci_data['high']
+    low_price = fibonacci_data['low']
+    levels = fibonacci_data['levels']
+    swing_range = high_price - low_price
+    direction = fibonacci_data['direction']
+    
+    # Key trading levels
+    key_levels = [0.382, 0.500, 0.618, 0.786]
+    
+    for level in key_levels:
+        if level in levels:
+            # Calculate entry price
+            entry_price = high_price - (swing_range * level)
+            
+            # Distance filter
+            distance_to_entry = abs(current_price - entry_price)
+            if distance_to_entry <= max_distance:
+                
+                # Generate trade setup
+                setup = create_enhanced_setup(
+                    level, entry_price, high_price, low_price,
+                    current_price, direction, instrument, timeframe,
+                    include_confluence, institutional_levels,
+                    pip_value, decimal_places, distance_to_entry
+                )
+                
+                if setup:
+                    trade_setups.append(setup)
+    
+    # Sort by setup quality (highest first)
+    trade_setups.sort(key=lambda x: x['setup_quality'], reverse=True)
+    
+    return trade_setups
+
+
+def create_enhanced_setup(level: float, entry_price: float, high_price: float, 
+                         low_price: float, current_price: float, direction: str,
+                         instrument: str, timeframe: str, include_confluence: bool,
+                         institutional_levels: Dict, pip_value: float, 
+                         decimal_places: int, distance_to_entry: float) -> Dict:
+    """
+    Create a single enhanced trade setup with detailed breakdowns.
+    """
+    
+    # Determine trade direction based on Fibonacci level and trend
+    swing_range = high_price - low_price
+    
+    # Smart stop loss calculation
+    if direction in ['uptrend', 'bullish'] or level < 0.618:
+        # Long trade setup
+        trade_direction = 'BUY'
+        stop_loss = calculate_smart_stop_loss(entry_price, high_price, low_price, level, 'long', pip_value)
+        targets = calculate_smart_targets(entry_price, high_price, low_price, 'long', pip_value)
+    else:
+        # Short trade setup  
+        trade_direction = 'SELL'
+        stop_loss = calculate_smart_stop_loss(entry_price, high_price, low_price, level, 'short', pip_value)
+        targets = calculate_smart_targets(entry_price, high_price, low_price, 'short', pip_value)
+    
+    # Calculate risk/reward ratios for all targets
+    risk_pips = abs(entry_price - stop_loss) / pip_value
+    
+    if risk_pips == 0:
+        return None  # Invalid setup
+    
+    risk_reward_ratios = []
+    reward_pips_array = []
+    
+    for target in targets:
+        reward_pips = abs(target - entry_price) / pip_value
+        reward_pips_array.append(reward_pips)
+        rr_ratio = reward_pips / risk_pips if risk_pips > 0 else 0
+        risk_reward_ratios.append(round(rr_ratio, 2))
+    
+    # Use first target for primary R:R
+    primary_rr = risk_reward_ratios[0] if risk_reward_ratios else 0
+    best_rr = max(risk_reward_ratios) if risk_reward_ratios else 0
+    
+    # Confluence analysis
+    confluence_data = None
+    confluence_summary = None
+    
+    if include_confluence and institutional_levels:
+        confluence_data = check_enhanced_confluence(entry_price, institutional_levels, pip_value)
+        confluence_summary = create_confluence_summary(confluence_data)
+    
+    # Quality scoring with detailed breakdown
+    quality_breakdown = calculate_enhanced_quality(
+        primary_rr, confluence_data, distance_to_entry, pip_value
+    )
+    
+    # Generate strategy metadata
+    setup_type = determine_setup_type(level, primary_rr)
+    strategy_name = generate_strategy_name(level, timeframe, direction, setup_type)
+    
+    # Create setup
+    setup = {
+        'setup_id': f'fibonacci_{level:.1%}_{timeframe}',
+        'strategy': strategy_name,
+        'setup_type': setup_type,
+        'direction': trade_direction,
+        'fibonacci_level': f'{level:.1%} Retracement',
+        'entry_price': round(entry_price, decimal_places),
+        'stop_loss': round(stop_loss, decimal_places),
+        'targets': [round(t, decimal_places) for t in targets],
+        'risk_pips': round(risk_pips, 1),
+        'reward_pips': [round(r, 1) for r in reward_pips_array],
+        'risk_reward_ratios': risk_reward_ratios,
+        'primary_rr': primary_rr,
+        'best_rr': best_rr,
+        'distance_to_entry_pips': round(distance_to_entry / pip_value, 1),
+        'setup_quality': quality_breakdown['total'],
+        'quality_breakdown': quality_breakdown,
+        'confluence': confluence_data,
+        'confluence_summary': confluence_summary,
+        'entry_reason': f'{level:.1%} Fibonacci retracement in {direction}',
+        'invalidation': f'Close {"below" if trade_direction == "BUY" else "above"} {round(stop_loss, decimal_places)}',
+        'analysis_timestamp': datetime.utcnow().isoformat() + 'Z'
+    }
+    
+    return setup
+
+
+def calculate_smart_stop_loss(entry_price: float, high_price: float, low_price: float,
+                             level: float, trade_direction: str, pip_value: float) -> float:
+    """
+    Calculate intelligent stop loss placement using deeper Fibonacci levels.
+    """
+    
+    swing_range = high_price - low_price
+    buffer_pips = 15  # Pip buffer to avoid stop hunting
+    buffer = buffer_pips * pip_value
+    
+    if trade_direction == 'long':
+        # For long trades, stop below deeper retracement or swing low
+        if level < 0.618:
+            # Use 78.6% level as stop
+            stop_level = high_price - (swing_range * 0.786)
+        else:
+            # Use swing low with buffer
+            stop_level = low_price
+        
+        return stop_level - buffer
+    
+    else:  # short trades
+        # For short trades, stop above shallower retracement or swing high
+        if level > 0.382:
+            # Use 23.6% level as stop
+            stop_level = high_price - (swing_range * 0.236)
+        else:
+            # Use swing high with buffer
+            stop_level = high_price
+            
+        return stop_level + buffer
+
+
+def calculate_smart_targets(entry_price: float, high_price: float, low_price: float,
+                           trade_direction: str, pip_value: float) -> List[float]:
+    """
+    Calculate multiple intelligent targets using Fibonacci extensions.
+    """
+    
+    swing_range = high_price - low_price
+    targets = []
+    
+    if trade_direction == 'long':
+        # Long targets: break above swing high, then extensions
+        targets.append(high_price + (10 * pip_value))  # T1: Break swing high
+        targets.append(high_price + (swing_range * 0.272))  # T2: 127.2% extension
+        targets.append(high_price + (swing_range * 0.618))  # T3: 161.8% extension
+    
+    else:  # short targets
+        # Short targets: break below swing low, then extensions  
+        targets.append(low_price - (10 * pip_value))   # T1: Break swing low
+        targets.append(low_price - (swing_range * 0.272))  # T2: 127.2% extension
+        targets.append(low_price - (swing_range * 0.618))  # T3: 161.8% extension
+    
+    return targets
+
+
+def check_enhanced_confluence(price: float, institutional_levels: Dict, 
+                             pip_value: float, tolerance_pips: int = 10) -> List[Dict]:
+    """
+    Enhanced confluence analysis with detailed breakdowns.
+    """
+    
+    if not institutional_levels:
+        return None
+    
+    tolerance = tolerance_pips * pip_value
+    confluences = []
+    
+    for level_type, levels in institutional_levels.items():
+        for level in levels:
+            distance = abs(price - level)
+            if distance <= tolerance:
+                distance_pips = distance / pip_value
+                strength = 1.0 / (1.0 + distance * 10000)  # Closer = stronger
+                
+                confluences.append({
+                    'level_type': level_type,
+                    'level_price': round(level, 5),
+                    'distance_pips': round(distance_pips, 1),
+                    'strength': round(strength, 3)
+                })
+    
+    return confluences if confluences else None
+
+
+def create_confluence_summary(confluence_data: List[Dict]) -> Dict:
+    """
+    Create confluence summary for easy interpretation.
+    """
+    
+    if not confluence_data:
+        return None
+    
+    total_confluences = len(confluence_data)
+    
+    # Find strongest confluence
+    strongest = max(confluence_data, key=lambda x: x['strength'])
+    strongest_desc = f"{strongest['level_type']} ({strongest['distance_pips']:.1f} pips)"
+    
+    # Calculate confluence score for quality rating
+    confluence_score = min(total_confluences * 10, 30)  # Max 30 points
+    
+    return {
+        'total_confluences': total_confluences,
+        'strongest_confluence': strongest_desc,
+        'confluence_score': confluence_score,
+        'all_types': [c['level_type'] for c in confluence_data]
+    }
+
+
+def calculate_enhanced_quality(risk_reward_ratio: float, confluence_data: List[Dict],
+                              distance_to_entry: float, pip_value: float) -> Dict:
+    """
+    Calculate setup quality with detailed component breakdown.
+    """
+    
+    breakdown = {
+        'risk_reward_score': 0,
+        'confluence_score': 0, 
+        'distance_score': 0,
+        'total': 0
+    }
+    
+    # Risk/reward component (0-50 points)
+    if risk_reward_ratio >= 3.0:
+        breakdown['risk_reward_score'] = 50
+    elif risk_reward_ratio >= 2.0:
+        breakdown['risk_reward_score'] = 35
+    elif risk_reward_ratio >= 1.5:
+        breakdown['risk_reward_score'] = 25
+    elif risk_reward_ratio >= 1.0:
+        breakdown['risk_reward_score'] = 15
+    
+    # Confluence component (0-30 points)
+    if confluence_data:
+        confluence_count = len(confluence_data)
+        breakdown['confluence_score'] = min(confluence_count * 10, 30)
+    
+    # Distance component (0-20 points)
+    distance_pips = distance_to_entry / pip_value
+    if distance_pips <= 10:
+        breakdown['distance_score'] = 20
+    elif distance_pips <= 25:
+        breakdown['distance_score'] = 15
+    elif distance_pips <= 50:
+        breakdown['distance_score'] = 10
+    
+    # Calculate total
+    breakdown['total'] = (breakdown['risk_reward_score'] + 
+                         breakdown['confluence_score'] + 
+                         breakdown['distance_score'])
+    
+    # Add descriptive details
+    breakdown['risk_reward_rating'] = get_rr_rating(risk_reward_ratio)
+    breakdown['distance_rating'] = get_distance_rating(distance_pips)
+    
+    return breakdown
+
+
+def determine_setup_type(level: float, risk_reward_ratio: float) -> str:
+    """
+    Determine setup type based on Fibonacci level and R:R.
+    """
+    
+    if level >= 0.786:
+        return 'Deep Retracement'
+    elif risk_reward_ratio >= 2.5:
+        return 'High Probability Retracement'
+    else:
+        return 'Standard Retracement'
+
+
+def generate_strategy_name(level: float, timeframe: str, direction: str, setup_type: str) -> str:
+    """
+    Generate descriptive strategy name.
+    """
+    
+    return f"Fibonacci {setup_type} {level:.1%} {timeframe} {direction.title()}"
+
+
+def get_rr_rating(rr: float) -> str:
+    """Get risk/reward rating description."""
+    if rr >= 3.0:
+        return 'Excellent'
+    elif rr >= 2.0:
+        return 'Good'
+    elif rr >= 1.5:
+        return 'Acceptable'
+    else:
+        return 'Poor'
+
+
+def get_distance_rating(distance_pips: float) -> str:
+    """Get distance rating description."""
+    if distance_pips <= 10:
+        return 'Immediate'
+    elif distance_pips <= 25:
+        return 'Near'
+    else:
+        return 'Distant'

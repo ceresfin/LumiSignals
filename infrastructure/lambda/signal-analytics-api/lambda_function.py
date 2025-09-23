@@ -22,6 +22,9 @@ from typing import Dict, Any, Optional, List
 import redis
 import boto3
 
+# Import Fibonacci strategy naming
+from fibonacci_strategy_naming import FibonacciStrategyNaming
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -274,6 +277,11 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         elif path.startswith('/analytics/consensus/') and http_method == 'GET':
             instrument = path_parameters.get('instrument')
             return handle_consensus_signal(instrument, query_parameters, cors_headers)
+        elif path == '/analytics/trade-setups' and http_method == 'GET':
+            timeframe = query_parameters.get('timeframe', 'M5')
+            return handle_trade_setups(query_parameters, cors_headers, timeframe)
+        elif path == '/analytics/place-trade' and http_method == 'POST':
+            return handle_place_trade(event, cors_headers)
         else:
             return {
                 'statusCode': 404,
@@ -595,6 +603,253 @@ def create_fallback_fibonacci_mode(price_data: Dict[str, Any], mode: str) -> Dic
             'swing_range_pips': int((high_price - low_price) * (10000 if 'JPY' not in instrument else 100))
         }
 
+def generate_fibonacci_trade_setups(fibonacci_data: Dict[str, Any], instrument: str, current_price: float) -> List[Dict[str, Any]]:
+    """
+    Generate flexible trade setups from Fibonacci retracement levels
+    Supports 50%, 61.8%, 78.6%, and 88.6% retracement levels
+    Minimum risk/reward ratio: 1.6667 (5:3)
+    """
+    try:
+        if not fibonacci_data or not fibonacci_data.get('detailed_levels'):
+            return []
+        
+        detailed_levels = fibonacci_data.get('detailed_levels', [])
+        direction = fibonacci_data.get('direction', 'neutral')
+        high = fibonacci_data.get('high', 0)
+        low = fibonacci_data.get('low', 0)
+        
+        if not high or not low or high <= low:
+            return []
+        
+        is_jpy_pair = 'JPY' in instrument
+        pip_factor = 100 if is_jpy_pair else 10000
+        min_risk_reward = 1.6667
+        
+        trade_setups = []
+        
+        # Define retracement levels we want to trade from (38.2% and higher for better opportunities)
+        # Check which levels are actually available in the Fibonacci data
+        available_ratios = [level['ratio'] for level in detailed_levels]
+        target_levels = [r for r in [0.382, 0.5, 0.618, 0.786, 0.886] if any(abs(r - ar) < 0.01 for ar in available_ratios)]
+        
+        if not target_levels:
+            logger.warning(f"No suitable retracement levels found for {instrument}")
+            return []
+        
+        for target_ratio in target_levels:
+            # Find the corresponding Fibonacci level
+            fib_level = None
+            for level in detailed_levels:
+                if abs(level['ratio'] - target_ratio) < 0.01:  # Small tolerance for floating point
+                    fib_level = level
+                    break
+            
+            if not fib_level:
+                continue  # Skip if level not found
+            
+            entry_price = fib_level['price']
+            
+            # Generate bullish setup (buying at retracement in uptrend)
+            if direction in ['bullish', 'uptrend', 'neutral']:
+                bullish_setup = generate_bullish_setup(
+                    instrument, entry_price, high, low, target_ratio, 
+                    pip_factor, min_risk_reward, current_price
+                )
+                if bullish_setup:
+                    trade_setups.append(bullish_setup)
+            
+            # Generate bearish setup (selling at retracement in downtrend)  
+            if direction in ['bearish', 'downtrend', 'neutral']:
+                bearish_setup = generate_bearish_setup(
+                    instrument, entry_price, high, low, target_ratio,
+                    pip_factor, min_risk_reward, current_price
+                )
+                if bearish_setup:
+                    trade_setups.append(bearish_setup)
+        
+        return trade_setups
+        
+    except Exception as e:
+        logger.error(f"Error generating Fibonacci trade setups for {instrument}: {e}")
+        return []
+
+def generate_bullish_setup(instrument: str, entry_price: float, swing_high: float, swing_low: float, 
+                          retracement_level: float, pip_factor: int, min_risk_reward: float, 
+                          current_price: float) -> Dict[str, Any]:
+    """Generate bullish trade setup (buy at retracement)"""
+    try:
+        # Entry at retracement level
+        entry = entry_price
+        
+        # Stop loss below swing low with buffer
+        stop_buffer_pips = get_stop_buffer_pips(retracement_level)
+        stop_loss = swing_low - (stop_buffer_pips / pip_factor)
+        
+        # Calculate risk in pips
+        risk_pips = abs(entry - stop_loss) * pip_factor
+        
+        # Target based on minimum risk/reward ratio
+        min_target_pips = risk_pips * min_risk_reward
+        target_price = entry + (min_target_pips / pip_factor)
+        
+        # Use extension levels if available, otherwise calculated target
+        extension_target = get_extension_target(swing_high, swing_low, retracement_level, 'bullish')
+        if extension_target and extension_target > target_price:
+            target_price = extension_target
+        
+        # Calculate actual risk/reward ratio
+        reward_pips = abs(target_price - entry) * pip_factor
+        risk_reward_ratio = reward_pips / risk_pips if risk_pips > 0 else 0
+        
+        # Only return setup if it meets minimum risk/reward
+        if risk_reward_ratio < min_risk_reward:
+            return None
+        
+        # Calculate position sizing (placeholder - would integrate with account size)
+        position_size = calculate_position_size(instrument, risk_pips, target_risk_percent=1.0)
+        
+        return {
+            'type': 'bullish',
+            'instrument': instrument,
+            'entry_price': round(entry, 5),
+            'stop_loss': round(stop_loss, 5),
+            'target_price': round(target_price, 5),
+            'retracement_level': f"{retracement_level:.1%}",
+            'risk_pips': round(risk_pips, 1),
+            'reward_pips': round(reward_pips, 1),
+            'risk_reward_ratio': round(risk_reward_ratio, 2),
+            'position_size': position_size,
+            'setup_quality': get_setup_quality(risk_reward_ratio, retracement_level),
+            'current_distance_pips': round(abs(current_price - entry) * pip_factor, 1),
+            'swing_analysis': {
+                'swing_high': round(swing_high, 5),
+                'swing_low': round(swing_low, 5),
+                'swing_range_pips': round((swing_high - swing_low) * pip_factor, 1)
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Error generating bullish setup: {e}")
+        return None
+
+def generate_bearish_setup(instrument: str, entry_price: float, swing_high: float, swing_low: float,
+                          retracement_level: float, pip_factor: int, min_risk_reward: float,
+                          current_price: float) -> Dict[str, Any]:
+    """Generate bearish trade setup (sell at retracement)"""
+    try:
+        # Entry at retracement level
+        entry = entry_price
+        
+        # Stop loss above swing high with buffer
+        stop_buffer_pips = get_stop_buffer_pips(retracement_level)
+        stop_loss = swing_high + (stop_buffer_pips / pip_factor)
+        
+        # Calculate risk in pips
+        risk_pips = abs(stop_loss - entry) * pip_factor
+        
+        # Target based on minimum risk/reward ratio
+        min_target_pips = risk_pips * min_risk_reward
+        target_price = entry - (min_target_pips / pip_factor)
+        
+        # Use extension levels if available, otherwise calculated target
+        extension_target = get_extension_target(swing_high, swing_low, retracement_level, 'bearish')
+        if extension_target and extension_target < target_price:
+            target_price = extension_target
+        
+        # Calculate actual risk/reward ratio
+        reward_pips = abs(entry - target_price) * pip_factor
+        risk_reward_ratio = reward_pips / risk_pips if risk_pips > 0 else 0
+        
+        # Only return setup if it meets minimum risk/reward
+        if risk_reward_ratio < min_risk_reward:
+            return None
+        
+        # Calculate position sizing (placeholder - would integrate with account size)
+        position_size = calculate_position_size(instrument, risk_pips, target_risk_percent=1.0)
+        
+        return {
+            'type': 'bearish',
+            'instrument': instrument,
+            'entry_price': round(entry, 5),
+            'stop_loss': round(stop_loss, 5),
+            'target_price': round(target_price, 5),
+            'retracement_level': f"{retracement_level:.1%}",
+            'risk_pips': round(risk_pips, 1),
+            'reward_pips': round(reward_pips, 1),
+            'risk_reward_ratio': round(risk_reward_ratio, 2),
+            'position_size': position_size,
+            'setup_quality': get_setup_quality(risk_reward_ratio, retracement_level),
+            'current_distance_pips': round(abs(current_price - entry) * pip_factor, 1),
+            'swing_analysis': {
+                'swing_high': round(swing_high, 5),
+                'swing_low': round(swing_low, 5),
+                'swing_range_pips': round((swing_high - swing_low) * pip_factor, 1)
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Error generating bearish setup: {e}")
+        return None
+
+def get_stop_buffer_pips(retracement_level: float) -> float:
+    """Get stop loss buffer based on retracement level"""
+    # Higher retracements get tighter stops
+    if retracement_level >= 0.786:
+        return 5.0  # Tight stop for deep retracements
+    elif retracement_level >= 0.618:
+        return 8.0  # Standard stop
+    else:
+        return 12.0  # Wider stop for shallow retracements
+
+def get_extension_target(swing_high: float, swing_low: float, retracement_level: float, 
+                        direction: str) -> float:
+    """Calculate extension target based on Fibonacci extensions"""
+    swing_range = swing_high - swing_low
+    
+    # Use 127.2% or 161.8% extensions based on retracement level
+    if retracement_level >= 0.786:
+        extension_ratio = 1.272  # 127.2% extension for deep retracements
+    else:
+        extension_ratio = 1.618  # 161.8% extension for standard retracements
+    
+    if direction == 'bullish':
+        return swing_high + (swing_range * (extension_ratio - 1.0))
+    else:  # bearish
+        return swing_low - (swing_range * (extension_ratio - 1.0))
+
+def calculate_position_size(instrument: str, risk_pips: float, target_risk_percent: float = 1.0) -> Dict[str, Any]:
+    """Calculate position size based on risk management (placeholder implementation)"""
+    # This would integrate with account balance and risk management in production
+    account_balance = 10000  # Placeholder - would come from OANDA API
+    risk_amount = account_balance * (target_risk_percent / 100)
+    
+    # Calculate pip value (simplified)
+    is_jpy_pair = 'JPY' in instrument
+    pip_value = 1.0 if is_jpy_pair else 10.0  # Approximate for standard lot
+    
+    # Calculate units
+    units = int(risk_amount / (risk_pips * pip_value)) if risk_pips > 0 else 0
+    
+    return {
+        'units': units,
+        'risk_amount': risk_amount,
+        'pip_value': pip_value,
+        'lot_size': round(units / 10000, 2)  # Convert to lots
+    }
+
+def get_setup_quality(risk_reward_ratio: float, retracement_level: float) -> str:
+    """Determine setup quality based on risk/reward and retracement level"""
+    min_risk_reward = 1.6667
+    # Higher quality for better R:R and key retracement levels
+    if risk_reward_ratio >= 2.5 and retracement_level in [0.618, 0.786]:
+        return 'excellent'
+    elif risk_reward_ratio >= 2.0:
+        return 'good'
+    elif risk_reward_ratio >= min_risk_reward:
+        return 'acceptable'
+    else:
+        return 'poor'
+
 # Removed old dual-mode fallback function - now using create_fallback_fibonacci_mode() for Fixed mode only
 
 def generate_pair_analytics(instrument: str, timeframe: str = 'H1') -> Dict[str, Any]:
@@ -615,13 +870,16 @@ def generate_pair_analytics(instrument: str, timeframe: str = 'H1') -> Dict[str,
         fibonacci_data = analyze_fibonacci_tiered(price_data)
         swing_data = analyze_swing_points_tiered(price_data)
         
+        # Generate Fibonacci trade setups using the real analysis data
+        current_price = price_data['current_price'] or 1.1000
+        trade_setups = generate_fibonacci_trade_setups(fibonacci_data, instrument, current_price)
+        
         # Future analytics will use the same price_data:
         # rsi_data = analyze_rsi_tiered(price_data)
         # ma_data = analyze_moving_averages_tiered(price_data)
         # sentiment_data = analyze_sentiment_tiered(price_data)
         
         # Generate other analytics (using mock data for now - will be replaced with tiered analysis)
-        current_price = price_data['current_price'] or 1.1000
         price_range = current_price * 0.05
         
         # Generate Supply/Demand zones (future: analyze_supply_demand_tiered(price_data))
@@ -719,6 +977,7 @@ def generate_pair_analytics(instrument: str, timeframe: str = 'H1') -> Dict[str,
             'instrument': instrument,
             'timeframe': timeframe,
             'fibonacci': fibonacci_data,
+            'trade_setups': trade_setups,
             'swing': swing_data,
             'supplyDemand': supply_demand_data,
             'momentum': momentum_data,
@@ -878,3 +1137,797 @@ def health_check() -> Dict[str, Any]:
         
     except Exception as e:
         return create_error_response(500, f"Health check failed: {str(e)}")
+
+# SAVED FOR LATER: Enhanced version with trading core integration
+# TODO: Integrate features one by one after basic functionality works
+"""
+def generate_pair_analytics_with_setups(instrument: str, timeframe: str = 'H1', 
+                                       include_confluence: bool = False, 
+                                       institutional_levels: Dict = None) -> Dict[str, Any]:
+    # Generate comprehensive analytics with trade setups for a single currency pair
+    try:
+        logger.info(f"Generating enhanced analytics for {instrument} {timeframe}")
+        
+        # GET ALL DATA ONCE
+        price_data = get_tiered_price_data(instrument, timeframe)
+        
+        if price_data['total_candles'] == 0:
+            logger.warning(f"No price data available for {instrument} {timeframe}")
+            return create_error_analytics(instrument, f"No price data available for {timeframe}")
+        
+        current_price = price_data['current_price'] or 1.1000
+        
+        # RUN ENHANCED FIBONACCI ANALYSIS WITH TRADE SETUPS
+        try:
+            from lumisignals_trading_core.fibonacci.improved_fibonacci_analysis import analyze_fibonacci_levels_improved
+            
+            fibonacci_data = analyze_fibonacci_levels_improved(
+                instrument=instrument,
+                current_price=current_price,
+                price_data=price_data['combined'],
+                mode='fixed',
+                timeframe=timeframe,
+                include_trade_setups=True,  # Enable trade setups
+                include_confluence=include_confluence,
+                institutional_levels=institutional_levels
+            )
+        except ImportError:
+            logger.warning("Trading core not available, using fallback Fibonacci analysis")
+            fibonacci_data = analyze_fibonacci_tiered(price_data)
+        
+        # Other analytics (keep existing mock data for now)
+        swing_data = analyze_swing_points_tiered(price_data)
+        
+        # Generate mock analytics (same as before)
+        price_range = current_price * 0.05
+        
+        supply_demand_data = {
+            'zones': [
+                {
+                    'type': 'supply',
+                    'start': current_price + (price_range * 0.5),
+                    'end': current_price + (price_range * 0.7),
+                    'strength': 0.85,
+                    'touches': 2,
+                    'freshness': 0.9
+                }
+            ],
+            'count': 1
+        }
+        
+        # Combine all analytics
+        analytics = {
+            'instrument': instrument,
+            'timeframe': timeframe,
+            'current_price': current_price,
+            'fibonacci': fibonacci_data,
+            'swing': swing_data,
+            'supply_demand': supply_demand_data,
+            'momentum': generate_mock_momentum_data(current_price),
+            'rsi_sma': generate_mock_rsi_sma_data(current_price),
+            'analysis_timestamp': datetime.utcnow().isoformat() + 'Z'
+        }
+        
+        return analytics
+        
+    except Exception as e:
+        logger.error(f"Error generating enhanced analytics for {instrument}: {e}")
+        return create_error_analytics(instrument, str(e))
+"""  # End of saved enhanced function
+
+def convert_analytics_to_trade_format(fibonacci_data: Dict[str, Any], current_price: float, instrument: str) -> Dict[str, Any]:
+    """
+    Convert all-signals fibonacci data to format expected by trade setup generator
+    """
+    try:
+        if not fibonacci_data or not fibonacci_data.get('levels'):
+            return None
+        
+        # Extract swing high and low from fibonacci data
+        swing_high_price = fibonacci_data.get('high')
+        swing_low_price = fibonacci_data.get('low')
+        
+        if not swing_high_price or not swing_low_price:
+            return None
+        
+        # Create swing objects
+        swing_high = {
+            'price': swing_high_price,
+            'time': '',  # Not needed for trade generation
+            'index': 0
+        }
+        
+        swing_low = {
+            'price': swing_low_price, 
+            'time': '',
+            'index': 0
+        }
+        
+        # Calculate swing range
+        swing_range = swing_high_price - swing_low_price
+        is_jpy = 'JPY' in instrument
+        pip_value = 0.01 if is_jpy else 0.0001
+        swing_range_pips = int(swing_range / pip_value)
+        
+        # Build retracement levels from fibonacci data
+        retracement_levels = {}
+        levels = fibonacci_data.get('levels', [])
+        
+        for level in levels:
+            if level > 0.0 and level <= 1.0:  # Valid retracement levels
+                price = swing_high_price - (swing_range * level)
+                retracement_levels[f'{level:.3f}'] = {
+                    'price': price,
+                    'ratio': level
+                }
+        
+        # Build extension levels (basic set)
+        extension_levels = {}
+        extension_ratios = [1.272, 1.618, 2.000]
+        
+        for ratio in extension_ratios:
+            price = swing_high_price + (swing_range * (ratio - 1.0))
+            extension_levels[f'{ratio:.3f}'] = {
+                'price': price,
+                'ratio': ratio
+            }
+        
+        # Return format expected by fibonacci_trade_setups.py
+        return {
+            'fibonacci_sets': [{}],  # Non-empty to pass validation
+            'most_relevant': {
+                'swing_range_pips': swing_range_pips,
+                'high_swing': swing_high,
+                'low_swing': swing_low,
+                'retracement_levels': retracement_levels,
+                'extension_levels': extension_levels
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Error converting analytics to trade format: {e}")
+        return None
+
+def handle_trade_setups(query_parameters: Dict[str, str], cors_headers: Dict[str, str], timeframe: str = 'M5') -> Dict[str, Any]:
+    """
+    Generate Fibonacci trade setups with OANDA integration
+    """
+    try:
+        logger.info(f"Generating trade setups for timeframe: {timeframe}")
+        
+        # Initialize strategy naming
+        strategy_naming = FibonacciStrategyNaming()
+        
+        # Check if confluence is requested
+        use_confluence = query_parameters.get('confluence', 'false').lower() == 'true'
+        logger.info(f"Confluence enabled: {use_confluence}")
+        
+        # Get instruments to analyze (default to major pairs)
+        instruments_param = query_parameters.get('instruments', '')
+        if instruments_param:
+            instruments = [inst.strip() for inst in instruments_param.split(',')]
+        else:
+            # Default to major USD pairs for M5 trading
+            instruments = ['EUR_USD', 'GBP_USD', 'USD_JPY', 'USD_CAD', 'AUD_USD', 'NZD_USD', 'USD_CHF']
+        
+        # Generate trade setups for each instrument
+        trade_setups = []
+        
+        for instrument in instruments:
+            try:
+                logger.info(f"Analyzing {instrument} for trade setups...")
+                
+                # Get institutional levels if confluence is enabled
+                institutional_levels = None
+                if use_confluence:
+                    institutional_levels = get_institutional_levels(instrument, 1.1000)  # Will get real price inside function
+                
+                # Use the original working analytics function
+                # TODO: Later integrate advanced features from generate_pair_analytics_with_setups
+                pair_analytics = generate_pair_analytics(instrument, timeframe)
+                
+                if not pair_analytics or 'fibonacci' not in pair_analytics:
+                    logger.warning(f"No Fibonacci analysis available for {instrument}")
+                    continue
+                
+                fibonacci_data = pair_analytics['fibonacci']
+                current_price = pair_analytics.get('current_price')
+                
+                if not current_price:
+                    logger.warning(f"No current price available for {instrument}")
+                    continue
+                
+                # Use enhanced Fibonacci analysis with trade setups
+                # Check both locations: fibonacci['trade_setups'] and top-level 'trade_setups'
+                fibonacci_data = pair_analytics.get('fibonacci', {})
+                trade_setups_source = []
+                
+                if 'trade_setups' in fibonacci_data and fibonacci_data['trade_setups']:
+                    trade_setups_source = fibonacci_data['trade_setups']
+                elif 'trade_setups' in pair_analytics and pair_analytics['trade_setups']:
+                    trade_setups_source = pair_analytics['trade_setups']
+                
+                if trade_setups_source:
+                    for setup in trade_setups_source:
+                        # Generate strategy metadata using our naming system
+                        setup_data = {
+                            'type': setup['direction'].lower().replace('buy', 'long').replace('sell', 'short'),
+                            'strategy': setup['strategy'],
+                            'action': setup['direction'],
+                            'entry_price': setup['entry_price'],
+                            'fibonacci_level': setup['fibonacci_level']
+                        }
+                        
+                        strategy_metadata = strategy_naming.get_strategy_metadata(setup_data, timeframe)
+                        
+                        # Create trade setup (for Fargate consumption, not direct OANDA)
+                        trade_setup = {
+                            'instrument': instrument,
+                            'timeframe': timeframe,
+                            'current_price': current_price,
+                            'setup_type': setup['setup_type'],
+                            'strategy': setup['strategy'],
+                            'direction': setup['direction'],
+                            'fibonacci_level': setup['fibonacci_level'],
+                            'entry_price': setup['entry_price'],
+                            'stop_loss': setup['stop_loss'],
+                            'targets': setup['targets'],
+                            'risk_reward_ratios': setup['risk_reward_ratios'],
+                            'primary_rr': setup['primary_rr'],
+                            'best_rr': setup['best_rr'],
+                            'risk_pips': setup['risk_pips'],
+                            'reward_pips': setup['reward_pips'],
+                            'distance_to_entry_pips': setup['distance_to_entry_pips'],
+                            'setup_quality': setup['setup_quality'],
+                            'quality_breakdown': setup['quality_breakdown'],
+                            'confluence': setup.get('confluence'),
+                            'confluence_summary': setup.get('confluence_summary'),
+                            'entry_reason': setup['entry_reason'],
+                            'invalidation': setup['invalidation'],
+                            'strategy_metadata': strategy_metadata,
+                            'analysis_timestamp': setup['analysis_timestamp']
+                        }
+                        
+                        trade_setups.append(trade_setup)
+                        
+            except Exception as e:
+                logger.error(f"Error analyzing {instrument}: {e}")
+                continue
+        
+        # Sort by setup quality (highest first)
+        trade_setups.sort(key=lambda x: x['setup_quality'], reverse=True)
+        
+        response_data = {
+            'success': True,
+            'data': {
+                'timeframe': timeframe,
+                'confluence_enabled': use_confluence,
+                'instruments_analyzed': len(instruments),
+                'setups_found': len(trade_setups),
+                'trade_setups': trade_setups[:20]  # Limit to top 20 setups
+            },
+            'timestamp': datetime.utcnow().isoformat() + 'Z'
+        }
+        
+        return {
+            'statusCode': 200,
+            'headers': {'Content-Type': 'application/json', **cors_headers},
+            'body': json.dumps(response_data, default=str)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in handle_trade_setups: {e}", exc_info=True)
+        return {
+            'statusCode': 500,
+            'headers': {'Content-Type': 'application/json', **cors_headers},
+            'body': json.dumps({
+                'success': False,
+                'error': f"Trade setup generation failed: {str(e)}",
+                'timestamp': datetime.utcnow().isoformat() + 'Z'
+            })
+        }
+
+def perform_fibonacci_analysis(candles: List[Dict], current_price: float, instrument: str, use_confluence: bool = False, institutional_levels: Dict = None) -> Dict[str, Any]:
+    """
+    Perform proper Fibonacci analysis using the established trading methodology
+    """
+    try:
+        if len(candles) < 20:
+            return {'setups': []}
+        
+        # Import the proper Fibonacci logic
+        from fibonacci_trade_setups import generate_fibonacci_trade_setups
+        
+        # Prepare fibonacci_analysis structure that matches expected format
+        fibonacci_analysis = create_fibonacci_analysis_from_candles(candles, current_price, instrument)
+        
+        if not fibonacci_analysis:
+            return {'setups': []}
+        
+        # Determine trend direction using recent price action
+        trend_direction = determine_trend_direction(candles, current_price)
+        
+        # Use institutional levels only if confluence is enabled
+        confluence_levels = institutional_levels if use_confluence else None
+        
+        # Generate trade setups using the proper methodology
+        is_jpy = 'JPY' in instrument
+        trade_analysis = generate_fibonacci_trade_setups(
+            fibonacci_analysis, 
+            current_price, 
+            trend_direction, 
+            confluence_levels,
+            is_jpy
+        )
+        
+        # Convert to our expected format
+        converted_setups = []
+        for setup in trade_analysis.get('trade_setups', []):
+            converted_setup = convert_fibonacci_setup_format(setup, instrument)
+            converted_setups.append(converted_setup)
+        
+        return {
+            'setups': converted_setups,
+            'trend_direction': trend_direction,
+            'fibonacci_range_pips': trade_analysis.get('fibonacci_range_pips', 0),
+            'swing_high': trade_analysis.get('high_swing'),
+            'swing_low': trade_analysis.get('low_swing'),
+            'total_setups': len(converted_setups),
+            'confluence_enabled': use_confluence
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in Fibonacci analysis: {e}")
+        return {'setups': []}
+
+def create_fibonacci_analysis_from_candles(candles: List[Dict], current_price: float, instrument: str) -> Dict[str, Any]:
+    """
+    Create fibonacci_analysis structure from candlestick data
+    """
+    try:
+        if len(candles) < 20:
+            return None
+        
+        # Sort candles by time
+        sorted_candles = sorted(candles, key=lambda x: x.get('time', ''))
+        
+        # Use last 100 candles for swing analysis
+        recent_candles = sorted_candles[-100:]
+        
+        # Find significant swing high and low
+        swing_high, swing_low = find_significant_swings(recent_candles)
+        
+        if not swing_high or not swing_low:
+            return None
+        
+        # Calculate swing range
+        swing_range = swing_high['price'] - swing_low['price']
+        is_jpy = 'JPY' in instrument
+        pip_value = 0.01 if is_jpy else 0.0001
+        swing_range_pips = int(swing_range / pip_value)
+        
+        # Calculate Fibonacci retracement levels
+        retracement_levels = {}
+        ratios = [0.236, 0.382, 0.500, 0.618, 0.786, 1.000]
+        
+        for ratio in ratios:
+            price = swing_high['price'] - (swing_range * ratio)
+            retracement_levels[f'{ratio:.3f}'] = {
+                'price': price,
+                'ratio': ratio
+            }
+        
+        # Calculate Fibonacci extension levels
+        extension_levels = {}
+        extension_ratios = [1.272, 1.618, 2.000, 2.618]
+        
+        for ratio in extension_ratios:
+            price = swing_high['price'] + (swing_range * (ratio - 1.0))
+            extension_levels[f'{ratio:.3f}'] = {
+                'price': price,
+                'ratio': ratio
+            }
+        
+        return {
+            'fibonacci_sets': [{}],  # Non-empty to pass validation
+            'most_relevant': {
+                'swing_range_pips': swing_range_pips,
+                'high_swing': swing_high,
+                'low_swing': swing_low,
+                'retracement_levels': retracement_levels,
+                'extension_levels': extension_levels
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Error creating Fibonacci analysis: {e}")
+        return None
+
+def find_significant_swings(candles: List[Dict]) -> tuple:
+    """
+    Find significant swing high and low points
+    """
+    try:
+        if len(candles) < 10:
+            return None, None
+        
+        highs = [float(c.get('h', 0)) for c in candles]
+        lows = [float(c.get('l', 0)) for c in candles]
+        times = [c.get('time', '') for c in candles]
+        
+        # Find absolute high and low in the range
+        max_high = max(highs)
+        min_low = min(lows)
+        
+        max_high_idx = highs.index(max_high)
+        min_low_idx = lows.index(min_low)
+        
+        swing_high = {
+            'price': max_high,
+            'time': times[max_high_idx],
+            'index': max_high_idx
+        }
+        
+        swing_low = {
+            'price': min_low,
+            'time': times[min_low_idx],
+            'index': min_low_idx
+        }
+        
+        return swing_high, swing_low
+        
+    except Exception as e:
+        logger.error(f"Error finding swings: {e}")
+        return None, None
+
+def determine_trend_direction(candles: List[Dict], current_price: float) -> str:
+    """
+    Determine if we're in uptrend or downtrend for continuation trades
+    """
+    try:
+        if len(candles) < 20:
+            return 'uptrend'  # Default
+        
+        # Use last 20 candles for trend analysis
+        recent_candles = candles[-20:]
+        closes = [float(c.get('c', 0)) for c in recent_candles]
+        
+        if not closes:
+            return 'uptrend'
+        
+        # Simple trend determination: compare current price to recent average
+        avg_close = sum(closes) / len(closes)
+        
+        # Also check if recent highs and lows are ascending/descending
+        highs = [float(c.get('h', 0)) for c in recent_candles]
+        lows = [float(c.get('l', 0)) for c in recent_candles]
+        
+        recent_high = max(highs[-10:])  # Last 10 candles
+        earlier_high = max(highs[:10])  # Earlier 10 candles
+        
+        recent_low = min(lows[-10:])
+        earlier_low = min(lows[:10])
+        
+        # Combine multiple signals for trend direction
+        price_vs_avg = current_price > avg_close
+        higher_highs = recent_high > earlier_high
+        higher_lows = recent_low > earlier_low
+        
+        # Uptrend if majority of signals are bullish
+        bullish_signals = sum([price_vs_avg, higher_highs, higher_lows])
+        
+        return 'uptrend' if bullish_signals >= 2 else 'downtrend'
+        
+    except Exception as e:
+        logger.error(f"Error determining trend: {e}")
+        return 'uptrend'
+
+def convert_fibonacci_setup_format(setup: Dict[str, Any], instrument: str) -> Dict[str, Any]:
+    """
+    Convert fibonacci_trade_setups format to our signal-analytics format
+    """
+    try:
+        # Map direction to action
+        action = 'BUY' if setup['direction'] == 'long' else 'SELL'
+        
+        # Extract main target (first target)
+        targets = setup.get('targets', [])
+        take_profit = targets[0] if targets else setup['entry_price']
+        
+        # Convert to our format
+        converted = {
+            'type': setup['direction'],
+            'action': action,
+            'retracement_level': setup.get('fibonacci_level', 'Unknown'),
+            'entry_price': setup['entry_price'],
+            'stop_loss': setup['stop_loss'],
+            'take_profit': take_profit,
+            'targets': targets,  # Keep multiple targets for position management
+            'risk_reward_ratio': setup['risk_reward_ratio'],
+            'signal_confidence': setup['setup_quality'],  # Use quality as confidence
+            'entry_reason': setup['entry_condition'],
+            'strategy': setup['strategy'],
+            'setup_id': setup['setup_id'],
+            'risk_pips': setup['risk_pips'],
+            'reward_pips': setup['reward_pips'],
+            'confluence': setup.get('confluence'),
+            'invalidation': setup.get('invalidation'),
+            'distance_to_entry_pips': setup.get('distance_to_entry_pips', 0)
+        }
+        
+        return converted
+        
+    except Exception as e:
+        logger.error(f"Error converting setup format: {e}")
+        return setup
+
+def get_institutional_levels(instrument: str, current_price: float) -> Dict[str, Any]:
+    """
+    Generate institutional levels (quarters, pennies, dimes) for confluence analysis
+    """
+    try:
+        is_jpy = 'JPY' in instrument
+        
+        if is_jpy:
+            # JPY pairs: Use whole numbers and half numbers
+            base_level = round(current_price)
+            level_range = 5
+            
+            levels = {
+                'quarters': [],  # Every 0.25 for JPY doesn't make sense
+                'pennies': [base_level + i for i in range(-level_range, level_range + 1)],  # Whole numbers
+                'dimes': [base_level + (i * 10) for i in range(-2, 3)]  # Every 10 yen
+            }
+        else:
+            # Non-JPY pairs: Use decimal levels
+            # Quarters: Every 0.25 (1.2500, 1.2750, 1.3000, etc.)
+            quarter_base = round(current_price * 4) / 4
+            quarters = [quarter_base + (i * 0.25) for i in range(-4, 5)]
+            
+            # Pennies: Every 0.01 (1.2300, 1.2400, 1.2500, etc.)
+            penny_base = round(current_price, 2)
+            pennies = [penny_base + (i * 0.01) for i in range(-10, 11)]
+            
+            # Dimes: Every 0.10 (1.2000, 1.3000, 1.4000, etc.)
+            dime_base = round(current_price, 1)
+            dimes = [dime_base + (i * 0.10) for i in range(-5, 6)]
+            
+            levels = {
+                'quarters': quarters,
+                'pennies': pennies,
+                'dimes': dimes
+            }
+        
+        # Filter positive levels only
+        for level_type in levels:
+            levels[level_type] = [level for level in levels[level_type] if level > 0]
+        
+        return levels
+        
+    except Exception as e:
+        logger.error(f"Error generating institutional levels: {e}")
+        return {'quarters': [], 'pennies': [], 'dimes': []}
+
+def handle_place_trade(event: Dict[str, Any], cors_headers: Dict[str, str]) -> Dict[str, Any]:
+    """
+    Place trade orders based on Fibonacci trade setups through OANDA
+    Following LumiSignals architecture: Lambda → OANDA → Fargate collection → RDS
+    """
+    try:
+        # Parse request body
+        body = event.get('body', '{}')
+        if isinstance(body, str):
+            trade_data = json.loads(body)
+        else:
+            trade_data = body
+        
+        logger.info(f"Placing trade order: {trade_data}")
+        
+        # Validate required fields
+        required_fields = ['instrument', 'direction', 'entry_price', 'stop_loss', 'take_profit']
+        missing_fields = [field for field in required_fields if field not in trade_data]
+        
+        if missing_fields:
+            return {
+                'statusCode': 400,
+                'headers': {'Content-Type': 'application/json', **cors_headers},
+                'body': json.dumps({
+                    'success': False,
+                    'error': f"Missing required fields: {missing_fields}",
+                    'timestamp': datetime.utcnow().isoformat() + 'Z'
+                })
+            }
+        
+        # Initialize OANDA API client
+        oanda_api = get_oanda_client()
+        if not oanda_api:
+            return create_error_response(500, "OANDA client not available", cors_headers)
+        
+        # Calculate position size (default $10 risk per trade)
+        risk_amount = trade_data.get('risk_amount', 10.0)  # $10 default risk
+        units = calculate_position_size(
+            trade_data['instrument'],
+            trade_data['entry_price'],
+            trade_data['stop_loss'],
+            risk_amount
+        )
+        
+        # Adjust units for direction (positive for BUY, negative for SELL)
+        if trade_data['direction'].upper() == 'SELL':
+            units = -abs(units)
+        else:
+            units = abs(units)
+        
+        # Place limit order with stop loss and take profit
+        order_result = oanda_api.place_limit_order(
+            instrument=trade_data['instrument'],
+            units=units,
+            price=float(trade_data['entry_price']),
+            stop_loss=float(trade_data['stop_loss']),
+            take_profit=float(trade_data['take_profit'])
+        )
+        
+        if order_result and not order_result.get('error'):
+            # Store trade metadata to Redis for Fargate collection
+            trade_metadata = prepare_trade_metadata(trade_data, order_result, units)
+            
+            # Store to Redis using centralized market data client
+            from centralized_market_data_client import CentralizedMarketDataClient
+            market_client = CentralizedMarketDataClient()
+            metadata_stored = market_client.store_trade_metadata(trade_metadata)
+            
+            # Prepare success response
+            response_data = {
+                'success': True,
+                'data': {
+                    'order_id': order_result.get('orderCreateTransaction', {}).get('id'),
+                    'instrument': trade_data['instrument'],
+                    'direction': trade_data['direction'],
+                    'units': units,
+                    'entry_price': trade_data['entry_price'],
+                    'stop_loss': trade_data['stop_loss'],
+                    'take_profit': trade_data['take_profit'],
+                    'risk_amount': risk_amount,
+                    'oanda_response': order_result,
+                    'metadata_stored': metadata_stored,
+                    'strategy_name': trade_data.get('strategy_metadata', {}).get('strategy_name', 'Fibonacci Setup')
+                },
+                'timestamp': datetime.utcnow().isoformat() + 'Z'
+            }
+            
+            logger.info(f"✅ Trade placed successfully: {trade_data['instrument']} {trade_data['direction']}")
+            
+            return {
+                'statusCode': 200,
+                'headers': {'Content-Type': 'application/json', **cors_headers},
+                'body': json.dumps(response_data, default=str)
+            }
+        else:
+            # OANDA order failed
+            error_msg = order_result.get('error', 'Unknown OANDA error')
+            logger.error(f"OANDA order failed: {error_msg}")
+            
+            return {
+                'statusCode': 400,
+                'headers': {'Content-Type': 'application/json', **cors_headers},
+                'body': json.dumps({
+                    'success': False,
+                    'error': f"OANDA order failed: {error_msg}",
+                    'oanda_response': order_result,
+                    'timestamp': datetime.utcnow().isoformat() + 'Z'
+                })
+            }
+            
+    except Exception as e:
+        logger.error(f"Error in handle_place_trade: {e}", exc_info=True)
+        return {
+            'statusCode': 500,
+            'headers': {'Content-Type': 'application/json', **cors_headers},
+            'body': json.dumps({
+                'success': False,
+                'error': f"Trade placement failed: {str(e)}",
+                'timestamp': datetime.utcnow().isoformat() + 'Z'
+            })
+        }
+
+def get_oanda_client():
+    """
+    Initialize OANDA API client with credentials from environment/secrets
+    """
+    try:
+        # Import OANDA API client
+        import sys
+        sys.path.append('/opt/python')  # Lambda layer path
+        from oanda_api import OandaAPI
+        
+        # Get credentials from environment or AWS Secrets Manager
+        api_key = os.environ.get('OANDA_API_KEY')
+        account_id = os.environ.get('OANDA_ACCOUNT_ID')
+        environment = os.environ.get('OANDA_ENVIRONMENT', 'practice')
+        
+        if not api_key or not account_id:
+            logger.error("OANDA credentials not configured")
+            return None
+        
+        oanda_client = OandaAPI(api_key, account_id, environment)
+        logger.info(f"✅ OANDA client initialized ({environment})")
+        
+        return oanda_client
+        
+    except Exception as e:
+        logger.error(f"Failed to initialize OANDA client: {e}")
+        return None
+
+def calculate_position_size(instrument: str, entry_price: float, stop_loss: float, risk_amount: float) -> int:
+    """
+    Calculate position size based on fixed risk amount ($10 default)
+    """
+    try:
+        # Calculate risk in pips
+        is_jpy = 'JPY' in instrument
+        pip_value = 0.01 if is_jpy else 0.0001
+        
+        risk_pips = abs(entry_price - stop_loss) / pip_value
+        
+        if risk_pips <= 0:
+            logger.warning(f"Invalid risk calculation: entry={entry_price}, stop={stop_loss}")
+            return 1000  # Default small position
+        
+        # Standard pip values for position sizing
+        if is_jpy:
+            # For JPY pairs: 1 pip = $1 per 10,000 units (approximately)
+            pip_value_usd = 0.0001 * 10000  # ~$1 per 10k units
+        else:
+            # For non-JPY pairs: 1 pip = $1 per 10,000 units (approximately)  
+            pip_value_usd = 0.0001 * 10000  # ~$1 per 10k units
+        
+        # Calculate units needed for target risk
+        target_loss = risk_amount  # $10 default
+        units_per_dollar_risk = 10000 / (risk_pips * pip_value_usd)
+        
+        position_size = int(target_loss * units_per_dollar_risk)
+        
+        # Ensure minimum and maximum position sizes
+        position_size = max(1000, min(position_size, 100000))  # Between 1k and 100k units
+        
+        logger.info(f"Position sizing: {instrument}, Risk: ${risk_amount}, Pips: {risk_pips:.1f}, Units: {position_size}")
+        
+        return position_size
+        
+    except Exception as e:
+        logger.error(f"Error calculating position size: {e}")
+        return 1000  # Default fallback
+
+def prepare_trade_metadata(trade_data: Dict, order_result: Dict, units: int) -> Dict:
+    """
+    Prepare trade metadata for Redis storage and Fargate collection
+    """
+    try:
+        order_transaction = order_result.get('orderCreateTransaction', {})
+        
+        metadata = {
+            'order_id': order_transaction.get('id'),
+            'instrument': trade_data['instrument'],
+            'action': trade_data['direction'].upper(),
+            'order_type': 'LIMIT',
+            'entry_price': float(trade_data['entry_price']),
+            'stop_loss': float(trade_data['stop_loss']),
+            'take_profit': float(trade_data['take_profit']),
+            'units': units,
+            'risk_amount': trade_data.get('risk_amount', 10.0),
+            'rr_ratio': trade_data.get('risk_reward_ratio', 0),
+            'signal_confidence': trade_data.get('signal_confidence', 75),
+            'strategy_name': trade_data.get('strategy_metadata', {}).get('strategy_name', 'Fibonacci Setup'),
+            'fibonacci_level': trade_data.get('fibonacci_level'),
+            'confluence_enabled': trade_data.get('confluence_enabled', False),
+            'reasoning': [trade_data.get('entry_reason', 'Fibonacci trade setup')],
+            'timestamp': datetime.utcnow().isoformat() + 'Z',
+            'oanda_transaction_id': order_transaction.get('id'),
+            'oanda_time': order_transaction.get('time')
+        }
+        
+        return metadata
+        
+    except Exception as e:
+        logger.error(f"Error preparing trade metadata: {e}")
+        return {}

@@ -87,8 +87,8 @@ def get_timeframe_fibonacci_ratios(timeframe: str) -> dict:
             'extension': [0.0, 1.0, 1.272, 1.618]
         },
         'M5': {
-            'retracement': [0.0, 0.5, 0.618, 1.0],
-            'extension': [0.0, 1.0, 1.272]
+            'retracement': [0.0, 0.382, 0.5, 0.618, 0.786, 1.0],
+            'extension': [0.0, 1.0, 1.272, 1.618]
         }
     }
     
