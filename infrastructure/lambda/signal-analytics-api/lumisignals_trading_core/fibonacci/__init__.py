@@ -5,22 +5,29 @@ LumiSignals Trading Core - Fibonacci Analysis Module
 This module provides Fibonacci retracement and extension analysis for trading.
 """
 
-from .fibonacci_analysis import (
-    detect_swing_points,
-    find_significant_swings,
-    generate_fibonacci_levels,
-    auto_generate_fibonacci_from_swings,
-    integrate_fibonacci_with_institutional_levels,
-    create_sample_price_data,
-    analyze_fibonacci_levels
+# Updated to use the improved Fibonacci analysis
+from .improved_fibonacci_analysis import (
+    detect_major_swing_points,
+    find_best_fibonacci_swing_pair,
+    generate_improved_fibonacci_levels,
+    analyze_fibonacci_levels_improved,
+    generate_enhanced_trade_setups,
+    check_institutional_confluence,
+    generate_institutional_levels
 )
 
+# Legacy function mapping for backward compatibility
+def analyze_fibonacci_levels(*args, **kwargs):
+    """Legacy wrapper - redirects to improved analysis"""
+    return analyze_fibonacci_levels_improved(*args, **kwargs)
+
 __all__ = [
-    'detect_swing_points',
-    'find_significant_swings', 
-    'generate_fibonacci_levels',
-    'auto_generate_fibonacci_from_swings',
-    'integrate_fibonacci_with_institutional_levels',
-    'create_sample_price_data',
-    'analyze_fibonacci_levels'
+    'detect_major_swing_points',
+    'find_best_fibonacci_swing_pair',
+    'generate_improved_fibonacci_levels', 
+    'analyze_fibonacci_levels_improved',
+    'generate_enhanced_trade_setups',
+    'check_institutional_confluence',
+    'generate_institutional_levels',
+    'analyze_fibonacci_levels'  # Legacy compatibility
 ]

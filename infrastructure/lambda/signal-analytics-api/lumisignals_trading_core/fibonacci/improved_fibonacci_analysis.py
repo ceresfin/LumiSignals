@@ -271,18 +271,31 @@ def generate_improved_fibonacci_levels(swing_pair: Dict, timeframe: str = 'H1') 
     price_range = high_price - low_price
     
     detailed_levels = []
+    trend_direction = swing_pair['trend_direction']
+    
     for ratio in ratios:
-        level_price = high_price - (price_range * ratio)
+        # Fix Problem 1: Proper FROM/TO Fibonacci calculation based on trend
+        if trend_direction == 'downtrend':
+            # Downtrend: FROM high (1.0) TO low (0.0)
+            # 0.618 retracement = 61.8% back UP from low toward high
+            level_price = low_price + (price_range * ratio)
+        else:  # uptrend
+            # Uptrend: FROM low (1.0) TO high (0.0)  
+            # 0.618 retracement = 61.8% back DOWN from high toward low
+            level_price = high_price - (price_range * ratio)
+            
         detailed_levels.append({
             'ratio': ratio,
             'price': round(level_price, 5),
             'description': f'{ratio:.1%} Retracement'
         })
     
-    # Determine key level based on current retracement
+    # Determine key level based on current retracement - Fix Problem 2: Add 0.5 for trend continuation
     current_ret = swing_pair['current_retracement']
     if current_ret < 0.382:
         key_level = 0.382
+    elif current_ret < 0.5:
+        key_level = 0.5
     elif current_ret < 0.618:
         key_level = 0.618
     else:
@@ -541,9 +554,9 @@ def create_enhanced_setup(level: float, entry_price: float, high_price: float,
             trade_direction = 'BUY'
             trade_type = 'long'
     
-    # Calculate stop loss and targets based on trade type
-    stop_loss = calculate_smart_stop_loss(entry_price, high_price, low_price, level, trade_type, pip_value, timeframe)
-    targets = calculate_smart_targets(entry_price, high_price, low_price, trade_type, pip_value)
+    # Calculate stop loss and targets based on trade type with Fibonacci level labels
+    stop_loss, stop_fibonacci_level = calculate_smart_stop_loss_with_level(entry_price, high_price, low_price, level, trade_type, pip_value, timeframe)
+    targets, target_fibonacci_levels = calculate_smart_targets_with_levels(entry_price, high_price, low_price, trade_type, pip_value)
     
     # Calculate risk/reward ratios for all targets
     risk_pips = abs(entry_price - stop_loss) / pip_value
@@ -596,6 +609,8 @@ def create_enhanced_setup(level: float, entry_price: float, high_price: float,
         'stop_loss': round(stop_loss, decimal_places),
         'target_price': round(targets[0], decimal_places) if targets else 0,
         'targets': [round(t, decimal_places) for t in targets],
+        'stop_fibonacci_level': stop_fibonacci_level,
+        'target_fibonacci_levels': target_fibonacci_levels,
         'risk_pips': round(risk_pips, 1),
         'reward_pips': [round(r, 1) for r in reward_pips_array],
         'risk_reward_ratios': risk_reward_ratios,
@@ -613,6 +628,46 @@ def create_enhanced_setup(level: float, entry_price: float, high_price: float,
     }
     
     return setup
+
+
+def calculate_smart_stop_loss_with_level(entry_price: float, high_price: float, low_price: float,
+                             level: float, trade_direction: str, pip_value: float, timeframe: str) -> tuple[float, str]:
+    """
+    Calculate intelligent stop loss placement using deeper Fibonacci levels with level labels.
+    Returns: (stop_price, fibonacci_level_description)
+    """
+    
+    swing_range = high_price - low_price
+    # Get timeframe-specific buffer
+    timeframe_settings = get_timeframe_settings(timeframe)
+    buffer_pips = timeframe_settings['stop_buffer_pips']
+    buffer = buffer_pips * pip_value
+    
+    if trade_direction == 'long':
+        # For long trades, stop below deeper retracement or swing low
+        if level < 0.618:
+            # Use 78.6% level as stop
+            stop_level = high_price - (swing_range * 0.786)
+            fibonacci_label = "78.6% Retracement"
+        else:
+            # Use swing low with buffer
+            stop_level = low_price
+            fibonacci_label = "Swing Low"
+        
+        return stop_level - buffer, fibonacci_label
+    
+    else:  # short trades
+        # For short trades, stop above shallower retracement or swing high
+        if level > 0.382:
+            # Use 23.6% level as stop
+            stop_level = high_price - (swing_range * 0.236)
+            fibonacci_label = "23.6% Retracement"
+        else:
+            # Use swing high with buffer
+            stop_level = high_price
+            fibonacci_label = "Swing High"
+            
+        return stop_level + buffer, fibonacci_label
 
 
 def calculate_smart_stop_loss(entry_price: float, high_price: float, low_price: float,
@@ -650,6 +705,42 @@ def calculate_smart_stop_loss(entry_price: float, high_price: float, low_price: 
         return stop_level + buffer
 
 
+def calculate_smart_targets_with_levels(entry_price: float, high_price: float, low_price: float,
+                           trade_direction: str, pip_value: float) -> tuple[List[float], List[str]]:
+    """
+    Calculate multiple intelligent targets using Fibonacci extensions with level labels.
+    Returns: (target_prices, fibonacci_level_descriptions)
+    """
+    
+    swing_range = high_price - low_price
+    targets = []
+    target_labels = []
+    
+    if trade_direction == 'long':
+        # Long targets: break above swing high, then extensions
+        targets.append(high_price + (10 * pip_value))  # T1: Break swing high
+        target_labels.append("Swing High Break")
+        
+        targets.append(high_price + (swing_range * 0.272))  # T2: 127.2% extension
+        target_labels.append("127.2% Extension")
+        
+        targets.append(high_price + (swing_range * 0.382))  # T3: 138.2% extension
+        target_labels.append("138.2% Extension")
+    
+    else:  # short targets
+        # Short targets: break below swing low, then extensions  
+        targets.append(low_price - (10 * pip_value))   # T1: Break swing low
+        target_labels.append("Swing Low Break")
+        
+        targets.append(low_price - (swing_range * 0.272))  # T2: 127.2% extension
+        target_labels.append("127.2% Extension")
+        
+        targets.append(low_price - (swing_range * 0.382))  # T3: 138.2% extension
+        target_labels.append("138.2% Extension")
+    
+    return targets, target_labels
+
+
 def calculate_smart_targets(entry_price: float, high_price: float, low_price: float,
                            trade_direction: str, pip_value: float) -> List[float]:
     """
@@ -663,13 +754,13 @@ def calculate_smart_targets(entry_price: float, high_price: float, low_price: fl
         # Long targets: break above swing high, then extensions
         targets.append(high_price + (10 * pip_value))  # T1: Break swing high
         targets.append(high_price + (swing_range * 0.272))  # T2: 127.2% extension
-        targets.append(high_price + (swing_range * 0.618))  # T3: 161.8% extension
+        targets.append(high_price + (swing_range * 0.382))  # T3: 138.2% extension
     
     else:  # short targets
         # Short targets: break below swing low, then extensions  
         targets.append(low_price - (10 * pip_value))   # T1: Break swing low
         targets.append(low_price - (swing_range * 0.272))  # T2: 127.2% extension
-        targets.append(low_price - (swing_range * 0.618))  # T3: 161.8% extension
+        targets.append(low_price - (swing_range * 0.382))  # T3: 138.2% extension
     
     return targets
 
@@ -818,3 +909,272 @@ def get_distance_rating(distance_pips: float) -> str:
         return 'Near'
     else:
         return 'Distant'
+
+# ===== ENHANCED FUNCTIONS MERGED FROM fibonacci_trade_setups.py =====
+
+def check_institutional_confluence(price: float, institutional_levels: Dict[str, List[float]], 
+                                  pip_value: float, tolerance_pips: int = 10) -> List[Dict[str, Any]]:
+    """
+    Check if Fibonacci level aligns with institutional levels (quarters, pennies, dimes).
+    
+    Args:
+        price: The Fibonacci level price to check
+        institutional_levels: Dict with 'quarters', 'pennies', 'dimes' level arrays
+        pip_value: Pip value for the instrument
+        tolerance_pips: Tolerance in pips for confluence detection
+        
+    Returns:
+        List of confluence matches with details
+    """
+    if not institutional_levels:
+        return []
+    
+    tolerance = tolerance_pips * pip_value
+    confluences = []
+    
+    # Check all institutional level types
+    for level_type, levels in institutional_levels.items():
+        if not levels:
+            continue
+            
+        for level in levels:
+            if abs(price - level) <= tolerance:
+                distance_pips = int(abs(price - level) / pip_value)
+                confluences.append({
+                    'level_type': level_type,
+                    'level_price': round(level, 5),
+                    'distance_pips': distance_pips,
+                    'strength': 'high' if distance_pips <= 5 else 'medium' if distance_pips <= 10 else 'low'
+                })
+    
+    # Sort by distance (closest first)
+    confluences.sort(key=lambda x: x['distance_pips'])
+    return confluences
+
+def calculate_enhanced_setup_quality(risk_reward_ratio: float, confluence: List[Dict], 
+                                   distance_to_entry_pips: float, fibonacci_level: float,
+                                   timeframe: str = 'H1') -> Dict[str, Any]:
+    """
+    Calculate comprehensive setup quality score with detailed breakdown.
+    
+    Args:
+        risk_reward_ratio: Risk to reward ratio
+        confluence: List of confluence matches
+        distance_to_entry_pips: Distance from current price to entry in pips
+        fibonacci_level: Fibonacci retracement level (0.382, 0.618, etc.)
+        timeframe: Trading timeframe
+        
+    Returns:
+        Dictionary with total score and detailed breakdown
+    """
+    breakdown = {
+        'risk_reward_score': 0,
+        'confluence_score': 0,
+        'distance_score': 0,
+        'fibonacci_level_score': 0,
+        'timeframe_bonus': 0
+    }
+    
+    # 1. Risk/Reward component (0-40 points)
+    if risk_reward_ratio >= 3.0:
+        breakdown['risk_reward_score'] = 40
+    elif risk_reward_ratio >= 2.5:
+        breakdown['risk_reward_score'] = 35
+    elif risk_reward_ratio >= 2.0:
+        breakdown['risk_reward_score'] = 30
+    elif risk_reward_ratio >= 1.5:
+        breakdown['risk_reward_score'] = 20
+    elif risk_reward_ratio >= 1.0:
+        breakdown['risk_reward_score'] = 10
+    
+    # 2. Confluence component (0-25 points)
+    if confluence:
+        high_strength_count = sum(1 for c in confluence if c['strength'] == 'high')
+        medium_strength_count = sum(1 for c in confluence if c['strength'] == 'medium')
+        
+        confluence_score = (high_strength_count * 10) + (medium_strength_count * 5)
+        breakdown['confluence_score'] = min(confluence_score, 25)
+    
+    # 3. Distance to entry component (0-20 points)
+    timeframe_settings = get_timeframe_settings(timeframe)
+    max_distance = timeframe_settings['entry_distance_pips']
+    
+    if distance_to_entry_pips <= max_distance * 0.2:  # Very close
+        breakdown['distance_score'] = 20
+    elif distance_to_entry_pips <= max_distance * 0.5:  # Close
+        breakdown['distance_score'] = 15
+    elif distance_to_entry_pips <= max_distance * 0.8:  # Reasonable
+        breakdown['distance_score'] = 10
+    elif distance_to_entry_pips <= max_distance:  # Max acceptable
+        breakdown['distance_score'] = 5
+    
+    # 4. Fibonacci level quality (0-10 points)
+    # Golden ratio levels get higher scores
+    if abs(fibonacci_level - 0.618) < 0.01:  # 61.8% - Golden ratio
+        breakdown['fibonacci_level_score'] = 10
+    elif abs(fibonacci_level - 0.382) < 0.01:  # 38.2% - Golden ratio
+        breakdown['fibonacci_level_score'] = 9
+    elif abs(fibonacci_level - 0.786) < 0.01:  # 78.6% - Deep retracement
+        breakdown['fibonacci_level_score'] = 8
+    elif abs(fibonacci_level - 0.5) < 0.01:    # 50% - Psychological level
+        breakdown['fibonacci_level_score'] = 7
+    else:
+        breakdown['fibonacci_level_score'] = 5
+    
+    # 5. Timeframe bonus (0-5 points)
+    timeframe_bonuses = {
+        'M5': 1,    # Scalping gets small bonus
+        'M15': 2,   # Short-term gets medium bonus  
+        'M30': 3,   # Intraday gets good bonus
+        'H1': 4,    # Hour gets high bonus
+        'H4': 5,    # 4-hour gets highest bonus
+        'D1': 5     # Daily gets highest bonus
+    }
+    breakdown['timeframe_bonus'] = timeframe_bonuses.get(timeframe, 3)
+    
+    # Calculate total score
+    total_score = sum(breakdown.values())
+    
+    # Determine quality rating
+    if total_score >= 85:
+        quality_rating = 'excellent'
+    elif total_score >= 70:
+        quality_rating = 'good'
+    elif total_score >= 55:
+        quality_rating = 'fair'
+    elif total_score >= 40:
+        quality_rating = 'poor'
+    else:
+        quality_rating = 'very_poor'
+    
+    return {
+        'total': total_score,
+        'rating': quality_rating,
+        'breakdown': breakdown,
+        'max_possible': 100
+    }
+
+def generate_extension_targets(high_price: float, low_price: float, entry_price: float,
+                             trade_direction: str, decimal_places: int) -> List[float]:
+    """
+    Generate Fibonacci extension targets for trade setups.
+    
+    Args:
+        high_price: Swing high price
+        low_price: Swing low price  
+        entry_price: Trade entry price
+        trade_direction: 'long' or 'short'
+        decimal_places: Decimal places for rounding
+        
+    Returns:
+        List of extension target prices
+    """
+    swing_range = high_price - low_price
+    extension_ratios = [1.272, 1.382, 1.618, 2.000, 2.618]
+    targets = []
+    
+    for ratio in extension_ratios:
+        if trade_direction.lower() == 'long':
+            target = high_price + (swing_range * (ratio - 1.0))
+            if target > entry_price:  # Only targets above entry for long trades
+                targets.append(round(target, decimal_places))
+        else:  # short
+            target = low_price - (swing_range * (ratio - 1.0))  
+            if target < entry_price:  # Only targets below entry for short trades
+                targets.append(round(target, decimal_places))
+    
+    return targets[:3]  # Maximum 3 extension targets
+
+def determine_smart_stop_placement(entry_price: float, high_price: float, low_price: float,
+                                 fibonacci_level: float, trade_direction: str, pip_value: float,
+                                 timeframe: str) -> tuple[float, str]:
+    """
+    Determine intelligent stop loss placement using Fibonacci levels.
+    
+    Returns:
+        (stop_price, fibonacci_level_description)
+    """
+    swing_range = high_price - low_price
+    timeframe_settings = get_timeframe_settings(timeframe)
+    buffer_pips = timeframe_settings['stop_buffer_pips']
+    buffer = buffer_pips * pip_value
+    
+    if trade_direction.lower() == 'long':
+        # For long trades, use deeper retracement levels as stops
+        if fibonacci_level < 0.5:
+            # Shallow retracement - stop at 78.6%
+            stop_price = high_price - (swing_range * 0.786) - buffer
+            stop_description = '78.6% Retracement'
+        elif fibonacci_level < 0.618:
+            # Medium retracement - stop below swing low
+            stop_price = low_price - buffer
+            stop_description = 'Swing Low'
+        else:
+            # Deep retracement - stop well below swing low
+            stop_price = low_price - (buffer * 2)
+            stop_description = 'Swing Low Buffer'
+    else:
+        # For short trades, use shallower retracement levels as stops
+        if fibonacci_level < 0.5:
+            # Shallow retracement - stop at 23.6%  
+            stop_price = high_price - (swing_range * 0.236) + buffer
+            stop_description = '23.6% Retracement'
+        elif fibonacci_level < 0.618:
+            # Medium retracement - stop above swing high
+            stop_price = high_price + buffer
+            stop_description = 'Swing High'
+        else:
+            # Deep retracement - stop well above swing high
+            stop_price = high_price + (buffer * 2)
+            stop_description = 'Swing High Buffer'
+    
+    return stop_price, stop_description
+
+def generate_institutional_levels(current_price: float, instrument: str) -> Dict[str, List[float]]:
+    """
+    Generate institutional levels (quarters, pennies, dimes) around current price.
+    
+    Args:
+        current_price: Current market price
+        instrument: Currency pair (for JPY detection)
+        
+    Returns:
+        Dictionary with institutional level arrays
+    """
+    is_jpy = 'JPY' in instrument
+    
+    if is_jpy:
+        # JPY pairs: Use whole numbers and half numbers
+        base_level = round(current_price)
+        level_range = 10
+        
+        levels = {
+            'quarters': [],  # Not applicable for JPY
+            'pennies': [base_level + i for i in range(-level_range, level_range + 1)],  # Whole numbers
+            'dimes': [base_level + (i * 10) for i in range(-3, 4)]  # Every 10 yen
+        }
+    else:
+        # Non-JPY pairs: Use decimal levels
+        # Quarters: Every 0.0025 (quarter pennies)
+        quarter_base = round(current_price * 4000) / 4000
+        quarters = [quarter_base + (i * 0.0025) for i in range(-20, 21)]
+        
+        # Pennies: Every 0.01 
+        penny_base = round(current_price * 100) / 100
+        pennies = [penny_base + (i * 0.01) for i in range(-10, 11)]
+        
+        # Dimes: Every 0.10
+        dime_base = round(current_price * 10) / 10
+        dimes = [dime_base + (i * 0.10) for i in range(-5, 6)]
+        
+        levels = {
+            'quarters': quarters,
+            'pennies': pennies,
+            'dimes': dimes
+        }
+    
+    # Filter positive levels only
+    for level_type in levels:
+        levels[level_type] = [level for level in levels[level_type] if level > 0]
+    
+    return levels

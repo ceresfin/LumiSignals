@@ -541,9 +541,9 @@ def create_enhanced_setup(level: float, entry_price: float, high_price: float,
             trade_direction = 'BUY'
             trade_type = 'long'
     
-    # Calculate stop loss and targets based on trade type
-    stop_loss = calculate_smart_stop_loss(entry_price, high_price, low_price, level, trade_type, pip_value, timeframe)
-    targets = calculate_smart_targets(entry_price, high_price, low_price, trade_type, pip_value)
+    # Calculate stop loss and targets based on trade type with Fibonacci level labels
+    stop_loss, stop_fibonacci_level = calculate_smart_stop_loss_with_level(entry_price, high_price, low_price, level, trade_type, pip_value, timeframe)
+    targets, target_fibonacci_levels = calculate_smart_targets_with_levels(entry_price, high_price, low_price, trade_type, pip_value)
     
     # Calculate risk/reward ratios for all targets
     risk_pips = abs(entry_price - stop_loss) / pip_value
@@ -596,6 +596,8 @@ def create_enhanced_setup(level: float, entry_price: float, high_price: float,
         'stop_loss': round(stop_loss, decimal_places),
         'target_price': round(targets[0], decimal_places) if targets else 0,
         'targets': [round(t, decimal_places) for t in targets],
+        'stop_fibonacci_level': stop_fibonacci_level,
+        'target_fibonacci_levels': target_fibonacci_levels,
         'risk_pips': round(risk_pips, 1),
         'reward_pips': [round(r, 1) for r in reward_pips_array],
         'risk_reward_ratios': risk_reward_ratios,
@@ -613,6 +615,46 @@ def create_enhanced_setup(level: float, entry_price: float, high_price: float,
     }
     
     return setup
+
+
+def calculate_smart_stop_loss_with_level(entry_price: float, high_price: float, low_price: float,
+                             level: float, trade_direction: str, pip_value: float, timeframe: str) -> tuple[float, str]:
+    """
+    Calculate intelligent stop loss placement using deeper Fibonacci levels with level labels.
+    Returns: (stop_price, fibonacci_level_description)
+    """
+    
+    swing_range = high_price - low_price
+    # Get timeframe-specific buffer
+    timeframe_settings = get_timeframe_settings(timeframe)
+    buffer_pips = timeframe_settings['stop_buffer_pips']
+    buffer = buffer_pips * pip_value
+    
+    if trade_direction == 'long':
+        # For long trades, stop below deeper retracement or swing low
+        if level < 0.618:
+            # Use 78.6% level as stop
+            stop_level = high_price - (swing_range * 0.786)
+            fibonacci_label = "78.6% Retracement"
+        else:
+            # Use swing low with buffer
+            stop_level = low_price
+            fibonacci_label = "Swing Low"
+        
+        return stop_level - buffer, fibonacci_label
+    
+    else:  # short trades
+        # For short trades, stop above shallower retracement or swing high
+        if level > 0.382:
+            # Use 23.6% level as stop
+            stop_level = high_price - (swing_range * 0.236)
+            fibonacci_label = "23.6% Retracement"
+        else:
+            # Use swing high with buffer
+            stop_level = high_price
+            fibonacci_label = "Swing High"
+            
+        return stop_level + buffer, fibonacci_label
 
 
 def calculate_smart_stop_loss(entry_price: float, high_price: float, low_price: float,
@@ -650,6 +692,42 @@ def calculate_smart_stop_loss(entry_price: float, high_price: float, low_price: 
         return stop_level + buffer
 
 
+def calculate_smart_targets_with_levels(entry_price: float, high_price: float, low_price: float,
+                           trade_direction: str, pip_value: float) -> tuple[List[float], List[str]]:
+    """
+    Calculate multiple intelligent targets using Fibonacci extensions with level labels.
+    Returns: (target_prices, fibonacci_level_descriptions)
+    """
+    
+    swing_range = high_price - low_price
+    targets = []
+    target_labels = []
+    
+    if trade_direction == 'long':
+        # Long targets: break above swing high, then extensions
+        targets.append(high_price + (10 * pip_value))  # T1: Break swing high
+        target_labels.append("Swing High Break")
+        
+        targets.append(high_price + (swing_range * 0.272))  # T2: 127.2% extension
+        target_labels.append("127.2% Extension")
+        
+        targets.append(high_price + (swing_range * 0.382))  # T3: 138.2% extension
+        target_labels.append("138.2% Extension")
+    
+    else:  # short targets
+        # Short targets: break below swing low, then extensions  
+        targets.append(low_price - (10 * pip_value))   # T1: Break swing low
+        target_labels.append("Swing Low Break")
+        
+        targets.append(low_price - (swing_range * 0.272))  # T2: 127.2% extension
+        target_labels.append("127.2% Extension")
+        
+        targets.append(low_price - (swing_range * 0.382))  # T3: 138.2% extension
+        target_labels.append("138.2% Extension")
+    
+    return targets, target_labels
+
+
 def calculate_smart_targets(entry_price: float, high_price: float, low_price: float,
                            trade_direction: str, pip_value: float) -> List[float]:
     """
@@ -663,13 +741,13 @@ def calculate_smart_targets(entry_price: float, high_price: float, low_price: fl
         # Long targets: break above swing high, then extensions
         targets.append(high_price + (10 * pip_value))  # T1: Break swing high
         targets.append(high_price + (swing_range * 0.272))  # T2: 127.2% extension
-        targets.append(high_price + (swing_range * 0.618))  # T3: 161.8% extension
+        targets.append(high_price + (swing_range * 0.382))  # T3: 138.2% extension
     
     else:  # short targets
         # Short targets: break below swing low, then extensions  
         targets.append(low_price - (10 * pip_value))   # T1: Break swing low
         targets.append(low_price - (swing_range * 0.272))  # T2: 127.2% extension
-        targets.append(low_price - (swing_range * 0.618))  # T3: 161.8% extension
+        targets.append(low_price - (swing_range * 0.382))  # T3: 138.2% extension
     
     return targets
 
