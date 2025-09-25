@@ -1207,13 +1207,13 @@ def handle_trade_setups(query_parameters: Dict[str, str], cors_headers: Dict[str
         use_confluence = query_parameters.get('confluence', 'false').lower() == 'true'
         logger.info(f"Confluence enabled: {use_confluence}")
         
-        # Get instruments to analyze (default to major pairs)
+        # Get instruments to analyze (default to all 28 pairs)
         instruments_param = query_parameters.get('instruments', '')
         if instruments_param:
             instruments = [inst.strip() for inst in instruments_param.split(',')]
         else:
-            # Default to major USD pairs for M5 trading
-            instruments = ['EUR_USD', 'GBP_USD', 'USD_JPY', 'USD_CAD', 'AUD_USD', 'NZD_USD', 'USD_CHF']
+            # Default to all 28 currency pairs from SHARD_MAPPING
+            instruments = list(SHARD_MAPPING.keys())
         
         # Generate trade setups for each instrument
         trade_setups = []
