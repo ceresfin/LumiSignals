@@ -196,17 +196,24 @@ def find_best_fibonacci_swing_pair(major_swings: Dict, current_price: float) -> 
     best_low = swing_lows[0]    # Already sorted by prominence
     
     # Determine trend direction based on which occurred more recently
-    trend_direction = 'downtrend' if best_high['index'] > best_low['index'] else 'uptrend'
+    # If high came after low → price moved up → uptrend
+    # If low came after high → price moved down → downtrend
+    trend_direction = 'uptrend' if best_high['index'] > best_low['index'] else 'downtrend'
     
     # Calculate swing range in pips
     pip_value = major_swings['parameters']['pip_value']
     swing_range_pips = abs(best_high['price'] - best_low['price']) / pip_value
     
-    # Calculate current retracement level using standard Fibonacci convention
-    # Standard: 0% = swing low (end of move), 100% = swing high (start of move)
-    # Retracement = how far price has moved back from the end toward the start
+    # Calculate current retracement level using TRADING-INTUITIVE FROM/TO logic
+    # DOWNTREND: FROM swing high (100%) TO swing low (0%) - 100% = deepest retracement back to high
+    # UPTREND: FROM swing low (100%) TO swing high (0%) - 100% = deepest retracement back to low
     if best_high['price'] != best_low['price']:
-        current_retracement = (current_price - best_low['price']) / (best_high['price'] - best_low['price'])
+        if trend_direction == 'downtrend':
+            # FROM high (100%) TO low (0%): when current=high, retracement=100% (deepest)
+            current_retracement = (best_high['price'] - current_price) / (best_high['price'] - best_low['price'])
+        else:  # uptrend
+            # FROM low (100%) TO high (0%): when current=low, retracement=100% (deepest)
+            current_retracement = (current_price - best_low['price']) / (best_high['price'] - best_low['price'])
         current_retracement = max(0, min(1, current_retracement))  # Clamp between 0-1
     else:
         current_retracement = 0.5
