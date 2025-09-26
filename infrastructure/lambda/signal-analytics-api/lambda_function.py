@@ -160,10 +160,26 @@ def get_tiered_price_data(instrument: str, timeframe: str = 'H1') -> Dict[str, A
         # Combine hot + warm for complete dataset (500 candles total)
         combined_data = hot_data + warm_data
         
+        # CRITICAL FIX: Sort by timestamp to ensure chronological order (oldest first, newest last)
+        if combined_data:
+            try:
+                # Sort by timestamp field (handle both 'time' and 'timestamp' fields)
+                combined_data.sort(key=lambda candle: candle.get('time', candle.get('timestamp', '0')))
+                logger.info(f"Sorted {len(combined_data)} candles by timestamp")
+            except Exception as e:
+                logger.error(f"Failed to sort candles by timestamp: {e}")
+        
         # If we don't have enough data, fall back to cold tier
         if len(combined_data) < 100:
             logger.warning(f"Insufficient hot+warm data ({len(combined_data)} candles), using cold tier")
             combined_data = cold_data
+            # Also sort cold data if we fall back to it
+            if combined_data:
+                try:
+                    combined_data.sort(key=lambda candle: candle.get('time', candle.get('timestamp', '0')))
+                    logger.info(f"Sorted fallback cold data: {len(combined_data)} candles")
+                except Exception as e:
+                    logger.error(f"Failed to sort cold data by timestamp: {e}")
         
         result = {
             'hot': hot_data,
