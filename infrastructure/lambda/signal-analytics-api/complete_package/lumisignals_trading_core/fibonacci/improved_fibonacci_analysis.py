@@ -55,7 +55,7 @@ def get_timeframe_settings(timeframe: str = 'M5') -> Dict:
 
 def detect_major_swing_points(price_data: List[Dict], 
                              lookback_periods: int = 50,
-                             min_swing_size_pips: int = 30,
+                             min_swing_size_pips: int = 15,
                              is_jpy: bool = False) -> Dict[str, Any]:
     """
     TRUE lookback swing detection - analyzes only recent lookback_periods candles.
@@ -431,7 +431,7 @@ def analyze_fibonacci_levels_improved(instrument: str, current_price: float = No
         params = get_timeframe_parameters(timeframe)
         # Use larger lookback for major swings
         lookback_periods = max(50, params['window'] * 10)
-        min_swing_pips = max(params['min_pip_distance'] * 2, 30)  # Double the threshold for major swings
+        min_swing_pips = params['min_pip_distance']  # Use timeframe-specific pip distance
         
         mode_info = {
             'mode': 'fixed',
