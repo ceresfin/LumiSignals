@@ -58,23 +58,26 @@ def detect_major_swing_points(price_data: List[Dict],
                              min_swing_size_pips: int = 30,
                              is_jpy: bool = False) -> Dict[str, Any]:
     """
-    Improved swing detection that finds major structural levels.
+    TRUE lookback swing detection - analyzes only recent lookback_periods candles.
     
     Args:
         price_data: List of candles with 'high', 'low', etc.
-        lookback_periods: How far back to look for major swings
+        lookback_periods: How many recent candles to analyze for swings
         min_swing_size_pips: Minimum size in pips to be considered major swing
         is_jpy: True for JPY pairs
         
     Returns:
-        Dictionary with major swing highs and lows
+        Dictionary with major swing highs and lows from recent data only
     """
     
-    if len(price_data) < lookback_periods:
+    if len(price_data) < max(lookback_periods, 20):
         return {'swing_highs': [], 'swing_lows': [], 'message': 'Insufficient data'}
     
-    highs = [float(candle.get('h', candle.get('high', 0))) for candle in price_data]
-    lows = [float(candle.get('l', candle.get('low', 0))) for candle in price_data]
+    # CRITICAL FIX: Use only the most recent lookback_periods candles
+    recent_data = price_data[-lookback_periods:] if len(price_data) >= lookback_periods else price_data
+    
+    highs = [float(candle.get('h', candle.get('high', 0))) for candle in recent_data]
+    lows = [float(candle.get('l', candle.get('low', 0))) for candle in recent_data]
     
     major_highs = []
     major_lows = []
@@ -82,77 +85,91 @@ def detect_major_swing_points(price_data: List[Dict],
     pip_value = 0.01 if is_jpy else 0.0001
     min_price_move = min_swing_size_pips * pip_value
     
-    # Find absolute highest and lowest points
-    max_high_price = max(highs)
-    min_low_price = min(lows)
-    max_high_index = highs.index(max_high_price)
-    min_low_index = lows.index(min_low_price)
+    # Find max/min within RECENT data only (not global dataset)
+    local_max_high = max(highs)
+    local_min_low = min(lows)
+    local_max_index = highs.index(local_max_high)
+    local_min_index = lows.index(local_min_low)
     
-    # Method 1: Find major swing highs using prominence
-    for i in range(lookback_periods, len(highs) - lookback_periods):
+    # Adaptive window size for prominence detection within recent data
+    prominence_window = min(10, len(highs) // 4)  # Smaller window for recent data
+    if prominence_window < 3:
+        prominence_window = 3
+    
+    # Method 1: Find swing highs using prominence within recent data
+    for i in range(prominence_window, len(highs) - prominence_window):
         current_high = highs[i]
         
-        # Check if this is a major high (highest in lookback range)
-        left_range = highs[i - lookback_periods:i]
-        right_range = highs[i + 1:i + lookback_periods + 1]
+        # Check prominence within recent data only
+        left_range = highs[max(0, i - prominence_window):i]
+        right_range = highs[i + 1:min(len(highs), i + prominence_window + 1)]
         
-        # Must be highest in the lookback range AND significant compared to global high
+        # Must be highest in proximity AND significant within recent range
         is_major_high = (current_high >= max(left_range) and 
                         current_high >= max(right_range) and
-                        current_high >= max_high_price * 0.9)  # Within 10% of absolute high
+                        current_high >= local_max_high * 0.85)  # Within 15% of recent max
         
         if is_major_high:
-            # Check if it's big enough move from previous major high
+            # Check if it's big enough move from previous swing
             if len(major_highs) == 0 or abs(current_high - major_highs[-1]['price']) >= min_price_move:
+                # Calculate actual index in original dataset
+                actual_index = len(price_data) - len(recent_data) + i
+                
                 major_highs.append({
                     'price': current_high,
-                    'index': i,
-                    'timestamp': price_data[i].get('time', price_data[i].get('timestamp', '')),
-                    'method': 'prominence',
+                    'index': actual_index,
+                    'timestamp': recent_data[i].get('time', recent_data[i].get('timestamp', '')),
+                    'method': 'recent_prominence',
                     'lookback_used': lookback_periods,
                     'prominence_score': min(current_high - max(left_range), current_high - max(right_range))
                 })
     
-    # Method 2: Find major swing lows using prominence  
-    for i in range(lookback_periods, len(lows) - lookback_periods):
+    # Method 2: Find swing lows using prominence within recent data
+    for i in range(prominence_window, len(lows) - prominence_window):
         current_low = lows[i]
         
-        # Check if this is a major low
-        left_range = lows[i - lookback_periods:i]
-        right_range = lows[i + 1:i + lookback_periods + 1]
+        # Check prominence within recent data only
+        left_range = lows[max(0, i - prominence_window):i]
+        right_range = lows[i + 1:min(len(lows), i + prominence_window + 1)]
         
+        # Must be lowest in proximity AND significant within recent range
         is_major_low = (current_low <= min(left_range) and 
                        current_low <= min(right_range) and
-                       current_low <= min_low_price * 1.1)  # Within 10% of absolute low
+                       current_low <= local_min_low * 1.15)  # Within 15% of recent min
         
         if is_major_low:
             if len(major_lows) == 0 or abs(current_low - major_lows[-1]['price']) >= min_price_move:
+                # Calculate actual index in original dataset
+                actual_index = len(price_data) - len(recent_data) + i
+                
                 major_lows.append({
                     'price': current_low,
-                    'index': i,
-                    'timestamp': price_data[i].get('time', price_data[i].get('timestamp', '')),
-                    'method': 'prominence',
+                    'index': actual_index,
+                    'timestamp': recent_data[i].get('time', recent_data[i].get('timestamp', '')),
+                    'method': 'recent_prominence',
                     'lookback_used': lookback_periods,
                     'prominence_score': min(min(left_range) - current_low, min(right_range) - current_low)
                 })
     
-    # Always include the absolute highest and lowest points if they're not already included
-    if not any(h['price'] == max_high_price for h in major_highs):
+    # Always include the recent highest and lowest points if significant
+    if not any(h['price'] == local_max_high for h in major_highs):
+        actual_max_index = len(price_data) - len(recent_data) + local_max_index
         major_highs.append({
-            'price': max_high_price,
-            'index': max_high_index,
-            'timestamp': price_data[max_high_index].get('time', price_data[max_high_index].get('timestamp', '')),
-            'method': 'absolute_high',
-            'prominence_score': max_high_price - min_low_price
+            'price': local_max_high,
+            'index': actual_max_index,
+            'timestamp': recent_data[local_max_index].get('time', recent_data[local_max_index].get('timestamp', '')),
+            'method': 'recent_absolute_high',
+            'prominence_score': local_max_high - local_min_low
         })
     
-    if not any(l['price'] == min_low_price for l in major_lows):
+    if not any(l['price'] == local_min_low for l in major_lows):
+        actual_min_index = len(price_data) - len(recent_data) + local_min_index
         major_lows.append({
-            'price': min_low_price,
-            'index': min_low_index,
-            'timestamp': price_data[min_low_index].get('time', price_data[min_low_index].get('timestamp', '')),
-            'method': 'absolute_low',
-            'prominence_score': max_high_price - min_low_price
+            'price': local_min_low,
+            'index': actual_min_index,
+            'timestamp': recent_data[local_min_index].get('time', recent_data[local_min_index].get('timestamp', '')),
+            'method': 'recent_absolute_low',
+            'prominence_score': local_max_high - local_min_low
         })
     
     # Sort by prominence score (most prominent first)
@@ -164,12 +181,15 @@ def detect_major_swing_points(price_data: List[Dict],
         'swing_lows': major_lows,
         'total_highs': len(major_highs),
         'total_lows': len(major_lows),
-        'dataset_range_pips': (max_high_price - min_low_price) / pip_value,
-        'method': 'improved_prominence',
+        'dataset_range_pips': (local_max_high - local_min_low) / pip_value,
+        'method': 'true_recent_lookback',
+        'recent_data_used': len(recent_data),
         'parameters': {
             'lookback_periods': lookback_periods,
             'min_swing_size_pips': min_swing_size_pips,
-            'pip_value': pip_value
+            'pip_value': pip_value,
+            'recent_candles_analyzed': len(recent_data),
+            'prominence_window': prominence_window
         }
     }
 
@@ -196,24 +216,50 @@ def find_best_fibonacci_swing_pair(major_swings: Dict, current_price: float) -> 
     best_low = swing_lows[0]    # Already sorted by prominence
     
     # Determine trend direction based on which occurred more recently
+    # Use timestamps for more reliable chronological comparison
     # If high came after low → price moved up → uptrend
     # If low came after high → price moved down → downtrend
-    trend_direction = 'uptrend' if best_high['index'] > best_low['index'] else 'downtrend'
+    
+    # Get timestamps, fallback to index if timestamps unavailable
+    high_timestamp = best_high.get('timestamp', '')
+    low_timestamp = best_low.get('timestamp', '')
+    
+    if high_timestamp and low_timestamp:
+        # Use timestamp comparison for chronological order
+        try:
+            # Handle Oanda nanosecond timestamps (numeric strings)
+            if str(high_timestamp).isdigit() and str(low_timestamp).isdigit():
+                # Nanosecond timestamps - compare as integers
+                high_ns = int(high_timestamp)
+                low_ns = int(low_timestamp)
+                trend_direction = 'uptrend' if high_ns > low_ns else 'downtrend'
+            else:
+                # ISO format timestamps - parse as datetime
+                from datetime import datetime
+                high_dt = datetime.fromisoformat(str(high_timestamp).replace('Z', '+00:00'))
+                low_dt = datetime.fromisoformat(str(low_timestamp).replace('Z', '+00:00'))
+                trend_direction = 'uptrend' if high_dt > low_dt else 'downtrend'
+        except (ValueError, AttributeError):
+            # Fallback to string comparison
+            trend_direction = 'uptrend' if str(high_timestamp) > str(low_timestamp) else 'downtrend'
+    else:
+        # Fallback to index comparison
+        trend_direction = 'uptrend' if best_high['index'] > best_low['index'] else 'downtrend'
     
     # Calculate swing range in pips
     pip_value = major_swings['parameters']['pip_value']
     swing_range_pips = abs(best_high['price'] - best_low['price']) / pip_value
     
-    # Calculate current retracement level using TRADING-INTUITIVE FROM/TO logic
-    # DOWNTREND: FROM swing high (100%) TO swing low (0%) - 100% = deepest retracement back to high
-    # UPTREND: FROM swing low (100%) TO swing high (0%) - 100% = deepest retracement back to low
+    # Calculate current retracement level using CORRECT FROM/TO logic
+    # DOWNTREND: FROM swing high (100%) TO swing low (0%) 
+    # UPTREND: FROM swing low (100%) TO swing high (0%)
     if best_high['price'] != best_low['price']:
         if trend_direction == 'downtrend':
-            # FROM high (100%) TO low (0%): when current=high, retracement=100% (deepest)
-            current_retracement = (best_high['price'] - current_price) / (best_high['price'] - best_low['price'])
-        else:  # uptrend
-            # FROM low (100%) TO high (0%): when current=low, retracement=100% (deepest)
+            # DOWNTREND: High=100%, Low=0%. Current closer to low = smaller retracement %
             current_retracement = (current_price - best_low['price']) / (best_high['price'] - best_low['price'])
+        else:  # uptrend
+            # UPTREND: Low=100%, High=0%. Current closer to low = larger retracement %
+            current_retracement = (best_high['price'] - current_price) / (best_high['price'] - best_low['price'])
         current_retracement = max(0, min(1, current_retracement))  # Clamp between 0-1
     else:
         current_retracement = 0.5
@@ -312,10 +358,20 @@ def generate_improved_fibonacci_levels(swing_pair: Dict, timeframe: str = 'H1') 
         'swing_range_pips': swing_pair['swing_range_pips'],
         'relevance_score': swing_pair['relevance_score'],
         'swing_analysis': {
-            'high_method': swing_pair['high_swing']['method'],
-            'low_method': swing_pair['low_swing']['method'],
-            'high_prominence': swing_pair['high_swing']['prominence_score'],
-            'low_prominence': swing_pair['low_swing']['prominence_score']
+            'high_swing': {
+                'method': swing_pair['high_swing']['method'],
+                'prominence': swing_pair['high_swing']['prominence_score'],
+                'timestamp': swing_pair['high_swing'].get('timestamp', ''),
+                'index': swing_pair['high_swing'].get('index', 0),
+                'price': swing_pair['high_swing']['price']
+            },
+            'low_swing': {
+                'method': swing_pair['low_swing']['method'],
+                'prominence': swing_pair['low_swing']['prominence_score'], 
+                'timestamp': swing_pair['low_swing'].get('timestamp', ''),
+                'index': swing_pair['low_swing'].get('index', 0),
+                'price': swing_pair['low_swing']['price']
+            }
         }
     }
 
@@ -450,74 +506,75 @@ def generate_enhanced_trade_setups(fibonacci_data: Dict, current_price: float,
                                  include_confluence: bool = False,
                                  institutional_levels: Dict = None) -> List[Dict]:
     """
-    Generate enhanced trade setups with detailed breakdowns.
+    Generate proper Fibonacci trade setups with three distinct trade types:
+    1. TREND EXTENSION (0-23.6%): Enter at 0%, targets start at 138.2%
+    2. TREND CONTINUATION (23.6-78.6%): Enter at 38.2/50/61.8%, targets at 127.2%
+    3. TREND REVERSAL (78.6%+): Enter at 100%, reversal targets
     """
     
     is_jpy = 'JPY' in instrument
     pip_value = 0.01 if is_jpy else 0.0001
     decimal_places = 2 if is_jpy else 4
     
-    # Distance filter based on timeframe
     timeframe_settings = get_timeframe_settings(timeframe)
     max_distance_pips = timeframe_settings['entry_distance_pips']
     max_distance = max_distance_pips * pip_value
     
-    trade_setups = []
-    
     # Extract Fibonacci data
     high_price = fibonacci_data['high']
     low_price = fibonacci_data['low']
-    levels = fibonacci_data['levels']
     swing_range = high_price - low_price
     direction = fibonacci_data['direction']
-    
-    # ONE TRUE LOGIC: Use actual current retracement to determine trade setups
-    # Get the corrected current retracement from fibonacci_data
     current_retracement = fibonacci_data.get('current_retracement', 0.0)
     
-    # Determine appropriate trading levels based on current position
+    # Determine trade type based on current retracement depth
     if current_retracement <= 0.236:
-        # Very close to swing low - look for deeper retracement levels
-        relevant_levels = [0.236, 0.382]
-    elif current_retracement <= 0.382:
-        # Shallow retracement - continuation zone
-        relevant_levels = [0.382, 0.500]
-    elif current_retracement <= 0.618:
-        # Mid-range retracement - continuation zone
-        relevant_levels = [0.500, 0.618]
+        trade_type = "TREND_EXTENSION"
+        entry_level = 0.0  # Enter at swing point (0%)
     elif current_retracement <= 0.786:
-        # Deep retracement - still continuation but watch for reversal
-        relevant_levels = [0.618, 0.786]
+        trade_type = "TREND_CONTINUATION"
+        # Find closest continuation level
+        if current_retracement <= 0.40:
+            entry_level = 0.382
+        elif current_retracement <= 0.55:
+            entry_level = 0.500
+        else:
+            entry_level = 0.618
     else:
-        # Very deep retracement - reversal zone
-        relevant_levels = [0.786, 0.886]
+        trade_type = "TREND_REVERSAL"
+        entry_level = 1.0  # Enter at full retracement (100%)
     
-    # Generate setups only for relevant levels near current position
-    for level in relevant_levels:
-        if level in levels:
-            # Calculate entry price
-            entry_price = high_price - (swing_range * level)
-            
-            # Distance filter
-            distance_to_entry = abs(current_price - entry_price)
-            if distance_to_entry <= max_distance:
-                
-                # Generate trade setup using ONE TRUE LOGIC
-                setup = create_enhanced_setup(
-                    level, entry_price, high_price, low_price,
-                    current_price, direction, instrument, timeframe,
-                    include_confluence, institutional_levels,
-                    pip_value, decimal_places, distance_to_entry,
-                    current_retracement  # Pass actual retracement for unified logic
-                )
-                
-                if setup:
-                    trade_setups.append(setup)
+    # Calculate entry price based on trend direction
+    if direction == 'downtrend':
+        if entry_level == 0.0:
+            entry_price = low_price  # 0% = swing low
+        elif entry_level == 1.0:
+            entry_price = high_price  # 100% = swing high
+        else:
+            entry_price = low_price + (swing_range * entry_level)
+    else:  # uptrend
+        if entry_level == 0.0:
+            entry_price = high_price  # 0% = swing high
+        elif entry_level == 1.0:
+            entry_price = low_price  # 100% = swing low
+        else:
+            entry_price = high_price - (swing_range * entry_level)
     
-    # Sort by setup quality (highest first)
-    trade_setups.sort(key=lambda x: x['setup_quality'], reverse=True)
+    # Distance filter
+    distance_to_entry = abs(current_price - entry_price)
+    if distance_to_entry > max_distance:
+        return []  # Too far from entry
     
-    return trade_setups
+    # Generate trade setup
+    setup = create_proper_fibonacci_setup(
+        trade_type, entry_level, entry_price, high_price, low_price,
+        current_price, direction, instrument, timeframe,
+        include_confluence, institutional_levels,
+        pip_value, decimal_places, distance_to_entry,
+        current_retracement
+    )
+    
+    return [setup] if setup else []
 
 
 def create_enhanced_setup(level: float, entry_price: float, high_price: float, 
@@ -1178,3 +1235,160 @@ def generate_institutional_levels(current_price: float, instrument: str) -> Dict
         levels[level_type] = [level for level in levels[level_type] if level > 0]
     
     return levels
+
+def create_proper_fibonacci_setup(trade_type: str, entry_level: float, entry_price: float, 
+                                  high_price: float, low_price: float, current_price: float, 
+                                  direction: str, instrument: str, timeframe: str, 
+                                  include_confluence: bool, institutional_levels: Dict,
+                                  pip_value: float, decimal_places: int, distance_to_entry: float,
+                                  current_retracement: float) -> Dict:
+    """
+    Create proper Fibonacci trade setup with correct entry, targets, and stops.
+    """
+    
+    swing_range = high_price - low_price
+    timeframe_settings = get_timeframe_settings(timeframe)
+    stop_buffer_pips = timeframe_settings['stop_buffer_pips']
+    
+    # Determine trade direction and calculate targets/stops
+    if trade_type == "TREND_EXTENSION":
+        # TREND EXTENSION: Riding momentum further
+        if direction == 'downtrend':
+            trade_direction = 'SELL'
+            targets = calculate_extension_targets(low_price, swing_range, 'down', decimal_places)
+            stop_loss = high_price + (stop_buffer_pips * pip_value)  # Above previous structure
+        else:  # uptrend
+            trade_direction = 'BUY'
+            targets = calculate_extension_targets(high_price, swing_range, 'up', decimal_places)
+            stop_loss = low_price - (stop_buffer_pips * pip_value)  # Below previous structure
+    
+    elif trade_type == "TREND_CONTINUATION":
+        # TREND CONTINUATION: Standard Fib trading
+        if direction == 'downtrend':
+            trade_direction = 'BUY'  # Buying the dip in downtrend
+            targets = calculate_continuation_targets(high_price, low_price, 'up', decimal_places)
+            # Stop one Fib level below entry
+            next_fib_down = get_next_fib_level_down(entry_level)
+            stop_loss = low_price + (swing_range * next_fib_down) - (stop_buffer_pips * pip_value)
+        else:  # uptrend
+            trade_direction = 'SELL'  # Selling the bounce in uptrend
+            targets = calculate_continuation_targets(high_price, low_price, 'down', decimal_places)
+            # Stop one Fib level above entry
+            next_fib_up = get_next_fib_level_up(entry_level)
+            stop_loss = high_price - (swing_range * next_fib_up) + (stop_buffer_pips * pip_value)
+    
+    else:  # TREND_REVERSAL
+        # TREND REVERSAL: Counter-trend trade
+        if direction == 'downtrend':
+            trade_direction = 'BUY'  # Reversing downtrend
+            targets = calculate_reversal_targets(high_price, low_price, 'up', decimal_places)
+            stop_loss = low_price - (stop_buffer_pips * pip_value)  # Beyond 100% level
+        else:  # uptrend
+            trade_direction = 'SELL'  # Reversing uptrend
+            targets = calculate_reversal_targets(high_price, low_price, 'down', decimal_places)
+            stop_loss = high_price + (stop_buffer_pips * pip_value)  # Beyond 100% level
+    
+    # Calculate risk/reward metrics
+    risk_pips = abs(entry_price - stop_loss) / pip_value
+    reward_pips = [abs(target - entry_price) / pip_value for target in targets]
+    risk_reward_ratio = reward_pips[0] / risk_pips if risk_pips > 0 else 0
+    
+    # Calculate setup quality
+    quality_data = calculate_enhanced_setup_quality(
+        risk_reward_ratio, [], distance_to_entry / pip_value, entry_level, timeframe
+    )
+    
+    return {
+        'instrument': instrument,
+        'direction': trade_direction,
+        'trade_type': trade_type,
+        'entry_price': round(entry_price, decimal_places),
+        'stop_loss': round(stop_loss, decimal_places),
+        'targets': [round(t, decimal_places) for t in targets],
+        'current_price': round(current_price, decimal_places),
+        'fibonacci_level': f'{entry_level:.1%} Entry',
+        'stop_fibonacci_level': get_stop_fib_description(trade_type, entry_level),
+        'target_fibonacci_levels': get_target_fib_descriptions(trade_type),
+        'risk_pips': round(risk_pips, 1),
+        'reward_pips': [round(r, 1) for r in reward_pips],
+        'risk_reward_ratio': round(risk_reward_ratio, 2),
+        'distance_to_entry_pips': round(distance_to_entry / pip_value, 1),
+        'setup_quality': quality_data['total'],
+        'timeframe': timeframe,
+        'swing_high': high_price,
+        'swing_low': low_price,
+        'current_retracement_pct': round(current_retracement * 100, 1)
+    }
+
+def calculate_extension_targets(base_price: float, swing_range: float, direction: str, decimal_places: int) -> List[float]:
+    """Calculate extension targets starting at 138.2%"""
+    extension_levels = [1.382, 1.618, 2.0]  # Start at 138.2%, then 161.8%, 200%
+    
+    targets = []
+    for level in extension_levels:
+        if direction == 'down':
+            target = base_price - (swing_range * level)
+        else:  # up
+            target = base_price + (swing_range * level)
+        targets.append(round(target, decimal_places))
+    
+    return targets
+
+def calculate_continuation_targets(high_price: float, low_price: float, direction: str, decimal_places: int) -> List[float]:
+    """Calculate continuation targets (swing break + 127.2%)"""
+    swing_range = high_price - low_price
+    
+    if direction == 'up':
+        swing_break = high_price
+        extension_127 = high_price + (swing_range * 0.272)
+    else:  # down
+        swing_break = low_price
+        extension_127 = low_price - (swing_range * 0.272)
+    
+    return [round(swing_break, decimal_places), round(extension_127, decimal_places)]
+
+def calculate_reversal_targets(high_price: float, low_price: float, direction: str, decimal_places: int) -> List[float]:
+    """Calculate reversal targets (major Fib levels in opposite direction)"""
+    swing_range = high_price - low_price
+    reversal_levels = [0.382, 0.618, 0.786]  # Major Fib levels
+    
+    targets = []
+    for level in reversal_levels:
+        if direction == 'up':
+            target = low_price + (swing_range * level)
+        else:  # down  
+            target = high_price - (swing_range * level)
+        targets.append(round(target, decimal_places))
+    
+    return targets
+
+def get_next_fib_level_down(current_level: float) -> float:
+    """Get next Fibonacci level down for stop placement"""
+    fib_levels = [0.0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0]
+    current_idx = min(range(len(fib_levels)), key=lambda i: abs(fib_levels[i] - current_level))
+    return fib_levels[max(0, current_idx - 1)]
+
+def get_next_fib_level_up(current_level: float) -> float:
+    """Get next Fibonacci level up for stop placement"""
+    fib_levels = [0.0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0]
+    current_idx = min(range(len(fib_levels)), key=lambda i: abs(fib_levels[i] - current_level))
+    return fib_levels[min(len(fib_levels) - 1, current_idx + 1)]
+
+def get_stop_fib_description(trade_type: str, entry_level: float) -> str:
+    """Get stop loss Fibonacci description"""
+    if trade_type == "TREND_EXTENSION":
+        return "Previous Structure"
+    elif trade_type == "TREND_REVERSAL":
+        return "Beyond 100% Level"
+    else:
+        next_level = get_next_fib_level_down(entry_level)
+        return f"{next_level:.1%} Level"
+
+def get_target_fib_descriptions(trade_type: str) -> List[str]:
+    """Get target Fibonacci descriptions"""
+    if trade_type == "TREND_EXTENSION":
+        return ["138.2% Extension", "161.8% Extension", "200% Extension"]
+    elif trade_type == "TREND_CONTINUATION":
+        return ["Swing Break", "127.2% Extension"]
+    else:  # TREND_REVERSAL
+        return ["38.2% Reversal", "61.8% Reversal", "78.6% Reversal"]
