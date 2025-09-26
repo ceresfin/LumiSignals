@@ -31,8 +31,15 @@ def main():
     print(f"Generated at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 80)
     
-    # Debug specific pairs with timestamps
-    debug_pairs = ['AUD_CAD', 'AUD_JPY', 'NZD_JPY']
+    # Debug ALL pairs with timestamps - especially EUR/USD
+    debug_pairs = [
+        'EUR_USD', 'GBP_USD', 'USD_JPY', 'USD_CAD', 'AUD_USD', 'NZD_USD', 'USD_CHF',
+        'EUR_GBP', 'EUR_JPY', 'EUR_CAD', 'EUR_AUD', 'EUR_NZD', 'EUR_CHF', 
+        'GBP_JPY', 'GBP_CAD', 'GBP_AUD', 'GBP_NZD', 'GBP_CHF',
+        'AUD_JPY', 'AUD_CAD', 'AUD_NZD', 'AUD_CHF',
+        'NZD_JPY', 'NZD_CAD', 'NZD_CHF',
+        'CAD_JPY', 'CAD_CHF', 'CHF_JPY'
+    ]
     
     for pair in debug_pairs:
         print(f"\n{pair}:")

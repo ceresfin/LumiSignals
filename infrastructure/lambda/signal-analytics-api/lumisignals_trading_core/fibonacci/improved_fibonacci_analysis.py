@@ -254,12 +254,14 @@ def find_best_fibonacci_swing_pair(major_swings: Dict, current_price: float) -> 
     # DOWNTREND: FROM swing high (100%) TO swing low (0%) 
     # UPTREND: FROM swing low (100%) TO swing high (0%)
     if best_high['price'] != best_low['price']:
-        if trend_direction == 'downtrend':
-            # DOWNTREND: High=100%, Low=0%. Current closer to low = smaller retracement %
-            current_retracement = (current_price - best_low['price']) / (best_high['price'] - best_low['price'])
-        else:  # uptrend
-            # UPTREND: Low=100%, High=0%. Current closer to low = larger retracement %
+        if trend_direction == 'uptrend':
+            # UPTREND: FROM low (100%) TO high (0%)  
+            # Retracement = (High - Current) / (High - Low)
             current_retracement = (best_high['price'] - current_price) / (best_high['price'] - best_low['price'])
+        else:  # downtrend
+            # DOWNTREND: FROM high (100%) TO low (0%)
+            # Retracement = (Current - Low) / (High - Low)
+            current_retracement = (current_price - best_low['price']) / (best_high['price'] - best_low['price'])
         current_retracement = max(0, min(1, current_retracement))  # Clamp between 0-1
     else:
         current_retracement = 0.5
@@ -1253,19 +1255,19 @@ def create_proper_fibonacci_setup(trade_type: str, entry_level: float, entry_pri
     
     # Determine trade direction and calculate targets/stops with proper Fibonacci logic
     if trade_type == "TREND_EXTENSION":
-        # TREND EXTENSION: Riding momentum further
+        # TREND EXTENSION: Riding momentum further with tight 8-pip stop
+        extension_stop_pips = 8  # Fixed 8-pip stop for extension setups
+        
         if direction == 'downtrend':
             trade_direction = 'SELL'
             targets = calculate_extension_targets(low_price, swing_range, 'down', decimal_places)
-            # Stop at next Fibonacci level ABOVE entry (23.6% level) + buffer
-            stop_fib_level = get_next_fib_level_up(entry_level)
-            stop_loss = high_price - (swing_range * stop_fib_level) + (stop_buffer_pips * pip_value)
+            # Use tight 8-pip stop above entry for extension setups
+            stop_loss = entry_price + (extension_stop_pips * pip_value)
         else:  # uptrend
             trade_direction = 'BUY'
             targets = calculate_extension_targets(high_price, swing_range, 'up', decimal_places)
-            # Stop at next Fibonacci level BELOW entry (23.6% level) + buffer
-            stop_fib_level = get_next_fib_level_down(entry_level)
-            stop_loss = low_price + (swing_range * stop_fib_level) - (stop_buffer_pips * pip_value)
+            # Use tight 8-pip stop below entry for extension setups
+            stop_loss = entry_price - (extension_stop_pips * pip_value)
     
     elif trade_type == "TREND_CONTINUATION":
         # TREND CONTINUATION: Standard Fib trading - FIXED LOGIC
@@ -1386,12 +1388,8 @@ def get_next_fib_level_up(current_level: float) -> float:
 def get_stop_fib_description(trade_type: str, entry_level: float, direction: str = None) -> str:
     """Get stop loss Fibonacci description"""
     if trade_type == "TREND_EXTENSION":
-        # For trend extension, stop is at next Fibonacci level in opposite direction
-        if direction == 'uptrend':
-            next_level = get_next_fib_level_down(entry_level)
-        else:
-            next_level = get_next_fib_level_up(entry_level) 
-        return f"{next_level:.1%} Level + Buffer"
+        # For trend extension, use tight 8-pip stop
+        return "8-Pip Fixed Stop"
     elif trade_type == "TREND_REVERSAL":
         return "Beyond 100% Level + Buffer"
     else:  # TREND_CONTINUATION
