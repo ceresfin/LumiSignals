@@ -15,10 +15,8 @@ def deploy_complete_package_via_s3():
     print("🚀 Deploying complete package via S3...")
     print("📋 Following ANALYTICS_DEVELOPMENT_METHODOLOGY.md deployment process")
     
-    # Step 1: Copy updated files to complete_package (SINGLE SOURCE OF TRUTH)
+    # Step 1: Copy updated files to complete_package
     print("\n📁 Step 1: Updating complete_package directory...")
-    
-    # Core Lambda files
     if os.path.exists('lambda_function.py'):
         os.system('cp lambda_function.py complete_package/lambda_function.py')
         print("✅ Copied lambda_function.py to complete_package/")
@@ -26,16 +24,6 @@ def deploy_complete_package_via_s3():
     if os.path.exists('fibonacci_strategy_naming.py'):
         os.system('cp fibonacci_strategy_naming.py complete_package/fibonacci_strategy_naming.py')
         print("✅ Copied fibonacci_strategy_naming.py to complete_package/")
-    
-    # Trading Core files (MAIN SOURCE → COMPLETE_PACKAGE)
-    main_fibonacci_file = 'lumisignals_trading_core/fibonacci/improved_fibonacci_analysis.py'
-    complete_fibonacci_file = 'complete_package/lumisignals_trading_core/fibonacci/improved_fibonacci_analysis.py'
-    
-    if os.path.exists(main_fibonacci_file):
-        os.system(f'cp "{main_fibonacci_file}" "{complete_fibonacci_file}"')
-        print("✅ Copied improved_fibonacci_analysis.py to complete_package/ (SINGLE SOURCE OF TRUTH)")
-    else:
-        print(f"⚠️  Warning: {main_fibonacci_file} not found - using existing complete_package version")
     
     # Step 2: Create deployment package
     print("\n📦 Step 2: Creating deployment package...")
