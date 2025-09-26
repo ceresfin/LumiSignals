@@ -594,11 +594,14 @@ def create_enhanced_setup(level: float, entry_price: float, high_price: float,
     # Use current_retracement (where price actually is) not level (potential entry)
     if current_retracement <= 0.786:  # Continuation zone: 0% to 78.6%
         setup_type_override = 'Trend Continuation'
+        # CORRECT Fibonacci retracement trading logic:
+        # Uptrend: Buy retracements (dips) to continue trend upward
+        # Downtrend: Sell retracements (bounces) to continue trend downward
         if direction in ['uptrend', 'bullish']:
-            trade_direction = 'BUY'
+            trade_direction = 'BUY'  # Buy the retracement in uptrend
             trade_type = 'long'
         else:  # downtrend
-            trade_direction = 'SELL'
+            trade_direction = 'SELL'  # Sell the retracement bounce in downtrend  
             trade_type = 'short'
     else:  # Reversal zone: >78.6%
         setup_type_override = 'Trend Reversal'
@@ -1263,15 +1266,17 @@ def create_proper_fibonacci_setup(trade_type: str, entry_level: float, entry_pri
             stop_loss = low_price - (stop_buffer_pips * pip_value)  # Below previous structure
     
     elif trade_type == "TREND_CONTINUATION":
-        # TREND CONTINUATION: Standard Fib trading
-        if direction == 'downtrend':
-            trade_direction = 'BUY'  # Buying the dip in downtrend
+        # TREND CONTINUATION: Standard Fib trading - FIXED LOGIC
+        # Uptrend: Buy the retracement (dip), targets up
+        # Downtrend: Sell the retracement (bounce), targets down
+        if direction == 'uptrend':
+            trade_direction = 'BUY'  # Buy the retracement in uptrend
             targets = calculate_continuation_targets(high_price, low_price, 'up', decimal_places)
             # Stop one Fib level below entry
             next_fib_down = get_next_fib_level_down(entry_level)
             stop_loss = low_price + (swing_range * next_fib_down) - (stop_buffer_pips * pip_value)
-        else:  # uptrend
-            trade_direction = 'SELL'  # Selling the bounce in uptrend
+        else:  # downtrend
+            trade_direction = 'SELL'  # Sell the retracement in downtrend
             targets = calculate_continuation_targets(high_price, low_price, 'down', decimal_places)
             # Stop one Fib level above entry
             next_fib_up = get_next_fib_level_up(entry_level)

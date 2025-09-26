@@ -21,6 +21,7 @@ from datetime import datetime
 from typing import Dict, Any, Optional, List
 import redis
 import boto3
+import pytz
 
 # Import Fibonacci strategy naming
 from fibonacci_strategy_naming import FibonacciStrategyNaming
@@ -28,6 +29,34 @@ from fibonacci_strategy_naming import FibonacciStrategyNaming
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+def convert_to_est(timestamp_str: str) -> str:
+    """
+    Convert UTC timestamp to EST timezone
+    
+    Args:
+        timestamp_str: UTC timestamp string (ISO format)
+    
+    Returns:
+        EST timestamp string with timezone info
+    """
+    try:
+        # Parse UTC timestamp
+        if timestamp_str.endswith('Z'):
+            timestamp_str = timestamp_str[:-1] + '+00:00'
+        
+        utc_dt = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+        
+        # Convert to EST
+        est_tz = pytz.timezone('US/Eastern')
+        est_dt = utc_dt.astimezone(est_tz)
+        
+        # Return formatted EST timestamp
+        return est_dt.strftime('%Y-%m-%dT%H:%M:%S %Z')
+        
+    except Exception as e:
+        logger.error(f"Error converting timestamp to EST: {e}")
+        return timestamp_str  # Return original if conversion fails
 
 # Redis cluster configuration (matches Fargate configuration)
 REDIS_NODES = [
@@ -1073,7 +1102,8 @@ def handle_trade_setups(query_parameters: Dict[str, str], cors_headers: Dict[str
                             'entry_reason': setup['entry_reason'],
                             'invalidation': setup['invalidation'],
                             'strategy_metadata': strategy_metadata,
-                            'analysis_timestamp': setup['analysis_timestamp']
+                            'analysis_timestamp': convert_to_est(setup['analysis_timestamp']),
+                            'analysis_timestamp_utc': setup['analysis_timestamp']  # Keep original UTC for reference
                         }
                         
                         trade_setups.append(trade_setup)
@@ -1085,6 +1115,10 @@ def handle_trade_setups(query_parameters: Dict[str, str], cors_headers: Dict[str
         # Sort by setup quality (highest first)
         trade_setups.sort(key=lambda x: x['setup_quality'], reverse=True)
         
+        # Generate timestamps
+        utc_timestamp = datetime.utcnow().isoformat() + 'Z'
+        est_timestamp = convert_to_est(utc_timestamp)
+        
         response_data = {
             'success': True,
             'data': {
@@ -1094,7 +1128,8 @@ def handle_trade_setups(query_parameters: Dict[str, str], cors_headers: Dict[str
                 'setups_found': len(trade_setups),
                 'trade_setups': trade_setups[:20]  # Limit to top 20 setups
             },
-            'timestamp': datetime.utcnow().isoformat() + 'Z'
+            'timestamp': est_timestamp,
+            'timestamp_utc': utc_timestamp
         }
         
         return {
@@ -1105,13 +1140,17 @@ def handle_trade_setups(query_parameters: Dict[str, str], cors_headers: Dict[str
         
     except Exception as e:
         logger.error(f"Error in handle_trade_setups: {e}", exc_info=True)
+        utc_timestamp = datetime.utcnow().isoformat() + 'Z'
+        est_timestamp = convert_to_est(utc_timestamp)
+        
         return {
             'statusCode': 500,
             'headers': {'Content-Type': 'application/json', **cors_headers},
             'body': json.dumps({
                 'success': False,
                 'error': f"Trade setup generation failed: {str(e)}",
-                'timestamp': datetime.utcnow().isoformat() + 'Z'
+                'timestamp': est_timestamp,
+                'timestamp_utc': utc_timestamp
             })
         }
 
