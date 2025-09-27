@@ -21,6 +21,9 @@ def create_deployment_package():
     # Copy main Lambda function
     shutil.copy2("lambda_function.py", package_dir)
     
+    # Copy fibonacci strategy naming module (required for lambda_function.py)
+    shutil.copy2("fibonacci_strategy_naming.py", package_dir)
+    
     # Copy Redis module
     if os.path.exists("redis"):
         shutil.copytree("redis", os.path.join(package_dir, "redis"))
@@ -65,23 +68,46 @@ def create_deployment_package():
 def deploy_lambda(zip_path):
     """Deploy the Lambda function"""
     lambda_client = boto3.client('lambda', region_name='us-east-1')
+    s3_client = boto3.client('s3', region_name='us-east-1')
     
     function_name = 'lumisignals-signal-analytics-api'
+    bucket_name = 'lumisignals-lambda-deployments'
+    s3_key = f'signal-analytics/{os.path.basename(zip_path)}'
     
     try:
-        # Read the deployment package
-        with open(zip_path, 'rb') as f:
-            zip_content = f.read()
+        # Check file size
+        file_size = os.path.getsize(zip_path)
+        size_mb = file_size / 1024 / 1024
+        print(f"Package size: {size_mb:.1f} MB")
         
-        # Update the function code
-        response = lambda_client.update_function_code(
-            FunctionName=function_name,
-            ZipFile=zip_content
-        )
+        if size_mb > 50:  # If larger than 50MB, use S3
+            print("📦 Package too large for direct upload, using S3...")
+            
+            # Upload to S3
+            print(f"📤 Uploading to S3: s3://{bucket_name}/{s3_key}")
+            s3_client.upload_file(zip_path, bucket_name, s3_key)
+            print("✅ Uploaded to S3")
+            
+            # Update Lambda from S3
+            response = lambda_client.update_function_code(
+                FunctionName=function_name,
+                S3Bucket=bucket_name,
+                S3Key=s3_key
+            )
+        else:
+            # Direct upload for smaller files
+            print("📤 Direct upload to Lambda...")
+            with open(zip_path, 'rb') as f:
+                zip_content = f.read()
+            
+            response = lambda_client.update_function_code(
+                FunctionName=function_name,
+                ZipFile=zip_content
+            )
         
         print(f"✅ Lambda function updated successfully")
         print(f"Version: {response['Version']}")
-        print(f"Size: {len(zip_content) / 1024 / 1024:.1f} MB")
+        print(f"CodeSize: {response.get('CodeSize', 0) / 1024 / 1024:.1f} MB")
         
         return True
         
