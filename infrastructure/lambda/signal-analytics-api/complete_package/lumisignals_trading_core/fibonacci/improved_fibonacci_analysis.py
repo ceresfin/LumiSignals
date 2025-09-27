@@ -594,11 +594,14 @@ def create_enhanced_setup(level: float, entry_price: float, high_price: float,
     # Use current_retracement (where price actually is) not level (potential entry)
     if current_retracement <= 0.786:  # Continuation zone: 0% to 78.6%
         setup_type_override = 'Trend Continuation'
+        # CORRECT Fibonacci retracement trading logic:
+        # Uptrend: Buy retracements (dips) to continue trend upward
+        # Downtrend: Sell retracements (bounces) to continue trend downward
         if direction in ['uptrend', 'bullish']:
-            trade_direction = 'BUY'
+            trade_direction = 'BUY'  # Buy the retracement in uptrend
             trade_type = 'long'
         else:  # downtrend
-            trade_direction = 'SELL'
+            trade_direction = 'SELL'  # Sell the retracement bounce in downtrend  
             trade_type = 'short'
     else:  # Reversal zone: >78.6%
         setup_type_override = 'Trend Reversal'
@@ -690,7 +693,7 @@ def create_enhanced_setup(level: float, entry_price: float, high_price: float,
 def calculate_smart_stop_loss_with_level(entry_price: float, high_price: float, low_price: float,
                              level: float, trade_direction: str, pip_value: float, timeframe: str) -> tuple[float, str]:
     """
-    Calculate intelligent stop loss placement using deeper Fibonacci levels with level labels.
+    Calculate intelligent stop loss placement using next Fibonacci level + timeframe buffer.
     Returns: (stop_price, fibonacci_level_description)
     """
     
@@ -701,36 +704,38 @@ def calculate_smart_stop_loss_with_level(entry_price: float, high_price: float, 
     buffer = buffer_pips * pip_value
     
     if trade_direction == 'long':
-        # For long trades, stop below deeper retracement or swing low
-        if level < 0.618:
-            # Use 78.6% level as stop
-            stop_level = high_price - (swing_range * 0.786)
-            fibonacci_label = "78.6% Retracement"
+        # For BUY signals: Stop at the next Fibonacci level BELOW entry + buffer
+        next_level_down = get_next_fib_level_down(level)
+        if next_level_down == 0.0:
+            # If we're at 23.6% and next is 0%, use swing low
+            stop_level = low_price - buffer
+            fibonacci_label = "Swing Low + Buffer"
         else:
-            # Use swing low with buffer
-            stop_level = low_price
-            fibonacci_label = "Swing Low"
+            # Use next Fibonacci level below
+            stop_level = low_price + (swing_range * next_level_down) - buffer
+            fibonacci_label = f"{next_level_down:.1%} Level + Buffer"
         
-        return stop_level - buffer, fibonacci_label
+        return stop_level, fibonacci_label
     
     else:  # short trades
-        # For short trades, stop above shallower retracement or swing high
-        if level > 0.382:
-            # Use 23.6% level as stop
-            stop_level = high_price - (swing_range * 0.236)
-            fibonacci_label = "23.6% Retracement"
+        # For SELL signals: Stop at the next Fibonacci level ABOVE entry + buffer
+        next_level_up = get_next_fib_level_up(level)
+        if next_level_up == 1.0:
+            # If we're at 78.6% and next is 100%, use swing high
+            stop_level = high_price + buffer
+            fibonacci_label = "Swing High + Buffer"
         else:
-            # Use swing high with buffer
-            stop_level = high_price
-            fibonacci_label = "Swing High"
+            # Use next Fibonacci level above
+            stop_level = high_price - (swing_range * next_level_up) + buffer
+            fibonacci_label = f"{next_level_up:.1%} Level + Buffer"
             
-        return stop_level + buffer, fibonacci_label
+        return stop_level, fibonacci_label
 
 
 def calculate_smart_stop_loss(entry_price: float, high_price: float, low_price: float,
                              level: float, trade_direction: str, pip_value: float, timeframe: str) -> float:
     """
-    Calculate intelligent stop loss placement using deeper Fibonacci levels.
+    Calculate intelligent stop loss placement using next Fibonacci level + timeframe buffer.
     """
     
     swing_range = high_price - low_price
@@ -740,26 +745,28 @@ def calculate_smart_stop_loss(entry_price: float, high_price: float, low_price: 
     buffer = buffer_pips * pip_value
     
     if trade_direction == 'long':
-        # For long trades, stop below deeper retracement or swing low
-        if level < 0.618:
-            # Use 78.6% level as stop
-            stop_level = high_price - (swing_range * 0.786)
+        # For BUY signals: Stop at the next Fibonacci level BELOW entry + buffer
+        next_level_down = get_next_fib_level_down(level)
+        if next_level_down == 0.0:
+            # If we're at 23.6% and next is 0%, use swing low
+            stop_level = low_price - buffer
         else:
-            # Use swing low with buffer
-            stop_level = low_price
+            # Use next Fibonacci level below
+            stop_level = low_price + (swing_range * next_level_down) - buffer
         
-        return stop_level - buffer
+        return stop_level
     
     else:  # short trades
-        # For short trades, stop above shallower retracement or swing high
-        if level > 0.382:
-            # Use 23.6% level as stop
-            stop_level = high_price - (swing_range * 0.236)
+        # For SELL signals: Stop at the next Fibonacci level ABOVE entry + buffer
+        next_level_up = get_next_fib_level_up(level)
+        if next_level_up == 1.0:
+            # If we're at 78.6% and next is 100%, use swing high
+            stop_level = high_price + buffer
         else:
-            # Use swing high with buffer
-            stop_level = high_price
+            # Use next Fibonacci level above
+            stop_level = high_price - (swing_range * next_level_up) + buffer
             
-        return stop_level + buffer
+        return stop_level
 
 
 def calculate_smart_targets_with_levels(entry_price: float, high_price: float, low_price: float,
@@ -1146,7 +1153,7 @@ def determine_smart_stop_placement(entry_price: float, high_price: float, low_pr
                                  fibonacci_level: float, trade_direction: str, pip_value: float,
                                  timeframe: str) -> tuple[float, str]:
     """
-    Determine intelligent stop loss placement using Fibonacci levels.
+    Determine intelligent stop loss placement using next Fibonacci level + timeframe buffer.
     
     Returns:
         (stop_price, fibonacci_level_description)
@@ -1157,33 +1164,27 @@ def determine_smart_stop_placement(entry_price: float, high_price: float, low_pr
     buffer = buffer_pips * pip_value
     
     if trade_direction.lower() == 'long':
-        # For long trades, use deeper retracement levels as stops
-        if fibonacci_level < 0.5:
-            # Shallow retracement - stop at 78.6%
-            stop_price = high_price - (swing_range * 0.786) - buffer
-            stop_description = '78.6% Retracement'
-        elif fibonacci_level < 0.618:
-            # Medium retracement - stop below swing low
+        # For BUY signals: Stop at the next Fibonacci level BELOW entry + buffer
+        next_level_down = get_next_fib_level_down(fibonacci_level)
+        if next_level_down == 0.0:
+            # If we're at 23.6% and next is 0%, use swing low
             stop_price = low_price - buffer
-            stop_description = 'Swing Low'
+            stop_description = 'Swing Low + Buffer'
         else:
-            # Deep retracement - stop well below swing low
-            stop_price = low_price - (buffer * 2)
-            stop_description = 'Swing Low Buffer'
+            # Use next Fibonacci level below
+            stop_price = low_price + (swing_range * next_level_down) - buffer
+            stop_description = f'{next_level_down:.1%} Level + Buffer'
     else:
-        # For short trades, use shallower retracement levels as stops
-        if fibonacci_level < 0.5:
-            # Shallow retracement - stop at 23.6%  
-            stop_price = high_price - (swing_range * 0.236) + buffer
-            stop_description = '23.6% Retracement'
-        elif fibonacci_level < 0.618:
-            # Medium retracement - stop above swing high
+        # For SELL signals: Stop at the next Fibonacci level ABOVE entry + buffer
+        next_level_up = get_next_fib_level_up(fibonacci_level)
+        if next_level_up == 1.0:
+            # If we're at 78.6% and next is 100%, use swing high
             stop_price = high_price + buffer
-            stop_description = 'Swing High'
+            stop_description = 'Swing High + Buffer'
         else:
-            # Deep retracement - stop well above swing high
-            stop_price = high_price + (buffer * 2)
-            stop_description = 'Swing High Buffer'
+            # Use next Fibonacci level above
+            stop_price = high_price - (swing_range * next_level_up) + buffer
+            stop_description = f'{next_level_up:.1%} Level + Buffer'
     
     return stop_price, stop_description
 
@@ -1250,30 +1251,36 @@ def create_proper_fibonacci_setup(trade_type: str, entry_level: float, entry_pri
     timeframe_settings = get_timeframe_settings(timeframe)
     stop_buffer_pips = timeframe_settings['stop_buffer_pips']
     
-    # Determine trade direction and calculate targets/stops
+    # Determine trade direction and calculate targets/stops with proper Fibonacci logic
     if trade_type == "TREND_EXTENSION":
         # TREND EXTENSION: Riding momentum further
         if direction == 'downtrend':
             trade_direction = 'SELL'
             targets = calculate_extension_targets(low_price, swing_range, 'down', decimal_places)
-            stop_loss = high_price + (stop_buffer_pips * pip_value)  # Above previous structure
+            # Stop at next Fibonacci level ABOVE entry (23.6% level) + buffer
+            stop_fib_level = get_next_fib_level_up(entry_level)
+            stop_loss = high_price - (swing_range * stop_fib_level) + (stop_buffer_pips * pip_value)
         else:  # uptrend
             trade_direction = 'BUY'
             targets = calculate_extension_targets(high_price, swing_range, 'up', decimal_places)
-            stop_loss = low_price - (stop_buffer_pips * pip_value)  # Below previous structure
+            # Stop at next Fibonacci level BELOW entry (23.6% level) + buffer
+            stop_fib_level = get_next_fib_level_down(entry_level)
+            stop_loss = low_price + (swing_range * stop_fib_level) - (stop_buffer_pips * pip_value)
     
     elif trade_type == "TREND_CONTINUATION":
-        # TREND CONTINUATION: Standard Fib trading
-        if direction == 'downtrend':
-            trade_direction = 'BUY'  # Buying the dip in downtrend
+        # TREND CONTINUATION: Standard Fib trading - FIXED LOGIC
+        # Uptrend: Buy the retracement (dip), targets up
+        # Downtrend: Sell the retracement (bounce), targets down
+        if direction == 'uptrend':
+            trade_direction = 'BUY'  # Buy the retracement in uptrend
             targets = calculate_continuation_targets(high_price, low_price, 'up', decimal_places)
-            # Stop one Fib level below entry
+            # Stop at next Fib level BELOW entry + buffer
             next_fib_down = get_next_fib_level_down(entry_level)
             stop_loss = low_price + (swing_range * next_fib_down) - (stop_buffer_pips * pip_value)
-        else:  # uptrend
-            trade_direction = 'SELL'  # Selling the bounce in uptrend
+        else:  # downtrend
+            trade_direction = 'SELL'  # Sell the retracement in downtrend
             targets = calculate_continuation_targets(high_price, low_price, 'down', decimal_places)
-            # Stop one Fib level above entry
+            # Stop at next Fib level ABOVE entry + buffer
             next_fib_up = get_next_fib_level_up(entry_level)
             stop_loss = high_price - (swing_range * next_fib_up) + (stop_buffer_pips * pip_value)
     
@@ -1282,11 +1289,13 @@ def create_proper_fibonacci_setup(trade_type: str, entry_level: float, entry_pri
         if direction == 'downtrend':
             trade_direction = 'BUY'  # Reversing downtrend
             targets = calculate_reversal_targets(high_price, low_price, 'up', decimal_places)
-            stop_loss = low_price - (stop_buffer_pips * pip_value)  # Beyond 100% level
+            # Stop beyond 100% level (swing low) + buffer
+            stop_loss = low_price - (stop_buffer_pips * pip_value)
         else:  # uptrend
             trade_direction = 'SELL'  # Reversing uptrend
             targets = calculate_reversal_targets(high_price, low_price, 'down', decimal_places)
-            stop_loss = high_price + (stop_buffer_pips * pip_value)  # Beyond 100% level
+            # Stop beyond 100% level (swing high) + buffer
+            stop_loss = high_price + (stop_buffer_pips * pip_value)
     
     # Calculate risk/reward metrics
     risk_pips = abs(entry_price - stop_loss) / pip_value
@@ -1298,26 +1307,51 @@ def create_proper_fibonacci_setup(trade_type: str, entry_level: float, entry_pri
         risk_reward_ratio, [], distance_to_entry / pip_value, entry_level, timeframe
     )
     
+    # Generate entry reason based on trade type
+    if trade_type == "TREND_EXTENSION":
+        entry_reason = f"Price at {current_retracement*100:.1f}% retracement - extending {direction} momentum"
+    elif trade_type == "TREND_CONTINUATION":
+        entry_reason = f"Fibonacci {entry_level:.1%} retracement in {direction} - continuation entry"
+    else:  # TREND_REVERSAL
+        entry_reason = f"Deep {current_retracement*100:.1f}% retracement - potential {direction} reversal"
+    
+    # Get stop fibonacci level description
+    stop_fib_desc = get_stop_fib_description(trade_type, entry_level, direction)
+    
+    # Generate invalidation reason
+    invalidation = f"Break beyond {stop_fib_desc}"
+    
     return {
         'instrument': instrument,
         'direction': trade_direction,
         'trade_type': trade_type,
+        'setup_type': trade_type,  # Duplicate for backward compatibility
+        'strategy': trade_type,     # Use trade type as strategy name
         'entry_price': round(entry_price, decimal_places),
         'stop_loss': round(stop_loss, decimal_places),
         'targets': [round(t, decimal_places) for t in targets],
         'current_price': round(current_price, decimal_places),
         'fibonacci_level': f'{entry_level:.1%} Entry',
-        'stop_fibonacci_level': get_stop_fib_description(trade_type, entry_level),
+        'stop_fibonacci_level': get_stop_fib_description(trade_type, entry_level, direction),
         'target_fibonacci_levels': get_target_fib_descriptions(trade_type),
         'risk_pips': round(risk_pips, 1),
         'reward_pips': [round(r, 1) for r in reward_pips],
         'risk_reward_ratio': round(risk_reward_ratio, 2),
+        'risk_reward_ratios': [round(risk_reward_ratio, 2)],  # Array version
+        'primary_rr': round(risk_reward_ratio, 2),  # Primary R:R
+        'best_rr': round(max(reward_pips[i] / risk_pips for i in range(len(reward_pips))) if risk_pips > 0 else 0, 2),
         'distance_to_entry_pips': round(distance_to_entry / pip_value, 1),
         'setup_quality': quality_data['total'],
+        'quality_breakdown': quality_data,  # Include full quality data
         'timeframe': timeframe,
         'swing_high': high_price,
         'swing_low': low_price,
-        'current_retracement_pct': round(current_retracement * 100, 1)
+        'current_retracement_pct': round(current_retracement * 100, 1),
+        'entry_reason': entry_reason,
+        'invalidation': invalidation,
+        'confluence': None,  # Will be populated if confluence is enabled
+        'confluence_summary': None,  # Will be populated if confluence is enabled
+        'analysis_timestamp': datetime.utcnow().isoformat() + 'Z'
     }
 
 def calculate_extension_targets(base_price: float, swing_range: float, direction: str, decimal_places: int) -> List[float]:
@@ -1374,15 +1408,23 @@ def get_next_fib_level_up(current_level: float) -> float:
     current_idx = min(range(len(fib_levels)), key=lambda i: abs(fib_levels[i] - current_level))
     return fib_levels[min(len(fib_levels) - 1, current_idx + 1)]
 
-def get_stop_fib_description(trade_type: str, entry_level: float) -> str:
+def get_stop_fib_description(trade_type: str, entry_level: float, direction: str = None) -> str:
     """Get stop loss Fibonacci description"""
     if trade_type == "TREND_EXTENSION":
-        return "Previous Structure"
+        # For trend extension, stop is at next Fibonacci level in opposite direction
+        if direction == 'uptrend':
+            next_level = get_next_fib_level_down(entry_level)
+        else:
+            next_level = get_next_fib_level_up(entry_level) 
+        return f"{next_level:.1%} Level + Buffer"
     elif trade_type == "TREND_REVERSAL":
-        return "Beyond 100% Level"
-    else:
-        next_level = get_next_fib_level_down(entry_level)
-        return f"{next_level:.1%} Level"
+        return "Beyond 100% Level + Buffer"
+    else:  # TREND_CONTINUATION
+        if direction == 'uptrend':
+            next_level = get_next_fib_level_down(entry_level)
+        else:
+            next_level = get_next_fib_level_up(entry_level)
+        return f"{next_level:.1%} Level + Buffer"
 
 def get_target_fib_descriptions(trade_type: str) -> List[str]:
     """Get target Fibonacci descriptions"""

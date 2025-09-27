@@ -656,6 +656,11 @@ def generate_pair_analytics(instrument: str, timeframe: str = 'H1',
         # Extract trade setups from fibonacci data - no fallback
         trade_setups = fibonacci_data.get('trade_setups', [])
         
+        # DEBUG: Log what fibonacci analysis returned
+        logger.info(f"DEBUG {instrument}: fibonacci_data has trade_setups = {'trade_setups' in fibonacci_data}")
+        if 'trade_setups' in fibonacci_data:
+            logger.info(f"DEBUG {instrument}: fibonacci_data['trade_setups'] = {len(fibonacci_data['trade_setups'])} setups")
+        
         # Future analytics will use the same price_data:
         # rsi_data = analyze_rsi_tiered(price_data)
         # ma_data = analyze_moving_averages_tiered(price_data)
@@ -1050,15 +1055,23 @@ def handle_trade_setups(query_parameters: Dict[str, str], cors_headers: Dict[str
                     logger.warning(f"No current price available for {instrument}")
                     continue
                 
+                # DEBUG: Log what we have
+                logger.info(f"DEBUG {instrument}: fibonacci_data keys = {list(fibonacci_data.keys())}")
+                logger.info(f"DEBUG {instrument}: pair_analytics keys = {list(pair_analytics.keys())}")
+                
                 # Use enhanced Fibonacci analysis with trade setups
                 # Check both locations: fibonacci['trade_setups'] and top-level 'trade_setups'
-                fibonacci_data = pair_analytics.get('fibonacci', {})
+                # DON'T reassign fibonacci_data - it's already set above!
                 trade_setups_source = []
                 
                 if 'trade_setups' in fibonacci_data and fibonacci_data['trade_setups']:
                     trade_setups_source = fibonacci_data['trade_setups']
+                    logger.info(f"DEBUG {instrument}: Found {len(trade_setups_source)} setups in fibonacci_data")
                 elif 'trade_setups' in pair_analytics and pair_analytics['trade_setups']:
                     trade_setups_source = pair_analytics['trade_setups']
+                    logger.info(f"DEBUG {instrument}: Found {len(trade_setups_source)} setups in pair_analytics")
+                else:
+                    logger.info(f"DEBUG {instrument}: No trade setups found in either location")
                 
                 if trade_setups_source:
                     for setup in trade_setups_source:
@@ -1073,34 +1086,9 @@ def handle_trade_setups(query_parameters: Dict[str, str], cors_headers: Dict[str
                         
                         strategy_metadata = strategy_naming.get_strategy_metadata(setup_data, timeframe)
                         
-                        # Create trade setup (for Fargate consumption, not direct OANDA)
+                        # Just pass through the setup with added metadata
                         trade_setup = {
-                            'instrument': instrument,
-                            'timeframe': timeframe,
-                            'current_price': current_price,
-                            'setup_type': setup['setup_type'],
-                            'strategy': setup['strategy'],
-                            'direction': setup['direction'],
-                            'fibonacci_level': setup['fibonacci_level'],
-                            'entry_price': setup['entry_price'],
-                            'stop_loss': setup['stop_loss'],
-                            'stop_fibonacci_level': setup.get('stop_fibonacci_level', 'Calculated stop'),
-                            'target_price': setup.get('target_price', setup['targets'][0] if setup['targets'] else 0),
-                            'targets': setup['targets'],
-                            'target_fibonacci_levels': setup.get('target_fibonacci_levels', []),
-                            'risk_reward_ratio': setup.get('risk_reward_ratio', setup['primary_rr'] if setup.get('primary_rr') else 0),
-                            'risk_reward_ratios': setup['risk_reward_ratios'],
-                            'primary_rr': setup['primary_rr'],
-                            'best_rr': setup['best_rr'],
-                            'risk_pips': setup['risk_pips'],
-                            'reward_pips': setup['reward_pips'],
-                            'distance_to_entry_pips': setup['distance_to_entry_pips'],
-                            'setup_quality': setup['setup_quality'],
-                            'quality_breakdown': setup['quality_breakdown'],
-                            'confluence': setup.get('confluence'),
-                            'confluence_summary': setup.get('confluence_summary'),
-                            'entry_reason': setup['entry_reason'],
-                            'invalidation': setup['invalidation'],
+                            **setup,  # Include all fields from the setup
                             'strategy_metadata': strategy_metadata,
                             'analysis_timestamp': convert_to_est(setup['analysis_timestamp']),
                             'analysis_timestamp_utc': setup['analysis_timestamp']  # Keep original UTC for reference

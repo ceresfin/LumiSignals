@@ -1307,10 +1307,26 @@ def create_proper_fibonacci_setup(trade_type: str, entry_level: float, entry_pri
         risk_reward_ratio, [], distance_to_entry / pip_value, entry_level, timeframe
     )
     
+    # Generate entry reason based on trade type
+    if trade_type == "TREND_EXTENSION":
+        entry_reason = f"Price at {current_retracement*100:.1f}% retracement - extending {direction} momentum"
+    elif trade_type == "TREND_CONTINUATION":
+        entry_reason = f"Fibonacci {entry_level:.1%} retracement in {direction} - continuation entry"
+    else:  # TREND_REVERSAL
+        entry_reason = f"Deep {current_retracement*100:.1f}% retracement - potential {direction} reversal"
+    
+    # Get stop fibonacci level description
+    stop_fib_desc = get_stop_fib_description(trade_type, entry_level, direction)
+    
+    # Generate invalidation reason
+    invalidation = f"Break beyond {stop_fib_desc}"
+    
     return {
         'instrument': instrument,
         'direction': trade_direction,
         'trade_type': trade_type,
+        'setup_type': trade_type,  # Duplicate for backward compatibility
+        'strategy': trade_type,     # Use trade type as strategy name
         'entry_price': round(entry_price, decimal_places),
         'stop_loss': round(stop_loss, decimal_places),
         'targets': [round(t, decimal_places) for t in targets],
@@ -1321,12 +1337,21 @@ def create_proper_fibonacci_setup(trade_type: str, entry_level: float, entry_pri
         'risk_pips': round(risk_pips, 1),
         'reward_pips': [round(r, 1) for r in reward_pips],
         'risk_reward_ratio': round(risk_reward_ratio, 2),
+        'risk_reward_ratios': [round(risk_reward_ratio, 2)],  # Array version
+        'primary_rr': round(risk_reward_ratio, 2),  # Primary R:R
+        'best_rr': round(max(reward_pips[i] / risk_pips for i in range(len(reward_pips))) if risk_pips > 0 else 0, 2),
         'distance_to_entry_pips': round(distance_to_entry / pip_value, 1),
         'setup_quality': quality_data['total'],
+        'quality_breakdown': quality_data,  # Include full quality data
         'timeframe': timeframe,
         'swing_high': high_price,
         'swing_low': low_price,
-        'current_retracement_pct': round(current_retracement * 100, 1)
+        'current_retracement_pct': round(current_retracement * 100, 1),
+        'entry_reason': entry_reason,
+        'invalidation': invalidation,
+        'confluence': None,  # Will be populated if confluence is enabled
+        'confluence_summary': None,  # Will be populated if confluence is enabled
+        'analysis_timestamp': datetime.utcnow().isoformat() + 'Z'
     }
 
 def calculate_extension_targets(base_price: float, swing_range: float, direction: str, decimal_places: int) -> List[float]:
