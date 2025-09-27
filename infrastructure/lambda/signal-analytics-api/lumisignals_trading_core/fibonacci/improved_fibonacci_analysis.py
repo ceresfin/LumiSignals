@@ -54,7 +54,7 @@ def get_timeframe_settings(timeframe: str = 'M5') -> Dict:
     return TIMEFRAME_SETTINGS[timeframe]
 
 def detect_major_swing_points(price_data: List[Dict], 
-                             lookback_periods: int = 50,
+                             lookback_periods: int = 70,
                              min_swing_size_pips: int = 15,
                              is_jpy: bool = False) -> Dict[str, Any]:
     """

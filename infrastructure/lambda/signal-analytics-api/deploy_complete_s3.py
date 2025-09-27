@@ -25,6 +25,11 @@ def deploy_complete_package_via_s3():
         os.system('cp fibonacci_strategy_naming.py complete_package/fibonacci_strategy_naming.py')
         print("✅ Copied fibonacci_strategy_naming.py to complete_package/")
     
+    # Copy trading core files (single source of truth)
+    if os.path.exists('lumisignals_trading_core/'):
+        os.system('cp -r lumisignals_trading_core/* complete_package/lumisignals_trading_core/')
+        print("✅ Copied lumisignals_trading_core/ to complete_package/")
+    
     # Step 2: Create deployment package
     print("\n📦 Step 2: Creating deployment package...")
     package_dir = "complete_package"
