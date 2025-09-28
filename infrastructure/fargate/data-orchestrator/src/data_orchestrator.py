@@ -446,6 +446,12 @@ class DataOrchestrator:
                 if result:
                     bootstrap_data[pair] = result
                     logger.debug(f"Bootstrap completed for {pair} {timeframe}")
+            
+            # Add delay between batches to avoid overwhelming OANDA API
+            batch_delay = float(os.getenv('BOOTSTRAP_BATCH_DELAY_SECONDS', '10.0'))  # Default 10 seconds between batches
+            if i + batch_size < len(currency_pairs):  # Don't delay after last batch
+                logger.info(f"⏳ Waiting {batch_delay}s before next batch to avoid OANDA API overload")
+                await asyncio.sleep(batch_delay)
         
         # Write bootstrap data to Redis using the same storage pattern
         if bootstrap_data:

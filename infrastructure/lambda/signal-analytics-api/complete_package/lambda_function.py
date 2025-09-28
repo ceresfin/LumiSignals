@@ -17,7 +17,7 @@ Version: 1.0.0
 import json
 import os
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional, List
 import redis
 import boto3
@@ -172,9 +172,99 @@ def get_current_price(instrument: str) -> float:
         logger.error(f"Error getting current price for {instrument}: {e}")
         return None
 
+def normalize_candle_timestamps(candles: List[Dict]) -> List[Dict]:
+    """
+    Normalize timestamps in candle data to ensure consistent format.
+    Handles Oanda nanosecond timestamps, ISO formats, and missing timestamps.
+    
+    Args:
+        candles: List of candle dictionaries
+        
+    Returns:
+        List of candles with normalized timestamp fields
+    """
+    if not candles:
+        return candles
+        
+    normalized = []
+    
+    for i, candle in enumerate(candles):
+        try:
+            # Get timestamp from various possible fields
+            ts = candle.get('time') or candle.get('timestamp') or candle.get('t')
+            
+            # Parse timestamp into datetime object
+            dt = None
+            if ts is None:
+                # No timestamp - use index-based timestamp (should rarely happen)
+                logger.warning(f"Missing timestamp for candle {i}, using index-based time")
+                dt = datetime(2024, 1, 1, tzinfo=timezone.utc) + timedelta(hours=i)
+            elif isinstance(ts, (int, str)) and str(ts).isdigit():
+                # Numeric timestamp
+                ts_int = int(ts)
+                if len(str(ts_int)) > 13:  # Nanoseconds (Oanda format)
+                    dt = datetime.fromtimestamp(ts_int / 1_000_000_000, tz=timezone.utc)
+                elif len(str(ts_int)) > 10:  # Milliseconds
+                    dt = datetime.fromtimestamp(ts_int / 1_000, tz=timezone.utc)
+                else:  # Seconds
+                    dt = datetime.fromtimestamp(ts_int, tz=timezone.utc)
+            elif isinstance(ts, str):
+                # ISO format string
+                try:
+                    # Handle ISO format with or without Z suffix
+                    dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+                except:
+                    logger.error(f"Could not parse timestamp '{ts}', using index-based time")
+                    dt = datetime(2024, 1, 1, tzinfo=timezone.utc) + timedelta(hours=i)
+            elif isinstance(ts, datetime):
+                # Already a datetime object
+                dt = ts
+            else:
+                logger.error(f"Unknown timestamp type {type(ts)}, using index-based time")
+                dt = datetime(2024, 1, 1, tzinfo=timezone.utc) + timedelta(hours=i)
+            
+            # Create normalized candle
+            normalized_candle = candle.copy()
+            
+            # Convert datetime back to nanosecond timestamp (Oanda format) for consistency
+            ns_timestamp = str(int(dt.timestamp() * 1_000_000_000))
+            
+            # Ensure both 'time' and 'timestamp' fields exist with same value
+            normalized_candle['time'] = ns_timestamp
+            normalized_candle['timestamp'] = ns_timestamp
+            
+            # Store the datetime object temporarily for sorting
+            normalized_candle['_dt'] = dt
+            
+            normalized.append(normalized_candle)
+            
+        except Exception as e:
+            logger.error(f"Error normalizing timestamp for candle {i}: {e}")
+            # Include the candle anyway but log the issue
+            normalized_candle = candle.copy()
+            # Set a fallback timestamp
+            fallback_dt = datetime(2024, 1, 1, tzinfo=timezone.utc) + timedelta(hours=i)
+            fallback_ns = str(int(fallback_dt.timestamp() * 1_000_000_000))
+            normalized_candle['time'] = fallback_ns
+            normalized_candle['timestamp'] = fallback_ns
+            normalized_candle['_dt'] = fallback_dt
+            normalized.append(normalized_candle)
+    
+    # Sort by datetime to ensure chronological order
+    try:
+        normalized.sort(key=lambda x: x['_dt'])
+    except Exception as e:
+        logger.error(f"Error sorting candles by timestamp: {e}")
+    
+    # Remove temporary datetime objects
+    for candle in normalized:
+        candle.pop('_dt', None)
+    
+    return normalized
+
 def get_tiered_price_data(instrument: str, timeframe: str = 'H1') -> Dict[str, Any]:
     """
-    Get all price data tiers for an instrument/timeframe
+    Get all price data tiers for an instrument/timeframe with normalized timestamps
     This is the centralized data retrieval function that all analytics will use
     """
     try:
@@ -186,29 +276,23 @@ def get_tiered_price_data(instrument: str, timeframe: str = 'H1') -> Dict[str, A
         cold_data = get_redis_candles(f"market_data:{instrument}:{timeframe}:historical", instrument)
         current_price = get_current_price(instrument)
         
+        # Normalize timestamps for all data to ensure consistency
+        hot_data = normalize_candle_timestamps(hot_data) if hot_data else []
+        warm_data = normalize_candle_timestamps(warm_data) if warm_data else []
+        cold_data = normalize_candle_timestamps(cold_data) if cold_data else []
+        
         # Combine hot + warm for complete dataset (500 candles total)
         combined_data = hot_data + warm_data
         
-        # CRITICAL FIX: Sort by timestamp to ensure chronological order (oldest first, newest last)
-        if combined_data:
-            try:
-                # Sort by timestamp field (handle both 'time' and 'timestamp' fields)
-                combined_data.sort(key=lambda candle: candle.get('time', candle.get('timestamp', '0')))
-                logger.info(f"Sorted {len(combined_data)} candles by timestamp")
-            except Exception as e:
-                logger.error(f"Failed to sort candles by timestamp: {e}")
+        # Data is already sorted by normalize_candle_timestamps
+        logger.info(f"Combined {len(combined_data)} normalized candles (hot: {len(hot_data)}, warm: {len(warm_data)})")
         
         # If we don't have enough data, fall back to cold tier
         if len(combined_data) < 100:
             logger.warning(f"Insufficient hot+warm data ({len(combined_data)} candles), using cold tier")
             combined_data = cold_data
-            # Also sort cold data if we fall back to it
-            if combined_data:
-                try:
-                    combined_data.sort(key=lambda candle: candle.get('time', candle.get('timestamp', '0')))
-                    logger.info(f"Sorted fallback cold data: {len(combined_data)} candles")
-                except Exception as e:
-                    logger.error(f"Failed to sort cold data by timestamp: {e}")
+            # Cold data is already normalized and sorted
+            logger.info(f"Using normalized cold data: {len(combined_data)} candles")
         
         result = {
             'hot': hot_data,
