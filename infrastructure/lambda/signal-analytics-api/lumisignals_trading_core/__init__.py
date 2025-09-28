@@ -42,9 +42,9 @@ from .momentum import (
 
 from .fibonacci import (
     analyze_fibonacci_levels,
-    detect_swing_points,
-    find_significant_swings,
-    generate_fibonacci_levels
+    detect_major_swing_points,
+    find_best_fibonacci_swing_pair,
+    generate_improved_fibonacci_levels
 )
 
 from .swing import (
