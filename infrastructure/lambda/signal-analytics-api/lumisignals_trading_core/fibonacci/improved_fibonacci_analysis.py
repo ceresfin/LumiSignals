@@ -191,15 +191,29 @@ def find_best_fibonacci_swing_pair(major_swings: Dict, current_price: float) -> 
     if not swing_highs or not swing_lows:
         return {'error': 'Insufficient swing data'}
     
-    # Get the most prominent high and low
-    best_high = swing_highs[0]  # Already sorted by prominence
-    best_low = swing_lows[0]    # Already sorted by prominence
+    # EXTREMES-FIRST APPROACH: Find absolute extremes, then refine with prominence
+    pip_value = major_swings['parameters']['pip_value']
+    proximity_threshold_pips = 10  # Consider swings within 10 pips as "close to extreme"
+    proximity_threshold_price = proximity_threshold_pips * pip_value
+    
+    # Step 1: Find absolute extremes
+    absolute_highest = max(swing_highs, key=lambda x: x['price'])
+    absolute_lowest = min(swing_lows, key=lambda x: x['price'])
+    
+    # Step 2: Find all swings close to the extremes
+    highs_near_extreme = [h for h in swing_highs 
+                         if abs(h['price'] - absolute_highest['price']) <= proximity_threshold_price]
+    lows_near_extreme = [l for l in swing_lows 
+                        if abs(l['price'] - absolute_lowest['price']) <= proximity_threshold_price]
+    
+    # Step 3: Among swings near extremes, pick the most prominent one
+    best_high = max(highs_near_extreme, key=lambda x: x['prominence_score'])
+    best_low = max(lows_near_extreme, key=lambda x: x['prominence_score'])
     
     # Determine trend direction based on which occurred more recently
     trend_direction = 'downtrend' if best_high['index'] > best_low['index'] else 'uptrend'
     
-    # Calculate swing range in pips
-    pip_value = major_swings['parameters']['pip_value']
+    # Calculate swing range in pips (pip_value already retrieved above)
     swing_range_pips = abs(best_high['price'] - best_low['price']) / pip_value
     
     # Calculate current retracement level using standard Fibonacci convention
