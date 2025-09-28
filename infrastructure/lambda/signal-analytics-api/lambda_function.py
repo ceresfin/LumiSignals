@@ -416,12 +416,15 @@ def analyze_swing_points_tiered(price_data: Dict[str, Any]) -> Dict[str, Any]:
             current_price = formatted_candles[-1]['close'] if formatted_candles else 0
             swing_analysis = analyze_swing_structure(instrument, formatted_candles, timeframe, current_price)
             
-            logger.info(f"Swing analysis for {instrument}: {len(swing_analysis.get('swing_analysis', {}).get('validated_highs', []))} highs, {len(swing_analysis.get('swing_analysis', {}).get('validated_lows', []))} lows")
+            # analyze_swing_structure returns {swing_levels, market_structure, ...} not {swing_analysis, ...}
+            swing_levels = swing_analysis.get('swing_levels', {})
+            
+            logger.info(f"Swing analysis for {instrument}: swing_levels keys: {list(swing_levels.keys()) if swing_levels else 'None'}")
             
             return {
-                'swing_analysis': swing_analysis.get('swing_analysis', {}),
-                'fibonacci_swings': swing_analysis.get('fibonacci_swings', []),
-                'success': swing_analysis.get('success', False),
+                'swing_analysis': swing_levels,  # Use swing_levels directly instead of nested swing_analysis
+                'fibonacci_swings': [],
+                'success': True,  # Success if we got swing_levels
                 'total_candles': len(formatted_candles),
                 'timeframe': timeframe
             }
@@ -431,49 +434,15 @@ def analyze_swing_points_tiered(price_data: Dict[str, Any]) -> Dict[str, Any]:
             
     except Exception as e:
         logger.error(f"Swing analysis error for {price_data['instrument']}: {str(e)}")
-        # Fallback to basic swing analysis
-        return create_fallback_swing(price_data)
+        # Return error instead of fallback
+        return {
+            'swing_analysis': {},
+            'fibonacci_swings': [],
+            'success': False,
+            'error': str(e),
+            'message': f'Swing analysis failed for {price_data["instrument"]}'
+        }
 
-def create_fallback_swing(price_data: Dict[str, Any]) -> Dict[str, Any]:
-    """Create fallback swing analysis when robust analysis fails"""
-    instrument = price_data['instrument']
-    current_price = price_data['current_price']
-    
-    # Use current price if available, otherwise estimate
-    if not current_price:
-        is_jpy_pair = 'JPY' in instrument
-        current_price = 150.0 if is_jpy_pair else 1.1000
-    
-    # Create reasonable high/low based on current price
-    price_range = current_price * 0.03  # 3% range for swings
-    
-    fallback_swing = {
-        'validated_highs': [
-            {
-                'price': current_price + (price_range * 0.8),
-                'index': 30,
-                'confidence': 1.0,
-                'method': 'fallback'
-            }
-        ],
-        'validated_lows': [
-            {
-                'price': current_price - (price_range * 0.8),
-                'index': 15,
-                'confidence': 1.0,
-                'method': 'fallback'
-            }
-        ],
-        'total_validated_swings': 2
-    }
-    
-    return {
-        'swing_analysis': fallback_swing,
-        'fibonacci_swings': [],
-        'success': False,
-        'fallback': True,
-        'message': f'Using fallback swing analysis for {instrument}'
-    }
 
 def create_fallback_fibonacci_mode(price_data: Dict[str, Any], mode: str) -> Dict[str, Any]:
     """Create fallback Fibonacci analysis for specific mode when improved analysis fails"""

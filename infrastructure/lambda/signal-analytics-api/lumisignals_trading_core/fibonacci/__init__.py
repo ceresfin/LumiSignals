@@ -11,9 +11,7 @@ from .improved_fibonacci_analysis import (
     find_best_fibonacci_swing_pair,
     generate_improved_fibonacci_levels,
     analyze_fibonacci_levels_improved,
-    generate_enhanced_trade_setups,
-    check_institutional_confluence,
-    generate_institutional_levels
+    generate_enhanced_trade_setups
 )
 
 # Legacy function mapping for backward compatibility
@@ -27,7 +25,5 @@ __all__ = [
     'generate_improved_fibonacci_levels', 
     'analyze_fibonacci_levels_improved',
     'generate_enhanced_trade_setups',
-    'check_institutional_confluence',
-    'generate_institutional_levels',
     'analyze_fibonacci_levels'  # Legacy compatibility
 ]
