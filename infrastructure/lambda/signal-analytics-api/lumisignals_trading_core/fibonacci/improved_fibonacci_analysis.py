@@ -46,24 +46,64 @@ TIMEFRAME_SETTINGS = {
     }
 }
 
-def get_timeframe_settings(timeframe: str = 'M5') -> Dict:
-    """Get settings for specific timeframe - no fallback defaults"""
+def get_complete_timeframe_config(timeframe: str = 'H1') -> Dict:
+    """
+    Get complete timeframe configuration for trading and analysis.
+    Merges trading settings and analysis parameters for RDS metadata storage.
+    
+    Args:
+        timeframe: Timeframe string (M5, M15, M30, H1, H4, D1)
+        
+    Returns:
+        Complete configuration dictionary with comments for RDS storage
+    """
     if timeframe not in TIMEFRAME_SETTINGS:
         raise ValueError(f"Unsupported timeframe: {timeframe}. Supported: {list(TIMEFRAME_SETTINGS.keys())}")
     
-    return TIMEFRAME_SETTINGS[timeframe]
+    # Get trading settings
+    trading_config = TIMEFRAME_SETTINGS[timeframe]
+    
+    # Get analysis parameters
+    analysis_config = get_timeframe_parameters(timeframe)
+    
+    # Merge into complete configuration with metadata comments
+    complete_config = {
+        # Trading Settings (for trade execution)
+        "entry_distance_pips": trading_config["entry_distance_pips"],  # Maximum distance from Fibonacci level for entry
+        "stop_buffer_pips": trading_config["stop_buffer_pips"],        # Additional buffer for stop loss placement
+        "trade_type": trading_config["trade_type"],                    # Trade classification: scalp/short_term/intraday/swing/position
+        
+        # Swing Detection Parameters (for analysis)
+        "min_pip_distance": analysis_config["min_pip_distance"],       # Minimum pip distance between swing points
+        "window": analysis_config["window"],                           # Analysis window size for swing validation
+        "min_strength": analysis_config["min_strength"],               # Minimum strength requirement for swing detection
+        "lookback_periods": analysis_config["lookback_periods"],       # Number of periods to look back for prominence detection
+        "recent_lookback": analysis_config["recent_lookback"],         # Recent window for extreme detection (Phase 1 fix)
+        "min_swing_size_pips": analysis_config["min_swing_size_pips"], # Minimum pip size for major swing classification
+        
+        # Metadata (for RDS documentation)
+        "timeframe": timeframe,                                        # Source timeframe for this configuration
+        "description": analysis_config["description"],                 # Human-readable description of timeframe characteristics
+        "config_type": "fibonacci_analysis",                          # Configuration type for database categorization
+        "version": "2.0"                                              # Configuration version for schema tracking
+    }
+    
+    return complete_config
+
 
 def detect_major_swing_points(price_data: List[Dict], 
                              lookback_periods: int = 50,
                              min_swing_size_pips: int = 30,
+                             recent_lookback: int = 30,
                              is_jpy: bool = False) -> Dict[str, Any]:
     """
     Improved swing detection that finds major structural levels.
     
     Args:
         price_data: List of candles with 'high', 'low', etc.
-        lookback_periods: How far back to look for major swings
+        lookback_periods: How far back to look for major swings (prominence detection)
         min_swing_size_pips: Minimum size in pips to be considered major swing
+        recent_lookback: How many recent candles to search for extremes (Phase 1)
         is_jpy: True for JPY pairs
         
     Returns:
@@ -82,24 +122,38 @@ def detect_major_swing_points(price_data: List[Dict],
     pip_value = 0.01 if is_jpy else 0.0001
     min_price_move = min_swing_size_pips * pip_value
     
-    # Find absolute highest and lowest points
-    max_high_price = max(highs)
-    min_low_price = min(lows)
-    max_high_index = highs.index(max_high_price)
-    min_low_index = lows.index(min_low_price)
+    # Find absolute highest and lowest points within recent timeframe window
+    recent_window_data = price_data[-recent_lookback:]
+    recent_highs = [float(candle.get('h', candle.get('high', 0))) for candle in recent_window_data]
+    recent_lows = [float(candle.get('l', candle.get('low', 0))) for candle in recent_window_data]
+    
+    max_high_price = max(recent_highs)
+    min_low_price = min(recent_lows)
+    
+    # Find their indices in the original data
+    max_high_index = len(price_data) - recent_lookback + recent_highs.index(max_high_price)
+    min_low_index = len(price_data) - recent_lookback + recent_lows.index(min_low_price)
     
     # Method 1: Find major swing highs using prominence
-    for i in range(lookback_periods, len(highs) - lookback_periods):
+    # Include more candles - go closer to edges with adjusted lookback
+    for i in range(len(highs)):
         current_high = highs[i]
         
-        # Check if this is a major high (highest in lookback range)
-        left_range = highs[i - lookback_periods:i]
-        right_range = highs[i + 1:i + lookback_periods + 1]
+        # Adjust lookback for edge cases
+        left_lookback = min(i, lookback_periods)
+        right_lookback = min(len(highs) - i - 1, lookback_periods)
         
-        # Must be highest in the lookback range AND significant compared to global high
-        is_major_high = (current_high >= max(left_range) and 
-                        current_high >= max(right_range) and
-                        current_high >= max_high_price * 0.9)  # Within 10% of absolute high
+        # Skip if we don't have enough data on either side
+        if left_lookback < 2 or right_lookback < 2:
+            continue
+            
+        # Check if this is a major high (highest in lookback range)
+        left_range = highs[max(0, i - left_lookback):i]
+        right_range = highs[i + 1:min(len(highs), i + right_lookback + 1)]
+        
+        # Must be highest in the lookback range
+        is_major_high = (len(left_range) > 0 and current_high >= max(left_range) and 
+                        len(right_range) > 0 and current_high >= max(right_range))
         
         if is_major_high:
             # Check if it's big enough move from previous major high
@@ -114,16 +168,24 @@ def detect_major_swing_points(price_data: List[Dict],
                 })
     
     # Method 2: Find major swing lows using prominence  
-    for i in range(lookback_periods, len(lows) - lookback_periods):
+    # Include more candles - go closer to edges with adjusted lookback
+    for i in range(len(lows)):
         current_low = lows[i]
         
-        # Check if this is a major low
-        left_range = lows[i - lookback_periods:i]
-        right_range = lows[i + 1:i + lookback_periods + 1]
+        # Adjust lookback for edge cases
+        left_lookback = min(i, lookback_periods)
+        right_lookback = min(len(lows) - i - 1, lookback_periods)
         
-        is_major_low = (current_low <= min(left_range) and 
-                       current_low <= min(right_range) and
-                       current_low <= min_low_price * 1.1)  # Within 10% of absolute low
+        # Skip if we don't have enough data on either side
+        if left_lookback < 2 or right_lookback < 2:
+            continue
+            
+        # Check if this is a major low
+        left_range = lows[max(0, i - left_lookback):i]
+        right_range = lows[i + 1:min(len(lows), i + right_lookback + 1)]
+        
+        is_major_low = (len(left_range) > 0 and current_low <= min(left_range) and 
+                       len(right_range) > 0 and current_low <= min(right_range))
         
         if is_major_low:
             if len(major_lows) == 0 or abs(current_low - major_lows[-1]['price']) >= min_price_move:
@@ -137,7 +199,7 @@ def detect_major_swing_points(price_data: List[Dict],
                 })
     
     # PHASE 1: Add recent extremes detection to catch true recent highs/lows
-    recent_lookback = min(50, len(price_data) // 4)  # Last 25% of data or 50 candles, whichever is smaller
+    # recent_lookback parameter is now timeframe-adaptive (Phase 2)
     if recent_lookback >= 5:  # Ensure we have enough data
         recent_data = price_data[-recent_lookback:]
         
@@ -174,24 +236,7 @@ def detect_major_swing_points(price_data: List[Dict],
                 'lookback_used': recent_lookback
             })
     
-    # Always include the absolute highest and lowest points if they're not already included
-    if not any(h['price'] == max_high_price for h in major_highs):
-        major_highs.append({
-            'price': max_high_price,
-            'index': max_high_index,
-            'timestamp': price_data[max_high_index].get('time', price_data[max_high_index].get('timestamp', '')),
-            'method': 'absolute_high',
-            'prominence_score': max_high_price - min_low_price
-        })
-    
-    if not any(l['price'] == min_low_price for l in major_lows):
-        major_lows.append({
-            'price': min_low_price,
-            'index': min_low_index,
-            'timestamp': price_data[min_low_index].get('time', price_data[min_low_index].get('timestamp', '')),
-            'method': 'absolute_low',
-            'prominence_score': max_high_price - min_low_price
-        })
+    # PHASE 1: Removed absolute extremes safeguard to focus on recent market structure
     
     # Sort by prominence score (most prominent first)
     major_highs.sort(key=lambda x: x['prominence_score'], reverse=True)
@@ -248,8 +293,9 @@ def find_best_fibonacci_swing_pair(major_swings: Dict, current_price: float) -> 
     best_high = max(highs_near_extreme, key=lambda x: x['prominence_score'])
     best_low = max(lows_near_extreme, key=lambda x: x['prominence_score'])
     
-    # Determine trend direction based on which occurred more recently
-    trend_direction = 'downtrend' if best_high['index'] > best_low['index'] else 'uptrend'
+    # Determine trend direction based on chronological order
+    # If high came after low (higher index) = uptrend, if low came after high = downtrend
+    trend_direction = 'uptrend' if best_high['index'] > best_low['index'] else 'downtrend'
     
     # Calculate swing range in pips (pip_value already retrieved above)
     swing_range_pips = abs(best_high['price'] - best_low['price']) / pip_value
@@ -284,11 +330,8 @@ def find_best_fibonacci_swing_pair(major_swings: Dict, current_price: float) -> 
         'low_swing': best_low,
         'trend_direction': trend_direction,
         'swing_range_pips': swing_range_pips,
-        'current_retracement': current_retracement,
-        'relevance_score': relevance_score,
-        'size_score': size_score,
-        'prominence_score': prominence_score,
-        'proximity_score': proximity_score
+        'current_price': current_price,
+        'pip_value': pip_value
     }
 
 def generate_improved_fibonacci_levels(swing_pair: Dict, timeframe: str = 'H1') -> Dict[str, Any]:
@@ -306,48 +349,105 @@ def generate_improved_fibonacci_levels(swing_pair: Dict, timeframe: str = 'H1') 
     if 'error' in swing_pair:
         return swing_pair
     
-    high_price = swing_pair['high_swing']['price']
-    low_price = swing_pair['low_swing']['price']
+    high_swing = swing_pair['high_swing']
+    low_swing = swing_pair['low_swing']
+    high_price = high_swing['price']
+    low_price = low_swing['price']
+    current_price = swing_pair['current_price']
+    pip_value = swing_pair['pip_value']
+    
+    # Determine Fibonacci direction based on chronological order (earlier index = 100%)
+    if high_swing['index'] < low_swing['index']:
+        # High came first, then low: 100% = high, 0% = low
+        fib_start = high_price  # 100%
+        fib_end = low_price     # 0%
+    else:
+        # Low came first, then high: 100% = low, 0% = high  
+        fib_start = low_price   # 100%
+        fib_end = high_price    # 0%
+    
+    # Calculate current retracement from start (100%) towards end (0%)
+    if fib_start != fib_end:
+        current_retracement = (current_price - fib_end) / (fib_start - fib_end)
+        current_retracement = max(0, min(1, current_retracement))  # Clamp between 0-1
+    else:
+        current_retracement = 0.5
+    
+    # Calculate relevance scores
+    swing_range_pips = abs(high_price - low_price) / pip_value
+    size_score = min(swing_range_pips / 100, 1.0)  # Normalize to max of 1.0 for 100+ pip swings
+    prominence_score = (high_swing['prominence_score'] + low_swing['prominence_score']) / 2
+    
+    # Proximity score - price within the swing range is more relevant
+    if min(high_price, low_price) <= current_price <= max(high_price, low_price):
+        proximity_score = 1.0  # Price is within the swing range
+    else:
+        distance_from_range = min(abs(current_price - high_price), abs(current_price - low_price))
+        proximity_score = 1.0 / (1.0 + distance_from_range * 1000)  # Closer = higher score
+    
+    relevance_score = (size_score + prominence_score + proximity_score) / 3
     
     # Get timeframe-specific Fibonacci ratios
     timeframe_ratios = get_timeframe_fibonacci_ratios(timeframe)
     ratios = timeframe_ratios.get('retracement', [0.0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0])
     
-    price_range = high_price - low_price
+    price_range = fib_start - fib_end
     
     detailed_levels = []
     for ratio in ratios:
-        level_price = high_price - (price_range * ratio)
+        level_price = fib_end + (price_range * ratio)
         detailed_levels.append({
             'ratio': ratio,
             'price': round(level_price, 5),
             'description': f'{ratio:.1%} Retracement'
         })
     
-    # Determine key level based on current retracement
-    current_ret = swing_pair['current_retracement']
-    if current_ret < 0.382:
-        key_level = 0.382
-    elif current_ret < 0.618:
-        key_level = 0.618
+    # Determine key level by finding closest Fibonacci level to current retracement
+    key_fib_levels = [0.0, 0.382, 0.5, 0.618, 1.0]  # Key levels: 0% (extension), 38.2%, 50%, 61.8%, 100% (reversal)
+    
+    # Find closest key level to current retracement
+    closest_distance = float('inf')
+    key_level = 0.618  # default
+    
+    for fib_level in key_fib_levels:
+        distance = abs(current_retracement - fib_level)
+        if distance < closest_distance:
+            closest_distance = distance
+            key_level = fib_level
+    
+    # Determine trade type based on key level
+    if key_level == 0.0:
+        trade_type = "Trend Extension"
+    elif key_level in [0.382, 0.5, 0.618]:
+        trade_type = "Trend Continuation" 
+    elif key_level == 1.0:
+        trade_type = "Trend Reversal"
     else:
-        key_level = 0.786
+        trade_type = "Trend Continuation"  # default
     
     return {
         'levels': ratios,
         'high': high_price,
         'low': low_price,
         'direction': swing_pair['trend_direction'],
-        'current_retracement': current_ret,
+        'current_retracement': current_retracement,
         'key_level': key_level,
+        'trade_type': trade_type,
         'detailed_levels': detailed_levels,
-        'swing_range_pips': swing_pair['swing_range_pips'],
-        'relevance_score': swing_pair['relevance_score'],
+        'swing_range_pips': swing_range_pips,
+        'relevance_score': relevance_score,
+        'size_score': size_score,
+        'prominence_score': prominence_score,
+        'proximity_score': proximity_score,
         'swing_analysis': {
-            'high_method': swing_pair['high_swing']['method'],
-            'low_method': swing_pair['low_swing']['method'],
-            'high_prominence': swing_pair['high_swing']['prominence_score'],
-            'low_prominence': swing_pair['low_swing']['prominence_score']
+            'high_method': high_swing['method'],
+            'low_method': low_swing['method'],
+            'high_prominence': high_swing['prominence_score'],
+            'low_prominence': low_swing['prominence_score'],
+            'high_index': high_swing['index'],
+            'low_index': low_swing['index'],
+            'fibonacci_start': fib_start,
+            'fibonacci_end': fib_end
         }
     }
 
@@ -417,11 +517,12 @@ def analyze_fibonacci_levels_improved(instrument: str, current_price: float = No
             'lookback_periods': lookback_periods
         }
     
-    # Detect major swing points
+    # Detect major swing points with timeframe-adaptive parameters (Phase 2)
     major_swings = detect_major_swing_points(
         price_data, 
         lookback_periods=lookback_periods,
         min_swing_size_pips=min_swing_pips,
+        recent_lookback=params.get('recent_lookback', 30),
         is_jpy=is_jpy
     )
     
