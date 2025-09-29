@@ -136,6 +136,44 @@ def detect_major_swing_points(price_data: List[Dict],
                     'prominence_score': min(min(left_range) - current_low, min(right_range) - current_low)
                 })
     
+    # PHASE 1: Add recent extremes detection to catch true recent highs/lows
+    recent_lookback = min(50, len(price_data) // 4)  # Last 25% of data or 50 candles, whichever is smaller
+    if recent_lookback >= 5:  # Ensure we have enough data
+        recent_data = price_data[-recent_lookback:]
+        
+        # Find absolute extremes in recent data
+        recent_highest = max(recent_data, key=lambda x: float(x.get('h', x.get('high', 0))))
+        recent_lowest = min(recent_data, key=lambda x: float(x.get('l', x.get('low', 0))))
+        
+        recent_high_price = float(recent_highest.get('h', recent_highest.get('high', 0)))
+        recent_low_price = float(recent_lowest.get('l', recent_lowest.get('low', 0)))
+        recent_high_index = len(price_data) - recent_lookback + recent_data.index(recent_highest)
+        recent_low_index = len(price_data) - recent_lookback + recent_data.index(recent_lowest)
+        
+        # Add recent extreme high if not already detected and significant
+        if (not any(abs(h['price'] - recent_high_price) < min_price_move for h in major_highs) and
+            recent_high_price >= max_high_price * 0.95):  # Within 5% of absolute high
+            major_highs.append({
+                'price': recent_high_price,
+                'index': recent_high_index,
+                'timestamp': recent_highest.get('time', recent_highest.get('timestamp', '')),
+                'method': 'recent_extreme_high',
+                'prominence_score': recent_high_price - min_low_price,
+                'lookback_used': recent_lookback
+            })
+        
+        # Add recent extreme low if not already detected and significant  
+        if (not any(abs(l['price'] - recent_low_price) < min_price_move for l in major_lows) and
+            recent_low_price <= min_low_price * 1.05):  # Within 5% of absolute low
+            major_lows.append({
+                'price': recent_low_price,
+                'index': recent_low_index,
+                'timestamp': recent_lowest.get('time', recent_lowest.get('timestamp', '')),
+                'method': 'recent_extreme_low',
+                'prominence_score': max_high_price - recent_low_price,
+                'lookback_used': recent_lookback
+            })
+    
     # Always include the absolute highest and lowest points if they're not already included
     if not any(h['price'] == max_high_price for h in major_highs):
         major_highs.append({

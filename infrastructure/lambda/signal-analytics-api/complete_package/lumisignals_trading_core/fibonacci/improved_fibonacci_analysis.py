@@ -136,24 +136,45 @@ def detect_major_swing_points(price_data: List[Dict],
                     'prominence_score': min(min(left_range) - current_low, min(right_range) - current_low)
                 })
     
-    # Always include the absolute highest and lowest points if they're not already included
-    if not any(h['price'] == max_high_price for h in major_highs):
-        major_highs.append({
-            'price': max_high_price,
-            'index': max_high_index,
-            'timestamp': price_data[max_high_index].get('time', price_data[max_high_index].get('timestamp', '')),
-            'method': 'absolute_high',
-            'prominence_score': max_high_price - min_low_price
-        })
+    # PHASE 1: Add recent extremes detection to catch true recent highs/lows
+    recent_lookback = 30  # Focus on last 30 candles for recent market structure
+    if recent_lookback >= 5:  # Ensure we have enough data
+        recent_data = price_data[-recent_lookback:]
+        
+        # Find absolute extremes in recent data
+        recent_highest = max(recent_data, key=lambda x: float(x.get('h', x.get('high', 0))))
+        recent_lowest = min(recent_data, key=lambda x: float(x.get('l', x.get('low', 0))))
+        
+        recent_high_price = float(recent_highest.get('h', recent_highest.get('high', 0)))
+        recent_low_price = float(recent_lowest.get('l', recent_lowest.get('low', 0)))
+        recent_high_index = len(price_data) - recent_lookback + recent_data.index(recent_highest)
+        recent_low_index = len(price_data) - recent_lookback + recent_data.index(recent_lowest)
+        
+        # Add recent extreme high if not already detected and significant
+        if (not any(abs(h['price'] - recent_high_price) < min_price_move for h in major_highs) and
+            recent_high_price >= max_high_price * 0.95):  # Within 5% of absolute high
+            major_highs.append({
+                'price': recent_high_price,
+                'index': recent_high_index,
+                'timestamp': recent_highest.get('time', recent_highest.get('timestamp', '')),
+                'method': 'recent_extreme_high',
+                'prominence_score': recent_high_price - min_low_price,
+                'lookback_used': recent_lookback
+            })
+        
+        # Add recent extreme low if not already detected and significant  
+        if (not any(abs(l['price'] - recent_low_price) < min_price_move for l in major_lows) and
+            recent_low_price <= min_low_price * 1.05):  # Within 5% of absolute low
+            major_lows.append({
+                'price': recent_low_price,
+                'index': recent_low_index,
+                'timestamp': recent_lowest.get('time', recent_lowest.get('timestamp', '')),
+                'method': 'recent_extreme_low',
+                'prominence_score': max_high_price - recent_low_price,
+                'lookback_used': recent_lookback
+            })
     
-    if not any(l['price'] == min_low_price for l in major_lows):
-        major_lows.append({
-            'price': min_low_price,
-            'index': min_low_index,
-            'timestamp': price_data[min_low_index].get('time', price_data[min_low_index].get('timestamp', '')),
-            'method': 'absolute_low',
-            'prominence_score': max_high_price - min_low_price
-        })
+    # PHASE 1: Removed absolute extremes safeguard to focus on recent market structure
     
     # Sort by prominence score (most prominent first)
     major_highs.sort(key=lambda x: x['prominence_score'], reverse=True)
@@ -191,15 +212,29 @@ def find_best_fibonacci_swing_pair(major_swings: Dict, current_price: float) -> 
     if not swing_highs or not swing_lows:
         return {'error': 'Insufficient swing data'}
     
-    # Get the most prominent high and low
-    best_high = swing_highs[0]  # Already sorted by prominence
-    best_low = swing_lows[0]    # Already sorted by prominence
+    # EXTREMES-FIRST APPROACH: Find absolute extremes, then refine with prominence
+    pip_value = major_swings['parameters']['pip_value']
+    proximity_threshold_pips = 10  # Consider swings within 10 pips as "close to extreme"
+    proximity_threshold_price = proximity_threshold_pips * pip_value
+    
+    # Step 1: Find absolute extremes
+    absolute_highest = max(swing_highs, key=lambda x: x['price'])
+    absolute_lowest = min(swing_lows, key=lambda x: x['price'])
+    
+    # Step 2: Find all swings close to the extremes
+    highs_near_extreme = [h for h in swing_highs 
+                         if abs(h['price'] - absolute_highest['price']) <= proximity_threshold_price]
+    lows_near_extreme = [l for l in swing_lows 
+                        if abs(l['price'] - absolute_lowest['price']) <= proximity_threshold_price]
+    
+    # Step 3: Among swings near extremes, pick the most prominent one
+    best_high = max(highs_near_extreme, key=lambda x: x['prominence_score'])
+    best_low = max(lows_near_extreme, key=lambda x: x['prominence_score'])
     
     # Determine trend direction based on which occurred more recently
     trend_direction = 'downtrend' if best_high['index'] > best_low['index'] else 'uptrend'
     
-    # Calculate swing range in pips
-    pip_value = major_swings['parameters']['pip_value']
+    # Calculate swing range in pips (pip_value already retrieved above)
     swing_range_pips = abs(best_high['price'] - best_low['price']) / pip_value
     
     # Calculate current retracement level using standard Fibonacci convention
