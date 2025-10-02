@@ -625,21 +625,39 @@ class DataOrchestrator:
             print("DEBUG: H1 backfill disabled, skipping")
             logger.info("🕐 H1 backfill disabled (set ENABLE_H1_BACKFILL=true to enable)")
         
-        # Bootstrap collection for initial 500 candles per timeframe
+        # Smart Bootstrap: Only run once, then remember completion
         bootstrap_env = os.getenv('ENABLE_BOOTSTRAP', 'false').lower()
         print(f"DEBUG: ENABLE_BOOTSTRAP environment variable = '{bootstrap_env}'")
         logger.info(f"DEBUG: ENABLE_BOOTSTRAP environment variable = '{bootstrap_env}'")
         
         if bootstrap_env == 'true':
-            print("DEBUG: Bootstrap condition met, about to start bootstrap collection")
-            logger.info("🚀 Bootstrap enabled via environment variable - collecting 500 candles for all pairs/timeframes")
+            # Check if we've already completed bootstrap
             try:
-                await self.perform_bootstrap_collection()
-                print("DEBUG: Bootstrap collection completed successfully")
-                logger.info("✅ Bootstrap collection completed successfully")
+                # Use first shard to check bootstrap completion marker
+                redis_conn = await self.redis_manager.get_connection(0)
+                bootstrap_marker_key = "lumisignals:system:bootstrap:completed"
+                has_bootstrapped = await redis_conn.get(bootstrap_marker_key)
+                
+                if has_bootstrapped:
+                    print("DEBUG: Bootstrap already completed previously, skipping")
+                    logger.info("✅ Bootstrap already completed - skipping to avoid data corruption")
+                else:
+                    print("DEBUG: First time bootstrap - starting collection")
+                    logger.info("🚀 First-time bootstrap - collecting 500 candles for all pairs/timeframes")
+                    try:
+                        await self.perform_bootstrap_collection()
+                        
+                        # Mark bootstrap as completed (remember for 30 days)
+                        await redis_conn.setex(bootstrap_marker_key, 30*24*60*60, "completed")
+                        print("DEBUG: Bootstrap collection completed and marked as done")
+                        logger.info("✅ Bootstrap collection completed successfully - marked as done")
+                    except Exception as e:
+                        print(f"DEBUG: Bootstrap collection failed with error: {e}")
+                        logger.error(f"❌ Bootstrap collection failed: {e}")
+                        
             except Exception as e:
-                print(f"DEBUG: Bootstrap collection failed with error: {e}")
-                logger.error(f"❌ Bootstrap collection failed: {e}")
+                logger.warning(f"Could not check bootstrap status, skipping bootstrap: {e}")
+                print(f"DEBUG: Could not check bootstrap status: {e}")
         else:
             print("DEBUG: Bootstrap collection disabled, skipping")
             logger.info("🚀 Bootstrap collection disabled (set ENABLE_BOOTSTRAP=true to enable)")
