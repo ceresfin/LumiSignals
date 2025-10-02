@@ -211,7 +211,7 @@ class DirectCandlestickAPI:
             tiered_keys = {
                 'hot': f"market_data:{currency_pair}:{timeframe}:hot",
                 'warm': f"market_data:{currency_pair}:{timeframe}:warm", 
-                'cold': f"market_data:{currency_pair}:{timeframe}:cold"
+                'cold': f"market_data:{currency_pair}:{timeframe}:historical"  # FIXED: Match data orchestrator key pattern
             }
             
             logger.info(f"Using tiered storage for {currency_pair} {timeframe} - targeting {count} candles")

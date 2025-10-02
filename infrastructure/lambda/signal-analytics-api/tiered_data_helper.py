@@ -34,7 +34,7 @@ def get_tiered_price_data(
         tiered_keys = {
             'hot': f"market_data:{currency_pair}:{timeframe}:hot",
             'warm': f"market_data:{currency_pair}:{timeframe}:warm", 
-            'cold': f"market_data:{currency_pair}:{timeframe}:cold"
+            'cold': f"market_data:{currency_pair}:{timeframe}:historical"  # FIXED: Match data orchestrator key pattern
         }
         
         candles = []

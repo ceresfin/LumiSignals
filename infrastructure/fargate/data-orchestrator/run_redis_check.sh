@@ -16,7 +16,7 @@ set -e
 REGION="us-east-1"
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 ECR_REPOSITORY="lumisignals-data-orchestrator"
-ECS_CLUSTER="lumisignals-trading-cluster"
+ECS_CLUSTER="lumisignals-cluster"
 ECS_SERVICE="lumisignals-data-orchestrator"
 
 echo "🔍 Running Redis Storage Verification"
