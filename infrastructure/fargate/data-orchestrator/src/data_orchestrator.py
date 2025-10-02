@@ -1025,9 +1025,10 @@ class DataOrchestrator:
                     # Add to end of hot tier list
                     pipe.rpush(keys['hot'], json.dumps(latest_candle))
                     
-                    # Execute pipeline so far to get accurate count for rotation check
+                    # FIXED: Don't execute pipeline early - get count directly
+                    # Execute rpush to add the candle first
                     await pipe.execute()
-                    pipe = redis_conn.pipeline()  # Reset pipeline
+                    pipe = redis_conn.pipeline()  # Reset pipeline for remaining operations
                     
                     # Check if hot tier exceeds capacity and rotate BEFORE trimming
                     hot_count = await redis_conn.llen(keys['hot'])
@@ -1035,8 +1036,7 @@ class DataOrchestrator:
                         logger.debug(f"Hot tier has {hot_count} candles, rotating excess to warm tier for {currency_pair} {timeframe}")
                         await self._rotate_hot_to_warm_tier(currency_pair, timeframe, redis_conn)
                     
-                    # Now maintain hot tier capacity (keep only most recent N candles)
-                    pipe.ltrim(keys['hot'], -self.settings.hot_tier_candles, -1)
+                    # FIXED: Removed redundant ltrim - rotation already handles hot tier trimming
                     
                     # Set TTL for hot tier
                     pipe.expire(keys['hot'], self.settings.hot_tier_ttl)

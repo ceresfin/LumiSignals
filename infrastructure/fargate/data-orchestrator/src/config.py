@@ -222,7 +222,15 @@ class Settings(BaseSettings):
         # Use proper interval logic for each timeframe
         # M5: every 5 minutes, H1: every hour, etc.
         interval = self.timeframe_intervals[timeframe]
-        return current_time % interval == 0
+        
+        # FIXED: Use a time window instead of exact match
+        # This handles cases where collection might be delayed by a few seconds
+        # For H1: collect if we're within the first 60 seconds of the hour
+        # For M5: collect if we're within the first 30 seconds of the 5-minute mark
+        window = min(60, interval // 10)  # 10% of interval or 60 seconds max
+        remainder = current_time % interval
+        
+        return remainder < window
     
     def get_timeframes_to_collect(self, current_time: int) -> List[str]:
         """Get list of timeframes that should be collected at current time"""
