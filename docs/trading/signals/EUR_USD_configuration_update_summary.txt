@@ -1,0 +1,171 @@
+EUR_USD TRADE SETUP ANALYSIS - CONFIGURATION UPDATE SUMMARY
+Generated: 2025-09-28 15:13:28 EDT
+
+================================================================
+CONFIGURATION CHANGES COMPLETED
+================================================================
+
+✅ REMOVED ALL HARDCODED VALUES FROM test_detailed_setups.py:
+
+1. BASE_URL → Now: config['api']['base_url']
+2. Timeframes ['M5', 'H1'] → Now: config['analysis']['timeframes']  
+3. Display limit (10) → Now: config['analysis']['display_limit']
+4. API timeout (30) → Now: config['api']['timeout']
+5. Timezone ('US/Eastern') → Now: config['analysis']['timezone']
+
+✅ FIBONACCI EXTENSION LEVELS UPDATED:
+- Replaced 2.0 (200%) with 1.5 (150%) in correct sorted order
+- Standardized across all timeframes: [0.0, 0.618, 1.0, 1.272, 1.382, 1.414, 1.5, 1.618]
+- Single source of truth established
+- Lambda function successfully deployed
+
+================================================================
+CURRENT EUR_USD TRADE SETUPS ANALYSIS
+================================================================
+
+📊 ANALYSIS OVERVIEW:
+- M5 Timeframe: 28 pairs analyzed → 23 setups found
+- H1 Timeframe: 28 pairs analyzed → 13 setups found
+- Current Price: 1.17002
+
+================================================================
+M5 TIMEFRAME SETUP (SELL SIGNAL)
+================================================================
+
+📍 SWING ANALYSIS:
+   Swing High: 1.17540 @ No timestamp
+   Swing Low:  1.16456 @ No timestamp
+   Trend Direction: DOWNTREND
+
+💰 TRADE DETAILS:
+   Current Price: 1.17002
+   Entry Price: 1.17000
+   Fibonacci Level: 50.0% Retracement
+   Signal: SELL
+   Trade Type: Trend Continuation
+
+🎯 TARGETS:
+   Target 1: 1.16360 (Extension Target 1)
+   Target 2: 1.16160 (Extension Target 2)  
+   Target 3: 1.15790 (Extension Target 3)
+
+🛑 RISK MANAGEMENT:
+   Stop Loss: 1.17310
+   Fibonacci Level: Calculated stop
+
+📊 PERFORMANCE METRICS:
+   Risk: 31.6 pips
+   Reward: 64.2 pips (first target)
+   Risk/Reward Ratio: 2.03
+   Distance to Entry: 0.4 pips
+   Current Retracement: 50.4%
+
+================================================================
+H1 TIMEFRAME SETUP (BUY SIGNAL)
+================================================================
+
+📍 SWING ANALYSIS:
+   Swing High: 1.19188 @ No timestamp
+   Swing Low:  1.16606 @ No timestamp
+   Trend Direction: UPTREND
+
+💰 TRADE DETAILS:
+   Current Price: 1.17002
+   Entry Price: 1.17160
+   Fibonacci Level: 78.6% Retracement
+   Signal: BUY
+   Trade Type: Trend Continuation
+
+🎯 TARGETS:
+   Target 1: 1.19290 (Extension Target 1)
+   Target 2: 1.19890 (Extension Target 2)
+   Target 3: 1.20780 (Extension Target 3)
+
+🛑 RISK MANAGEMENT:
+   Stop Loss: 1.16460
+   Fibonacci Level: Calculated stop
+
+📊 PERFORMANCE METRICS:
+   Risk: 70.3 pips
+   Reward: 212.9 pips (first target)
+   Risk/Reward Ratio: 3.03
+   Distance to Entry: 15.6 pips
+   Current Retracement: 15.4%
+
+================================================================
+KEY IMPROVEMENTS FROM CONFIGURATION UPDATE
+================================================================
+
+🚀 TRADE QUALITY IMPROVEMENTS:
+- M5 R:R Ratio: 2.03 (vs previous ~1.26)
+- H1 R:R Ratio: 3.03 (vs previous ~1.49)
+- Better entry points using proper Fibonacci retracements
+- More sophisticated risk management
+
+🔧 TECHNICAL IMPROVEMENTS:
+- Zero hardcoded values in test script
+- Single source of truth for Fibonacci configuration
+- Standardized extension levels across timeframes
+- Proper sorted order for 150% extension (1.5)
+- Configurable via JSON file
+
+📈 TRADING INSIGHTS:
+- Conflicting signals between timeframes (M5 SELL vs H1 BUY)
+- M5 shows immediate entry opportunity (0.4 pips away)
+- H1 shows higher reward potential (212.9 pips)
+- Both setups meet minimum R:R requirements (>1.5)
+
+================================================================
+CONFIGURATION FILE STRUCTURE
+================================================================
+
+config.json:
+{
+  "api": {
+    "base_url": "https://hqsiypravhxr5lhhkajvstmnpi0mxckg.lambda-url.us-east-1.on.aws",
+    "timeout": 30
+  },
+  "analysis": {
+    "timeframes": ["M5", "H1"],
+    "display_limit": 10,
+    "timezone": "US/Eastern"
+  },
+  "output": {
+    "show_all_pairs": true,
+    "detailed_mode": true
+  }
+}
+
+================================================================
+DEPLOYMENT SUMMARY
+================================================================
+
+✅ Lambda Function: lumisignals-signal-analytics-api
+✅ Region: us-east-1
+✅ Package Size: 22.8 MB
+✅ Deployment Status: Successful
+✅ Last Modified: 2025-09-28T19:09:59.000+0000
+✅ Configuration: Updated with 150% extension levels
+
+================================================================
+SWING ANALYSIS SUMMARY
+================================================================
+
+M5 TIMEFRAME SWING STRUCTURE:
+- Swing Range: 108.4 pips (1.17540 - 1.16456)
+- Current Position: 50.4% retracement from swing low
+- Trend: DOWNTREND (selling into resistance)
+- Setup: Continuation of downward move
+
+H1 TIMEFRAME SWING STRUCTURE:  
+- Swing Range: 258.2 pips (1.19188 - 1.16606)
+- Current Position: 15.4% retracement from swing low
+- Trend: UPTREND (buying the pullback)
+- Setup: Continuation of upward move
+
+MULTI-TIMEFRAME CONFLICT:
+- M5 suggests selling (short-term downtrend)
+- H1 suggests buying (longer-term uptrend)
+- Typical retracement scenario requiring trade management
+
+================================================================
