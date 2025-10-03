@@ -225,9 +225,12 @@ class Settings(BaseSettings):
         
         # FIXED: Use a time window instead of exact match
         # This handles cases where collection might be delayed by a few seconds
-        # For H1: collect if we're within the first 60 seconds of the hour
+        # For H1: collect if we're within the first 6 minutes of the hour (ensures 100% hit rate with 5-min cycles)
         # For M5: collect if we're within the first 30 seconds of the 5-minute mark
-        window = min(60, interval // 10)  # 10% of interval or 60 seconds max
+        if timeframe == "H1":
+            window = 360  # 6 minutes window for H1 to ensure reliable collection
+        else:
+            window = min(60, interval // 10)  # 10% of interval or 60 seconds max for other timeframes
         remainder = current_time % interval
         
         return remainder < window

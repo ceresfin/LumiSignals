@@ -636,7 +636,14 @@ class DataOrchestrator:
                 # Use first shard to check bootstrap completion marker
                 redis_conn = await self.redis_manager.get_connection(0)
                 bootstrap_marker_key = "lumisignals:system:bootstrap:completed"
-                has_bootstrapped = await redis_conn.get(bootstrap_marker_key)
+                
+                # Check if we should force clear the bootstrap marker
+                if os.getenv('FORCE_BOOTSTRAP_CLEAR', '').lower() == 'true':
+                    logger.warning("⚠️  FORCE_BOOTSTRAP_CLEAR is set - clearing bootstrap marker for one-time re-bootstrap")
+                    await redis_conn.delete(bootstrap_marker_key)
+                    has_bootstrapped = None
+                else:
+                    has_bootstrapped = await redis_conn.get(bootstrap_marker_key)
                 
                 if has_bootstrapped:
                     print("DEBUG: Bootstrap already completed previously, skipping")
