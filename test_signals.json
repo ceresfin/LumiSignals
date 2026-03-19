@@ -1,0 +1,29 @@
+[
+  {
+    "action": "BUY",
+    "symbol": "EURUSD",
+    "entry": 1.0850,
+    "stop": 1.0800,
+    "target": 1.0950,
+    "timeframe": "15",
+    "rr": 2.0
+  },
+  {
+    "action": "SELL",
+    "symbol": "GBPUSD",
+    "entry": 1.2650,
+    "stop": 1.2700,
+    "target": 1.2550,
+    "timeframe": "1H",
+    "rr": 2.0
+  },
+  {
+    "action": "BUY",
+    "symbol": "USDJPY",
+    "entry": 149.500,
+    "stop": 149.000,
+    "target": 150.500,
+    "timeframe": "4H",
+    "rr": 2.0
+  }
+]

@@ -1,0 +1,56 @@
+# LumiSignals Bot Configuration
+# Copy this file to config.yaml and fill in your credentials.
+#
+# IMPORTANT: Never commit config.yaml — it contains your API keys.
+
+oanda:
+  account_id: "YOUR_OANDA_ACCOUNT_ID"
+  api_key: "YOUR_OANDA_API_KEY"
+  environment: "practice"  # "practice" or "live"
+
+signals:
+  mode: "polling"           # "polling", "webhook", or "mock"
+
+  # Signal strategy:
+  #   "top-tickers" — trade Top Tickers signals filtered by R:R (no S/R validation)
+  #   "snr"         — trade only when entry aligns with untouched S/R levels
+  #   "combined"    — Top Tickers candidates validated against SNR levels (best quality)
+  strategy: "top-tickers"
+
+  # LumiTrade Partner API
+  api_url: "https://app.lumitrade.ai/partners/technical-analysis/top-tickers/"
+  api_key: "YOUR_LUMITRADE_PARTNER_KEY"   # e.g. trk_live_xxxxx.yyyyy
+  poll_interval_seconds: 60
+  market_filter: "fx"       # "fx", "equity", "crypto", "futures", or "" for all
+  min_reward_risk: 1.5      # Minimum R:R ratio to accept (0 = no filter)
+
+  # Your trading timeframe — determines which SNR levels the bot uses
+  # Bot auto-selects primary S/R levels 2-3 timeframes above yours
+  # Monthly, weekly, daily are always monitored as alert levels
+  trading_timeframe: "1h"   # "5m", "15m", "30m", "1h", "4h", "daily", "weekly"
+
+  # Webhook mode
+  webhook_port: 8080
+  webhook_secret: ""
+
+  # Mock mode
+  mock_file: "test_signals.json"
+
+# SNR filter settings (used when strategy is "snr" or "combined")
+snr:
+  min_grade: "B"            # Minimum confluence grade to trade: "A+", "A", "B", "C"
+                            #   A+ = primary + alert S/R confluence
+                            #   A  = alert-level confluence (monthly/weekly/daily)
+                            #   B  = primary-level confluence only
+                            #   C  = no confluence (not recommended)
+  tolerance_pct: 0.002      # How close price must be to S/R level (0.002 = 0.2% of price)
+  market_type: "forex"      # "forex", "stock", "crypto"
+
+risk:
+  risk_percent: 1.0         # % of account balance to risk per trade
+  max_position_units: 100000
+  max_open_positions: 5
+
+bot:
+  dry_run: false            # true = log orders without executing
+  log_level: "INFO"
