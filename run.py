@@ -38,8 +38,8 @@ def main():
         help="Run in CLI mode without web dashboard",
     )
     parser.add_argument(
-        "--port", type=int, default=5000,
-        help="Web dashboard port (default: 5000)",
+        "--port", type=int, default=5050,
+        help="Web dashboard port (default: 5050)",
     )
     args = parser.parse_args()
 

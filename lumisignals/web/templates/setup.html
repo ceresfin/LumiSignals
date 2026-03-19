@@ -145,7 +145,8 @@ body { font-family: 'Inter', sans-serif; background: var(--cream); color: var(--
       <select name="strategy" id="strategy" onchange="toggleStrategy()">
         <option value="top-tickers" {{ 'selected' if config.get('signals', {}).get('strategy') == 'top-tickers' else '' }}>Top Tickers — R:R screener only</option>
         <option value="snr" {{ 'selected' if config.get('signals', {}).get('strategy') == 'snr' else '' }}>SNR — Untouched S/R levels only</option>
-        <option value="combined" {{ 'selected' if config.get('signals', {}).get('strategy', 'combined') == 'combined' else '' }}>Combined — Top Tickers + SNR validation (best quality)</option>
+        <option value="combined" {{ 'selected' if config.get('signals', {}).get('strategy', 'combined') == 'combined' else '' }}>Combined — Top Tickers + SNR validation</option>
+        <option value="levels" {{ 'selected' if config.get('signals', {}).get('strategy') == 'levels' else '' }}>Levels — S/R levels + multi-TF candle confirmation (best quality)</option>
       </select>
     </div>
     <div class="field-row">
@@ -246,7 +247,8 @@ function toggleStrategy() {
   var descriptions = {
     'top-tickers': 'Trades signals based on Reward:Risk ratio screening only. Fast, more signals, less filtering.',
     'snr': 'Only trades when entry aligns with untouched supply/demand levels. Fewer signals, higher precision.',
-    'combined': 'Top Tickers candidates validated against untouched S/R levels. Best signal quality — recommended.'
+    'combined': 'Top Tickers candidates validated against untouched S/R levels.',
+    'levels': 'Scans all 27 major pairs for price at untouched monthly/weekly/daily levels. Confirms with multi-timeframe candlestick direction. Shows pattern names (Hammer, Engulfing, etc). Best quality — recommended.'
   };
   info.textContent = descriptions[strategy] || '';
 }

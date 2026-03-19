@@ -64,6 +64,7 @@ class OandaClient:
         self.account_id = account_id
         self.api_key = api_key
         self.base_url = OANDA_ENVIRONMENTS.get(environment, OANDA_ENVIRONMENTS["practice"])
+        self.tradeable = set()
         self.session = requests.Session()
         self.session.headers.update({
             "Authorization": f"Bearer {api_key}",
@@ -81,7 +82,7 @@ class OandaClient:
         return response.json()
 
     def validate_connection(self) -> bool:
-        """Test that credentials are valid by fetching account info."""
+        """Test that credentials are valid and load tradeable instruments."""
         try:
             result = self.get_account()
             account = result.get("account", {})
@@ -90,10 +91,28 @@ class OandaClient:
                 account.get("id", "?"),
                 account.get("balance", "?"),
             )
+            # Cache tradeable instruments
+            self._load_tradeable_instruments()
             return True
         except Exception as e:
             logger.error("Failed to connect to Oanda: %s", e)
             return False
+
+    def _load_tradeable_instruments(self):
+        """Fetch and cache the list of tradeable instruments."""
+        try:
+            result = self._request("GET", f"/v3/accounts/{self.account_id}/instruments")
+            self.tradeable = {i["name"] for i in result.get("instruments", [])}
+            logger.info("Loaded %d tradeable instruments", len(self.tradeable))
+        except Exception as e:
+            logger.warning("Could not load instruments: %s", e)
+            self.tradeable = set()
+
+    def is_tradeable(self, instrument: str) -> bool:
+        """Check if an instrument is tradeable on this account."""
+        if not self.tradeable:
+            return True  # If we couldn't load the list, don't block
+        return instrument in self.tradeable
 
     def get_account(self) -> dict:
         """Get account details including balance."""
@@ -102,6 +121,23 @@ class OandaClient:
     def get_price(self, instrument: str) -> dict:
         """Get current price for an instrument."""
         return self._request("GET", f"/v3/accounts/{self.account_id}/pricing?instruments={instrument}")
+
+    def get_candles(self, instrument: str, granularity: str = "D", count: int = 2) -> list:
+        """Get recent candles for an instrument.
+
+        Args:
+            instrument: e.g. "EUR_USD"
+            granularity: "M" (monthly), "W" (weekly), "D" (daily), "H4", "H1", etc.
+            count: Number of candles to return.
+
+        Returns:
+            List of candle dicts with mid OHLC.
+        """
+        result = self._request(
+            "GET",
+            f"/v3/instruments/{instrument}/candles?granularity={granularity}&count={count}&price=M",
+        )
+        return result.get("candles", [])
 
     def create_order(self, order_data: dict) -> dict:
         """Create a new order."""

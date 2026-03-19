@@ -180,7 +180,11 @@ def create_web_app():
         state["log_entries"] = []
 
         try:
-            dry_run = request.get_json().get("dry_run", config.get("bot", {}).get("dry_run", False))
+            req_data = request.get_json() or {}
+            if "dry_run" in req_data:
+                dry_run = req_data["dry_run"]
+            else:
+                dry_run = config.get("bot", {}).get("dry_run", False)
             bot = LumiSignalsBot(config=config, dry_run=dry_run)
             state["bot"] = bot
             state["running"] = True
@@ -218,7 +222,7 @@ def create_web_app():
         config = _get_config() if _has_config() else {}
         return jsonify({
             "running": state["running"],
-            "dry_run": config.get("bot", {}).get("dry_run", False),
+            "dry_run": state["bot"].dry_run if state["bot"] else config.get("bot", {}).get("dry_run", False),
             "strategy": config.get("signals", {}).get("strategy", ""),
             "signals_processed": state["signals_processed"],
             "orders_placed": state["orders_placed"],

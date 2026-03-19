@@ -11,6 +11,7 @@ from .oanda_client import OandaClient
 from .order_manager import OrderManager
 from .signal_receiver import run_polling, create_webhook_app, run_mock
 from .snr_filter import SNRClient, get_relevant_timeframes, check_snr_confluence
+from .levels_strategy import LevelsStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -34,10 +35,10 @@ def load_config(config_path: str) -> dict:
 class LumiSignalsBot:
     """Orchestrates signal intake and order execution."""
 
-    def __init__(self, config: dict, mode: str = None, dry_run: bool = False):
+    def __init__(self, config: dict, mode: str = None, dry_run: bool = None):
         self.config = config
         self.mode = mode or config.get("signals", {}).get("mode", "polling")
-        self.dry_run = dry_run or config.get("bot", {}).get("dry_run", False)
+        self.dry_run = dry_run if dry_run is not None else config.get("bot", {}).get("dry_run", False)
         self._stop_event = threading.Event()
 
         # Set up logging
@@ -165,13 +166,16 @@ class LumiSignalsBot:
         if not self.dry_run:
             if not self.client.validate_connection():
                 logger.error("Could not connect to Oanda. Check your credentials.")
-                sys.exit(1)
+                return
         else:
             logger.info("Skipping Oanda connection check (dry-run mode)")
 
-        # Register signal handlers for graceful shutdown
-        signal.signal(signal.SIGINT, self._shutdown)
-        signal.signal(signal.SIGTERM, self._shutdown)
+        # Register signal handlers for graceful shutdown (only works in main thread)
+        try:
+            signal.signal(signal.SIGINT, self._shutdown)
+            signal.signal(signal.SIGTERM, self._shutdown)
+        except ValueError:
+            pass  # Running in a background thread (e.g. web UI), skip signal handlers
 
         logger.info("Starting in %s mode | strategy: %s", self.mode, self.strategy)
 
@@ -179,6 +183,45 @@ class LumiSignalsBot:
             logger.info("Trading timeframe: %s | Primary SNR: %s | Alert SNR: %s",
                         self.trading_timeframe, self.primary_tfs, self.alert_tfs)
             logger.info("Min grade: %s | Tolerance: %.3f%%", self.snr_min_grade, self.snr_tolerance_pct * 100)
+
+        # Levels strategy runs its own loop — different from the other strategies
+        if self.strategy == "levels":
+            sig_cfg = self.config.get("signals", {})
+            levels_cfg = self.config.get("levels", {})
+
+            base_url = sig_cfg.get("api_url", "").split("/partners/")[0]
+            if not base_url:
+                base_url = "https://app.lumitrade.ai/api/v1"
+
+            if self.snr_client is None:
+                self.snr_client = SNRClient(
+                    base_url=base_url,
+                    api_key=sig_cfg.get("api_key", ""),
+                )
+
+            levels = LevelsStrategy(
+                oanda_client=self.client,
+                snr_client=self.snr_client,
+                trade_builder_url=base_url,
+                api_key=sig_cfg.get("api_key", ""),
+                min_score=levels_cfg.get("min_candle_score", 2),
+                atr_stop_multiplier=levels_cfg.get("atr_stop_multiplier", 1.0),
+                tolerance_pct=levels_cfg.get("tolerance_pct", 0.003),
+                on_signal=self._handle_signal,
+            )
+
+            logger.info(
+                "Levels strategy — min candle score: %d/3 | ATR stop: %.1fx | tolerance: %.1f%%",
+                levels_cfg.get("min_candle_score", 2),
+                levels_cfg.get("atr_stop_multiplier", 1.0),
+                levels_cfg.get("tolerance_pct", 0.003) * 100,
+            )
+
+            levels.run(
+                interval=sig_cfg.get("poll_interval_seconds", 300),
+                stop_event=self._stop_event,
+            )
+            return
 
         # Pick the signal handler based on strategy
         if self.strategy in ("snr", "combined"):
@@ -212,7 +255,7 @@ class LumiSignalsBot:
             )
         else:
             logger.error("Unknown mode: %s", self.mode)
-            sys.exit(1)
+            return
 
     def _shutdown(self, signum, frame):
         """Handle graceful shutdown."""

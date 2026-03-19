@@ -14,7 +14,8 @@ signals:
   # Signal strategy:
   #   "top-tickers" — trade Top Tickers signals filtered by R:R (no S/R validation)
   #   "snr"         — trade only when entry aligns with untouched S/R levels
-  #   "combined"    — Top Tickers candidates validated against SNR levels (best quality)
+  #   "combined"    — Top Tickers candidates validated against SNR levels
+  #   "levels"      — monitor untouched S/R levels + multi-TF candle confirmation (best quality)
   strategy: "top-tickers"
 
   # LumiTrade Partner API
@@ -45,6 +46,15 @@ snr:
                             #   C  = no confluence (not recommended)
   tolerance_pct: 0.002      # How close price must be to S/R level (0.002 = 0.2% of price)
   market_type: "forex"      # "forex", "stock", "crypto"
+
+# Levels strategy settings (used when strategy is "levels")
+levels:
+  min_candle_score: 2       # Min bullish/bearish candle count out of 3 (monthly/weekly/daily)
+                            #   3 = all timeframes agree (strictest)
+                            #   2 = 2 of 3 agree (recommended)
+                            #   1 = any single TF confirmation (aggressive)
+  atr_stop_multiplier: 1.0  # Stop distance = ATR x this value
+  tolerance_pct: 0.003      # How close price must be to level to trigger scan (0.3%)
 
 risk:
   risk_percent: 1.0         # % of account balance to risk per trade

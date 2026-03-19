@@ -6,6 +6,16 @@ from .oanda_client import OandaClient, resolve_instrument
 
 logger = logging.getLogger(__name__)
 
+# Major and major-cross forex pairs — liquid, tight spreads, available on US accounts
+MAJOR_PAIRS = {
+    # 7 Majors
+    "EUR_USD", "GBP_USD", "USD_JPY", "USD_CHF", "AUD_USD", "NZD_USD", "USD_CAD",
+    # 20 Major crosses
+    "EUR_GBP", "EUR_JPY", "GBP_JPY", "EUR_AUD", "AUD_JPY", "EUR_CHF", "GBP_CHF",
+    "CAD_JPY", "AUD_NZD", "GBP_NZD", "EUR_NZD", "EUR_CAD", "GBP_CAD", "GBP_AUD",
+    "NZD_CAD", "AUD_CAD", "NZD_CHF", "AUD_CHF", "CHF_JPY", "NZD_JPY",
+}
+
 
 def get_pip_precision(instrument: str) -> tuple[float, int]:
     """Get pip value and price decimal precision for an instrument.
@@ -75,6 +85,15 @@ class OrderManager:
             return OrderResult(success=False, error="; ".join(errors))
 
         instrument = resolve_instrument(signal.symbol)
+
+        # Filter to major/cross pairs only
+        if instrument not in MAJOR_PAIRS:
+            return OrderResult(success=False, error=f"{instrument} is not a major/cross pair — skipping exotic")
+
+        # Check if instrument is tradeable on this account
+        if not self.client.is_tradeable(instrument):
+            return OrderResult(success=False, error=f"{instrument} is not tradeable on this account")
+
         pip_value, precision = get_pip_precision(instrument)
 
         if self.dry_run:
