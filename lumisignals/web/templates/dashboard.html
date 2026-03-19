@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LumiSignals — Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600&family=Inter:wght@300;400;500;600&family=Open+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+<style>
+:root {
+  --olive: #7F8464; --olive-light: #9C9C78; --cream: #F5F3EE;
+  --dark: #2E2E2C; --text-dark: #2E2E2C; --text-medium: #56665F;
+  --text-light: #8a847e; --white: #ffffff; --sage-bg: #D9DDD2;
+  --red: #c0392b; --green: #27ae60; --blue: #2980b9;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Inter', sans-serif; background: var(--cream); color: var(--text-dark); min-height: 100vh; }
+
+.header { background: linear-gradient(165deg, #C4B99A 0%, #B8A88C 40%, #A89878 100%); padding: 16px 0; }
+.header-inner { max-width: 1100px; margin: 0 auto; padding: 0 24px; display: flex; justify-content: space-between; align-items: center; }
+.header h1 { font-family: 'Playfair Display', serif; font-size: 1.4rem; font-weight: 400; }
+.header-actions { display: flex; gap: 12px; align-items: center; }
+
+.container { max-width: 1100px; margin: 0 auto; padding: 24px; }
+
+.stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
+.stat-card { background: var(--white); border-radius: 12px; padding: 20px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
+.stat-value { font-family: 'Playfair Display', serif; font-size: 2rem; color: var(--text-dark); }
+.stat-label { font-size: 0.78rem; color: var(--text-light); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 4px; }
+
+.main-grid { display: grid; grid-template-columns: 1fr 320px; gap: 24px; }
+
+.card { background: var(--white); border-radius: 12px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); margin-bottom: 16px; }
+.card h2 { font-family: 'Playfair Display', serif; font-size: 1.1rem; font-weight: 400; margin-bottom: 16px; padding-bottom: 10px; border-bottom: 1px solid #eee; }
+
+.log-container { height: 420px; overflow-y: auto; font-family: 'JetBrains Mono', monospace; font-size: 0.78rem; line-height: 1.6; background: var(--dark); color: rgba(255,255,255,0.85); border-radius: 8px; padding: 16px; }
+.log-entry { padding: 2px 0; }
+.log-time { color: rgba(255,255,255,0.4); }
+.log-INFO { color: rgba(255,255,255,0.85); }
+.log-WARNING { color: #f39c12; }
+.log-ERROR { color: #e74c3c; }
+.log-grade { font-weight: 600; }
+.log-grade-a { color: #2ecc71; }
+.log-grade-b { color: #3498db; }
+.log-grade-c { color: #95a5a6; }
+
+.config-item { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #f0f0f0; font-size: 0.85rem; }
+.config-item:last-child { border-bottom: none; }
+.config-label { color: var(--text-light); }
+.config-value { font-weight: 500; color: var(--text-dark); }
+
+.status-badge { display: inline-block; padding: 4px 12px; border-radius: 50px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+.status-running { background: #e8f5e9; color: var(--green); }
+.status-stopped { background: #f0f0f0; color: var(--text-light); }
+.status-dry { background: #fff3e0; color: #e67e22; }
+
+.btn { display: inline-block; font-family: 'Open Sans', sans-serif; font-weight: 500; border-radius: 50px; cursor: pointer; text-align: center; border: none; transition: all 0.3s; font-size: 0.85rem; padding: 8px 20px; }
+.btn-primary { background: var(--olive); color: #FFF5E1; }
+.btn-primary:hover { background: var(--olive-light); }
+.btn-danger { background: var(--red); color: white; }
+.btn-danger:hover { background: #a93226; }
+.btn-outline { background: transparent; color: var(--text-dark); border: 1.5px solid #ccc; }
+.btn-outline:hover { background: rgba(0,0,0,0.05); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.snr-info { font-size: 0.82rem; color: var(--text-medium); line-height: 1.5; }
+.snr-info .tf-tag { display: inline-block; background: var(--cream); padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 500; margin: 2px; }
+.tf-alert { background: #fff3e0; color: #e67e22; }
+.tf-primary { background: #e8f5e9; color: var(--green); }
+
+.disclaimer { text-align: center; font-size: 0.72rem; color: var(--text-light); margin-top: 24px; line-height: 1.5; }
+
+@media (max-width: 768px) {
+  .stats-grid { grid-template-columns: repeat(2, 1fr); }
+  .main-grid { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-inner">
+    <h1>LumiSignals</h1>
+    <div class="header-actions">
+      <span id="statusBadge" class="status-badge status-stopped">Stopped</span>
+      <button id="startBtn" class="btn btn-primary" onclick="startBot(false)">Start</button>
+      <button id="dryRunBtn" class="btn btn-outline" onclick="startBot(true)">Dry Run</button>
+      <button id="stopBtn" class="btn btn-danger" onclick="stopBot()" disabled>Stop</button>
+      <a href="/setup" class="btn btn-outline">Settings</a>
+    </div>
+  </div>
+</div>
+
+<div class="container">
+
+  <!-- Stats -->
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-value" id="signalCount">0</div>
+      <div class="stat-label">Signals Received</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value" id="orderCount">0</div>
+      <div class="stat-label">Orders Placed</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value" id="skipCount">0</div>
+      <div class="stat-label">Filtered Out</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value" id="lastSignal">—</div>
+      <div class="stat-label">Last Signal</div>
+    </div>
+  </div>
+
+  <!-- Main Content -->
+  <div class="main-grid">
+    <!-- Log -->
+    <div class="card">
+      <h2>Activity Log</h2>
+      <div class="log-container" id="logContainer">
+        <div class="log-entry"><span class="log-time">--:--:--</span> Waiting to start...</div>
+      </div>
+    </div>
+
+    <!-- Sidebar -->
+    <div>
+      <!-- Config Summary -->
+      <div class="card">
+        <h2>Configuration</h2>
+        <div class="config-item">
+          <span class="config-label">Strategy</span>
+          <span class="config-value">{{ config.get('signals', {}).get('strategy', 'top-tickers') }}</span>
+        </div>
+        <div class="config-item">
+          <span class="config-label">Mode</span>
+          <span class="config-value">{{ config.get('signals', {}).get('mode', 'polling') }}</span>
+        </div>
+        <div class="config-item">
+          <span class="config-label">Market</span>
+          <span class="config-value">{{ config.get('signals', {}).get('market_filter', 'all') or 'all' }}</span>
+        </div>
+        <div class="config-item">
+          <span class="config-label">Min R:R</span>
+          <span class="config-value">{{ config.get('signals', {}).get('min_reward_risk', 1.5) }}</span>
+        </div>
+        <div class="config-item">
+          <span class="config-label">Risk/Trade</span>
+          <span class="config-value">{{ config.get('risk', {}).get('risk_percent', 1.0) }}%</span>
+        </div>
+        <div class="config-item">
+          <span class="config-label">Environment</span>
+          <span class="config-value">{{ config.get('oanda', {}).get('environment', 'practice') }}</span>
+        </div>
+        <div class="config-item">
+          <span class="config-label">Dry Run</span>
+          <span class="config-value">{{ 'Yes' if config.get('bot', {}).get('dry_run') else 'No' }}</span>
+        </div>
+      </div>
+
+      <!-- SNR Levels -->
+      {% if config.get('signals', {}).get('strategy') in ['snr', 'combined'] %}
+      <div class="card">
+        <h2>S/R Levels Monitored</h2>
+        <div class="snr-info">
+          <div style="margin-bottom: 8px;">
+            <strong>Trading:</strong> {{ config.get('signals', {}).get('trading_timeframe', '1h') }}
+          </div>
+          <div style="margin-bottom: 8px;">
+            <strong>Alert levels</strong> (always active):<br>
+            {% for tf in alert_tfs %}
+            <span class="tf-tag tf-alert">{{ tf }}</span>
+            {% endfor %}
+          </div>
+          {% if primary_tfs %}
+          <div style="margin-bottom: 8px;">
+            <strong>Primary levels</strong>:<br>
+            {% for tf in primary_tfs %}
+            <span class="tf-tag tf-primary">{{ tf }}</span>
+            {% endfor %}
+          </div>
+          {% endif %}
+          <div>
+            <strong>Min grade:</strong> {{ config.get('snr', {}).get('min_grade', 'B') }}
+          </div>
+        </div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="disclaimer">
+    LumiTrade is a financial publishing company. All signals are for educational and informational purposes only.
+    Not investment advice. Use at your own risk.
+  </div>
+</div>
+
+<script>
+var logIndex = 0;
+var pollTimer = null;
+
+function updateStatus() {
+  fetch('/api/status')
+    .then(r => r.json())
+    .then(data => {
+      document.getElementById('signalCount').textContent = data.signals_processed;
+      document.getElementById('orderCount').textContent = data.orders_placed;
+      document.getElementById('skipCount').textContent = data.orders_skipped;
+      document.getElementById('lastSignal').textContent = data.last_signal_time || '—';
+
+      var badge = document.getElementById('statusBadge');
+      var startBtn = document.getElementById('startBtn');
+      var dryRunBtn = document.getElementById('dryRunBtn');
+      var stopBtn = document.getElementById('stopBtn');
+
+      if (data.running) {
+        badge.textContent = data.dry_run ? 'Dry Run' : 'Running';
+        badge.className = 'status-badge ' + (data.dry_run ? 'status-dry' : 'status-running');
+        startBtn.disabled = true;
+        dryRunBtn.disabled = true;
+        stopBtn.disabled = false;
+      } else {
+        badge.textContent = 'Stopped';
+        badge.className = 'status-badge status-stopped';
+        startBtn.disabled = false;
+        dryRunBtn.disabled = false;
+        stopBtn.disabled = true;
+      }
+    });
+}
+
+function updateLogs() {
+  fetch('/api/logs?since=' + logIndex)
+    .then(r => r.json())
+    .then(entries => {
+      if (entries.length === 0) return;
+      var container = document.getElementById('logContainer');
+      if (logIndex === 0) container.innerHTML = '';
+
+      entries.forEach(function(entry) {
+        var div = document.createElement('div');
+        div.className = 'log-entry';
+        var msg = entry.message;
+        // Highlight grades
+        msg = msg.replace(/Grade (A\+|A|B|C)/g, function(match, grade) {
+          var cls = grade === 'C' ? 'grade-c' : (grade === 'B' ? 'grade-b' : 'grade-a');
+          return '<span class="log-grade log-' + cls + '">Grade ' + grade + '</span>';
+        });
+        div.innerHTML = '<span class="log-time">' + entry.time + '</span> <span class="log-' + entry.level + '">' + msg + '</span>';
+        container.appendChild(div);
+      });
+
+      logIndex += entries.length;
+      container.scrollTop = container.scrollHeight;
+    });
+}
+
+function startBot(dryRun) {
+  fetch('/api/start', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({dry_run: dryRun})
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.error) alert(data.error);
+    logIndex = 0;
+    updateStatus();
+  });
+}
+
+function stopBot() {
+  fetch('/api/stop', {method: 'POST'})
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) alert(data.error);
+      updateStatus();
+    });
+}
+
+// Poll for updates every 2 seconds
+setInterval(function() { updateStatus(); updateLogs(); }, 2000);
+updateStatus();
+</script>
+</body>
+</html>

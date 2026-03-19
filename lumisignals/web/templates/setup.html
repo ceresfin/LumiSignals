@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LumiSignals — Setup</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600&family=Inter:wght@300;400;500;600&family=Open+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --olive: #7F8464; --olive-light: #9C9C78; --cream: #F5F3EE;
+  --dark: #2E2E2C; --text-dark: #2E2E2C; --text-medium: #56665F;
+  --text-light: #8a847e; --white: #ffffff; --sage-bg: #D9DDD2;
+  --red: #c0392b; --green: #27ae60;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Inter', sans-serif; background: var(--cream); color: var(--text-dark); min-height: 100vh; }
+
+.header { background: linear-gradient(165deg, #C4B99A 0%, #B8A88C 40%, #A89878 100%); padding: 24px 0; text-align: center; }
+.header h1 { font-family: 'Playfair Display', serif; font-size: 1.8rem; font-weight: 400; }
+.header p { font-size: 0.9rem; color: var(--text-medium); margin-top: 4px; }
+
+.container { max-width: 640px; margin: 0 auto; padding: 32px 24px; }
+
+.card { background: var(--white); border-radius: 12px; padding: 28px 24px; margin-bottom: 24px; box-shadow: 0 2px 12px rgba(0,0,0,0.06); }
+.card h2 { font-family: 'Playfair Display', serif; font-size: 1.3rem; font-weight: 400; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 1px solid #eee; }
+
+.field { margin-bottom: 16px; }
+.field label { display: block; font-size: 0.85rem; font-weight: 500; color: var(--text-medium); margin-bottom: 6px; }
+.field input, .field select { width: 100%; padding: 10px 12px; border: 1.5px solid #ddd; border-radius: 8px; font-size: 0.9rem; font-family: 'Inter', sans-serif; background: var(--cream); color: var(--text-dark); }
+.field input:focus, .field select:focus { outline: none; border-color: var(--olive); }
+.field small { display: block; font-size: 0.78rem; color: var(--text-light); margin-top: 4px; }
+.field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+
+.checkbox-field { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
+.checkbox-field input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--olive); }
+.checkbox-field label { font-size: 0.9rem; color: var(--text-dark); margin-bottom: 0; }
+
+.btn { display: inline-block; font-family: 'Open Sans', sans-serif; font-weight: 500; border-radius: 50px; cursor: pointer; text-align: center; border: none; transition: all 0.3s; }
+.btn-primary { background: var(--olive); color: #FFF5E1; padding: 12px 32px; font-size: 0.95rem; }
+.btn-primary:hover { background: var(--olive-light); }
+.btn-outline { background: transparent; color: var(--text-dark); padding: 10px 24px; font-size: 0.85rem; border: 1.5px solid var(--text-dark); }
+.btn-outline:hover { background: rgba(0,0,0,0.05); }
+.btn-sm { padding: 8px 18px; font-size: 0.8rem; }
+
+.actions { text-align: center; padding: 16px 0; }
+
+.test-result { margin-top: 12px; padding: 10px 14px; border-radius: 8px; font-size: 0.85rem; display: none; }
+.test-result.success { background: #e8f5e9; color: var(--green); display: block; }
+.test-result.error { background: #fdecea; color: var(--red); display: block; }
+
+.strategy-info { background: var(--cream); border-radius: 8px; padding: 12px 14px; margin-top: 12px; font-size: 0.82rem; color: var(--text-medium); line-height: 1.5; }
+
+.disclaimer { text-align: center; font-size: 0.78rem; color: var(--text-light); max-width: 500px; margin: 0 auto; line-height: 1.6; padding: 16px 0 32px; }
+
+.hidden { display: none; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>LumiSignals Setup</h1>
+  <p>Configure your bot in a few steps</p>
+</div>
+
+<div class="container">
+<form method="POST" action="/setup" id="setupForm">
+
+  <!-- Step 1: Oanda -->
+  <div class="card">
+    <h2>1. Oanda Account</h2>
+    <div class="field">
+      <label>Account ID</label>
+      <input type="text" name="oanda_account_id" placeholder="e.g. 101-001-12345678-001" value="{{ config.get('oanda', {}).get('account_id', '') }}" required>
+    </div>
+    <div class="field">
+      <label>API Key</label>
+      <input type="password" name="oanda_api_key" id="oandaKey" placeholder="Your Oanda API token" value="{{ config.get('oanda', {}).get('api_key', '') }}" required>
+    </div>
+    <div class="field">
+      <label>Environment</label>
+      <select name="oanda_environment">
+        <option value="practice" {{ 'selected' if config.get('oanda', {}).get('environment') == 'practice' else '' }}>Practice (paper trading)</option>
+        <option value="live" {{ 'selected' if config.get('oanda', {}).get('environment') == 'live' else '' }}>Live (real money)</option>
+      </select>
+    </div>
+    <button type="button" class="btn btn-outline btn-sm" onclick="testConnection()">Test Connection</button>
+    <div id="testResult" class="test-result"></div>
+  </div>
+
+  <!-- Step 2: Signal Source -->
+  <div class="card">
+    <h2>2. Signal Source</h2>
+    <div class="field">
+      <label>Mode</label>
+      <select name="signal_mode" id="signalMode" onchange="toggleMode()">
+        <option value="polling" {{ 'selected' if config.get('signals', {}).get('mode') == 'polling' else '' }}>API Polling (recommended)</option>
+        <option value="webhook" {{ 'selected' if config.get('signals', {}).get('mode') == 'webhook' else '' }}>Webhook Server</option>
+        <option value="mock" {{ 'selected' if config.get('signals', {}).get('mode') == 'mock' else '' }}>Mock (test signals)</option>
+      </select>
+    </div>
+    <div id="pollingFields">
+      <div class="field">
+        <label>LumiTrade Partner API Key</label>
+        <input type="password" name="signal_api_key" placeholder="trk_live_xxxxx.yyyyy" value="{{ config.get('signals', {}).get('api_key', '') }}">
+      </div>
+      <div class="field">
+        <label>API URL</label>
+        <input type="text" name="api_url" placeholder="https://app.lumitrade.ai/api/v1/partners/technical-analysis/top-tickers/" value="{{ config.get('signals', {}).get('api_url', 'https://app.lumitrade.ai/api/v1/partners/technical-analysis/top-tickers/') }}">
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label>Poll Interval (seconds)</label>
+          <input type="number" name="poll_interval" value="{{ config.get('signals', {}).get('poll_interval_seconds', 60) }}" min="10">
+        </div>
+        <div class="field">
+          <label>Market</label>
+          <select name="market_filter">
+            <option value="fx" {{ 'selected' if config.get('signals', {}).get('market_filter') == 'fx' else '' }}>Forex</option>
+            <option value="equity" {{ 'selected' if config.get('signals', {}).get('market_filter') == 'equity' else '' }}>Stocks</option>
+            <option value="crypto" {{ 'selected' if config.get('signals', {}).get('market_filter') == 'crypto' else '' }}>Crypto</option>
+            <option value="" {{ 'selected' if not config.get('signals', {}).get('market_filter') else '' }}>All Markets</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <div id="webhookFields" class="hidden">
+      <div class="field-row">
+        <div class="field">
+          <label>Webhook Port</label>
+          <input type="number" name="webhook_port" value="{{ config.get('signals', {}).get('webhook_port', 8080) }}">
+        </div>
+        <div class="field">
+          <label>Webhook Secret (optional)</label>
+          <input type="text" name="webhook_secret" value="{{ config.get('signals', {}).get('webhook_secret', '') }}">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Step 3: Strategy -->
+  <div class="card">
+    <h2>3. Signal Strategy</h2>
+    <div class="field">
+      <label>Strategy</label>
+      <select name="strategy" id="strategy" onchange="toggleStrategy()">
+        <option value="top-tickers" {{ 'selected' if config.get('signals', {}).get('strategy') == 'top-tickers' else '' }}>Top Tickers — R:R screener only</option>
+        <option value="snr" {{ 'selected' if config.get('signals', {}).get('strategy') == 'snr' else '' }}>SNR — Untouched S/R levels only</option>
+        <option value="combined" {{ 'selected' if config.get('signals', {}).get('strategy', 'combined') == 'combined' else '' }}>Combined — Top Tickers + SNR validation (best quality)</option>
+      </select>
+    </div>
+    <div class="field-row">
+      <div class="field">
+        <label>Min Reward:Risk Ratio</label>
+        <select name="min_rr">
+          <option value="1.0" {{ 'selected' if config.get('signals', {}).get('min_reward_risk') == 1.0 else '' }}>1.0</option>
+          <option value="1.5" {{ 'selected' if config.get('signals', {}).get('min_reward_risk', 1.5) == 1.5 else '' }}>1.5 (recommended)</option>
+          <option value="2.0" {{ 'selected' if config.get('signals', {}).get('min_reward_risk') == 2.0 else '' }}>2.0</option>
+          <option value="2.5" {{ 'selected' if config.get('signals', {}).get('min_reward_risk') == 2.5 else '' }}>2.5</option>
+          <option value="3.0" {{ 'selected' if config.get('signals', {}).get('min_reward_risk') == 3.0 else '' }}>3.0</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Your Trading Timeframe</label>
+        <select name="trading_timeframe">
+          <option value="5m" {{ 'selected' if config.get('signals', {}).get('trading_timeframe') == '5m' else '' }}>5 Minute</option>
+          <option value="15m" {{ 'selected' if config.get('signals', {}).get('trading_timeframe') == '15m' else '' }}>15 Minute</option>
+          <option value="30m" {{ 'selected' if config.get('signals', {}).get('trading_timeframe') == '30m' else '' }}>30 Minute</option>
+          <option value="1h" {{ 'selected' if config.get('signals', {}).get('trading_timeframe', '1h') == '1h' else '' }}>1 Hour</option>
+          <option value="4h" {{ 'selected' if config.get('signals', {}).get('trading_timeframe') == '4h' else '' }}>4 Hour</option>
+          <option value="1d" {{ 'selected' if config.get('signals', {}).get('trading_timeframe') == '1d' else '' }}>Daily</option>
+        </select>
+      </div>
+    </div>
+    <div id="snrFields">
+      <div class="field-row">
+        <div class="field">
+          <label>Min SNR Grade</label>
+          <select name="min_grade">
+            <option value="A+" {{ 'selected' if config.get('snr', {}).get('min_grade') == 'A+' else '' }}>A+ (strictest — primary + alert confluence)</option>
+            <option value="A" {{ 'selected' if config.get('snr', {}).get('min_grade') == 'A' else '' }}>A (alert-level confluence)</option>
+            <option value="B" {{ 'selected' if config.get('snr', {}).get('min_grade', 'B') == 'B' else '' }}>B (primary confluence)</option>
+            <option value="C" {{ 'selected' if config.get('snr', {}).get('min_grade') == 'C' else '' }}>C (no filter — not recommended)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>S/R Tolerance</label>
+          <select name="tolerance_pct">
+            <option value="0.001" {{ 'selected' if config.get('snr', {}).get('tolerance_pct') == 0.001 else '' }}>Tight (0.1%)</option>
+            <option value="0.002" {{ 'selected' if config.get('snr', {}).get('tolerance_pct', 0.002) == 0.002 else '' }}>Normal (0.2%)</option>
+            <option value="0.005" {{ 'selected' if config.get('snr', {}).get('tolerance_pct') == 0.005 else '' }}>Wide (0.5%)</option>
+          </select>
+        </div>
+      </div>
+      <input type="hidden" name="snr_market_type" value="forex">
+    </div>
+    <div id="strategyInfo" class="strategy-info"></div>
+  </div>
+
+  <!-- Step 4: Risk -->
+  <div class="card">
+    <h2>4. Risk Management</h2>
+    <div class="field-row">
+      <div class="field">
+        <label>Risk Per Trade (%)</label>
+        <input type="number" name="risk_percent" value="{{ config.get('risk', {}).get('risk_percent', 1.0) }}" step="0.5" min="0.5" max="10">
+        <small>% of account balance risked per trade</small>
+      </div>
+      <div class="field">
+        <label>Max Position Size</label>
+        <input type="number" name="max_units" value="{{ config.get('risk', {}).get('max_position_units', 100000) }}" step="10000">
+      </div>
+    </div>
+    <div class="field">
+      <label>Max Open Positions</label>
+      <input type="number" name="max_positions" value="{{ config.get('risk', {}).get('max_open_positions', 5) }}" min="1" max="20">
+    </div>
+    <div class="checkbox-field">
+      <input type="checkbox" name="dry_run" id="dryRun" {{ 'checked' if config.get('bot', {}).get('dry_run', True) else '' }}>
+      <label for="dryRun">Dry-run mode (log orders without executing)</label>
+    </div>
+  </div>
+
+  <div class="actions">
+    <button type="submit" class="btn btn-primary">Save &amp; Launch Dashboard</button>
+  </div>
+
+</form>
+
+<div class="disclaimer">
+  LumiTrade is a financial publishing company. All signals are for educational and informational purposes only. You are solely responsible for trades executed through this software. Test with paper trading before using real funds.
+</div>
+</div>
+
+<script>
+function toggleMode() {
+  var mode = document.getElementById('signalMode').value;
+  document.getElementById('pollingFields').style.display = mode === 'polling' ? 'block' : 'none';
+  document.getElementById('webhookFields').style.display = mode === 'webhook' ? 'block' : 'none';
+}
+
+function toggleStrategy() {
+  var strategy = document.getElementById('strategy').value;
+  var snrFields = document.getElementById('snrFields');
+  var info = document.getElementById('strategyInfo');
+  snrFields.style.display = (strategy === 'snr' || strategy === 'combined') ? 'block' : 'none';
+  var descriptions = {
+    'top-tickers': 'Trades signals based on Reward:Risk ratio screening only. Fast, more signals, less filtering.',
+    'snr': 'Only trades when entry aligns with untouched supply/demand levels. Fewer signals, higher precision.',
+    'combined': 'Top Tickers candidates validated against untouched S/R levels. Best signal quality — recommended.'
+  };
+  info.textContent = descriptions[strategy] || '';
+}
+
+function testConnection() {
+  var result = document.getElementById('testResult');
+  result.className = 'test-result';
+  result.style.display = 'block';
+  result.textContent = 'Testing...';
+
+  fetch('/api/test-connection', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      account_id: document.querySelector('[name=oanda_account_id]').value,
+      api_key: document.getElementById('oandaKey').value,
+      environment: document.querySelector('[name=oanda_environment]').value
+    })
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.success) {
+      result.className = 'test-result success';
+      result.textContent = 'Connected — Balance: ' + data.currency + ' ' + parseFloat(data.balance).toLocaleString();
+    } else {
+      result.className = 'test-result error';
+      result.textContent = 'Connection failed: ' + data.error;
+    }
+  })
+  .catch(e => {
+    result.className = 'test-result error';
+    result.textContent = 'Error: ' + e.message;
+  });
+}
+
+toggleMode();
+toggleStrategy();
+</script>
+</body>
+</html>
