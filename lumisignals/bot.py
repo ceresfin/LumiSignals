@@ -12,6 +12,7 @@ from .order_manager import OrderManager
 from .signal_receiver import run_polling, create_webhook_app, run_mock
 from .snr_filter import SNRClient, get_relevant_timeframes, check_snr_confluence
 from .levels_strategy import LevelsStrategy
+from .signal_log import get_signal_log
 
 logger = logging.getLogger(__name__)
 
@@ -90,12 +91,26 @@ class LumiSignalsBot:
         self.snr_tolerance_pct = snr_cfg.get("tolerance_pct", 0.002)
         self.snr_market_type = snr_cfg.get("market_type", "forex")
 
-    def _handle_signal(self, sig):
-        """Callback for top-tickers strategy — execute directly."""
+    def _handle_signal(self, sig, extra_meta: dict = None):
+        """Callback — execute signal and log strategy metadata."""
         logger.info("Processing signal: %s %s", sig.action, sig.symbol)
         result = self.order_manager.execute_signal(sig)
         if result.success:
             logger.info("Order placed — ID: %s | %s", result.order_id, result.details)
+            # Log strategy metadata
+            log_entry = {
+                "strategy": self.strategy,
+                "action": sig.action,
+                "symbol": sig.symbol,
+                "entry": sig.entry,
+                "stop": sig.stop,
+                "target": sig.target,
+                "risk_reward": sig.risk_reward,
+                "timeframe": sig.timeframe,
+            }
+            if extra_meta:
+                log_entry.update(extra_meta)
+            get_signal_log().record(result.order_id, log_entry)
         else:
             logger.warning("Order failed — %s", result.error)
 
@@ -147,13 +162,20 @@ class LumiSignalsBot:
                         sig.action, sig.symbol, confluence["grade"], self.snr_min_grade)
             return
 
-        # Execute
-        result = self.order_manager.execute_signal(sig)
-        if result.success:
-            logger.info("Order placed — ID: %s | Grade: %s | %s",
-                        result.order_id, confluence["grade"], result.details)
-        else:
-            logger.warning("Order failed — %s", result.error)
+        # Execute — pass SNR metadata
+        snr_meta = {
+            "snr_grade": confluence["grade"],
+            "snr_summary": confluence["summary"],
+            "primary_matches": [
+                f"{m['timeframe']} {m['level_type']} @ {m['level_price']}"
+                for m in confluence["primary_matches"]
+            ],
+            "alert_matches": [
+                f"{m['timeframe']} {m['level_type']} @ {m['level_price']}"
+                for m in confluence["alert_matches"]
+            ],
+        }
+        self._handle_signal(sig, extra_meta=snr_meta)
 
     def start(self):
         """Start the bot."""

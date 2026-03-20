@@ -1,10 +1,11 @@
-"""Trade tracker — pulls trade data from Oanda and computes performance stats."""
+"""Trade tracker — pulls trade data from Oanda and merges with local signal metadata."""
 
 import logging
 from datetime import datetime, timezone
 from typing import Optional
 
 from .oanda_client import OandaClient
+from .signal_log import get_signal_log
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,29 @@ def _pip_value(instrument: str) -> float:
     if "JPY" in instrument:
         return 0.01
     return 0.0001
+
+
+def _enrich_with_signal_data(entry: dict, order_id: str) -> dict:
+    """Merge local signal log data into a trade/order entry."""
+    sig = get_signal_log().get(order_id)
+    if sig:
+        entry["strategy"] = sig.get("strategy", "")
+        entry["snr_grade"] = sig.get("snr_grade", "")
+        entry["snr_summary"] = sig.get("snr_summary", "")
+        entry["candle_score"] = sig.get("candle_score", "")
+        entry["candle_summary"] = sig.get("candle_summary", "")
+        entry["candle_details"] = sig.get("candle_details", [])
+        entry["level_type"] = sig.get("level_type", "")
+        entry["level_timeframe"] = sig.get("level_timeframe", "")
+        entry["level_price"] = sig.get("level_price", "")
+        entry["alert_matches"] = sig.get("alert_matches", [])
+        entry["primary_matches"] = sig.get("primary_matches", [])
+    else:
+        entry["strategy"] = ""
+        entry["snr_grade"] = ""
+        entry["candle_summary"] = ""
+        entry["candle_details"] = []
+    return entry
 
 
 def get_pending_orders(client: OandaClient) -> list:
@@ -50,7 +74,7 @@ def get_pending_orders(client: OandaClient) -> list:
             reward = abs(tp - entry)
             rr = round(reward / risk, 2) if risk > 0 else 0
 
-        result.append({
+        order_entry = {
             "id": order.get("id", ""),
             "instrument": instrument,
             "direction": direction,
@@ -62,7 +86,8 @@ def get_pending_orders(client: OandaClient) -> list:
             "type": order.get("type", ""),
             "time": _parse_oanda_time(order.get("createTime", "")),
             "status": "PENDING",
-        })
+        }
+        result.append(_enrich_with_signal_data(order_entry, order.get("id", "")))
 
     return result
 
@@ -92,7 +117,7 @@ def get_open_trades(client: OandaClient) -> list:
         current_price = entry + (unrealized_pl / abs(units)) if units != 0 else entry
         pips_pl = round((current_price - entry) / pip, 1) if direction == "BUY" else round((entry - current_price) / pip, 1)
 
-        result.append({
+        trade_entry = {
             "id": trade.get("id", ""),
             "instrument": instrument,
             "direction": direction,
@@ -105,7 +130,14 @@ def get_open_trades(client: OandaClient) -> list:
             "pips": pips_pl,
             "time_opened": _parse_oanda_time(trade.get("openTime", "")),
             "status": "OPEN",
-        })
+        }
+        # Try matching by trade ID or the order that opened it
+        open_id = trade.get("id", "")
+        opening_order = trade.get("openingTransactionID", open_id)
+        trade_entry = _enrich_with_signal_data(trade_entry, opening_order)
+        if not trade_entry.get("strategy"):
+            trade_entry = _enrich_with_signal_data(trade_entry, open_id)
+        result.append(trade_entry)
 
     return result
 
@@ -146,7 +178,7 @@ def get_closed_trades(client: OandaClient, count: int = 50) -> list:
         open_time = _parse_oanda_time(trade.get("openTime", ""))
         close_time = _parse_oanda_time(trade.get("closeTime", ""))
 
-        result.append({
+        trade_entry = {
             "id": trade.get("id", ""),
             "instrument": instrument,
             "direction": direction,
@@ -162,7 +194,12 @@ def get_closed_trades(client: OandaClient, count: int = 50) -> list:
             "time_closed": close_time,
             "status": "CLOSED",
             "won": realized_pl > 0,
-        })
+        }
+        opening_order = trade.get("openingTransactionID", trade.get("id", ""))
+        trade_entry = _enrich_with_signal_data(trade_entry, opening_order)
+        if not trade_entry.get("strategy"):
+            trade_entry = _enrich_with_signal_data(trade_entry, trade.get("id", ""))
+        result.append(trade_entry)
 
     return result
 

@@ -164,24 +164,37 @@ function loadTrades() {
       // Open trades
       document.getElementById('openCount').textContent = data.open.length;
       var openRows = data.open.map(function(t) {
+        var strat = t.strategy ? '<span class="badge badge-open">' + t.strategy + '</span>' : '—';
+        var sig = '';
+        if (t.snr_grade) sig = 'Grade ' + t.snr_grade;
+        if (t.candle_summary) sig = t.candle_summary;
+        if (t.candle_details && t.candle_details.length) {
+          sig = t.candle_details.map(function(c) { return c.timeframe + ': ' + c.pattern; }).join(' | ');
+        }
         return '<td>' + t.instrument + '</td>' +
           '<td class="dir-' + t.direction.toLowerCase() + '">' + t.direction + '</td>' +
           '<td>' + t.units.toLocaleString() + '</td>' +
           '<td>' + t.entry.toFixed(5) + '</td>' +
           '<td>' + t.current_price.toFixed(5) + '</td>' +
-          '<td>' + (t.stop_loss ? t.stop_loss.toFixed(5) : '—') + '</td>' +
-          '<td>' + (t.take_profit ? t.take_profit.toFixed(5) : '—') + '</td>' +
           '<td class="' + plClass(t.pips) + '">' + fmt(t.pips, 1) + '</td>' +
           '<td class="' + plClass(t.unrealized_pl) + '">$' + fmt(t.unrealized_pl) + '</td>' +
-          '<td>' + t.time_opened + '</td>';
+          '<td>' + strat + '</td>' +
+          '<td style="font-size:0.75rem;max-width:200px;">' + (sig || '—') + '</td>';
       });
       document.getElementById('openTable').innerHTML = buildTable(
-        ['Pair', 'Dir', 'Units', 'Entry', 'Current', 'SL', 'TP', 'Pips', 'P&L', 'Opened'], openRows
+        ['Pair', 'Dir', 'Units', 'Entry', 'Current', 'Pips', 'P&L', 'Strategy', 'Signal Details'], openRows
       );
 
       // Pending orders
       document.getElementById('pendingCount').textContent = data.pending.length;
       var pendingRows = data.pending.map(function(o) {
+        var strat = o.strategy ? '<span class="badge badge-pending">' + o.strategy + '</span>' : '—';
+        var sig = '';
+        if (o.snr_grade) sig = 'Grade ' + o.snr_grade;
+        if (o.candle_details && o.candle_details.length) {
+          sig = o.candle_details.map(function(c) { return c.timeframe + ': ' + c.pattern; }).join(' | ');
+        }
+        if (o.level_timeframe) sig = o.level_timeframe + ' ' + o.level_type + (sig ? ' | ' + sig : '');
         return '<td>' + o.instrument + '</td>' +
           '<td class="dir-' + o.direction.toLowerCase() + '">' + o.direction + '</td>' +
           '<td>' + o.units.toLocaleString() + '</td>' +
@@ -189,31 +202,37 @@ function loadTrades() {
           '<td>' + (o.stop_loss ? o.stop_loss.toFixed(5) : '—') + '</td>' +
           '<td>' + (o.take_profit ? o.take_profit.toFixed(5) : '—') + '</td>' +
           '<td>' + o.risk_reward + '</td>' +
-          '<td>' + o.type + '</td>' +
+          '<td>' + strat + '</td>' +
+          '<td style="font-size:0.75rem;max-width:200px;">' + (sig || '—') + '</td>' +
           '<td>' + o.time + '</td>';
       });
       document.getElementById('pendingTable').innerHTML = buildTable(
-        ['Pair', 'Dir', 'Units', 'Entry', 'SL', 'TP', 'R:R', 'Type', 'Created'], pendingRows
+        ['Pair', 'Dir', 'Units', 'Entry', 'SL', 'TP', 'R:R', 'Strategy', 'Signal Details', 'Created'], pendingRows
       );
 
       // Closed trades
       document.getElementById('closedCount').textContent = data.closed.length;
       var closedRows = data.closed.map(function(t) {
         var badge = t.won ? '<span class="badge badge-won">WIN</span>' : '<span class="badge badge-lost">LOSS</span>';
+        var strat = t.strategy ? '<span class="badge badge-closed">' + t.strategy + '</span>' : '—';
+        var sig = '';
+        if (t.snr_grade) sig = 'Grade ' + t.snr_grade;
+        if (t.candle_details && t.candle_details.length) {
+          sig = t.candle_details.map(function(c) { return c.timeframe + ': ' + c.pattern; }).join(' | ');
+        }
         return '<td>' + t.instrument + '</td>' +
           '<td class="dir-' + t.direction.toLowerCase() + '">' + t.direction + '</td>' +
-          '<td>' + t.units.toLocaleString() + '</td>' +
           '<td>' + t.entry.toFixed(5) + '</td>' +
           '<td>' + t.close_price.toFixed(5) + '</td>' +
           '<td class="' + plClass(t.pips) + '">' + fmt(t.pips, 1) + '</td>' +
           '<td class="' + plClass(t.realized_pl) + '">$' + fmt(t.realized_pl) + '</td>' +
           '<td>' + t.close_reason + '</td>' +
           '<td>' + badge + '</td>' +
-          '<td>' + t.time_opened + '</td>' +
-          '<td>' + t.time_closed + '</td>';
+          '<td>' + strat + '</td>' +
+          '<td style="font-size:0.75rem;max-width:200px;">' + (sig || '—') + '</td>';
       });
       document.getElementById('closedTable').innerHTML = buildTable(
-        ['Pair', 'Dir', 'Units', 'Entry', 'Close', 'Pips', 'P&L', 'Reason', 'Result', 'Opened', 'Closed'], closedRows
+        ['Pair', 'Dir', 'Entry', 'Close', 'Pips', 'P&L', 'Reason', 'Result', 'Strategy', 'Signal Details'], closedRows
       );
 
       // By pair

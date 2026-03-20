@@ -277,7 +277,28 @@ class LevelsStrategy:
             score, mtf_score["total"], pattern_str,
         )
 
-        # 8. Create signal
+        # 8. Build metadata for signal log
+        candle_details = []
+        for s in mtf_score["scores"]:
+            tf_name = {"1mo": "Monthly", "1w": "Weekly", "1d": "Daily"}.get(s.timeframe, s.timeframe)
+            candle_details.append({
+                "timeframe": tf_name,
+                "pattern": s.pattern,
+                "direction": s.direction,
+            })
+
+        levels_meta = {
+            "strategy": "levels",
+            "level_timeframe": tf_label,
+            "level_type": best_level["type"],
+            "level_price": best_level["level"],
+            "candle_score": f"{score}/{mtf_score['total']}",
+            "candle_details": candle_details,
+            "candle_summary": pattern_str,
+            "atr": atr,
+        }
+
+        # 9. Create signal and call handler
         signal = Signal(
             action=trade_dir,
             symbol=ticker,
@@ -289,7 +310,7 @@ class LevelsStrategy:
         )
 
         if self.on_signal:
-            self.on_signal(signal)
+            self.on_signal(signal, extra_meta=levels_meta)
 
     def scan_all(self, pairs: list = None):
         """Scan all major pairs for level-based setups."""
