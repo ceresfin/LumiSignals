@@ -203,7 +203,7 @@ function loadTrades() {
           parts.push(o.candle_details.map(function(c) { return c.timeframe + ': ' + c.pattern; }).join(', '));
         }
         if (o.candle_score) parts.push('Score: ' + o.candle_score);
-        if (o.trends) {
+        if (o.trends && Object.keys(o.trends).length > 0) {
           var trendParts = Object.entries(o.trends).map(function(t) {
             var color = t[1] === 'bullish' ? 'pl-pos' : 'pl-neg';
             return t[0] + ': <span class="' + color + '">' + t[1] + '</span>';
