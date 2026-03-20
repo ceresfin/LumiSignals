@@ -27,6 +27,38 @@ def _pip_value(instrument: str) -> float:
     return 0.0001
 
 
+def _estimate_usd_pl(instrument: str, units: int, entry: float, target_price: float) -> float:
+    """Estimate P&L in USD for a price move.
+
+    Simplified: assumes account currency is USD.
+    For XXX_USD pairs, P&L = units × (target - entry).
+    For USD_XXX pairs, P&L = units × (target - entry) / target.
+    For cross pairs, approximates using entry price.
+    """
+    if units == 0 or entry == 0:
+        return 0.0
+    distance = target_price - entry  # positive = price went up
+    parts = instrument.split("_")
+    if len(parts) != 2:
+        return round(abs(units) * abs(distance), 2)
+
+    base, quote = parts
+    if quote == "USD":
+        # EUR_USD, GBP_USD etc — P&L is directly in USD
+        return round(abs(units) * distance, 2)
+    elif base == "USD":
+        # USD_JPY, USD_CAD etc — P&L needs conversion
+        if target_price != 0:
+            return round(abs(units) * distance / target_price, 2)
+        return 0.0
+    else:
+        # Cross pairs (EUR_GBP, AUD_NZD) — rough approximation
+        # P&L in quote currency, divide by entry as rough USD estimate
+        if entry != 0:
+            return round(abs(units) * distance / entry, 2)
+        return 0.0
+
+
 def _enrich_with_signal_data(entry: dict, order_id: str) -> dict:
     """Merge local signal log data into a trade/order entry."""
     sig = get_signal_log().get(order_id)
@@ -74,6 +106,11 @@ def get_pending_orders(client: OandaClient) -> list:
             reward = abs(tp - entry)
             rr = round(reward / risk, 2) if risk > 0 else 0
 
+        # Calculate potential profit/loss in USD
+        sign = 1 if direction == "BUY" else -1
+        potential_profit = abs(_estimate_usd_pl(instrument, units, entry, tp)) if tp else 0
+        potential_loss = abs(_estimate_usd_pl(instrument, units, entry, sl)) if sl else 0
+
         order_entry = {
             "id": order.get("id", ""),
             "instrument": instrument,
@@ -83,6 +120,8 @@ def get_pending_orders(client: OandaClient) -> list:
             "stop_loss": sl,
             "take_profit": tp,
             "risk_reward": rr,
+            "potential_profit": round(potential_profit, 2),
+            "potential_loss": round(potential_loss, 2),
             "type": order.get("type", ""),
             "time": _parse_oanda_time(order.get("createTime", "")),
             "status": "PENDING",
@@ -117,6 +156,10 @@ def get_open_trades(client: OandaClient) -> list:
         current_price = entry + (unrealized_pl / abs(units)) if units != 0 else entry
         pips_pl = round((current_price - entry) / pip, 1) if direction == "BUY" else round((entry - current_price) / pip, 1)
 
+        # Potential profit/loss from current price to TP/SL
+        potential_profit = abs(_estimate_usd_pl(instrument, abs(units), current_price, tp)) if tp else 0
+        potential_loss = abs(_estimate_usd_pl(instrument, abs(units), current_price, sl)) if sl else 0
+
         trade_entry = {
             "id": trade.get("id", ""),
             "instrument": instrument,
@@ -128,6 +171,8 @@ def get_open_trades(client: OandaClient) -> list:
             "take_profit": tp,
             "unrealized_pl": round(unrealized_pl, 2),
             "pips": pips_pl,
+            "potential_profit": round(potential_profit, 2),
+            "potential_loss": round(potential_loss, 2),
             "time_opened": _parse_oanda_time(trade.get("openTime", "")),
             "status": "OPEN",
         }
@@ -178,6 +223,16 @@ def get_closed_trades(client: OandaClient, count: int = 50) -> list:
         open_time = _parse_oanda_time(trade.get("openTime", ""))
         close_time = _parse_oanda_time(trade.get("closeTime", ""))
 
+        # Get planned SL/TP from signal log if available
+        opening_order = trade.get("openingTransactionID", trade.get("id", ""))
+        sig = get_signal_log().get(opening_order) or get_signal_log().get(trade.get("id", ""))
+        planned_sl = sig.get("stop", 0) if sig else 0
+        planned_tp = sig.get("target", 0) if sig else 0
+
+        # Planned potential profit/loss (what was expected at entry)
+        planned_profit = abs(_estimate_usd_pl(instrument, abs(units), entry, planned_tp)) if planned_tp else 0
+        planned_loss = abs(_estimate_usd_pl(instrument, abs(units), entry, planned_sl)) if planned_sl else 0
+
         trade_entry = {
             "id": trade.get("id", ""),
             "instrument": instrument,
@@ -185,17 +240,18 @@ def get_closed_trades(client: OandaClient, count: int = 50) -> list:
             "units": abs(units),
             "entry": entry,
             "close_price": close_price,
-            "stop_loss": 0,
-            "take_profit": 0,
+            "stop_loss": planned_sl,
+            "take_profit": planned_tp,
             "realized_pl": round(realized_pl, 2),
             "pips": pips,
+            "planned_profit": round(planned_profit, 2),
+            "planned_loss": round(planned_loss, 2),
             "close_reason": close_reason,
             "time_opened": open_time,
             "time_closed": close_time,
             "status": "CLOSED",
             "won": realized_pl > 0,
         }
-        opening_order = trade.get("openingTransactionID", trade.get("id", ""))
         trade_entry = _enrich_with_signal_data(trade_entry, opening_order)
         if not trade_entry.get("strategy"):
             trade_entry = _enrich_with_signal_data(trade_entry, trade.get("id", ""))

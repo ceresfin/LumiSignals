@@ -167,22 +167,22 @@ function loadTrades() {
         var strat = t.strategy ? '<span class="badge badge-open">' + t.strategy + '</span>' : '—';
         var sig = '';
         if (t.snr_grade) sig = 'Grade ' + t.snr_grade;
-        if (t.candle_summary) sig = t.candle_summary;
         if (t.candle_details && t.candle_details.length) {
           sig = t.candle_details.map(function(c) { return c.timeframe + ': ' + c.pattern; }).join(' | ');
         }
         return '<td>' + t.instrument + '</td>' +
           '<td class="dir-' + t.direction.toLowerCase() + '">' + t.direction + '</td>' +
-          '<td>' + t.units.toLocaleString() + '</td>' +
           '<td>' + t.entry.toFixed(5) + '</td>' +
           '<td>' + t.current_price.toFixed(5) + '</td>' +
           '<td class="' + plClass(t.pips) + '">' + fmt(t.pips, 1) + '</td>' +
           '<td class="' + plClass(t.unrealized_pl) + '">$' + fmt(t.unrealized_pl) + '</td>' +
+          '<td class="pl-pos">$' + t.potential_profit.toFixed(2) + '</td>' +
+          '<td class="pl-neg">-$' + t.potential_loss.toFixed(2) + '</td>' +
           '<td>' + strat + '</td>' +
           '<td style="font-size:0.75rem;max-width:200px;">' + (sig || '—') + '</td>';
       });
       document.getElementById('openTable').innerHTML = buildTable(
-        ['Pair', 'Dir', 'Units', 'Entry', 'Current', 'Pips', 'P&L', 'Strategy', 'Signal Details'], openRows
+        ['Pair', 'Dir', 'Entry', 'Current', 'Pips', 'P&L', 'Pot. Profit', 'Pot. Loss', 'Strategy', 'Signal Details'], openRows
       );
 
       // Pending orders
@@ -202,12 +202,13 @@ function loadTrades() {
           '<td>' + (o.stop_loss ? o.stop_loss.toFixed(5) : '—') + '</td>' +
           '<td>' + (o.take_profit ? o.take_profit.toFixed(5) : '—') + '</td>' +
           '<td>' + o.risk_reward + '</td>' +
+          '<td class="pl-pos">$' + o.potential_profit.toFixed(2) + '</td>' +
+          '<td class="pl-neg">-$' + o.potential_loss.toFixed(2) + '</td>' +
           '<td>' + strat + '</td>' +
-          '<td style="font-size:0.75rem;max-width:200px;">' + (sig || '—') + '</td>' +
-          '<td>' + o.time + '</td>';
+          '<td style="font-size:0.75rem;max-width:200px;">' + (sig || '—') + '</td>';
       });
       document.getElementById('pendingTable').innerHTML = buildTable(
-        ['Pair', 'Dir', 'Units', 'Entry', 'SL', 'TP', 'R:R', 'Strategy', 'Signal Details', 'Created'], pendingRows
+        ['Pair', 'Dir', 'Units', 'Entry', 'SL', 'TP', 'R:R', 'Pot. Profit', 'Pot. Loss', 'Strategy', 'Signal Details'], pendingRows
       );
 
       // Closed trades
@@ -220,19 +221,22 @@ function loadTrades() {
         if (t.candle_details && t.candle_details.length) {
           sig = t.candle_details.map(function(c) { return c.timeframe + ': ' + c.pattern; }).join(' | ');
         }
+        var pp = t.planned_profit ? '$' + t.planned_profit.toFixed(2) : '—';
+        var pl = t.planned_loss ? '-$' + t.planned_loss.toFixed(2) : '—';
         return '<td>' + t.instrument + '</td>' +
           '<td class="dir-' + t.direction.toLowerCase() + '">' + t.direction + '</td>' +
           '<td>' + t.entry.toFixed(5) + '</td>' +
           '<td>' + t.close_price.toFixed(5) + '</td>' +
           '<td class="' + plClass(t.pips) + '">' + fmt(t.pips, 1) + '</td>' +
           '<td class="' + plClass(t.realized_pl) + '">$' + fmt(t.realized_pl) + '</td>' +
+          '<td class="pl-pos">' + pp + '</td>' +
+          '<td class="pl-neg">' + pl + '</td>' +
           '<td>' + t.close_reason + '</td>' +
           '<td>' + badge + '</td>' +
-          '<td>' + strat + '</td>' +
-          '<td style="font-size:0.75rem;max-width:200px;">' + (sig || '—') + '</td>';
+          '<td>' + strat + '</td>';
       });
       document.getElementById('closedTable').innerHTML = buildTable(
-        ['Pair', 'Dir', 'Entry', 'Close', 'Pips', 'P&L', 'Reason', 'Result', 'Strategy', 'Signal Details'], closedRows
+        ['Pair', 'Dir', 'Entry', 'Close', 'Pips', 'Actual P&L', 'Planned Profit', 'Planned Loss', 'Reason', 'Result', 'Strategy'], closedRows
       );
 
       // By pair
