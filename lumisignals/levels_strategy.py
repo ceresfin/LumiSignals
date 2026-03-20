@@ -72,6 +72,8 @@ class LevelsStrategy:
         self.on_signal = on_signal
         self.session = requests.Session()
         self.session.headers["Authorization"] = f"Bearer {api_key}"
+        # Track placed orders to avoid duplicates: set of "INSTRUMENT:TIMEFRAME:TYPE:LEVEL"
+        self._placed_setups = set()
 
     def _get_current_price(self, instrument: str) -> Optional[float]:
         """Get mid price for an instrument."""
@@ -191,6 +193,12 @@ class LevelsStrategy:
         best_level = near_levels[0]
 
         tf_label = {"1mo": "Monthly", "1w": "Weekly", "1d": "Daily"}.get(best_level["timeframe"], best_level["timeframe"])
+
+        # Dedup: skip if we already placed an order for this instrument at this level
+        setup_key = f"{instrument}:{best_level['timeframe']}:{best_level['type']}:{best_level['level']:.5f}"
+        if setup_key in self._placed_setups:
+            return
+
         logger.info(
             "LEVEL: %s price %.5f near untouched %s %s @ %.5f (%.1f pips away)",
             instrument, price, tf_label, best_level["type"], best_level["level"],
@@ -317,6 +325,9 @@ class LevelsStrategy:
 
         if self.on_signal:
             self.on_signal(signal, extra_meta=levels_meta)
+            # Mark this setup as placed so we don't duplicate
+            self._placed_setups.add(setup_key)
+            logger.debug("Marked setup as placed: %s", setup_key)
 
     def scan_all(self, pairs: list = None):
         """Scan all major pairs for level-based setups."""
