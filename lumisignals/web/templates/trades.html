@@ -115,6 +115,12 @@ tr:hover { background: rgba(0,0,0,0.015); }
     <div id="closedTable"><div class="loading">Loading...</div></div>
   </div>
 
+  <!-- By Strategy -->
+  <div class="card">
+    <h2>Performance by Strategy</h2>
+    <div id="strategyStats" class="pair-stats"><div class="loading">Loading...</div></div>
+  </div>
+
   <!-- By Pair -->
   <div class="card">
     <h2>Performance by Pair</h2>
@@ -174,6 +180,7 @@ function loadTrades() {
           '<td class="dir-' + t.direction.toLowerCase() + '">' + t.direction + '</td>' +
           '<td>' + t.entry.toFixed(5) + '</td>' +
           '<td>' + t.current_price.toFixed(5) + '</td>' +
+          '<td>' + (t.risk_reward || '—') + '</td>' +
           '<td class="' + plClass(t.pips) + '">' + fmt(t.pips, 1) + '</td>' +
           '<td class="' + plClass(t.unrealized_pl) + '">$' + fmt(t.unrealized_pl) + '</td>' +
           '<td class="pl-pos">$' + t.potential_profit.toFixed(2) + '</td>' +
@@ -182,7 +189,7 @@ function loadTrades() {
           '<td style="font-size:0.75rem;max-width:200px;">' + (sig || '—') + '</td>';
       });
       document.getElementById('openTable').innerHTML = buildTable(
-        ['Pair', 'Dir', 'Entry', 'Current', 'Pips', 'P&L', 'Pot. Profit', 'Pot. Loss', 'Strategy', 'Signal Details'], openRows
+        ['Pair', 'Dir', 'Entry', 'Current', 'R:R', 'Pips', 'P&L', 'Pot. Profit', 'Pot. Loss', 'Strategy', 'Signal Details'], openRows
       );
 
       // Pending orders
@@ -223,10 +230,15 @@ function loadTrades() {
         }
         var pp = t.planned_profit ? '$' + t.planned_profit.toFixed(2) : '—';
         var pl = t.planned_loss ? '-$' + t.planned_loss.toFixed(2) : '—';
+        var prr = t.planned_rr ? t.planned_rr.toFixed(1) : '—';
+        var arr = t.achieved_rr ? fmt(t.achieved_rr, 1) : '—';
+        var arrClass = t.achieved_rr > 0 ? 'pl-pos' : (t.achieved_rr < 0 ? 'pl-neg' : '');
         return '<td>' + t.instrument + '</td>' +
           '<td class="dir-' + t.direction.toLowerCase() + '">' + t.direction + '</td>' +
           '<td>' + t.entry.toFixed(5) + '</td>' +
           '<td>' + t.close_price.toFixed(5) + '</td>' +
+          '<td>' + prr + '</td>' +
+          '<td class="' + arrClass + '">' + arr + '</td>' +
           '<td class="' + plClass(t.pips) + '">' + fmt(t.pips, 1) + '</td>' +
           '<td class="' + plClass(t.realized_pl) + '">$' + fmt(t.realized_pl) + '</td>' +
           '<td class="pl-pos">' + pp + '</td>' +
@@ -236,7 +248,7 @@ function loadTrades() {
           '<td>' + strat + '</td>';
       });
       document.getElementById('closedTable').innerHTML = buildTable(
-        ['Pair', 'Dir', 'Entry', 'Close', 'Pips', 'Actual P&L', 'Planned Profit', 'Planned Loss', 'Reason', 'Result', 'Strategy'], closedRows
+        ['Pair', 'Dir', 'Entry', 'Close', 'Plan R:R', 'Got R:R', 'Pips', 'Actual P&L', 'Plan Profit', 'Plan Loss', 'Reason', 'Result', 'Strategy'], closedRows
       );
 
       // By pair
@@ -256,6 +268,25 @@ function loadTrades() {
         document.getElementById('pairStats').innerHTML = pairHtml;
       } else {
         document.getElementById('pairStats').innerHTML = '<div style="text-align:center;padding:20px;color:#8a847e;">No closed trades yet</div>';
+      }
+
+      // By strategy
+      var strategies = Object.entries(s.by_strategy || {}).sort(function(a, b) { return b[1].pl - a[1].pl; });
+      if (strategies.length) {
+        var stratHtml = strategies.map(function(p) {
+          var name = p[0], d = p[1];
+          return '<div class="pair-stat">' +
+            '<div class="pair-name">' + name + '</div>' +
+            '<div class="pair-detail">Trades: ' + d.trades + ' (W/L: ' + d.wins + '/' + d.losses + ')</div>' +
+            '<div class="pair-detail">Win Rate: ' + d.win_rate + '%</div>' +
+            '<div class="pair-detail ' + plClass(d.pl) + '">P&L: $' + fmt(d.pl) + '</div>' +
+            '<div class="pair-detail ' + plClass(d.pips) + '">Pips: ' + fmt(d.pips, 1) + '</div>' +
+            '<div class="pair-detail">Avg R:R: ' + (d.avg_rr || '—') + '</div>' +
+            '</div>';
+        }).join('');
+        document.getElementById('strategyStats').innerHTML = stratHtml;
+      } else {
+        document.getElementById('strategyStats').innerHTML = '<div style="text-align:center;padding:20px;color:#8a847e;">No strategy data yet</div>';
       }
     })
     .catch(function(e) {

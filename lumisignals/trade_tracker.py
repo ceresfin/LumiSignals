@@ -160,6 +160,13 @@ def get_open_trades(client: OandaClient) -> list:
         potential_profit = abs(_estimate_usd_pl(instrument, abs(units), current_price, tp)) if tp else 0
         potential_loss = abs(_estimate_usd_pl(instrument, abs(units), current_price, sl)) if sl else 0
 
+        # Planned R:R from entry
+        rr = 0
+        if sl and tp and entry:
+            risk = abs(entry - sl)
+            reward = abs(tp - entry)
+            rr = round(reward / risk, 2) if risk > 0 else 0
+
         trade_entry = {
             "id": trade.get("id", ""),
             "instrument": instrument,
@@ -169,6 +176,7 @@ def get_open_trades(client: OandaClient) -> list:
             "current_price": round(current_price, 5),
             "stop_loss": sl,
             "take_profit": tp,
+            "risk_reward": rr,
             "unrealized_pl": round(unrealized_pl, 2),
             "pips": pips_pl,
             "potential_profit": round(potential_profit, 2),
@@ -233,6 +241,25 @@ def get_closed_trades(client: OandaClient, count: int = 50) -> list:
         planned_profit = abs(_estimate_usd_pl(instrument, abs(units), entry, planned_tp)) if planned_tp else 0
         planned_loss = abs(_estimate_usd_pl(instrument, abs(units), entry, planned_sl)) if planned_sl else 0
 
+        # Planned R:R from signal log
+        planned_rr = 0
+        if planned_sl and planned_tp and entry:
+            risk = abs(entry - planned_sl)
+            reward = abs(planned_tp - entry)
+            planned_rr = round(reward / risk, 2) if risk > 0 else 0
+        elif sig and sig.get("risk_reward"):
+            planned_rr = round(float(sig["risk_reward"]), 2)
+
+        # Achieved R:R (actual result vs planned risk)
+        achieved_rr = 0
+        if planned_sl and entry:
+            planned_risk = abs(entry - planned_sl)
+            actual_move = abs(close_price - entry)
+            if planned_risk > 0:
+                achieved_rr = round(actual_move / planned_risk, 2)
+                if realized_pl < 0:
+                    achieved_rr = -achieved_rr
+
         trade_entry = {
             "id": trade.get("id", ""),
             "instrument": instrument,
@@ -244,6 +271,8 @@ def get_closed_trades(client: OandaClient, count: int = 50) -> list:
             "take_profit": planned_tp,
             "realized_pl": round(realized_pl, 2),
             "pips": pips,
+            "planned_rr": planned_rr,
+            "achieved_rr": achieved_rr,
             "planned_profit": round(planned_profit, 2),
             "planned_loss": round(planned_loss, 2),
             "close_reason": close_reason,
@@ -314,6 +343,35 @@ def get_performance_stats(closed_trades: list) -> dict:
         else:
             by_direction[d]["losses"] += 1
 
+    # Average R:R
+    rr_values = [t["achieved_rr"] for t in closed_trades if t.get("achieved_rr")]
+    avg_rr = round(sum(rr_values) / len(rr_values), 2) if rr_values else 0
+    avg_planned_rr_values = [t["planned_rr"] for t in closed_trades if t.get("planned_rr")]
+    avg_planned_rr = round(sum(avg_planned_rr_values) / len(avg_planned_rr_values), 2) if avg_planned_rr_values else 0
+
+    # By strategy
+    by_strategy = {}
+    for t in closed_trades:
+        strat = t.get("strategy") or "unknown"
+        if strat not in by_strategy:
+            by_strategy[strat] = {"wins": 0, "losses": 0, "pl": 0, "pips": 0, "trades": 0, "rr_sum": 0, "rr_count": 0}
+        by_strategy[strat]["trades"] += 1
+        by_strategy[strat]["pl"] += t["realized_pl"]
+        by_strategy[strat]["pips"] += t["pips"]
+        if t.get("achieved_rr"):
+            by_strategy[strat]["rr_sum"] += t["achieved_rr"]
+            by_strategy[strat]["rr_count"] += 1
+        if t["realized_pl"] > 0:
+            by_strategy[strat]["wins"] += 1
+        else:
+            by_strategy[strat]["losses"] += 1
+    # Calculate averages
+    for strat, data in by_strategy.items():
+        data["win_rate"] = round(data["wins"] / data["trades"] * 100, 1) if data["trades"] else 0
+        data["avg_rr"] = round(data["rr_sum"] / data["rr_count"], 2) if data["rr_count"] else 0
+        data["pl"] = round(data["pl"], 2)
+        data["pips"] = round(data["pips"], 1)
+
     return {
         "total_trades": len(closed_trades),
         "wins": len(wins),
@@ -323,8 +381,11 @@ def get_performance_stats(closed_trades: list) -> dict:
         "total_pips": round(total_pips, 1),
         "avg_win": round(avg_win, 2),
         "avg_loss": round(avg_loss, 2),
+        "avg_planned_rr": avg_planned_rr,
+        "avg_achieved_rr": avg_rr,
         "best_trade": best,
         "worst_trade": worst,
         "by_pair": by_pair,
         "by_direction": by_direction,
+        "by_strategy": by_strategy,
     }
