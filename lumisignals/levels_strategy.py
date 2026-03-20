@@ -152,26 +152,32 @@ class LevelsStrategy:
             return
 
         # 3. Check if price is near any untouched level
-        tolerance = price * self.tolerance_pct
+        # Scale tolerance by timeframe — higher TFs represent bigger zones
+        tolerance_multiplier = {
+            "1mo": 3.0,   # Monthly: 3x base tolerance (e.g. 0.9%)
+            "1w": 2.0,    # Weekly: 2x base tolerance (e.g. 0.6%)
+            "1d": 1.0,    # Daily: base tolerance (e.g. 0.3%)
+        }
         near_levels = []
 
         for tf in ["1mo", "1w", "1d"]:
             levels = snr_data.get(tf, {})
             support = levels.get("support_price")
             resistance = levels.get("resistance_price")
+            tf_tolerance = price * self.tolerance_pct * tolerance_multiplier.get(tf, 1.0)
 
-            if support and abs(price - support) <= tolerance:
+            if support and abs(price - support) <= tf_tolerance:
                 near_levels.append({
                     "timeframe": tf,
-                    "type": "support",
+                    "type": "demand",
                     "level": support,
                     "distance": abs(price - support),
                     "trade_direction": "BUY",
                 })
-            if resistance and abs(price - resistance) <= tolerance:
+            if resistance and abs(price - resistance) <= tf_tolerance:
                 near_levels.append({
                     "timeframe": tf,
-                    "type": "resistance",
+                    "type": "supply",
                     "level": resistance,
                     "distance": abs(price - resistance),
                     "trade_direction": "SELL",
@@ -230,14 +236,14 @@ class LevelsStrategy:
 
         if trade_dir == "BUY":
             stop = entry - stop_distance
-            # Target: next resistance level, or 2x ATR
+            # Target: next supply level above, or 2x ATR
             target = None
             for lvl in near_levels:
-                if lvl["type"] == "resistance" and lvl["level"] > entry:
+                if lvl["type"] == "supply" and lvl["level"] > entry:
                     target = lvl["level"]
                     break
             if target is None:
-                # Check all timeframes for a resistance above entry
+                # Check all timeframes for a supply level above entry
                 for tf in ["1d", "1w", "1mo"]:
                     r = snr_data.get(tf, {}).get("resistance_price")
                     if r and r > entry + stop_distance:
@@ -249,7 +255,7 @@ class LevelsStrategy:
             stop = entry + stop_distance
             target = None
             for lvl in near_levels:
-                if lvl["type"] == "support" and lvl["level"] < entry:
+                if lvl["type"] == "demand" and lvl["level"] < entry:
                     target = lvl["level"]
                     break
             if target is None:
