@@ -89,50 +89,67 @@ class LevelsStrategy:
         return None
 
     def _get_candles(self, instrument: str) -> tuple:
-        """Fetch current and previous candles for monthly, weekly, daily.
+        """Fetch last CLOSED candles for monthly, weekly, daily.
+
+        Uses the last completed candle (not the current in-progress one)
+        because the current candle hasn't finished forming and its
+        direction/pattern can change.
 
         Returns:
-            (current_candles, prev_candles) dicts keyed by timeframe.
+            (last_closed_candles, prev_candles) dicts keyed by timeframe.
         """
-        current = {}
+        last_closed = {}
         previous = {}
 
         for tf, gran in [("1mo", "M"), ("1w", "W"), ("1d", "D")]:
             try:
-                candles = self.oanda.get_candles(instrument, granularity=gran, count=2)
-                if len(candles) >= 2:
-                    prev = _oanda_candle_to_data(candles[0])
-                    curr = _oanda_candle_to_data(candles[1])
+                # Fetch 3 candles: prev_closed, last_closed, current_incomplete
+                candles = self.oanda.get_candles(instrument, granularity=gran, count=3)
+
+                # Find the last two COMPLETED candles
+                completed = [c for c in candles if c.get("complete", False)]
+                if len(completed) >= 2:
+                    prev = _oanda_candle_to_data(completed[-2])
+                    curr = _oanda_candle_to_data(completed[-1])
                     if curr:
-                        current[tf] = curr
+                        last_closed[tf] = curr
                     if prev:
                         previous[tf] = prev
-                elif len(candles) == 1:
-                    curr = _oanda_candle_to_data(candles[0])
+                elif len(completed) == 1:
+                    curr = _oanda_candle_to_data(completed[0])
                     if curr:
-                        current[tf] = curr
+                        last_closed[tf] = curr
             except Exception as e:
                 logger.debug("Could not get %s candles for %s: %s", tf, instrument, e)
 
-        return current, previous
+        return last_closed, previous
 
-    def _get_atr(self, ticker: str) -> Optional[float]:
-        """Get ATR from Trade Builder API for the daily timeframe."""
+    def _get_trade_builder_data(self, ticker: str) -> dict:
+        """Get ATR and trend direction from Trade Builder API across timeframes."""
+        result = {"atr": None, "trends": {}}
         try:
             resp = self.session.get(
                 f"{self.trade_builder_url}/partners/technical-analysis/trade-builder-setup",
-                params={"ticker": ticker, "period": 14, "market": "forex", "frequency": "daily"},
+                params={"ticker": ticker, "period": 14, "market": "forex",
+                        "frequency": "daily,weekly,monthly"},
                 timeout=30,
             )
             resp.raise_for_status()
             data = resp.json().get("data", resp.json())
-            daily = data.get("daily", {})
-            atr = daily.get("atr_value")
-            if atr:
-                return float(atr)
+
+            for tf_key, tf_label in [("daily", "Daily"), ("weekly", "Weekly"), ("monthly", "Monthly")]:
+                tf_data = data.get(tf_key, {})
+                position = tf_data.get("position", "")
+                if position:
+                    result["trends"][tf_label] = "bullish" if position == "positive" else "bearish"
+
+                # Use daily ATR for stop calculation
+                if tf_key == "daily" and tf_data.get("atr_value"):
+                    result["atr"] = float(tf_data["atr_value"])
+
         except Exception as e:
-            logger.debug("Could not get ATR for %s: %s", ticker, e)
-        return None
+            logger.debug("Could not get Trade Builder data for %s: %s", ticker, e)
+        return result
 
     def scan_pair(self, instrument: str):
         """Scan a single pair for level-based trade setups."""
@@ -232,11 +249,33 @@ class LevelsStrategy:
             )
             return
 
-        # 6. Get ATR for stop calculation
-        atr = self._get_atr(ticker)
+        # 6. Get ATR and trend direction from Trade Builder
+        tb_data = self._get_trade_builder_data(ticker)
+        atr = tb_data["atr"]
+        trends = tb_data["trends"]
+
         if atr is None or atr == 0:
             logger.warning("No ATR for %s — cannot set stop", instrument)
             return
+
+        # Log trend direction
+        if trends:
+            trend_str = " | ".join(f"{tf}: {d}" for tf, d in trends.items())
+            logger.info("TREND: %s — %s", instrument, trend_str)
+
+            # Check if Trade Builder trend conflicts with trade direction
+            # Count how many timeframes agree with the proposed trade
+            if trade_dir == "BUY":
+                trend_agrees = sum(1 for d in trends.values() if d == "bullish")
+            else:
+                trend_agrees = sum(1 for d in trends.values() if d == "bearish")
+
+            if trend_agrees == 0:
+                logger.info(
+                    "SKIP: %s %s — Trade Builder trend disagrees on ALL timeframes (%s)",
+                    trade_dir, instrument, trend_str,
+                )
+                return
 
         # 7. Build the trade
         entry = best_level["level"]
@@ -309,6 +348,7 @@ class LevelsStrategy:
             "candle_score": f"{score}/{mtf_score['total']}",
             "candle_details": candle_details,
             "candle_summary": pattern_str,
+            "trends": trends,
             "atr": atr,
         }
 

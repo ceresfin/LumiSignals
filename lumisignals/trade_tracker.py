@@ -74,6 +74,7 @@ def _enrich_with_signal_data(entry: dict, order_id: str) -> dict:
         entry["level_price"] = sig.get("level_price", "")
         entry["alert_matches"] = sig.get("alert_matches", [])
         entry["primary_matches"] = sig.get("primary_matches", [])
+        entry["trends"] = sig.get("trends", {})
     else:
         entry["strategy"] = ""
         entry["snr_grade"] = ""
