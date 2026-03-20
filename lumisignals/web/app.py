@@ -13,6 +13,7 @@ from flask import Flask, render_template, request, jsonify, redirect, url_for
 
 from ..bot import LumiSignalsBot, load_config
 from ..oanda_client import OandaClient
+from ..trade_tracker import get_pending_orders, get_open_trades, get_closed_trades, get_performance_stats
 from ..snr_filter import get_relevant_timeframes
 
 logger = logging.getLogger(__name__)
@@ -235,5 +236,41 @@ def create_web_app():
     def logs():
         since = int(request.args.get("since", 0))
         return jsonify(state["log_entries"][since:])
+
+    def _get_oanda_client():
+        """Get an OandaClient from current config."""
+        config = _get_config()
+        if not config or "oanda" not in config:
+            return None
+        oanda_cfg = config["oanda"]
+        return OandaClient(
+            account_id=oanda_cfg["account_id"],
+            api_key=oanda_cfg["api_key"],
+            environment=oanda_cfg.get("environment", "practice"),
+        )
+
+    @app.route("/trades")
+    def trades_page():
+        if not _has_config():
+            return redirect(url_for("setup"))
+        return render_template("trades.html", config=_get_config())
+
+    @app.route("/api/trades")
+    def api_trades():
+        client = _get_oanda_client()
+        if not client:
+            return jsonify({"error": "No Oanda config"}), 400
+
+        pending = get_pending_orders(client)
+        open_trades = get_open_trades(client)
+        closed = get_closed_trades(client, count=50)
+        stats = get_performance_stats(closed)
+
+        return jsonify({
+            "pending": pending,
+            "open": open_trades,
+            "closed": closed,
+            "stats": stats,
+        })
 
     return app

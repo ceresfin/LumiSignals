@@ -147,6 +147,29 @@ class OandaClient:
         """Get all open positions."""
         return self._request("GET", f"/v3/accounts/{self.account_id}/openPositions")
 
+    def get_orders(self) -> dict:
+        """Get all pending orders."""
+        return self._request("GET", f"/v3/accounts/{self.account_id}/pendingOrders")
+
+    def get_trades(self, state: str = "ALL", count: int = 50) -> dict:
+        """Get trades. state: OPEN, CLOSED, ALL."""
+        return self._request("GET", f"/v3/accounts/{self.account_id}/trades?state={state}&count={count}")
+
+    def get_trade(self, trade_id: str) -> dict:
+        """Get a specific trade by ID."""
+        return self._request("GET", f"/v3/accounts/{self.account_id}/trades/{trade_id}")
+
+    def get_transactions(self, page_size: int = 100, type_filter: str = "") -> dict:
+        """Get recent transactions. type_filter e.g. 'ORDER_FILL,STOP_LOSS_ORDER'."""
+        url = f"/v3/accounts/{self.account_id}/transactions?pageSize={page_size}"
+        if type_filter:
+            url += f"&type={type_filter}"
+        return self._request("GET", url)
+
+    def get_transactions_since(self, since_id: str) -> dict:
+        """Get transactions since a given transaction ID."""
+        return self._request("GET", f"/v3/accounts/{self.account_id}/transactions/sinceid?id={since_id}")
+
     def close_position(self, instrument: str) -> dict:
         """Close all positions for an instrument."""
         return self._request(

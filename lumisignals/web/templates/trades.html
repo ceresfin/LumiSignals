@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LumiSignals — Trade Log</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600&family=Inter:wght@300;400;500;600&family=Open+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --olive: #7F8464; --olive-light: #9C9C78; --cream: #F5F3EE;
+  --dark: #2E2E2C; --text-dark: #2E2E2C; --text-medium: #56665F;
+  --text-light: #8a847e; --white: #ffffff; --sage-bg: #D9DDD2;
+  --red: #c0392b; --green: #27ae60; --blue: #2980b9;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Inter', sans-serif; background: var(--cream); color: var(--text-dark); min-height: 100vh; }
+
+.header { background: linear-gradient(165deg, #C4B99A 0%, #B8A88C 40%, #A89878 100%); padding: 16px 0; }
+.header-inner { max-width: 1200px; margin: 0 auto; padding: 0 24px; display: flex; justify-content: space-between; align-items: center; }
+.header h1 { font-family: 'Playfair Display', serif; font-size: 1.4rem; font-weight: 400; }
+.header-nav { display: flex; gap: 16px; align-items: center; }
+.header-nav a { font-family: 'Open Sans', sans-serif; font-size: 0.85rem; color: var(--text-dark); padding: 8px 16px; border-radius: 50px; transition: 0.3s; }
+.header-nav a:hover { background: rgba(0,0,0,0.05); }
+.header-nav a.active { background: var(--olive); color: #FFF5E1; }
+a { text-decoration: none; color: inherit; }
+
+.container { max-width: 1200px; margin: 0 auto; padding: 24px; }
+
+.stats-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin-bottom: 24px; }
+.stat-card { background: var(--white); border-radius: 12px; padding: 16px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
+.stat-value { font-family: 'Playfair Display', serif; font-size: 1.6rem; color: var(--text-dark); }
+.stat-value.positive { color: var(--green); }
+.stat-value.negative { color: var(--red); }
+.stat-label { font-size: 0.72rem; color: var(--text-light); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 4px; }
+
+.card { background: var(--white); border-radius: 12px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); margin-bottom: 20px; }
+.card h2 { font-family: 'Playfair Display', serif; font-size: 1.1rem; font-weight: 400; margin-bottom: 16px; padding-bottom: 10px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; }
+.card h2 .count { font-family: 'Inter', sans-serif; font-size: 0.8rem; color: var(--text-light); background: var(--cream); padding: 2px 10px; border-radius: 50px; }
+
+table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+th { text-align: left; font-weight: 500; color: var(--text-light); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.5px; padding: 8px 10px; border-bottom: 2px solid #eee; }
+td { padding: 10px; border-bottom: 1px solid #f5f5f5; }
+tr:hover { background: rgba(0,0,0,0.015); }
+
+.dir-buy { color: var(--green); font-weight: 600; }
+.dir-sell { color: var(--red); font-weight: 600; }
+.pl-pos { color: var(--green); font-weight: 500; }
+.pl-neg { color: var(--red); font-weight: 500; }
+
+.badge { display: inline-block; padding: 3px 10px; border-radius: 50px; font-size: 0.7rem; font-weight: 600; }
+.badge-pending { background: #fff3e0; color: #e67e22; }
+.badge-open { background: #e8f5e9; color: var(--green); }
+.badge-closed { background: #f0f0f0; color: var(--text-light); }
+.badge-won { background: #e8f5e9; color: var(--green); }
+.badge-lost { background: #fdecea; color: var(--red); }
+
+.pair-stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+.pair-stat { background: var(--cream); border-radius: 8px; padding: 12px; }
+.pair-stat .pair-name { font-weight: 600; font-size: 0.85rem; margin-bottom: 4px; }
+.pair-stat .pair-detail { font-size: 0.78rem; color: var(--text-medium); }
+
+.loading { text-align: center; padding: 40px; color: var(--text-light); }
+.refresh-btn { font-family: 'Open Sans', sans-serif; font-size: 0.78rem; background: var(--cream); border: 1px solid #ddd; border-radius: 50px; padding: 6px 14px; cursor: pointer; color: var(--text-medium); }
+.refresh-btn:hover { background: #e8e6e1; }
+
+.disclaimer { text-align: center; font-size: 0.72rem; color: var(--text-light); margin-top: 24px; line-height: 1.5; }
+
+@media (max-width: 768px) {
+  .stats-grid { grid-template-columns: repeat(3, 1fr); }
+  .pair-stats { grid-template-columns: 1fr 1fr; }
+  table { font-size: 0.75rem; }
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-inner">
+    <h1>LumiSignals</h1>
+    <nav class="header-nav">
+      <a href="/">Dashboard</a>
+      <a href="/trades" class="active">Trades</a>
+      <a href="/setup">Settings</a>
+    </nav>
+  </div>
+</div>
+
+<div class="container">
+
+  <!-- Stats Row -->
+  <div class="stats-grid" id="statsGrid">
+    <div class="stat-card"><div class="stat-value" id="totalTrades">—</div><div class="stat-label">Total Trades</div></div>
+    <div class="stat-card"><div class="stat-value" id="winRate">—</div><div class="stat-label">Win Rate</div></div>
+    <div class="stat-card"><div class="stat-value" id="totalPL">—</div><div class="stat-label">Total P&L</div></div>
+    <div class="stat-card"><div class="stat-value" id="totalPips">—</div><div class="stat-label">Total Pips</div></div>
+    <div class="stat-card"><div class="stat-value" id="avgWin">—</div><div class="stat-label">Avg Win</div></div>
+    <div class="stat-card"><div class="stat-value" id="avgLoss">—</div><div class="stat-label">Avg Loss</div></div>
+  </div>
+
+  <!-- Open Trades -->
+  <div class="card">
+    <h2>Open Trades <span class="count" id="openCount">0</span> <button class="refresh-btn" onclick="loadTrades()">Refresh</button></h2>
+    <div id="openTable"><div class="loading">Loading...</div></div>
+  </div>
+
+  <!-- Pending Orders -->
+  <div class="card">
+    <h2>Pending Orders <span class="count" id="pendingCount">0</span></h2>
+    <div id="pendingTable"><div class="loading">Loading...</div></div>
+  </div>
+
+  <!-- Closed Trades -->
+  <div class="card">
+    <h2>Trade History <span class="count" id="closedCount">0</span></h2>
+    <div id="closedTable"><div class="loading">Loading...</div></div>
+  </div>
+
+  <!-- By Pair -->
+  <div class="card">
+    <h2>Performance by Pair</h2>
+    <div id="pairStats" class="pair-stats"><div class="loading">Loading...</div></div>
+  </div>
+
+  <div class="disclaimer">
+    LumiTrade is a financial publishing company. All signals are for educational and informational purposes only.
+  </div>
+</div>
+
+<script>
+function plClass(val) { return val > 0 ? 'pl-pos' : (val < 0 ? 'pl-neg' : ''); }
+function fmt(val, dec) { return (val >= 0 ? '+' : '') + val.toFixed(dec || 2); }
+
+function buildTable(headers, rows) {
+  if (!rows.length) return '<div style="text-align:center;padding:20px;color:#8a847e;">No data</div>';
+  var html = '<table><thead><tr>';
+  headers.forEach(function(h) { html += '<th>' + h + '</th>'; });
+  html += '</tr></thead><tbody>';
+  rows.forEach(function(r) { html += '<tr>' + r + '</tr>'; });
+  html += '</tbody></table>';
+  return html;
+}
+
+function loadTrades() {
+  fetch('/api/trades')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      // Stats
+      var s = data.stats;
+      document.getElementById('totalTrades').textContent = s.total_trades;
+      var wr = document.getElementById('winRate');
+      wr.textContent = s.win_rate + '%';
+      wr.className = 'stat-value ' + (s.win_rate >= 50 ? 'positive' : (s.win_rate > 0 ? 'negative' : ''));
+      var pl = document.getElementById('totalPL');
+      pl.textContent = '$' + fmt(s.total_pl);
+      pl.className = 'stat-value ' + (s.total_pl >= 0 ? 'positive' : 'negative');
+      var pips = document.getElementById('totalPips');
+      pips.textContent = fmt(s.total_pips, 1);
+      pips.className = 'stat-value ' + (s.total_pips >= 0 ? 'positive' : 'negative');
+      document.getElementById('avgWin').textContent = s.avg_win ? '$' + fmt(s.avg_win) : '—';
+      document.getElementById('avgWin').className = 'stat-value positive';
+      document.getElementById('avgLoss').textContent = s.avg_loss ? '$' + s.avg_loss.toFixed(2) : '—';
+      document.getElementById('avgLoss').className = 'stat-value negative';
+
+      // Open trades
+      document.getElementById('openCount').textContent = data.open.length;
+      var openRows = data.open.map(function(t) {
+        return '<td>' + t.instrument + '</td>' +
+          '<td class="dir-' + t.direction.toLowerCase() + '">' + t.direction + '</td>' +
+          '<td>' + t.units.toLocaleString() + '</td>' +
+          '<td>' + t.entry.toFixed(5) + '</td>' +
+          '<td>' + t.current_price.toFixed(5) + '</td>' +
+          '<td>' + (t.stop_loss ? t.stop_loss.toFixed(5) : '—') + '</td>' +
+          '<td>' + (t.take_profit ? t.take_profit.toFixed(5) : '—') + '</td>' +
+          '<td class="' + plClass(t.pips) + '">' + fmt(t.pips, 1) + '</td>' +
+          '<td class="' + plClass(t.unrealized_pl) + '">$' + fmt(t.unrealized_pl) + '</td>' +
+          '<td>' + t.time_opened + '</td>';
+      });
+      document.getElementById('openTable').innerHTML = buildTable(
+        ['Pair', 'Dir', 'Units', 'Entry', 'Current', 'SL', 'TP', 'Pips', 'P&L', 'Opened'], openRows
+      );
+
+      // Pending orders
+      document.getElementById('pendingCount').textContent = data.pending.length;
+      var pendingRows = data.pending.map(function(o) {
+        return '<td>' + o.instrument + '</td>' +
+          '<td class="dir-' + o.direction.toLowerCase() + '">' + o.direction + '</td>' +
+          '<td>' + o.units.toLocaleString() + '</td>' +
+          '<td>' + o.entry.toFixed(5) + '</td>' +
+          '<td>' + (o.stop_loss ? o.stop_loss.toFixed(5) : '—') + '</td>' +
+          '<td>' + (o.take_profit ? o.take_profit.toFixed(5) : '—') + '</td>' +
+          '<td>' + o.risk_reward + '</td>' +
+          '<td>' + o.type + '</td>' +
+          '<td>' + o.time + '</td>';
+      });
+      document.getElementById('pendingTable').innerHTML = buildTable(
+        ['Pair', 'Dir', 'Units', 'Entry', 'SL', 'TP', 'R:R', 'Type', 'Created'], pendingRows
+      );
+
+      // Closed trades
+      document.getElementById('closedCount').textContent = data.closed.length;
+      var closedRows = data.closed.map(function(t) {
+        var badge = t.won ? '<span class="badge badge-won">WIN</span>' : '<span class="badge badge-lost">LOSS</span>';
+        return '<td>' + t.instrument + '</td>' +
+          '<td class="dir-' + t.direction.toLowerCase() + '">' + t.direction + '</td>' +
+          '<td>' + t.units.toLocaleString() + '</td>' +
+          '<td>' + t.entry.toFixed(5) + '</td>' +
+          '<td>' + t.close_price.toFixed(5) + '</td>' +
+          '<td class="' + plClass(t.pips) + '">' + fmt(t.pips, 1) + '</td>' +
+          '<td class="' + plClass(t.realized_pl) + '">$' + fmt(t.realized_pl) + '</td>' +
+          '<td>' + t.close_reason + '</td>' +
+          '<td>' + badge + '</td>' +
+          '<td>' + t.time_opened + '</td>' +
+          '<td>' + t.time_closed + '</td>';
+      });
+      document.getElementById('closedTable').innerHTML = buildTable(
+        ['Pair', 'Dir', 'Units', 'Entry', 'Close', 'Pips', 'P&L', 'Reason', 'Result', 'Opened', 'Closed'], closedRows
+      );
+
+      // By pair
+      var pairs = Object.entries(s.by_pair || {}).sort(function(a, b) { return b[1].pl - a[1].pl; });
+      if (pairs.length) {
+        var pairHtml = pairs.map(function(p) {
+          var name = p[0], d = p[1];
+          var total = d.wins + d.losses;
+          var wr = total ? Math.round(d.wins / total * 100) : 0;
+          return '<div class="pair-stat">' +
+            '<div class="pair-name">' + name + '</div>' +
+            '<div class="pair-detail">W/L: ' + d.wins + '/' + d.losses + ' (' + wr + '%)</div>' +
+            '<div class="pair-detail ' + plClass(d.pl) + '">P&L: $' + fmt(d.pl) + '</div>' +
+            '<div class="pair-detail ' + plClass(d.pips) + '">Pips: ' + fmt(d.pips, 1) + '</div>' +
+            '</div>';
+        }).join('');
+        document.getElementById('pairStats').innerHTML = pairHtml;
+      } else {
+        document.getElementById('pairStats').innerHTML = '<div style="text-align:center;padding:20px;color:#8a847e;">No closed trades yet</div>';
+      }
+    })
+    .catch(function(e) {
+      console.error('Failed to load trades:', e);
+    });
+}
+
+// Load on page open, refresh every 10 seconds
+loadTrades();
+setInterval(loadTrades, 10000);
+</script>
+</body>
+</html>

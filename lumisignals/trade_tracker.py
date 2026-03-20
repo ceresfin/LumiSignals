@@ -1,0 +1,237 @@
+"""Trade tracker — pulls trade data from Oanda and computes performance stats."""
+
+import logging
+from datetime import datetime, timezone
+from typing import Optional
+
+from .oanda_client import OandaClient
+
+logger = logging.getLogger(__name__)
+
+
+def _parse_oanda_time(time_str: str) -> Optional[str]:
+    """Convert Oanda UNIX timestamp to human-readable format."""
+    try:
+        ts = float(time_str)
+        dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+        return dt.strftime("%Y-%m-%d %H:%M")
+    except (ValueError, TypeError, OSError):
+        return time_str
+
+
+def _pip_value(instrument: str) -> float:
+    """Get pip value for an instrument."""
+    if "JPY" in instrument:
+        return 0.01
+    return 0.0001
+
+
+def get_pending_orders(client: OandaClient) -> list:
+    """Get all pending orders formatted for display."""
+    try:
+        data = client.get_orders()
+        orders = data.get("orders", [])
+    except Exception as e:
+        logger.error("Failed to get orders: %s", e)
+        return []
+
+    result = []
+    for order in orders:
+        instrument = order.get("instrument", "")
+        units = int(float(order.get("units", 0)))
+        direction = "BUY" if units > 0 else "SELL"
+        entry = float(order.get("price", 0))
+        sl = float(order.get("stopLossOnFill", {}).get("price", 0))
+        tp = float(order.get("takeProfitOnFill", {}).get("price", 0))
+
+        rr = 0
+        if sl and entry and tp:
+            risk = abs(entry - sl)
+            reward = abs(tp - entry)
+            rr = round(reward / risk, 2) if risk > 0 else 0
+
+        result.append({
+            "id": order.get("id", ""),
+            "instrument": instrument,
+            "direction": direction,
+            "units": abs(units),
+            "entry": entry,
+            "stop_loss": sl,
+            "take_profit": tp,
+            "risk_reward": rr,
+            "type": order.get("type", ""),
+            "time": _parse_oanda_time(order.get("createTime", "")),
+            "status": "PENDING",
+        })
+
+    return result
+
+
+def get_open_trades(client: OandaClient) -> list:
+    """Get all open trades with unrealized P&L."""
+    try:
+        data = client.get_trades(state="OPEN")
+        trades = data.get("trades", [])
+    except Exception as e:
+        logger.error("Failed to get trades: %s", e)
+        return []
+
+    result = []
+    for trade in trades:
+        instrument = trade.get("instrument", "")
+        units = int(float(trade.get("currentUnits", trade.get("initialUnits", 0))))
+        direction = "BUY" if units > 0 else "SELL"
+        entry = float(trade.get("price", 0))
+        unrealized_pl = float(trade.get("unrealizedPL", 0))
+
+        sl = float(trade.get("stopLossOrder", {}).get("price", 0)) if trade.get("stopLossOrder") else 0
+        tp = float(trade.get("takeProfitOrder", {}).get("price", 0)) if trade.get("takeProfitOrder") else 0
+
+        # Calculate pips P&L
+        pip = _pip_value(instrument)
+        current_price = entry + (unrealized_pl / abs(units)) if units != 0 else entry
+        pips_pl = round((current_price - entry) / pip, 1) if direction == "BUY" else round((entry - current_price) / pip, 1)
+
+        result.append({
+            "id": trade.get("id", ""),
+            "instrument": instrument,
+            "direction": direction,
+            "units": abs(units),
+            "entry": entry,
+            "current_price": round(current_price, 5),
+            "stop_loss": sl,
+            "take_profit": tp,
+            "unrealized_pl": round(unrealized_pl, 2),
+            "pips": pips_pl,
+            "time_opened": _parse_oanda_time(trade.get("openTime", "")),
+            "status": "OPEN",
+        })
+
+    return result
+
+
+def get_closed_trades(client: OandaClient, count: int = 50) -> list:
+    """Get recently closed trades with realized P&L."""
+    try:
+        data = client.get_trades(state="CLOSED", count=count)
+        trades = data.get("trades", [])
+    except Exception as e:
+        logger.error("Failed to get closed trades: %s", e)
+        return []
+
+    result = []
+    for trade in trades:
+        instrument = trade.get("instrument", "")
+        units = int(float(trade.get("initialUnits", 0)))
+        direction = "BUY" if units > 0 else "SELL"
+        entry = float(trade.get("price", 0))
+        realized_pl = float(trade.get("realizedPL", 0))
+        close_price = float(trade.get("averageClosePrice", 0))
+
+        # Calculate pips
+        pip = _pip_value(instrument)
+        if direction == "BUY":
+            pips = round((close_price - entry) / pip, 1)
+        else:
+            pips = round((entry - close_price) / pip, 1)
+
+        # Determine how it closed
+        close_reason = "Manual"
+        if trade.get("stopLossOrderID"):
+            close_reason = "Stop Loss"
+        elif trade.get("takeProfitOrderID"):
+            close_reason = "Take Profit"
+
+        # Duration
+        open_time = _parse_oanda_time(trade.get("openTime", ""))
+        close_time = _parse_oanda_time(trade.get("closeTime", ""))
+
+        result.append({
+            "id": trade.get("id", ""),
+            "instrument": instrument,
+            "direction": direction,
+            "units": abs(units),
+            "entry": entry,
+            "close_price": close_price,
+            "stop_loss": 0,
+            "take_profit": 0,
+            "realized_pl": round(realized_pl, 2),
+            "pips": pips,
+            "close_reason": close_reason,
+            "time_opened": open_time,
+            "time_closed": close_time,
+            "status": "CLOSED",
+            "won": realized_pl > 0,
+        })
+
+    return result
+
+
+def get_performance_stats(closed_trades: list) -> dict:
+    """Calculate performance statistics from closed trades."""
+    if not closed_trades:
+        return {
+            "total_trades": 0,
+            "wins": 0,
+            "losses": 0,
+            "win_rate": 0,
+            "total_pl": 0,
+            "total_pips": 0,
+            "avg_win": 0,
+            "avg_loss": 0,
+            "best_trade": None,
+            "worst_trade": None,
+            "avg_rr_achieved": 0,
+            "by_pair": {},
+            "by_direction": {"BUY": {"wins": 0, "losses": 0, "pl": 0}, "SELL": {"wins": 0, "losses": 0, "pl": 0}},
+        }
+
+    wins = [t for t in closed_trades if t["realized_pl"] > 0]
+    losses = [t for t in closed_trades if t["realized_pl"] <= 0]
+
+    total_pl = sum(t["realized_pl"] for t in closed_trades)
+    total_pips = sum(t["pips"] for t in closed_trades)
+
+    avg_win = sum(t["realized_pl"] for t in wins) / len(wins) if wins else 0
+    avg_loss = sum(t["realized_pl"] for t in losses) / len(losses) if losses else 0
+
+    best = max(closed_trades, key=lambda t: t["realized_pl"]) if closed_trades else None
+    worst = min(closed_trades, key=lambda t: t["realized_pl"]) if closed_trades else None
+
+    # By pair
+    by_pair = {}
+    for t in closed_trades:
+        pair = t["instrument"]
+        if pair not in by_pair:
+            by_pair[pair] = {"wins": 0, "losses": 0, "pl": 0, "pips": 0}
+        by_pair[pair]["pl"] += t["realized_pl"]
+        by_pair[pair]["pips"] += t["pips"]
+        if t["realized_pl"] > 0:
+            by_pair[pair]["wins"] += 1
+        else:
+            by_pair[pair]["losses"] += 1
+
+    # By direction
+    by_direction = {"BUY": {"wins": 0, "losses": 0, "pl": 0}, "SELL": {"wins": 0, "losses": 0, "pl": 0}}
+    for t in closed_trades:
+        d = t["direction"]
+        by_direction[d]["pl"] += t["realized_pl"]
+        if t["realized_pl"] > 0:
+            by_direction[d]["wins"] += 1
+        else:
+            by_direction[d]["losses"] += 1
+
+    return {
+        "total_trades": len(closed_trades),
+        "wins": len(wins),
+        "losses": len(losses),
+        "win_rate": round(len(wins) / len(closed_trades) * 100, 1) if closed_trades else 0,
+        "total_pl": round(total_pl, 2),
+        "total_pips": round(total_pips, 1),
+        "avg_win": round(avg_win, 2),
+        "avg_loss": round(avg_loss, 2),
+        "best_trade": best,
+        "worst_trade": worst,
+        "by_pair": by_pair,
+        "by_direction": by_direction,
+    }
