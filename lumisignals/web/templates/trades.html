@@ -196,26 +196,33 @@ function loadTrades() {
       document.getElementById('pendingCount').textContent = data.pending.length;
       var pendingRows = data.pending.map(function(o) {
         var strat = o.strategy ? '<span class="badge badge-pending">' + o.strategy + '</span>' : '—';
-        var sig = '';
-        if (o.snr_grade) sig = 'Grade ' + o.snr_grade;
+        var parts = [];
+        if (o.level_timeframe) parts.push(o.level_timeframe + ' ' + o.level_type);
+        if (o.snr_grade) parts.push('Grade ' + o.snr_grade);
         if (o.candle_details && o.candle_details.length) {
-          sig = o.candle_details.map(function(c) { return c.timeframe + ': ' + c.pattern; }).join(' | ');
+          parts.push(o.candle_details.map(function(c) { return c.timeframe + ': ' + c.pattern; }).join(', '));
         }
-        if (o.level_timeframe) sig = o.level_timeframe + ' ' + o.level_type + (sig ? ' | ' + sig : '');
+        if (o.candle_score) parts.push('Score: ' + o.candle_score);
+        var sig = parts.join(' | ');
+
+        // Pips away from current price
+        var pipsAway = o.pips_away != null ? o.pips_away.toFixed(1) : '—';
+
         return '<td>' + o.instrument + '</td>' +
           '<td class="dir-' + o.direction.toLowerCase() + '">' + o.direction + '</td>' +
           '<td>' + o.units.toLocaleString() + '</td>' +
           '<td>' + o.entry.toFixed(5) + '</td>' +
+          '<td>' + pipsAway + '</td>' +
           '<td>' + (o.stop_loss ? o.stop_loss.toFixed(5) : '—') + '</td>' +
           '<td>' + (o.take_profit ? o.take_profit.toFixed(5) : '—') + '</td>' +
           '<td>' + o.risk_reward + '</td>' +
           '<td class="pl-pos">$' + o.potential_profit.toFixed(2) + '</td>' +
           '<td class="pl-neg">-$' + o.potential_loss.toFixed(2) + '</td>' +
           '<td>' + strat + '</td>' +
-          '<td style="font-size:0.75rem;max-width:200px;">' + (sig || '—') + '</td>';
+          '<td style="font-size:0.75rem;max-width:240px;">' + (sig || '—') + '</td>';
       });
       document.getElementById('pendingTable').innerHTML = buildTable(
-        ['Pair', 'Dir', 'Units', 'Entry', 'SL', 'TP', 'R:R', 'Pot. Profit', 'Pot. Loss', 'Strategy', 'Signal Details'], pendingRows
+        ['Pair', 'Dir', 'Units', 'Entry', 'Pips Away', 'SL', 'TP', 'R:R', 'Pot. Profit', 'Pot. Loss', 'Strategy', 'Signal Details'], pendingRows
       );
 
       // Closed trades

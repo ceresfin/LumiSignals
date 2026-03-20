@@ -82,6 +82,30 @@ def _enrich_with_signal_data(entry: dict, order_id: str) -> dict:
     return entry
 
 
+def _get_current_prices(client: OandaClient, instruments: list) -> dict:
+    """Fetch current mid prices for a list of instruments."""
+    prices = {}
+    if not instruments:
+        return prices
+    # Oanda accepts comma-separated instruments
+    try:
+        unique = list(set(instruments))
+        # Batch in groups of 20
+        for i in range(0, len(unique), 20):
+            batch = unique[i:i+20]
+            data = client._request(
+                "GET",
+                f"/v3/accounts/{client.account_id}/pricing?instruments={','.join(batch)}",
+            )
+            for p in data.get("prices", []):
+                bid = float(p["bids"][0]["price"])
+                ask = float(p["asks"][0]["price"])
+                prices[p["instrument"]] = (bid + ask) / 2
+    except Exception as e:
+        logger.debug("Could not fetch prices: %s", e)
+    return prices
+
+
 def get_pending_orders(client: OandaClient) -> list:
     """Get all pending orders formatted for display."""
     try:
@@ -90,6 +114,10 @@ def get_pending_orders(client: OandaClient) -> list:
     except Exception as e:
         logger.error("Failed to get orders: %s", e)
         return []
+
+    # Fetch current prices for all instruments with pending orders
+    instruments = [o.get("instrument", "") for o in orders if o.get("instrument")]
+    current_prices = _get_current_prices(client, instruments)
 
     result = []
     for order in orders:
@@ -107,9 +135,13 @@ def get_pending_orders(client: OandaClient) -> list:
             rr = round(reward / risk, 2) if risk > 0 else 0
 
         # Calculate potential profit/loss in USD
-        sign = 1 if direction == "BUY" else -1
-        potential_profit = abs(_estimate_usd_pl(instrument, units, entry, tp)) if tp else 0
-        potential_loss = abs(_estimate_usd_pl(instrument, units, entry, sl)) if sl else 0
+        potential_profit = abs(_estimate_usd_pl(instrument, abs(units), entry, tp)) if tp else 0
+        potential_loss = abs(_estimate_usd_pl(instrument, abs(units), entry, sl)) if sl else 0
+
+        # Calculate pips away from current price
+        pip = _pip_value(instrument)
+        cur_price = current_prices.get(instrument)
+        pips_away = round(abs(entry - cur_price) / pip, 1) if cur_price else None
 
         order_entry = {
             "id": order.get("id", ""),
@@ -117,6 +149,8 @@ def get_pending_orders(client: OandaClient) -> list:
             "direction": direction,
             "units": abs(units),
             "entry": entry,
+            "current_price": round(cur_price, 5) if cur_price else None,
+            "pips_away": pips_away,
             "stop_loss": sl,
             "take_profit": tp,
             "risk_reward": rr,
