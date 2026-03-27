@@ -66,17 +66,17 @@ class TestClassifyCandle:
         assert result.direction == "neutral"
         assert result.pattern == "No Range"
 
-    def test_strong_bullish(self):
+    def test_bullish_belt_hold(self):
         candle = CandleData(open=1.0800, high=1.0880, low=1.0790, close=1.0870)
         result = classify_candle(candle)
         assert result.direction == "bullish"
-        assert "Bullish" in result.pattern
+        assert result.pattern == "Bullish Belt Hold"
 
-    def test_strong_bearish(self):
+    def test_bearish_belt_hold(self):
         candle = CandleData(open=1.0880, high=1.0890, low=1.0800, close=1.0810)
         result = classify_candle(candle)
         assert result.direction == "bearish"
-        assert "Bearish" in result.pattern
+        assert result.pattern == "Bearish Belt Hold"
 
 
 class TestScoreMultiTimeframe:

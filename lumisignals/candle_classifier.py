@@ -109,14 +109,14 @@ def classify_candle(candle: CandleData, prev_candle: CandleData = None) -> Candl
             pattern = "Bearish Marubozu"
             direction = "bearish"
             strength = 0.9
-    # Strong candle: large body, some wicks
+    # Belt Hold: large body with one small wick
     elif body_pct > 0.6:
         if is_green:
-            pattern = "Strong Bullish"
+            pattern = "Bullish Belt Hold"
             direction = "bullish"
             strength = 0.7
         else:
-            pattern = "Strong Bearish"
+            pattern = "Bearish Belt Hold"
             direction = "bearish"
             strength = 0.7
     # Spinning Top: small body, wicks on both sides
@@ -124,18 +124,18 @@ def classify_candle(candle: CandleData, prev_candle: CandleData = None) -> Candl
         pattern = "Spinning Top"
         direction = "neutral"
         strength = 0.2
-    # Default: moderate candle
+    # White/Black candle: moderate body
     else:
         if is_green:
-            pattern = "Bullish"
+            pattern = "White Candle"
             direction = "bullish"
             strength = 0.5
         elif is_red:
-            pattern = "Bearish"
+            pattern = "Black Candle"
             direction = "bearish"
             strength = 0.5
         else:
-            pattern = "Neutral"
+            pattern = "Doji"
             direction = "neutral"
             strength = 0.1
 

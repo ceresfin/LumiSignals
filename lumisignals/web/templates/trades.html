@@ -174,7 +174,10 @@ function loadTrades() {
         var sig = '';
         if (t.snr_grade) sig = 'Grade ' + t.snr_grade;
         if (t.candle_details && t.candle_details.length) {
-          sig = t.candle_details.map(function(c) { return c.timeframe + ': ' + c.pattern; }).join(' | ');
+          sig = t.candle_details.map(function(c) {
+            var color = c.direction === 'bullish' ? 'pl-pos' : (c.direction === 'bearish' ? 'pl-neg' : '');
+            return c.timeframe + ': <span class="' + color + '">' + c.pattern + '</span>';
+          }).join(' | ');
         }
         return '<td>' + t.instrument + '</td>' +
           '<td class="dir-' + t.direction.toLowerCase() + '">' + t.direction + '</td>' +
@@ -200,7 +203,10 @@ function loadTrades() {
         if (o.level_timeframe) parts.push(o.level_timeframe + ' ' + o.level_type);
         if (o.snr_grade) parts.push('Grade ' + o.snr_grade);
         if (o.candle_details && o.candle_details.length) {
-          parts.push(o.candle_details.map(function(c) { return c.timeframe + ': ' + c.pattern; }).join(', '));
+          parts.push(o.candle_details.map(function(c) {
+            var color = c.direction === 'bullish' ? 'pl-pos' : (c.direction === 'bearish' ? 'pl-neg' : '');
+            return c.timeframe + ': <span class="' + color + '">' + c.pattern + '</span>';
+          }).join(', '));
         }
         if (o.candle_score) parts.push('Score: ' + o.candle_score);
         if (o.trends && Object.keys(o.trends).length > 0) {
@@ -240,7 +246,10 @@ function loadTrades() {
         var sig = '';
         if (t.snr_grade) sig = 'Grade ' + t.snr_grade;
         if (t.candle_details && t.candle_details.length) {
-          sig = t.candle_details.map(function(c) { return c.timeframe + ': ' + c.pattern; }).join(' | ');
+          sig = t.candle_details.map(function(c) {
+            var color = c.direction === 'bullish' ? 'pl-pos' : (c.direction === 'bearish' ? 'pl-neg' : '');
+            return c.timeframe + ': <span class="' + color + '">' + c.pattern + '</span>';
+          }).join(' | ');
         }
         var pp = t.planned_profit ? '$' + t.planned_profit.toFixed(2) : '—';
         var pl = t.planned_loss ? '-$' + t.planned_loss.toFixed(2) : '—';
