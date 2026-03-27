@@ -6,7 +6,7 @@ from typing import Callable, Optional
 
 import requests
 
-from .candle_classifier import CandleData, classify_candle, score_multi_timeframe
+from .candle_classifier import CandleData, classify_candle, classify_candle_series, score_multi_timeframe
 from .models import Signal
 from .oanda_client import OandaClient, resolve_instrument
 from .order_manager import MAJOR_PAIRS
@@ -91,38 +91,32 @@ class LevelsStrategy:
     def _get_candles(self, instrument: str) -> tuple:
         """Fetch last CLOSED candles for monthly, weekly, daily.
 
-        Uses the last completed candle (not the current in-progress one)
-        because the current candle hasn't finished forming and its
-        direction/pattern can change.
+        Uses completed candles only (not the current in-progress one).
+        Fetches 6 candles per timeframe so TA-Lib can detect multi-candle
+        patterns (Three White Soldiers, Morning Star, etc.)
 
         Returns:
-            (last_closed_candles, prev_candles) dicts keyed by timeframe.
+            (candle_series, prev_candles) where candle_series is a dict of
+            {timeframe: [CandleData, ...]} (last 5 completed) and
+            prev_candles is {timeframe: CandleData} (second-to-last completed).
         """
-        last_closed = {}
+        candle_series = {}
         previous = {}
 
         for tf, gran in [("1mo", "M"), ("1w", "W"), ("1d", "D")]:
             try:
-                # Fetch 3 candles: prev_closed, last_closed, current_incomplete
-                candles = self.oanda.get_candles(instrument, granularity=gran, count=3)
-
-                # Find the last two COMPLETED candles
-                completed = [c for c in candles if c.get("complete", False)]
+                raw = self.oanda.get_candles(instrument, granularity=gran, count=6)
+                completed = [c for c in raw if c.get("complete", False)]
                 if len(completed) >= 2:
-                    prev = _oanda_candle_to_data(completed[-2])
-                    curr = _oanda_candle_to_data(completed[-1])
-                    if curr:
-                        last_closed[tf] = curr
-                    if prev:
-                        previous[tf] = prev
-                elif len(completed) == 1:
-                    curr = _oanda_candle_to_data(completed[0])
-                    if curr:
-                        last_closed[tf] = curr
+                    series = [_oanda_candle_to_data(c) for c in completed]
+                    series = [c for c in series if c is not None]
+                    if series:
+                        candle_series[tf] = series
+                        previous[tf] = series[-2] if len(series) >= 2 else None
             except Exception as e:
                 logger.debug("Could not get %s candles for %s: %s", tf, instrument, e)
 
-        return last_closed, previous
+        return candle_series, previous
 
     def _get_trade_builder_data(self, ticker: str) -> dict:
         """Get ATR and trend direction from Trade Builder API across timeframes."""
@@ -223,12 +217,44 @@ class LevelsStrategy:
         )
 
         # 4. Get candles and score direction
-        current_candles, prev_candles = self._get_candles(instrument)
-        if not current_candles:
+        candle_series, prev_candles = self._get_candles(instrument)
+        if not candle_series:
             logger.debug("No candle data for %s", instrument)
             return
 
-        mtf_score = score_multi_timeframe(current_candles, prev_candles)
+        # Use TA-Lib series classification if available, otherwise fall back
+        # Build the format score_multi_timeframe expects: {tf: last_candle}
+        current_candles = {}
+        for tf, series in candle_series.items():
+            current_candles[tf] = series[-1] if series else None
+
+        # Classify using full series for multi-candle pattern detection
+        from .candle_classifier import classify_candle_series as _cls_series, TimeframeScore
+        scores = []
+        for tf in ["1mo", "1w", "1d"]:
+            series = candle_series.get(tf)
+            if not series:
+                continue
+            classification = _cls_series(series)
+            sc = 1 if classification.direction == "bullish" else (-1 if classification.direction == "bearish" else 0)
+            tf_label = {"1mo": "Monthly", "1w": "Weekly", "1d": "Daily"}.get(tf, tf)
+            scores.append(TimeframeScore(tf, classification.direction, classification.pattern, classification.strength, sc))
+
+        total = len(scores)
+        long_score = sum(1 for s in scores if s.score > 0)
+        short_score = sum(1 for s in scores if s.score < 0)
+        direction = "bullish" if long_score > short_score else ("bearish" if short_score > long_score else "neutral")
+
+        parts = []
+        for s in scores:
+            tf_label = {"1mo": "Monthly", "1w": "Weekly", "1d": "Daily"}.get(s.timeframe, s.timeframe)
+            parts.append(f"{tf_label}: {s.pattern} ({s.direction})")
+        summary = " | ".join(parts) + f" → {direction} ({long_score}/{total})"
+
+        mtf_score = {
+            "scores": scores, "long_score": long_score, "short_score": short_score,
+            "total": total, "direction": direction, "summary": summary,
+        }
 
         logger.info("CANDLES: %s — %s", instrument, mtf_score["summary"])
 
