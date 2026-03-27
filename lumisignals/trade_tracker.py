@@ -66,6 +66,8 @@ def _enrich_with_signal_data(entry: dict, order_id: str) -> dict:
         entry["strategy"] = sig.get("strategy", "")
         entry["snr_grade"] = sig.get("snr_grade", "")
         entry["snr_summary"] = sig.get("snr_summary", "")
+        entry["final_score"] = sig.get("final_score", "")
+        entry["trend_score"] = sig.get("trend_score", "")
         entry["candle_score"] = sig.get("candle_score", "")
         entry["candle_summary"] = sig.get("candle_summary", "")
         entry["candle_details"] = sig.get("candle_details", [])

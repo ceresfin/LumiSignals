@@ -226,15 +226,15 @@ class LumiSignalsBot:
                 snr_client=self.snr_client,
                 trade_builder_url=base_url,
                 api_key=sig_cfg.get("api_key", ""),
-                min_score=levels_cfg.get("min_candle_score", 2),
+                min_score=levels_cfg.get("min_score", 50),
                 atr_stop_multiplier=levels_cfg.get("atr_stop_multiplier", 1.0),
                 tolerance_pct=levels_cfg.get("tolerance_pct", 0.003),
                 on_signal=self._handle_signal,
             )
 
             logger.info(
-                "Levels strategy — min candle score: %d/3 | ATR stop: %.1fx | tolerance: %.1f%%",
-                levels_cfg.get("min_candle_score", 2),
+                "Levels strategy — min score: %d/100 (trend 60%% + candle 40%%) | ATR stop: %.1fx | tolerance: %.1f%%",
+                levels_cfg.get("min_score", 50),
                 levels_cfg.get("atr_stop_multiplier", 1.0),
                 levels_cfg.get("tolerance_pct", 0.003) * 100,
             )

@@ -232,24 +232,8 @@ class LevelsStrategy:
 
         logger.info("CANDLES: %s — %s", instrument, mtf_score["summary"])
 
-        # 5. Check if candle direction confirms the trade
+        # 5. Get ATR and trend direction from Trade Builder
         trade_dir = best_level["trade_direction"]
-        if trade_dir == "BUY":
-            score = mtf_score["long_score"]
-            needed_direction = "bullish"
-        else:
-            score = mtf_score["short_score"]
-            needed_direction = "bearish"
-
-        if score < self.min_score:
-            logger.info(
-                "WAIT: %s %s at %s %s — candle score %d/%d (need %d)",
-                trade_dir, instrument, tf_label, best_level["type"],
-                score, mtf_score["total"], self.min_score,
-            )
-            return
-
-        # 6. Get ATR and trend direction from Trade Builder
         tb_data = self._get_trade_builder_data(ticker)
         atr = tb_data["atr"]
         trends = tb_data["trends"]
@@ -258,24 +242,44 @@ class LevelsStrategy:
             logger.warning("No ATR for %s — cannot set stop", instrument)
             return
 
-        # Log trend direction
-        if trends:
-            trend_str = " | ".join(f"{tf}: {d}" for tf, d in trends.items())
-            logger.info("TREND: %s — %s", instrument, trend_str)
+        # 6. Calculate weighted combined score (trend 60%, candle 40%)
+        # Candle score
+        if trade_dir == "BUY":
+            candle_agrees = mtf_score["long_score"]
+        else:
+            candle_agrees = mtf_score["short_score"]
+        candle_total = mtf_score["total"] or 1
 
-            # Check if Trade Builder trend conflicts with trade direction
-            # Count how many timeframes agree with the proposed trade
-            if trade_dir == "BUY":
-                trend_agrees = sum(1 for d in trends.values() if d == "bullish")
-            else:
-                trend_agrees = sum(1 for d in trends.values() if d == "bearish")
+        # Trend score
+        trend_total = len(trends) or 1
+        if trade_dir == "BUY":
+            trend_agrees = sum(1 for d in trends.values() if d == "bullish")
+        else:
+            trend_agrees = sum(1 for d in trends.values() if d == "bearish")
 
-            if trend_agrees == 0:
-                logger.info(
-                    "SKIP: %s %s — Trade Builder trend disagrees on ALL timeframes (%s)",
-                    trade_dir, instrument, trend_str,
-                )
-                return
+        # Weighted score: trend 60%, candle 40%
+        trend_pct = trend_agrees / trend_total
+        candle_pct = candle_agrees / candle_total
+        final_score = round((trend_pct * 60) + (candle_pct * 40), 1)
+
+        # Log
+        trend_str = " | ".join(f"{tf}: {d}" for tf, d in trends.items()) if trends else "no data"
+        logger.info("TREND: %s — %s", instrument, trend_str)
+        logger.info(
+            "SCORE: %s — Trend: %d/%d (%.0f%%) | Candle: %d/%d (%.0f%%) | Final: %.1f/100",
+            instrument, trend_agrees, trend_total, trend_pct * 100,
+            candle_agrees, candle_total, candle_pct * 100, final_score,
+        )
+
+        # Minimum score to trade (default 50)
+        min_final_score = self.min_score  # Reuse config, now means min combined score
+        if final_score < min_final_score:
+            logger.info(
+                "WAIT: %s %s at %s %s — score %.1f/100 (need %d)",
+                trade_dir, instrument, tf_label, best_level["type"],
+                final_score, min_final_score,
+            )
+            return
 
         # 7. Build the trade
         entry = best_level["level"]
@@ -325,9 +329,9 @@ class LevelsStrategy:
 
         logger.info(
             "TRADE: %s %s @ %.5f | Stop: %.5f | Target: %.5f | R:R: %.1f | "
-            "Score: %d/%d | Candles: %s",
+            "Score: %.1f/100 (Trend %d/%d, Candle %d/%d) | Candles: %s",
             trade_dir, instrument, entry, stop, target, rr,
-            score, mtf_score["total"], pattern_str,
+            final_score, trend_agrees, trend_total, candle_agrees, candle_total, pattern_str,
         )
 
         # 8. Build metadata for signal log
@@ -345,7 +349,9 @@ class LevelsStrategy:
             "level_timeframe": tf_label,
             "level_type": best_level["type"],
             "level_price": best_level["level"],
-            "candle_score": f"{score}/{mtf_score['total']}",
+            "final_score": final_score,
+            "trend_score": f"{trend_agrees}/{trend_total}",
+            "candle_score": f"{candle_agrees}/{candle_total}",
             "candle_details": candle_details,
             "candle_summary": pattern_str,
             "trends": trends,

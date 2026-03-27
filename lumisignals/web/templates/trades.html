@@ -200,6 +200,11 @@ function loadTrades() {
       var pendingRows = data.pending.map(function(o) {
         var strat = o.strategy ? '<span class="badge badge-pending">' + o.strategy + '</span>' : '—';
         var parts = [];
+        if (o.final_score) {
+          var sc = parseFloat(o.final_score);
+          var scColor = sc >= 70 ? 'pl-pos' : (sc >= 50 ? '' : 'pl-neg');
+          parts.push('<strong class="' + scColor + '">' + sc.toFixed(0) + '/100</strong>');
+        }
         if (o.level_timeframe) parts.push(o.level_timeframe + ' ' + o.level_type);
         if (o.snr_grade) parts.push('Grade ' + o.snr_grade);
         if (o.candle_details && o.candle_details.length) {
@@ -208,13 +213,14 @@ function loadTrades() {
             return c.timeframe + ': <span class="' + color + '">' + c.pattern + '</span>';
           }).join(', '));
         }
-        if (o.candle_score) parts.push('Score: ' + o.candle_score);
+        if (o.trend_score) parts.push('Trend: ' + o.trend_score);
+        if (o.candle_score) parts.push('Candles: ' + o.candle_score);
         if (o.trends && Object.keys(o.trends).length > 0) {
           var trendParts = Object.entries(o.trends).map(function(t) {
             var color = t[1] === 'bullish' ? 'pl-pos' : 'pl-neg';
             return t[0] + ': <span class="' + color + '">' + t[1] + '</span>';
           });
-          parts.push('Trend: ' + trendParts.join(', '));
+          parts.push(trendParts.join(', '));
         }
         var sig = parts.join(' | ');
 
