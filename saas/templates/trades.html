@@ -59,21 +59,27 @@ tr:hover { background: rgba(0,0,0,0.015); }
 </div>
 
 <div class="container">
+  <!-- Scalp Model (15m trigger at 1h/4h zones) -->
   <div class="card">
-    <h2>Stocks Watchlist <span class="count" id="stockCount">0</span>
-      <span><button class="refresh-btn" onclick="loadWatchlist()">Refresh</button>
-      <button class="refresh-btn" onclick="analyzeAllOptions()" style="background:#e8f5e9;">Analyze All Options</button></span></h2>
-    <div id="stockTable"><div class="loading">Start the bot to see watchlist...</div></div>
+    <h2>Scalp Zones <span style="font-size:0.75rem;color:var(--text-light);font-weight:300">15m trigger | 1h/4h zones | 4h bias | 0.25% risk</span>
+      <span class="count" id="scalpCount">0</span>
+      <button class="refresh-btn" onclick="loadWatchlist()">Refresh</button></h2>
+    <div id="scalpTable"><div class="loading">Start the bot to see zones...</div></div>
   </div>
 
+  <!-- Intraday Model (1h trigger at 4h/daily zones) -->
   <div class="card">
-    <h2>Crypto Watchlist <span class="count" id="cryptoCount">0</span></h2>
-    <div id="cryptoTable"><div class="loading">Loading...</div></div>
+    <h2>Intraday Zones <span style="font-size:0.75rem;color:var(--text-light);font-weight:300">1h trigger | 4h/daily zones | daily bias | 0.5% risk</span>
+      <span class="count" id="intradayCount">0</span></h2>
+    <div id="intradayTable"><div class="loading">Loading...</div></div>
   </div>
 
+  <!-- Swing Model (daily trigger at weekly/monthly zones) -->
   <div class="card">
-    <h2>Currencies Watchlist <span class="count" id="fxCount">0</span></h2>
-    <div id="fxTable"><div class="loading">Loading...</div></div>
+    <h2>Swing Zones <span style="font-size:0.75rem;color:var(--text-light);font-weight:300">daily trigger | weekly/monthly zones | monthly bias | 1% risk</span>
+      <span class="count" id="swingCount">0</span>
+      <button class="refresh-btn" onclick="analyzeAllOptions()" style="background:#e8f5e9;">Analyze All Options</button></h2>
+    <div id="swingTable"><div class="loading">Loading...</div></div>
   </div>
 
   <div class="disclaimer">
@@ -183,18 +189,21 @@ function wlRow(z, showOptions) {
 var headers = ['Ticker', 'Dir', 'Zone Price', 'Status', 'Score', 'Strategy', 'Monthly', 'Weekly', 'Daily'];
 var headersOpt = headers.concat(['Options']);
 
+function renderModelTable(model, data, tableId, countId, showOptions) {
+  var zones = (data.forex || []).concat(data.stocks || []).concat(data.crypto || []);
+  document.getElementById(countId).textContent = zones.length;
+  if (showOptions && optionsActive) return; // Don't wipe options
+  var hdrs = showOptions ? headersOpt : headers;
+  document.getElementById(tableId).innerHTML = buildTable(hdrs, zones.map(function(z) { return wlRow(z, showOptions); }));
+}
+
 function loadWatchlist() {
   fetch('/api/watchlist')
     .then(function(r) { return r.json(); })
     .then(function(d) {
-      document.getElementById('stockCount').textContent = d.stocks.length;
-      if (!optionsActive) {
-        document.getElementById('stockTable').innerHTML = buildTable(headersOpt, d.stocks.map(function(z) { return wlRow(z, true); }));
-      }
-      document.getElementById('cryptoCount').textContent = d.crypto.length;
-      document.getElementById('cryptoTable').innerHTML = buildTable(headers, d.crypto.map(function(z) { return wlRow(z, false); }));
-      document.getElementById('fxCount').textContent = d.forex.length;
-      document.getElementById('fxTable').innerHTML = buildTable(headers, d.forex.map(function(z) { return wlRow(z, false); }));
+      renderModelTable('scalp', d.scalp || {}, 'scalpTable', 'scalpCount', false);
+      renderModelTable('intraday', d.intraday || {}, 'intradayTable', 'intradayCount', false);
+      renderModelTable('swing', d.swing || {}, 'swingTable', 'swingCount', true);
     })
     .catch(function(e) { console.error('Watchlist error:', e); });
 }

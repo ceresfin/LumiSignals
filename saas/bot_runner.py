@@ -49,8 +49,20 @@ def get_active_users():
 
 
 def publish_watchlist(user_id, zones):
-    """Store watchlist in Redis so the web app can read it."""
-    rdb.setex(f"watchlist:{user_id}", 600, json.dumps(zones))  # 10 min TTL
+    """Store combined watchlist in Redis."""
+    rdb.setex(f"watchlist:{user_id}", 600, json.dumps(zones))
+
+
+def publish_watchlist_model(user_id, model_name, zones):
+    """Store per-model watchlist in Redis."""
+    rdb.setex(f"watchlist:{user_id}:{model_name}", 600, json.dumps(zones))
+    # Also update combined
+    all_zones = []
+    for mn in ["scalp", "intraday", "swing"]:
+        raw = rdb.get(f"watchlist:{user_id}:{mn}")
+        if raw:
+            all_zones.extend(json.loads(raw))
+    rdb.setex(f"watchlist:{user_id}", 600, json.dumps(all_zones))
 
 
 def publish_log(user_id, entries):
@@ -121,69 +133,94 @@ def run_bot_for_user(user_data, stop_check):
             log_entry.update(extra_meta)
         signal_log.record(f"{signal.symbol}_{int(time.time())}", log_entry)
 
-    trading_tf = user_data.get("trading_timeframe") or "1d"
-    min_score = user_data.get("min_score") or 50
-    min_rr = user_data.get("min_risk_reward") or 1.5
-    stock_atr = user_data.get("stock_atr_multiplier") or 0.5
+    from lumisignals.levels_strategy import SCALP_MODEL, INTRADAY_MODEL, SWING_MODEL, ALL_MODELS
 
     import threading
-    stop_event = threading.Event()
 
-    strategy = LevelsStrategy(
-        oanda_client=oanda, snr_client=snr,
-        trade_builder_url=snr_base_url, api_key=snr_api_key,
-        min_score=min_score, atr_stop_multiplier=1.0,
-        trading_timeframe=trading_tf, min_risk_reward=min_rr,
-        watchlist_interval=300, monitor_interval=30,
-        on_signal=on_signal, massive_client=massive,
-        stock_tickers=stock_tickers, stock_atr_multiplier=stock_atr,
-    )
+    # Create all three model strategies
+    models = {}
+    for model_cfg in [SCALP_MODEL, INTRADAY_MODEL, SWING_MODEL]:
+        def make_signal_handler(model_name):
+            def handler(signal, extra_meta=None):
+                log(f"[{model_name.upper()}] SIGNAL: {signal.action} {signal.symbol} @ {signal.entry:.5f} | R:R {signal.risk_reward:.1f}")
+                log_entry = {
+                    "action": signal.action, "symbol": signal.symbol,
+                    "entry": signal.entry, "stop": signal.stop, "target": signal.target,
+                    "risk_reward": signal.risk_reward, "model": model_name,
+                }
+                if extra_meta:
+                    log_entry.update(extra_meta)
+                signal_log.record(f"{model_name}_{signal.symbol}_{int(time.time())}", log_entry)
 
-    log(f"Strategy configured — TF: {trading_tf}, min score: {min_score}, min R:R: {min_rr}")
+                if not user_data.get("dry_run", True):
+                    from lumisignals.order_manager import OrderManager
+                    risk_pct = model_cfg.risk_percent
+                    om = OrderManager(client=oanda, risk_config={"risk_percent": risk_pct}, dry_run=False)
+                    result = om.execute_signal(signal)
+                    if result.success:
+                        log(f"[{model_name.upper()}] ORDER PLACED: {result.order_id}")
+                    else:
+                        log(f"[{model_name.upper()}] ORDER FAILED: {result.error}")
+            return handler
 
-    # Patch watchlist refresh to publish to Redis
-    original_refresh = strategy._refresh_watchlist
+        strategy = LevelsStrategy(
+            oanda_client=oanda, snr_client=snr,
+            trade_builder_url=snr_base_url, api_key=snr_api_key,
+            model=model_cfg,
+            massive_client=massive, stock_tickers=stock_tickers,
+            stock_atr_multiplier=user_data.get("stock_atr_multiplier") or 0.5,
+            on_signal=make_signal_handler(model_cfg.name),
+        )
+        models[model_cfg.name] = strategy
+        log(f"[{model_cfg.name.upper()}] Configured — zones: {model_cfg.zone_tfs}, trigger: {model_cfg.trigger_tf}, bias: {model_cfg.bias_tf}, risk: {model_cfg.risk_percent}%")
 
-    def patched_refresh(pairs=None):
-        original_refresh(pairs)
-        zones = get_watchlist_snapshot()
-        publish_watchlist(user_id, zones)
-        fx_count = sum(1 for z in zones if not z.get("is_stock"))
-        stock_count = len(zones) - fx_count
-        log(f"Watchlist: {len(zones)} zones ({fx_count} forex, {stock_count} stocks/crypto)")
+    # Patch each strategy's watchlist refresh to publish to Redis per model
+    for model_name, strategy in models.items():
+        original = strategy._refresh_watchlist
+        mn = model_name  # capture for closure
 
-    strategy._refresh_watchlist = patched_refresh
+        def make_patched(orig, name):
+            def patched(pairs=None):
+                orig(pairs)
+                zones = get_watchlist_snapshot(name)
+                publish_watchlist_model(user_id, name, zones)
+                log(f"[{name.upper()}] Watchlist: {len(zones)} zones")
+            return patched
 
-    log("Bot running — scanning...")
+        strategy._refresh_watchlist = make_patched(original, mn)
 
-    # Run with periodic check if user deactivated
-    ticks_per_watchlist = max(1, 300 // 30)
+    log("All 3 models running — SCALP (15m) + INTRADAY (1h) + SWING (daily)")
+
+    # Run all models in a unified loop
     tick = 0
-
-    while not stop_event.is_set():
+    while True:
         # Check if user deactivated
         if tick > 0 and tick % 10 == 0:
             if stop_check(user_id):
                 log("Bot stopped by user")
                 break
 
-        if tick % ticks_per_watchlist == 0:
+        for model_name, strategy in models.items():
+            ticks_per_wl = max(1, strategy.watchlist_interval // 30)
+
+            if tick % ticks_per_wl == 0:
+                try:
+                    strategy._refresh_watchlist()
+                except Exception as e:
+                    logger.debug("[%s] Watchlist error: %s", model_name, e)
+
             try:
-                strategy._refresh_watchlist()
+                strategy._monitor_zones()
             except Exception as e:
-                log(f"Watchlist error: {e}")
+                logger.debug("[%s] Monitor error: %s", model_name, e)
 
-        try:
-            strategy._monitor_zones()
-        except Exception as e:
-            logger.debug("Monitor error: %s", e)
+            try:
+                strategy._check_triggers()
+            except Exception as e:
+                logger.debug("[%s] Trigger error: %s", model_name, e)
 
-        try:
-            strategy._check_triggers()
-        except Exception as e:
-            logger.debug("Trigger error: %s", e)
+            strategy._watchlist = [z for z in strategy._watchlist if z.status != "triggered"]
 
-        strategy._watchlist = [z for z in strategy._watchlist if z.status != "triggered"]
         tick += 1
         time.sleep(30)
 

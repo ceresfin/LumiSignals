@@ -222,12 +222,17 @@ def create_app():
     def api_watchlist():
         import redis as _redis
         rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
-        raw = rdb.get(f"watchlist:{current_user.id}")
-        zones = json.loads(raw) if raw else []
-        stocks = [z for z in zones if z.get("is_stock") and not z.get("instrument", "").startswith("X:")]
-        crypto = [z for z in zones if z.get("instrument", "").startswith("X:")]
-        forex = [z for z in zones if not z.get("is_stock")]
-        return jsonify({"stocks": stocks, "crypto": crypto, "forex": forex, "total": len(zones)})
+
+        result = {}
+        for model in ["scalp", "intraday", "swing"]:
+            raw = rdb.get(f"watchlist:{current_user.id}:{model}")
+            zones = json.loads(raw) if raw else []
+            stocks = [z for z in zones if z.get("is_stock") and not z.get("instrument", "").startswith("X:")]
+            crypto = [z for z in zones if z.get("instrument", "").startswith("X:")]
+            forex = [z for z in zones if not z.get("is_stock")]
+            result[model] = {"stocks": stocks, "crypto": crypto, "forex": forex, "total": len(zones)}
+
+        return jsonify(result)
 
     @app.route("/api/options/<ticker>")
     @login_required

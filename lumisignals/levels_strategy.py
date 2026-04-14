@@ -16,14 +16,96 @@ from .order_manager import MAJOR_PAIRS
 
 logger = logging.getLogger(__name__)
 
-# Shared watchlist for web UI access
-_shared_watchlist = []
+# ---------------------------------------------------------------------------
+# Model configurations — three concurrent institutional strategies
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ModelConfig:
+    """Configuration for a single trading model."""
+    name: str              # "scalp", "intraday", "swing"
+    trigger_tf: str        # Timeframe for entry trigger candle
+    zone_tfs: list         # SNR level timeframes to watch
+    bias_tf: str           # Trend direction timeframe
+    bias_candle_tfs: list  # Candle classification timeframes for scoring
+    risk_percent: float    # Risk per trade as % of account
+    zone_tolerance_pct: dict  # Per-zone-TF tolerance {tf: pct}
+    min_score: int = 50
+    min_risk_reward: float = 1.5
+    atr_stop_multiplier: float = 1.0
+    watchlist_interval: int = 300
+    monitor_interval: int = 30
 
 
-def get_watchlist_snapshot() -> list:
-    """Return current watchlist as serializable dicts for the web API."""
+SCALP_MODEL = ModelConfig(
+    name="scalp",
+    trigger_tf="15m",
+    zone_tfs=["1h", "4h"],
+    bias_tf="4h",
+    bias_candle_tfs=["1h", "4h"],
+    risk_percent=0.25,
+    zone_tolerance_pct={"1h": 0.002, "4h": 0.004},
+    min_score=50,
+    min_risk_reward=1.5,
+    watchlist_interval=300,
+    monitor_interval=30,
+)
+
+INTRADAY_MODEL = ModelConfig(
+    name="intraday",
+    trigger_tf="1h",
+    zone_tfs=["4h", "1d"],
+    bias_tf="1d",
+    bias_candle_tfs=["4h", "1d"],
+    risk_percent=0.5,
+    zone_tolerance_pct={"4h": 0.003, "1d": 0.005},
+    min_score=50,
+    min_risk_reward=1.5,
+    watchlist_interval=300,
+    monitor_interval=30,
+)
+
+SWING_MODEL = ModelConfig(
+    name="swing",
+    trigger_tf="1d",
+    zone_tfs=["1w", "1mo"],
+    bias_tf="1mo",
+    bias_candle_tfs=["1w", "1mo"],
+    risk_percent=1.0,
+    zone_tolerance_pct={"1w": 0.006, "1mo": 0.009},
+    min_score=50,
+    min_risk_reward=1.5,
+    watchlist_interval=300,
+    monitor_interval=30,
+)
+
+ALL_MODELS = {"scalp": SCALP_MODEL, "intraday": INTRADAY_MODEL, "swing": SWING_MODEL}
+
+# Shared watchlists for web UI access — keyed by model name
+_shared_watchlists = {"scalp": [], "intraday": [], "swing": []}
+
+
+TF_LABELS = {
+    "1mo": "Monthly", "1w": "Weekly", "1d": "Daily",
+    "4h": "4H", "1h": "1H", "30m": "30M", "15m": "15M", "5m": "5M",
+}
+
+
+def get_watchlist_snapshot(model_name: str = None) -> list:
+    """Return current watchlist as serializable dicts for the web API.
+
+    Args:
+        model_name: "scalp", "intraday", "swing", or None for all.
+    """
+    if model_name:
+        zones = _shared_watchlists.get(model_name, [])
+    else:
+        zones = []
+        for wl in _shared_watchlists.values():
+            zones.extend(wl)
+
     result = []
-    for z in _shared_watchlist:
+    for z in zones:
         result.append({
             "instrument": z.instrument,
             "direction": z.trade_direction,
@@ -37,13 +119,14 @@ def get_watchlist_snapshot() -> list:
             "tf_details": z.tf_details,
             "status": z.status,
             "visit_count": z.visit_count,
-            "trigger_timeframe": "",  # filled at trigger time
+            "trigger_timeframe": "",
             "trigger_pattern": "",
-            "level_timeframe": {"1mo": "Monthly", "1w": "Weekly", "1d": "Daily"}.get(z.zone_timeframe, z.zone_timeframe),
+            "level_timeframe": TF_LABELS.get(z.zone_timeframe, z.zone_timeframe),
             "level_type": z.zone_type,
-            "strategy": {"1mo": "Monthly", "1w": "Weekly", "1d": "Daily"}.get(z.zone_timeframe, z.zone_timeframe) + " " + z.zone_type,
+            "strategy": TF_LABELS.get(z.zone_timeframe, z.zone_timeframe) + " " + z.zone_type,
             "final_score": z.bias_score,
             "is_stock": "_" not in z.instrument,
+            "model": getattr(z, "_model_name", "swing"),
         })
     return result
 
@@ -133,11 +216,18 @@ class LevelsStrategy:
     Phase 1 (every N minutes): Build zone watchlist from SNR levels + bias scoring.
     Phase 2 (every 30s): Monitor prices, activate/deactivate zones by proximity.
     Phase 3 (every 30s): Check LTF candle triggers for activated zones.
+
+    Supports multiple models via ModelConfig:
+      - scalp:    15m trigger at 1h/4h zones, 4h bias
+      - intraday: 1h trigger at 4h/daily zones, daily bias
+      - swing:    daily trigger at weekly/monthly zones, monthly bias
     """
 
     def __init__(self, oanda_client: OandaClient, snr_client, trade_builder_url: str,
-                 api_key: str, min_score: int = 50, atr_stop_multiplier: float = 1.0,
-                 trading_timeframe: str = "5m", zone_tolerances: dict = None,
+                 api_key: str, model: ModelConfig = None,
+                 # Legacy params (used if model is None)
+                 min_score: int = 50, atr_stop_multiplier: float = 1.0,
+                 trading_timeframe: str = "1d", zone_tolerances: dict = None,
                  min_risk_reward: float = 1.5, watchlist_interval: int = 300,
                  monitor_interval: int = 30, trigger_candle_count: int = 10,
                  zone_timeout: int = 14400, on_signal: Callable = None,
@@ -147,15 +237,37 @@ class LevelsStrategy:
         self.snr_client = snr_client
         self.trade_builder_url = trade_builder_url.rstrip("/")
         self.api_key = api_key
-        self.min_score = min_score
-        self.atr_stop_multiplier = atr_stop_multiplier
-        self.trading_timeframe = trading_timeframe
-        self.zone_tolerances = zone_tolerances or {
-            "1d": 0.003, "1w": 0.006, "1mo": 0.009,
-        }
-        self.min_risk_reward = min_risk_reward
-        self.watchlist_interval = watchlist_interval
-        self.monitor_interval = monitor_interval
+
+        # Model config — either from ModelConfig or legacy params
+        if model:
+            self.model = model
+            self.model_name = model.name
+            self.trading_timeframe = model.trigger_tf
+            self.zone_tfs = model.zone_tfs
+            self.bias_tf = model.bias_tf
+            self.bias_candle_tfs = model.bias_candle_tfs
+            self.min_score = model.min_score
+            self.atr_stop_multiplier = model.atr_stop_multiplier
+            self.min_risk_reward = model.min_risk_reward
+            self.zone_tolerances = model.zone_tolerance_pct
+            self.watchlist_interval = model.watchlist_interval
+            self.monitor_interval = model.monitor_interval
+            self.risk_percent = model.risk_percent
+        else:
+            self.model = None
+            self.model_name = "swing"
+            self.trading_timeframe = trading_timeframe
+            self.zone_tfs = ["1w", "1mo"]
+            self.bias_tf = "1mo"
+            self.bias_candle_tfs = ["1w", "1mo"]
+            self.min_score = min_score
+            self.atr_stop_multiplier = atr_stop_multiplier
+            self.min_risk_reward = min_risk_reward
+            self.zone_tolerances = zone_tolerances or {"1w": 0.006, "1mo": 0.009}
+            self.watchlist_interval = watchlist_interval
+            self.monitor_interval = monitor_interval
+            self.risk_percent = 1.0
+
         self.trigger_candle_count = trigger_candle_count
         self.zone_timeout = zone_timeout
         self.on_signal = on_signal
@@ -308,15 +420,14 @@ class LevelsStrategy:
         self._watchlist = new_watchlist
 
         # Publish to shared state for web UI
-        global _shared_watchlist
-        _shared_watchlist = list(self._watchlist)
+        _shared_watchlists[self.model_name] = list(self._watchlist)
 
         # Log summary
         pair_count = len(set(z.instrument for z in self._watchlist))
         fx_count = sum(1 for z in self._watchlist if "_" in z.instrument)
         stock_count = len(self._watchlist) - fx_count
-        logger.info("Watchlist: %d zones across %d instruments (%d forex, %d stocks/crypto)",
-                     len(self._watchlist), pair_count, fx_count, stock_count)
+        logger.info("[%s] Watchlist: %d zones across %d instruments (%d forex, %d stocks/crypto)",
+                     self.model_name.upper(), len(self._watchlist), pair_count, fx_count, stock_count)
 
     def _scan_pair_for_zones(self, instrument: str, watchlist: list):
         """Scan a single pair and append qualifying ZoneEntry objects to watchlist."""
@@ -327,9 +438,9 @@ class LevelsStrategy:
         if price is None:
             return
 
-        # 2. Get SNR levels
+        # 2. Get SNR levels for this model's zone timeframes
         snr_data = self.snr_client.get_snr_levels(
-            ticker=ticker, intervals=["1mo", "1w", "1d"], market_type="forex",
+            ticker=ticker, intervals=self.zone_tfs, market_type="forex",
         )
         if not snr_data:
             return
@@ -419,73 +530,44 @@ class LevelsStrategy:
         candle_series = {}
         tf_details = {}
 
-        for tf, gran in [("1mo", "M"), ("1w", "W"), ("1d", "D")]:
+        # Build candle details for this model's bias timeframes
+        all_candle_tfs = list(set(self.zone_tfs + self.bias_candle_tfs))
+        tf_to_gran = {"1mo": "M", "1w": "W", "1d": "D", "4h": "H4", "1h": "H1", "30m": "M30", "15m": "M15"}
+
+        for tf in all_candle_tfs:
+            gran = tf_to_gran.get(tf, "D")
             tf_label = self._tf_label(tf)
             detail = {"trend": trends.get(tf_label, "")}
 
+            # Determine label format based on timeframe
             if tf == "1mo":
-                # Monthly: max candle history for best TA-Lib detection
-                # Always show 3 candles: prev_completed + last_completed + current
-                series = self._get_candles(instrument, granularity=gran, count=500)
-                if series:
-                    candle_series[tf] = series
-                    if len(series) >= 2:
-                        _set_candle(detail, "candle1_", _label_from_ts(series[-2].timestamp, "month") or "2 mo ago", _cls(series[:-1]), series[-2])
-                        _set_candle(detail, "candle2_", _label_from_ts(series[-1].timestamp, "month") or "Last mo", _cls(series), series[-1])
-                    else:
-                        _set_candle(detail, "candle1_", _label_from_ts(series[-1].timestamp, "month") or "Last mo", _cls(series), series[-1])
-                curr = self._get_current_candle(instrument, gran)
-                if curr:
-                    cls_curr = _cls(series + [curr]) if series else _cls_single(curr)
-                    prefix = "candle3_" if series and len(series) >= 2 else "candle2_"
-                    _set_candle(detail, prefix, _label_from_ts(curr.timestamp, "month") or "This mo", cls_curr, curr)
-
+                label_fmt = "month"
+                count = 500  # Max history for TA-Lib
             elif tf == "1w":
-                # Always show 3 candles: 2 completed weeks + current week
-                series = self._get_candles(instrument, granularity=gran, count=500)
-                if series and len(series) >= 2:
-                    candle_series[tf] = series
-                    _set_candle(detail, "candle1_", _label_from_ts(series[-2].timestamp, "week") or "Prev wk", _cls(series[:-1]), series[-2])
-                    _set_candle(detail, "candle2_", _label_from_ts(series[-1].timestamp, "week") or "Last wk", _cls(series), series[-1])
-                elif series:
-                    candle_series[tf] = series
-                    _set_candle(detail, "candle1_", _label_from_ts(series[-1].timestamp, "week") or "Last wk", _cls(series), series[-1])
-                # Current week (in-progress)
-                curr_w = self._get_current_candle(instrument, gran) if hasattr(self, '_get_current_candle') else None
-                if curr_w:
-                    cls_cw = _cls(series + [curr_w]) if series else _cls_single(curr_w)
-                    prefix_w = "candle3_" if series and len(series) >= 2 else "candle2_"
-                    _set_candle(detail, prefix_w, "This wk", cls_cw, curr_w)
+                label_fmt = "week"
+                count = 500
+            else:
+                label_fmt = "day"  # Works for daily, 4h, 1h, etc.
+                count = 100
 
-            elif tf == "1d":
-                # Always show 3 daily candles
-                series = self._get_candles(instrument, granularity=gran, count=500)
-                if series:
-                    candle_series[tf] = series
+            # Fetch completed candles
+            series = self._get_candles(instrument, granularity=gran, count=count)
+            if series:
+                candle_series[tf] = series
 
-                if after_midday:
-                    # 2 days ago + yesterday + today
-                    if series and len(series) >= 2:
-                        _set_candle(detail, "candle1_", _label_from_ts(series[-2].timestamp, "day") or "2d ago", _cls(series[:-1]), series[-2])
-                        _set_candle(detail, "candle2_", _label_from_ts(series[-1].timestamp, "day") or "Yesterday", _cls(series), series[-1])
-                    elif series:
-                        _set_candle(detail, "candle1_", _label_from_ts(series[-1].timestamp, "day") or "Yesterday", _cls(series), series[-1])
-                    curr = self._get_current_candle(instrument, gran)
-                    if curr:
-                        cls_cd = _cls(series + [curr]) if series else _cls_single(curr)
-                        prefix_d = "candle3_" if series and len(series) >= 2 else "candle2_"
-                        _set_candle(detail, prefix_d, "Today", cls_cd, curr)
-                else:
-                    # 3 days ago + 2 days ago + yesterday
-                    if series and len(series) >= 3:
-                        _set_candle(detail, "candle1_", _label_from_ts(series[-3].timestamp, "day") or "3d ago", _cls(series[:-2]), series[-3])
-                        _set_candle(detail, "candle2_", _label_from_ts(series[-2].timestamp, "day") or "2d ago", _cls(series[:-1]), series[-2])
-                        _set_candle(detail, "candle3_", _label_from_ts(series[-1].timestamp, "day") or "Yesterday", _cls(series), series[-1])
-                    elif series and len(series) >= 2:
-                        _set_candle(detail, "candle1_", _label_from_ts(series[-2].timestamp, "day") or "2d ago", _cls(series[:-1]), series[-2])
-                        _set_candle(detail, "candle2_", _label_from_ts(series[-1].timestamp, "day") or "Yesterday", _cls(series), series[-1])
-                    elif series:
-                        _set_candle(detail, "candle1_", _label_from_ts(series[-1].timestamp, "day") or "Yesterday", _cls(series), series[-1])
+            # Always show 3 candles: 2 completed + current (or 3 completed)
+            if series and len(series) >= 2:
+                _set_candle(detail, "candle1_", _label_from_ts(series[-2].timestamp, label_fmt) or "prev", _cls(series[:-1]), series[-2])
+                _set_candle(detail, "candle2_", _label_from_ts(series[-1].timestamp, label_fmt) or "last", _cls(series), series[-1])
+            elif series:
+                _set_candle(detail, "candle1_", _label_from_ts(series[-1].timestamp, label_fmt) or "last", _cls(series), series[-1])
+
+            # Try to add current in-progress candle as 3rd
+            curr = self._get_current_candle(instrument, gran)
+            if curr:
+                cls_curr = _cls(series + [curr]) if series else _cls_single(curr)
+                prefix = "candle3_" if series and len(series) >= 2 else "candle2_"
+                _set_candle(detail, prefix, _label_from_ts(curr.timestamp, label_fmt) or "now", cls_curr, curr)
 
             tf_details[tf_label] = detail
 
@@ -494,7 +576,7 @@ class LevelsStrategy:
 
         # Score candles — only actionable formations count for bias
         scores = []
-        for tf in ["1mo", "1w", "1d"]:
+        for tf in self.bias_candle_tfs:
             series = candle_series.get(tf)
             if not series:
                 continue
@@ -514,7 +596,7 @@ class LevelsStrategy:
         candle_summary = " | ".join(parts) if parts else "no data"
 
         # 5. Check each level within outer tolerance
-        for tf in ["1mo", "1w", "1d"]:
+        for tf in self.zone_tfs:
             levels = snr_data.get(tf, {})
             tolerance = price * self.zone_tolerances.get(tf, 0.003)
 
@@ -982,7 +1064,8 @@ class LevelsStrategy:
         candle_score_approx = max(0, min(3, candle_score_approx))
 
         levels_meta = {
-            "strategy": "levels",
+            "strategy": f"levels-{self.model_name}",
+            "model": self.model_name,
             "zone_timeframe": self._tf_label(zone.zone_timeframe),
             "zone_type": zone.zone_type,
             "zone_price": zone.zone_price,
@@ -1022,10 +1105,11 @@ class LevelsStrategy:
         Phase 2 + 3 run every monitor_interval seconds.
         """
         logger.info(
-            "Levels strategy running -- watchlist every %ds, monitor every %ds, "
-            "trading TF: %s, min R:R: %.1f",
-            self.watchlist_interval, self.monitor_interval,
-            self.trading_timeframe, self.min_risk_reward,
+            "[%s] Strategy running -- zones: %s, trigger: %s, bias: %s, "
+            "watchlist every %ds, monitor every %ds, min R:R: %.1f",
+            self.model_name.upper(), self.zone_tfs, self.trading_timeframe,
+            self.bias_tf, self.watchlist_interval, self.monitor_interval,
+            self.min_risk_reward,
         )
 
         ticks_per_watchlist = max(1, self.watchlist_interval // self.monitor_interval)

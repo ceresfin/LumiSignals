@@ -13,19 +13,30 @@ from lumisignals.levels_strategy import (
 
 def _make_strategy(**overrides):
     """Create a LevelsStrategy with mocked dependencies."""
+    from lumisignals.levels_strategy import ModelConfig
     oanda = MagicMock()
     snr = MagicMock()
+    # Default test model uses daily zones (like old behavior)
+    test_model = ModelConfig(
+        name="test",
+        trigger_tf="5m",
+        zone_tfs=["1d", "1w", "1mo"],
+        bias_tf="1d",
+        bias_candle_tfs=["1d", "1w", "1mo"],
+        risk_percent=1.0,
+        zone_tolerance_pct={"1d": 0.003, "1w": 0.006, "1mo": 0.009},
+        min_score=overrides.pop("min_score", 50),
+        min_risk_reward=overrides.pop("min_risk_reward", 1.5),
+        atr_stop_multiplier=overrides.pop("atr_stop_multiplier", 1.0),
+        watchlist_interval=overrides.pop("watchlist_interval", 300),
+        monitor_interval=overrides.pop("monitor_interval", 30),
+    )
     defaults = dict(
         oanda_client=oanda,
         snr_client=snr,
         trade_builder_url="https://app.lumitrade.ai/api/v1",
         api_key="test_key",
-        min_score=50,
-        atr_stop_multiplier=1.0,
-        trading_timeframe="5m",
-        min_risk_reward=1.5,
-        watchlist_interval=300,
-        monitor_interval=30,
+        model=test_model,
         on_signal=MagicMock(),
     )
     defaults.update(overrides)
@@ -298,7 +309,7 @@ class TestFireTrigger:
 
         assert signal.action == "BUY"
         assert signal.entry == 1.08120
-        assert meta["strategy"] == "levels"
+        assert meta["strategy"] == "levels-test"
         assert meta["trigger_timeframe"] == "5m"
         assert meta["trigger_pattern"] == "Bullish Engulfing"
         assert meta["zone_timeframe"] == "Daily"
