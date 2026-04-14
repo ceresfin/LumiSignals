@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LumiSignals — Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600&family=Inter:wght@300;400;500;600&family=Open+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root { --olive: #7F8464; --cream: #F5F3EE; --dark: #2E2E2C; --text-light: #8a847e; --white: #fff; --green: #27ae60; --red: #c0392b; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Inter', sans-serif; background: var(--cream); color: var(--dark); }
+.header { background: linear-gradient(165deg, #C4B99A 0%, #B8A88C 40%, #A89878 100%); padding: 16px 0; }
+.header-inner { max-width: 1200px; margin: 0 auto; padding: 0 24px; display: flex; justify-content: space-between; align-items: center; }
+.header h1 { font-family: 'Playfair Display', serif; font-size: 1.4rem; font-weight: 400; }
+.header-nav { display: flex; gap: 12px; align-items: center; }
+.header-nav a { font-size: 0.85rem; color: var(--dark); padding: 8px 16px; border-radius: 50px; text-decoration: none; }
+.header-nav a:hover { background: rgba(0,0,0,0.05); }
+.header-nav a.active { background: var(--olive); color: #FFF5E1; }
+.container { max-width: 1200px; margin: 0 auto; padding: 24px; }
+.card { background: var(--white); border-radius: 12px; padding: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); margin-bottom: 20px; }
+.card h2 { font-family: 'Playfair Display', serif; font-size: 1.1rem; font-weight: 400; margin-bottom: 16px; }
+.stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 24px; }
+.stat-card { background: var(--white); border-radius: 12px; padding: 20px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
+.stat-value { font-family: 'Playfair Display', serif; font-size: 1.8rem; }
+.stat-label { font-size: 0.72rem; color: var(--text-light); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 4px; }
+.status-badge { display: inline-block; padding: 6px 16px; border-radius: 50px; font-size: 0.82rem; font-weight: 600; }
+.status-active { background: #e8f5e9; color: var(--green); }
+.status-inactive { background: #f0f0f0; color: var(--text-light); }
+.status-setup { background: #fff3e0; color: #e67e22; }
+.btn { padding: 10px 24px; border: none; border-radius: 8px; font-size: 0.85rem; cursor: pointer; font-weight: 500; }
+.btn-start { background: var(--green); color: white; }
+.btn-stop { background: var(--red); color: white; }
+.btn:hover { opacity: 0.9; }
+.plan-badge { display: inline-block; padding: 4px 12px; border-radius: 50px; font-size: 0.75rem; font-weight: 600; background: var(--olive); color: #FFF5E1; }
+.disclaimer { text-align: center; font-size: 0.72rem; color: var(--text-light); margin-top: 24px; }
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="header-inner">
+    <h1>LumiSignals</h1>
+    <nav class="header-nav">
+      <a href="/dashboard" class="active">Dashboard</a>
+      <a href="/trades">Trades</a>
+      <a href="/setup">Settings</a>
+      <a href="/logout">Log out</a>
+    </nav>
+  </div>
+</div>
+
+<div class="container">
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-value" id="botStatus">—</div>
+      <div class="stat-label">Bot Status</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value" id="plan"><span class="plan-badge">{{ user.plan }}</span></div>
+      <div class="stat-label">Your Plan</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value" id="timeframe">{{ user.trading_timeframe }}</div>
+      <div class="stat-label">Trading TF</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value" id="mode">{{ 'DRY RUN' if user.dry_run else 'LIVE' }}</div>
+      <div class="stat-label">Mode</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Bot Control</h2>
+    {% if not user.oanda_api_key %}
+    <p><span class="status-badge status-setup">Setup Required</span></p>
+    <p style="margin-top:12px;color:var(--text-light);font-size:0.85rem;">
+      Connect your Oanda account in <a href="/setup" style="color:var(--olive);">Settings</a> to start the bot.
+    </p>
+    {% else %}
+    <div style="display:flex;gap:12px;align-items:center;">
+      <button class="btn btn-start" onclick="startBot()">Start Bot</button>
+      <button class="btn btn-stop" onclick="stopBot()">Stop Bot</button>
+      <span id="statusBadge" class="status-badge status-inactive">Inactive</span>
+    </div>
+    <p style="margin-top:12px;color:var(--text-light);font-size:0.82rem;">
+      Scanning 27 forex pairs + 112 stocks/crypto | Min score: {{ user.min_score }} | Min R:R: {{ user.min_risk_reward }}
+    </p>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h2>Activity Log</h2>
+    <div id="activityLog" style="max-height:400px;overflow-y:auto;font-family:monospace;font-size:0.78rem;color:var(--dark);line-height:1.6;">
+      <p style="color:var(--text-light)">Start the bot to see activity...</p>
+    </div>
+  </div>
+
+  <div class="disclaimer">
+    LumiTrade is a financial publishing company. All signals are for educational and informational purposes only.
+  </div>
+</div>
+
+<script>
+function startBot() {
+  fetch('/api/bot/start', {method: 'POST'})
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.success) {
+        document.getElementById('statusBadge').className = 'status-badge status-active';
+        document.getElementById('statusBadge').textContent = 'Running';
+        document.getElementById('botStatus').textContent = 'Active';
+        startLogPolling();
+      } else {
+        alert(d.error || d.message);
+      }
+    });
+}
+
+function stopBot() {
+  fetch('/api/bot/stop', {method: 'POST'})
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      document.getElementById('statusBadge').className = 'status-badge status-inactive';
+      document.getElementById('statusBadge').textContent = 'Stopped';
+      document.getElementById('botStatus').textContent = 'Inactive';
+    });
+}
+
+var logInterval = null;
+function startLogPolling() {
+  if (logInterval) return;
+  logInterval = setInterval(function() {
+    fetch('/api/log')
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        var el = document.getElementById('activityLog');
+        if (d.entries && d.entries.length) {
+          el.innerHTML = d.entries.map(function(e) { return '<div>' + e + '</div>'; }).join('');
+          el.scrollTop = el.scrollHeight;
+        }
+      });
+  }, 5000);
+}
+
+// Load log immediately
+function loadLog() {
+  fetch('/api/log')
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      var el = document.getElementById('activityLog');
+      if (d.entries && d.entries.length) {
+        el.innerHTML = d.entries.map(function(e) { return '<div>' + e + '</div>'; }).join('');
+        el.scrollTop = el.scrollHeight;
+      }
+    });
+}
+
+// Check status on load
+fetch('/api/status')
+  .then(function(r) { return r.json(); })
+  .then(function(d) {
+    document.getElementById('botStatus').textContent = d.bot_active ? 'Active' : 'Inactive';
+    if (d.bot_active) {
+      document.getElementById('statusBadge').className = 'status-badge status-active';
+      document.getElementById('statusBadge').textContent = 'Running';
+      startLogPolling();
+    }
+    // Always load log on page open (shows history even if bot stopped)
+    loadLog();
+  });
+</script>
+</body>
+</html>

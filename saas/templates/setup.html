@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LumiSignals — Setup</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600&family=Inter:wght@300;400;500;600&family=Open+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root { --olive: #7F8464; --cream: #F5F3EE; --dark: #2E2E2C; --text-light: #8a847e; --white: #fff; --green: #27ae60; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Inter', sans-serif; background: var(--cream); color: var(--dark); }
+.header { background: linear-gradient(165deg, #C4B99A 0%, #B8A88C 40%, #A89878 100%); padding: 16px 0; }
+.header-inner { max-width: 800px; margin: 0 auto; padding: 0 24px; display: flex; justify-content: space-between; align-items: center; }
+.header h1 { font-family: 'Playfair Display', serif; font-size: 1.4rem; font-weight: 400; }
+.header-nav a { font-size: 0.85rem; color: var(--dark); padding: 8px 16px; border-radius: 50px; text-decoration: none; }
+.header-nav a:hover { background: rgba(0,0,0,0.05); }
+.container { max-width: 800px; margin: 0 auto; padding: 24px; }
+.card { background: var(--white); border-radius: 12px; padding: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); margin-bottom: 20px; }
+.card h2 { font-family: 'Playfair Display', serif; font-size: 1.1rem; font-weight: 400; margin-bottom: 16px; padding-bottom: 10px; border-bottom: 1px solid #eee; }
+label { display: block; font-size: 0.8rem; font-weight: 500; margin-bottom: 4px; }
+input, select { width: 100%; padding: 10px 14px; border: 1px solid #ddd; border-radius: 8px; font-size: 0.9rem; margin-bottom: 12px; }
+input:focus, select:focus { outline: none; border-color: var(--olive); }
+small { color: var(--text-light); font-size: 0.75rem; display: block; margin-top: -8px; margin-bottom: 12px; }
+.field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+button[type="submit"] { padding: 12px 32px; background: var(--olive); color: white; border: none; border-radius: 8px; font-size: 0.9rem; cursor: pointer; }
+button:hover { opacity: 0.9; }
+.checkbox-field { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.checkbox-field input { width: auto; margin: 0; }
+.flash { padding: 10px; border-radius: 8px; margin-bottom: 16px; font-size: 0.82rem; }
+.flash.success { background: #e8f5e9; color: var(--green); }
+.flash.error { background: #fdecea; color: #c0392b; }
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="header-inner">
+    <h1>LumiSignals</h1>
+    <nav class="header-nav">
+      <a href="/dashboard">Dashboard</a>
+      <a href="/trades">Trades</a>
+      <a href="/setup">Settings</a>
+      <a href="/logout">Log out</a>
+    </nav>
+  </div>
+</div>
+
+<div class="container">
+  {% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+  {% for cat, msg in messages %}
+  <div class="flash {{ cat }}">{{ msg }}</div>
+  {% endfor %}
+  {% endif %}
+  {% endwith %}
+
+  <form method="POST">
+    <div class="card">
+      <h2>1. Broker Connection — Oanda</h2>
+      <div class="field-row">
+        <div>
+          <label>Account ID</label>
+          <input type="text" name="oanda_account_id" value="{{ user.oanda_account_id or '' }}" placeholder="101-001-xxxxx-001">
+        </div>
+        <div>
+          <label>API Key</label>
+          <input type="password" name="oanda_api_key" value="{{ user.oanda_api_key or '' }}" placeholder="Your Oanda API key">
+        </div>
+      </div>
+      <label>Environment</label>
+      <select name="oanda_environment">
+        <option value="practice" {{ 'selected' if user.oanda_environment == 'practice' else '' }}>Practice (Paper Trading)</option>
+        <option value="live" {{ 'selected' if user.oanda_environment == 'live' else '' }}>Live</option>
+      </select>
+    </div>
+
+    <div class="card">
+      <h2>2. Strategy Settings</h2>
+      <div class="field-row">
+        <div>
+          <label>Trading Timeframe</label>
+          <select name="trading_timeframe">
+            <option value="5m" {{ 'selected' if user.trading_timeframe == '5m' else '' }}>5 minute</option>
+            <option value="15m" {{ 'selected' if user.trading_timeframe == '15m' else '' }}>15 minute</option>
+            <option value="30m" {{ 'selected' if user.trading_timeframe == '30m' else '' }}>30 minute</option>
+            <option value="1h" {{ 'selected' if user.trading_timeframe == '1h' else '' }}>1 hour</option>
+            <option value="4h" {{ 'selected' if user.trading_timeframe == '4h' else '' }}>4 hour</option>
+            <option value="1d" {{ 'selected' if user.trading_timeframe == '1d' else '' }}>Daily</option>
+          </select>
+        </div>
+        <div>
+          <label>Min Bias Score</label>
+          <input type="number" name="min_score" value="{{ user.min_score }}" min="0" max="100" step="5">
+          <small>0-100. Trend 60% + Candle 40%</small>
+        </div>
+      </div>
+      <div class="field-row">
+        <div>
+          <label>Min Risk:Reward</label>
+          <input type="number" name="min_risk_reward" value="{{ user.min_risk_reward }}" min="0.5" max="5" step="0.1">
+        </div>
+        <div>
+          <label>Stock Zone ATR Multiplier</label>
+          <input type="number" name="stock_atr_multiplier" value="{{ user.stock_atr_multiplier }}" min="0.1" max="5" step="0.1">
+          <small>Lower = tighter zones</small>
+        </div>
+      </div>
+      <div class="checkbox-field">
+        <input type="checkbox" name="dry_run" id="dryRun" {{ 'checked' if user.dry_run else '' }}>
+        <label for="dryRun">Dry-run mode (log signals without executing)</label>
+      </div>
+    </div>
+
+    <button type="submit">Save Settings</button>
+  </form>
+</div>
+</body>
+</html>

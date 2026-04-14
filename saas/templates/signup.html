@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LumiSignals — Sign Up</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+:root { --olive: #7F8464; --cream: #F5F3EE; --dark: #2E2E2C; --text-light: #8a847e; --white: #fff; --green: #27ae60; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Inter', sans-serif; background: var(--cream); min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+.card { background: var(--white); border-radius: 16px; padding: 40px; width: 100%; max-width: 420px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }
+h1 { font-family: 'Playfair Display', serif; font-size: 1.6rem; text-align: center; margin-bottom: 8px; }
+.subtitle { text-align: center; color: var(--text-light); font-size: 0.85rem; margin-bottom: 28px; }
+label { display: block; font-size: 0.8rem; font-weight: 500; margin-bottom: 4px; color: var(--dark); }
+input[type="email"], input[type="password"] { width: 100%; padding: 10px 14px; border: 1px solid #ddd; border-radius: 8px; font-size: 0.9rem; margin-bottom: 16px; }
+input:focus { outline: none; border-color: var(--olive); }
+button { width: 100%; padding: 12px; background: var(--olive); color: white; border: none; border-radius: 8px; font-size: 0.9rem; font-weight: 500; cursor: pointer; }
+button:hover { opacity: 0.9; }
+.link { text-align: center; margin-top: 16px; font-size: 0.82rem; color: var(--text-light); }
+.link a { color: var(--olive); text-decoration: none; }
+.flash { padding: 10px; border-radius: 8px; margin-bottom: 16px; font-size: 0.82rem; background: #fdecea; color: #c0392b; }
+.features { margin-bottom: 24px; }
+.features li { font-size: 0.82rem; color: var(--dark); margin-bottom: 6px; list-style: none; padding-left: 20px; position: relative; }
+.features li::before { content: ""; position: absolute; left: 0; top: 5px; width: 8px; height: 8px; background: var(--green); border-radius: 50%; }
+small { color: var(--text-light); font-size: 0.75rem; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>LumiSignals</h1>
+  <p class="subtitle">Start your free trial</p>
+  {% with messages = get_flashed_messages() %}
+  {% if messages %}
+  <div class="flash">{{ messages[0] }}</div>
+  {% endif %}
+  {% endwith %}
+  <ul class="features">
+    <li>Institutional S/R zone scanner — 27 forex pairs + 112 stocks</li>
+    <li>Multi-timeframe candlestick confirmation</li>
+    <li>Options spread analyzer at key levels</li>
+    <li>Auto-execution via Oanda (forex)</li>
+  </ul>
+  <form method="POST">
+    <label>Email</label>
+    <input type="email" name="email" required>
+    <label>Password</label>
+    <input type="password" name="password" required minlength="8">
+    <small>Minimum 8 characters</small><br><br>
+    <button type="submit">Create Account</button>
+  </form>
+  <p class="link">Already have an account? <a href="/login">Log in</a></p>
+  <p class="link" style="margin-top:8px;font-size:0.72rem;">For educational purposes only. Not investment advice.</p>
+</div>
+</body>
+</html>

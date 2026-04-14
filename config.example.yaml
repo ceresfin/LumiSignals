@@ -47,16 +47,32 @@ snr:
   tolerance_pct: 0.002      # How close price must be to S/R level (0.002 = 0.2% of price)
   market_type: "forex"      # "forex", "stock", "crypto"
 
+# Massive (formerly Polygon) — stock and crypto market data
+massive:
+  api_key: "YOUR_MASSIVE_API_KEY"    # Get from massive.io (or polygon.io)
+  # Extra tickers beyond the built-in watchlist
+  # Built-in: SPY, QQQ, IWM, DIA, 11 SPDR sectors, AAPL, TSLA, META, etc.
+  # extra_tickers:
+  #   - SOFI
+  #   - RIVN
+  #   - HOOD
+
 # Levels strategy settings (used when strategy is "levels")
+# Three-phase pipeline: Zone Watchlist → Zone Monitor → Execution Trigger
 levels:
-  min_score: 50             # Min combined score out of 100 to place a trade
-                            #   Score = (trend × 60%) + (candle × 40%)
-                            #   100 = all 3 timeframes agree on both trend and candle
-                            #   60  = strong trend, weak candles
-                            #   50  = balanced minimum (recommended)
-                            #   40  = aggressive
-  atr_stop_multiplier: 1.0  # Stop distance = ATR x this value
-  tolerance_pct: 0.003      # How close price must be to level to trigger scan (0.3%)
+  min_score: 50                    # Min bias score to watch a zone (0-100)
+                                   #   Score = (trend × 60%) + (candle × 40%)
+                                   #   50 = balanced minimum (recommended)
+  atr_stop_multiplier: 1.0        # Stop distance = ATR × this value
+  trading_timeframe: "5m"          # LTF for entry triggers (5m, 15m, 30m, 1h)
+  zone_tolerance_daily: 0.003      # 0.3% — how close price must be to daily level
+  zone_tolerance_weekly: 0.006     # 0.6% — weekly levels get wider zones
+  zone_tolerance_monthly: 0.009    # 0.9% — monthly levels get widest zones
+  watchlist_interval: 300          # Seconds between full pair scans (Phase 1)
+  monitor_interval: 30             # Seconds between price checks (Phase 2+3)
+  trigger_candle_count: 10         # Candles to fetch at trading TF for trigger
+  min_risk_reward: 1.5             # Minimum R:R ratio to accept a trigger
+  zone_timeout: 14400              # 4 hours — deactivate zone if no trigger
 
 risk:
   risk_percent: 1.0         # % of account balance to risk per trade

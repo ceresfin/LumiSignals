@@ -65,6 +65,15 @@ tr:hover { background: rgba(0,0,0,0.015); }
 
 .disclaimer { text-align: center; font-size: 0.72rem; color: var(--text-light); margin-top: 24px; line-height: 1.5; }
 
+/* Mini candlestick visuals */
+.candle-row { display: flex; align-items: flex-end; gap: 3px; margin-top: 2px; height: 36px; }
+.candle { display: flex; flex-direction: column; align-items: center; width: 10px; height: 100%; position: relative; }
+.candle-wick { width: 1px; background: #555; }
+.candle-body { width: 8px; min-height: 1px; border-radius: 1px; }
+.candle-body.green { background: var(--green); }
+.candle-body.red { background: var(--red); }
+.candle-label { font-size: 0.55rem; color: var(--text-light); white-space: nowrap; margin-top: 1px; }
+
 @media (max-width: 768px) {
   .stats-grid { grid-template-columns: repeat(3, 1fr); }
   .pair-stats { grid-template-columns: 1fr 1fr; }
@@ -95,6 +104,24 @@ tr:hover { background: rgba(0,0,0,0.015); }
     <div class="stat-card"><div class="stat-value" id="totalPips">—</div><div class="stat-label">Total Pips</div></div>
     <div class="stat-card"><div class="stat-value" id="avgWin">—</div><div class="stat-label">Avg Win</div></div>
     <div class="stat-card"><div class="stat-value" id="avgLoss">—</div><div class="stat-label">Avg Loss</div></div>
+  </div>
+
+  <!-- Zone Watchlist — Stocks -->
+  <div class="card">
+    <h2>Stocks Watchlist <span class="count" id="stockWatchCount">0</span> <button class="refresh-btn" onclick="loadTrades(true)">Refresh</button> <button class="refresh-btn" onclick="analyzeAllOptions()" style="background:#e8f5e9;">Analyze All Options</button></h2>
+    <div id="stockWatchTable"><div class="loading">Loading...</div></div>
+  </div>
+
+  <!-- Zone Watchlist — Crypto -->
+  <div class="card">
+    <h2>Crypto Watchlist <span class="count" id="cryptoWatchCount">0</span></h2>
+    <div id="cryptoWatchTable"><div class="loading">Loading...</div></div>
+  </div>
+
+  <!-- Zone Watchlist — Currencies -->
+  <div class="card">
+    <h2>Currencies Watchlist <span class="count" id="fxWatchCount">0</span></h2>
+    <div id="fxWatchTable"><div class="loading">Loading...</div></div>
   </div>
 
   <!-- Open Trades -->
@@ -132,9 +159,110 @@ tr:hover { background: rgba(0,0,0,0.015); }
   </div>
 </div>
 
-<script>
+<script>/* v2 */
 function plClass(val) { return val > 0 ? 'pl-pos' : (val < 0 ? 'pl-neg' : ''); }
 function fmt(val, dec) { return (val >= 0 ? '+' : '') + val.toFixed(dec || 2); }
+
+function fmtStrategy(t, badgeClass) {
+  // Strategy badge: "Daily demand", "Weekly supply", etc.
+  if (t.level_timeframe && t.level_type) {
+    return '<span class="badge ' + badgeClass + '">' + t.level_timeframe + ' ' + t.level_type + '</span>';
+  }
+  if (t.strategy) return '<span class="badge ' + badgeClass + '">' + t.strategy + '</span>';
+  return '—';
+}
+
+function fmtSignalDetails(t) {
+  var parts = [];
+  if (t.trigger_pattern) {
+    parts.push('<strong>' + t.trigger_timeframe + ' ' + t.trigger_pattern + '</strong>');
+  }
+  if (t.final_score) {
+    var sc = parseFloat(t.final_score);
+    var scColor = sc >= 70 ? 'pl-pos' : (sc >= 50 ? '' : 'pl-neg');
+    parts.push('Score: <span class="' + scColor + '">' + sc.toFixed(0) + '/100</span>');
+  }
+  if (!parts.length && t.snr_grade) parts.push('Grade ' + t.snr_grade);
+  return parts.join(' | ') || '—';
+}
+
+function fmtTfCell(t, tfName) {
+  // Renders a Monthly/Weekly/Daily cell: trend + two labeled candles
+  var d = (t.tf_details || {})[tfName];
+  if (!d) {
+    // Fallback: build from trends + candle_summary for older signals
+    var parts = [];
+    var trend = (t.trends || {})[tfName];
+    if (trend) {
+      var tc = trend === 'bullish' ? 'pl-pos' : 'pl-neg';
+      parts.push('<span class="' + tc + '">trend: ' + trend + '</span>');
+    }
+    if (t.candle_summary) {
+      var re = new RegExp(tfName + ':\\s*(.+?)\\s*\\((bullish|bearish|neutral)\\)');
+      var m = t.candle_summary.match(re);
+      if (m) {
+        var cc = m[2] === 'bullish' ? 'pl-pos' : (m[2] === 'bearish' ? 'pl-neg' : '');
+        parts.push('<span class="' + cc + '">' + m[1] + '</span>');
+      }
+    }
+    return parts.join('<br>') || '—';
+  }
+  var parts = [];
+  if (d.trend) {
+    var tc = d.trend === 'bullish' ? 'pl-pos' : 'pl-neg';
+    parts.push('<span class="' + tc + '">trend: ' + d.trend + '</span>');
+  }
+  // New labeled format (candle1/candle2) or old format (prev/curr)
+  var p1 = d.candle1_pattern || d.prev_candle;
+  var d1 = d.candle1_direction || d.prev_direction;
+  var l1 = d.candle1_label || '';
+  if (p1) {
+    var c1 = d1 === 'bullish' ? 'pl-pos' : (d1 === 'bearish' ? 'pl-neg' : '');
+    parts.push('<span class="' + c1 + '">' + (l1 ? l1 + ': ' : '') + p1 + '</span>');
+  }
+  var p2 = d.candle2_pattern || d.curr_candle;
+  var d2 = d.candle2_direction || d.curr_direction;
+  var l2 = d.candle2_label || '';
+  if (p2) {
+    var c2 = d2 === 'bullish' ? 'pl-pos' : (d2 === 'bearish' ? 'pl-neg' : '');
+    parts.push('<span class="' + c2 + '">' + (l2 ? l2 + ': ' : '') + p2 + '</span>');
+  }
+  // Third candle (monthly first-half: prev + last + current)
+  if (d.candle3_pattern) {
+    var c3 = d.candle3_direction === 'bullish' ? 'pl-pos' : (d.candle3_direction === 'bearish' ? 'pl-neg' : '');
+    parts.push('<span class="' + c3 + '" style="opacity:0.7">' + (d.candle3_label ? d.candle3_label + ': ' : '') + d.candle3_pattern + '</span>');
+  }
+  // Visual candlesticks
+  var shapes = [];
+  ['candle1_', 'candle2_', 'candle3_'].forEach(function(pfx) {
+    var s = d[pfx + 'shape'];
+    if (s) shapes.push({shape: s, label: d[pfx + 'label'] || ''});
+  });
+  if (shapes.length) {
+    parts.push(renderCandles(shapes));
+  }
+  return parts.join('<br>') || '—';
+}
+
+function renderCandles(shapes) {
+  var h = 32; // total height in px
+  var html = '<div class="candle-row">';
+  shapes.forEach(function(item) {
+    var s = item.shape;
+    var upperH = Math.round(s.upper * h);
+    var bodyH = Math.max(1, Math.round(s.body * h));
+    var lowerH = Math.round(s.lower * h);
+    var color = s.green ? 'green' : 'red';
+    html += '<div class="candle">' +
+      '<div class="candle-wick" style="height:' + upperH + 'px"></div>' +
+      '<div class="candle-body ' + color + '" style="height:' + bodyH + 'px"></div>' +
+      '<div class="candle-wick" style="height:' + lowerH + 'px"></div>' +
+      '<div class="candle-label">' + item.label + '</div>' +
+      '</div>';
+  });
+  html += '</div>';
+  return html;
+}
 
 function buildTable(headers, rows) {
   if (!rows.length) return '<div style="text-align:center;padding:20px;color:#8a847e;">No data</div>';
@@ -146,7 +274,8 @@ function buildTable(headers, rows) {
   return html;
 }
 
-function loadTrades() {
+function loadTrades(rebuildStocks) {
+  if (rebuildStocks === undefined) rebuildStocks = true;
   fetch('/api/trades')
     .then(function(r) { return r.json(); })
     .then(function(data) {
@@ -167,117 +296,127 @@ function loadTrades() {
       document.getElementById('avgLoss').textContent = s.avg_loss ? '$' + s.avg_loss.toFixed(2) : '—';
       document.getElementById('avgLoss').className = 'stat-value negative';
 
+      // Zone Watchlist
+      // Split watchlist into stocks, crypto, forex
+      var wl = data.watchlist || [];
+      var stocks = wl.filter(function(z) { return z.is_stock && !z.instrument.startsWith('X:'); });
+      var crypto = wl.filter(function(z) { return z.instrument.startsWith('X:'); });
+      var forex = wl.filter(function(z) { return !z.is_stock; });
+
+      function wlRow(z, showOptions) {
+        var statusBadge = z.status === 'activated' ? '<span class="badge badge-open">ACTIVE</span>' :
+                          z.status === 'triggered' ? '<span class="badge badge-won">TRIGGERED</span>' :
+                          '<span class="badge badge-closed">watching</span>';
+        var typeClass = z.zone_type === 'demand' ? 'dir-buy' : 'dir-sell';
+        var dir = z.zone_type === 'demand' ? 'BUY' : 'SELL';
+        var scColor = z.bias_score >= 70 ? 'pl-pos' : (z.bias_score >= 50 ? '' : 'pl-neg');
+        var dec = z.is_stock ? 2 : 5;
+        var row = '<td>' + z.instrument + '</td>' +
+          '<td class="' + typeClass + '">' + dir + '</td>' +
+          '<td>' + z.zone_price.toFixed(dec) + '</td>' +
+          '<td>' + statusBadge + '</td>' +
+          '<td class="' + scColor + '">' + z.bias_score.toFixed(0) + '/100</td>' +
+          '<td>' + fmtStrategy(z, 'badge-pending') + '</td>' +
+          '<td style="font-size:0.72rem;line-height:1.4">' + fmtTfCell(z, 'Monthly') + '</td>' +
+          '<td style="font-size:0.72rem;line-height:1.4">' + fmtTfCell(z, 'Weekly') + '</td>' +
+          '<td style="font-size:0.72rem;line-height:1.4">' + fmtTfCell(z, 'Daily') + '</td>';
+        if (showOptions) {
+          var btnId = 'opt_' + z.instrument + '_' + z.zone_type + '_' + z.zone_price.toFixed(0);
+          row += '<td><button class="refresh-btn" onclick="loadOptions(\'' + z.instrument + '\',\'' + z.zone_type + '\',' + z.zone_price + ',this)" id="' + btnId + '">Analyze</button>' +
+            '<div id="' + btnId + '_result" style="font-size:0.7rem;margin-top:4px;"></div></td>';
+        }
+        return row;
+      }
+      var wlHeaders = ['Ticker', 'Dir', 'Zone Price', 'Status', 'Score', 'Strategy', 'Monthly', 'Weekly', 'Daily'];
+      var wlHeadersOpt = wlHeaders.concat(['Options']);
+
+      cachedStockWatchlist = stocks;
+      document.getElementById('stockWatchCount').textContent = stocks.length;
+      if (rebuildStocks) {
+        document.getElementById('stockWatchTable').innerHTML = buildTable(wlHeadersOpt, stocks.map(function(z) { return wlRow(z, true); }));
+      }
+
+      document.getElementById('cryptoWatchCount').textContent = crypto.length;
+      document.getElementById('cryptoWatchTable').innerHTML = buildTable(wlHeaders, crypto.map(wlRow));
+
+      document.getElementById('fxWatchCount').textContent = forex.length;
+      document.getElementById('fxWatchTable').innerHTML = buildTable(wlHeaders, forex.map(wlRow));
+
       // Open trades
       document.getElementById('openCount').textContent = data.open.length;
       var openRows = data.open.map(function(t) {
-        var strat = t.strategy ? '<span class="badge badge-open">' + t.strategy + '</span>' : '—';
-        var sig = '';
-        if (t.snr_grade) sig = 'Grade ' + t.snr_grade;
-        if (t.candle_details && t.candle_details.length) {
-          sig = t.candle_details.map(function(c) {
-            var color = c.direction === 'bullish' ? 'pl-pos' : (c.direction === 'bearish' ? 'pl-neg' : '');
-            return c.timeframe + ': <span class="' + color + '">' + c.pattern + '</span>';
-          }).join(' | ');
-        }
+        var slCell = t.stop_loss ? t.stop_loss.toFixed(5) + '<br><span class="pl-neg" style="font-size:0.7rem">-$' + t.potential_loss.toFixed(2) + '</span>' : '—';
+        var tpCell = t.take_profit ? t.take_profit.toFixed(5) + '<br><span class="pl-pos" style="font-size:0.7rem">+$' + t.potential_profit.toFixed(2) + '</span>' : '—';
         return '<td>' + t.instrument + '</td>' +
           '<td class="dir-' + t.direction.toLowerCase() + '">' + t.direction + '</td>' +
+          '<td>' + (t.trigger_timeframe || '—') + '</td>' +
           '<td>' + t.entry.toFixed(5) + '</td>' +
           '<td>' + t.current_price.toFixed(5) + '</td>' +
+          '<td>' + slCell + '</td>' +
+          '<td>' + tpCell + '</td>' +
           '<td>' + (t.risk_reward || '—') + '</td>' +
           '<td class="' + plClass(t.pips) + '">' + fmt(t.pips, 1) + '</td>' +
           '<td class="' + plClass(t.unrealized_pl) + '">$' + fmt(t.unrealized_pl) + '</td>' +
-          '<td class="pl-pos">$' + t.potential_profit.toFixed(2) + '</td>' +
-          '<td class="pl-neg">-$' + t.potential_loss.toFixed(2) + '</td>' +
-          '<td>' + strat + '</td>' +
-          '<td style="font-size:0.75rem;max-width:200px;">' + (sig || '—') + '</td>';
+          '<td>' + fmtStrategy(t, 'badge-open') + '</td>' +
+          '<td style="font-size:0.72rem;line-height:1.4">' + fmtTfCell(t, 'Monthly') + '</td>' +
+          '<td style="font-size:0.72rem;line-height:1.4">' + fmtTfCell(t, 'Weekly') + '</td>' +
+          '<td style="font-size:0.72rem;line-height:1.4">' + fmtTfCell(t, 'Daily') + '</td>' +
+          '<td style="font-size:0.75rem;max-width:200px;">' + fmtSignalDetails(t) + '</td>';
       });
       document.getElementById('openTable').innerHTML = buildTable(
-        ['Pair', 'Dir', 'Entry', 'Current', 'R:R', 'Pips', 'P&L', 'Pot. Profit', 'Pot. Loss', 'Strategy', 'Signal Details'], openRows
+        ['Pair', 'Dir', 'TF', 'Entry', 'Current', 'SL', 'TP', 'R:R', 'Pips', 'P&L', 'Strategy', 'Monthly', 'Weekly', 'Daily', 'Signal'], openRows
       );
 
       // Pending orders
       document.getElementById('pendingCount').textContent = data.pending.length;
       var pendingRows = data.pending.map(function(o) {
-        var strat = o.strategy ? '<span class="badge badge-pending">' + o.strategy + '</span>' : '—';
-        var parts = [];
-        if (o.final_score) {
-          var sc = parseFloat(o.final_score);
-          var scColor = sc >= 70 ? 'pl-pos' : (sc >= 50 ? '' : 'pl-neg');
-          parts.push('<strong class="' + scColor + '">' + sc.toFixed(0) + '/100</strong>');
-        }
-        if (o.level_timeframe) parts.push(o.level_timeframe + ' ' + o.level_type);
-        if (o.snr_grade) parts.push('Grade ' + o.snr_grade);
-        if (o.candle_details && o.candle_details.length) {
-          parts.push(o.candle_details.map(function(c) {
-            var color = c.direction === 'bullish' ? 'pl-pos' : (c.direction === 'bearish' ? 'pl-neg' : '');
-            return c.timeframe + ': <span class="' + color + '">' + c.pattern + '</span>';
-          }).join(', '));
-        }
-        if (o.trend_score) parts.push('Trend: ' + o.trend_score);
-        if (o.candle_score) parts.push('Candles: ' + o.candle_score);
-        if (o.trends && Object.keys(o.trends).length > 0) {
-          var trendParts = Object.entries(o.trends).map(function(t) {
-            var color = t[1] === 'bullish' ? 'pl-pos' : 'pl-neg';
-            return t[0] + ': <span class="' + color + '">' + t[1] + '</span>';
-          });
-          parts.push(trendParts.join(', '));
-        }
-        var sig = parts.join(' | ');
-
-        // Pips away from current price
         var pipsAway = o.pips_away != null ? o.pips_away.toFixed(1) : '—';
-
+        var slCell = o.stop_loss ? o.stop_loss.toFixed(5) + '<br><span class="pl-neg" style="font-size:0.7rem">-$' + o.potential_loss.toFixed(2) + '</span>' : '—';
+        var tpCell = o.take_profit ? o.take_profit.toFixed(5) + '<br><span class="pl-pos" style="font-size:0.7rem">+$' + o.potential_profit.toFixed(2) + '</span>' : '—';
         return '<td>' + o.instrument + '</td>' +
           '<td class="dir-' + o.direction.toLowerCase() + '">' + o.direction + '</td>' +
-          '<td>' + o.units.toLocaleString() + '</td>' +
+          '<td>' + (o.trigger_timeframe || '—') + '</td>' +
           '<td>' + o.entry.toFixed(5) + '</td>' +
           '<td>' + pipsAway + '</td>' +
-          '<td>' + (o.stop_loss ? o.stop_loss.toFixed(5) : '—') + '</td>' +
-          '<td>' + (o.take_profit ? o.take_profit.toFixed(5) : '—') + '</td>' +
+          '<td>' + slCell + '</td>' +
+          '<td>' + tpCell + '</td>' +
           '<td>' + o.risk_reward + '</td>' +
-          '<td class="pl-pos">$' + o.potential_profit.toFixed(2) + '</td>' +
-          '<td class="pl-neg">-$' + o.potential_loss.toFixed(2) + '</td>' +
-          '<td>' + strat + '</td>' +
-          '<td style="font-size:0.75rem;max-width:240px;">' + (sig || '—') + '</td>';
+          '<td>' + fmtStrategy(o, 'badge-pending') + '</td>' +
+          '<td style="font-size:0.72rem;line-height:1.4">' + fmtTfCell(o, 'Monthly') + '</td>' +
+          '<td style="font-size:0.72rem;line-height:1.4">' + fmtTfCell(o, 'Weekly') + '</td>' +
+          '<td style="font-size:0.72rem;line-height:1.4">' + fmtTfCell(o, 'Daily') + '</td>' +
+          '<td style="font-size:0.75rem;max-width:200px;">' + fmtSignalDetails(o) + '</td>';
       });
       document.getElementById('pendingTable').innerHTML = buildTable(
-        ['Pair', 'Dir', 'Units', 'Entry', 'Pips Away', 'SL', 'TP', 'R:R', 'Pot. Profit', 'Pot. Loss', 'Strategy', 'Signal Details'], pendingRows
+        ['Pair', 'Dir', 'TF', 'Entry', 'Pips Away', 'SL', 'TP', 'R:R', 'Strategy', 'Monthly', 'Weekly', 'Daily', 'Signal'], pendingRows
       );
 
       // Closed trades
       document.getElementById('closedCount').textContent = data.closed.length;
       var closedRows = data.closed.map(function(t) {
         var badge = t.won ? '<span class="badge badge-won">WIN</span>' : '<span class="badge badge-lost">LOSS</span>';
-        var strat = t.strategy ? '<span class="badge badge-closed">' + t.strategy + '</span>' : '—';
-        var sig = '';
-        if (t.snr_grade) sig = 'Grade ' + t.snr_grade;
-        if (t.candle_details && t.candle_details.length) {
-          sig = t.candle_details.map(function(c) {
-            var color = c.direction === 'bullish' ? 'pl-pos' : (c.direction === 'bearish' ? 'pl-neg' : '');
-            return c.timeframe + ': <span class="' + color + '">' + c.pattern + '</span>';
-          }).join(' | ');
-        }
-        var pp = t.planned_profit ? '$' + t.planned_profit.toFixed(2) : '—';
-        var pl = t.planned_loss ? '-$' + t.planned_loss.toFixed(2) : '—';
         var prr = t.planned_rr ? t.planned_rr.toFixed(1) : '—';
         var arr = t.achieved_rr ? fmt(t.achieved_rr, 1) : '—';
         var arrClass = t.achieved_rr > 0 ? 'pl-pos' : (t.achieved_rr < 0 ? 'pl-neg' : '');
+        var slCell = t.stop_loss ? t.stop_loss.toFixed(5) + '<br><span class="pl-neg" style="font-size:0.7rem">-$' + t.planned_loss.toFixed(2) + '</span>' : '—';
+        var tpCell = t.take_profit ? t.take_profit.toFixed(5) + '<br><span class="pl-pos" style="font-size:0.7rem">+$' + t.planned_profit.toFixed(2) + '</span>' : '—';
         return '<td>' + t.instrument + '</td>' +
           '<td class="dir-' + t.direction.toLowerCase() + '">' + t.direction + '</td>' +
+          '<td>' + (t.trigger_timeframe || '—') + '</td>' +
           '<td>' + t.entry.toFixed(5) + '</td>' +
           '<td>' + t.close_price.toFixed(5) + '</td>' +
+          '<td>' + slCell + '</td>' +
+          '<td>' + tpCell + '</td>' +
           '<td>' + prr + '</td>' +
           '<td class="' + arrClass + '">' + arr + '</td>' +
           '<td class="' + plClass(t.pips) + '">' + fmt(t.pips, 1) + '</td>' +
           '<td class="' + plClass(t.realized_pl) + '">$' + fmt(t.realized_pl) + '</td>' +
-          '<td class="pl-pos">' + pp + '</td>' +
-          '<td class="pl-neg">' + pl + '</td>' +
           '<td>' + t.close_reason + '</td>' +
           '<td>' + badge + '</td>' +
-          '<td>' + strat + '</td>';
+          '<td>' + fmtStrategy(t, 'badge-closed') + '</td>';
       });
       document.getElementById('closedTable').innerHTML = buildTable(
-        ['Pair', 'Dir', 'Entry', 'Close', 'Plan R:R', 'Got R:R', 'Pips', 'Actual P&L', 'Plan Profit', 'Plan Loss', 'Reason', 'Result', 'Strategy'], closedRows
+        ['Pair', 'Dir', 'TF', 'Entry', 'Close', 'SL', 'TP', 'Plan R:R', 'Got R:R', 'Pips', 'Actual P&L', 'Reason', 'Result', 'Strategy'], closedRows
       );
 
       // By pair
@@ -323,9 +462,76 @@ function loadTrades() {
     });
 }
 
-// Load on page open, refresh every 10 seconds
+// Track whether options are being displayed
+var optionsActive = false;
+var cachedStockWatchlist = [];
+
+// Load on page open, refresh every 30 seconds (longer to not interrupt options viewing)
 loadTrades();
-setInterval(loadTrades, 10000);
+setInterval(function() {
+  // Only auto-refresh non-stock sections if options are active
+  loadTrades(!optionsActive);
+}, 30000);
+
+function analyzeAllOptions() {
+  var buttons = document.querySelectorAll('[id^="opt_"]');
+  var delay = 0;
+  buttons.forEach(function(btn) {
+    if (btn.tagName === 'BUTTON') {
+      setTimeout(function() { btn.click(); }, delay);
+      delay += 1500; // Stagger to avoid rate limits
+    }
+  });
+}
+
+function loadOptions(ticker, zoneType, zonePrice, btn) {
+  optionsActive = true;
+  btn.textContent = '...';
+  btn.disabled = true;
+  var resultDiv = document.getElementById(btn.id + '_result');
+  fetch('/api/options/' + ticker + '?zone_type=' + zoneType + '&zone_price=' + zonePrice + '&current_price=' + zonePrice)
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.error) {
+        resultDiv.innerHTML = '<span class="pl-neg">' + d.error + '</span>';
+        btn.textContent = 'Retry';
+        btn.disabled = false;
+        return;
+      }
+      var html = '';
+      if (d.credit_spread) {
+        var cs = d.credit_spread;
+        var vc = cs.verdict === 'GOOD' ? 'pl-pos' : (cs.verdict === 'FAIR' ? '' : 'pl-neg');
+        html += '<div style="margin-bottom:6px;padding:4px;background:#f9f9f6;border-radius:4px;">' +
+          '<strong>' + cs.type + '</strong> <span class="' + vc + '">' + cs.verdict + '</span><br>' +
+          'SELL ' + cs.short_strike + ' / BUY ' + cs.long_strike + ' ' + cs.option_type + '<br>' +
+          '<span class="pl-pos">Credit: $' + cs.net_credit.toFixed(2) + '</span> | ' +
+          'Profit: $' + cs.max_profit.toFixed(0) + ' | Loss: $' + cs.max_loss.toFixed(0) + '<br>' +
+          'R:R: ' + cs.risk_reward + ' | ' + cs.days_to_expiry + 'd | IV: ' + cs.iv_rank +
+          '<br><span style="color:var(--text-light)">' + cs.reason + '</span></div>';
+      }
+      if (d.debit_spread) {
+        var ds = d.debit_spread;
+        var vd = ds.verdict === 'GOOD' ? 'pl-pos' : (ds.verdict === 'FAIR' ? '' : 'pl-neg');
+        html += '<div style="padding:4px;background:#f9f9f6;border-radius:4px;">' +
+          '<strong>' + ds.type + '</strong> <span class="' + vd + '">' + ds.verdict + '</span><br>' +
+          'BUY ' + ds.long_strike + ' / SELL ' + ds.short_strike + ' ' + ds.option_type + '<br>' +
+          '<span class="pl-neg">Debit: $' + ds.net_debit.toFixed(2) + '</span> | ' +
+          'Profit: $' + ds.max_profit.toFixed(0) + ' | Loss: $' + ds.max_loss.toFixed(0) + '<br>' +
+          'R:R: ' + ds.risk_reward + ' | ' + ds.days_to_expiry + 'd | IV: ' + ds.iv_rank +
+          '<br><span style="color:var(--text-light)">' + ds.reason + '</span></div>';
+      }
+      if (!html) html = '<span class="pl-neg">No spreads found</span>';
+      resultDiv.innerHTML = html;
+      btn.textContent = 'Refresh';
+      btn.disabled = false;
+    })
+    .catch(function(e) {
+      resultDiv.innerHTML = '<span class="pl-neg">Error: ' + e + '</span>';
+      btn.textContent = 'Retry';
+      btn.disabled = false;
+    });
+}
 </script>
 </body>
 </html>

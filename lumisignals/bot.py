@@ -221,6 +221,27 @@ class LumiSignalsBot:
                     api_key=sig_cfg.get("api_key", ""),
                 )
 
+            trading_tf = levels_cfg.get("trading_timeframe",
+                                        sig_cfg.get("trading_timeframe", "5m"))
+            zone_tolerances = {
+                "1d": levels_cfg.get("zone_tolerance_daily", 0.003),
+                "1w": levels_cfg.get("zone_tolerance_weekly", 0.006),
+                "1mo": levels_cfg.get("zone_tolerance_monthly", 0.009),
+            }
+
+            # Initialize Massive client for stocks/crypto if configured
+            massive_client = None
+            stock_tickers = []
+            massive_cfg = self.config.get("massive", {})
+            if massive_cfg.get("api_key"):
+                from .massive_client import MassiveClient, DEFAULT_TICKERS
+                massive_client = MassiveClient(api_key=massive_cfg["api_key"])
+                stock_tickers = list(DEFAULT_TICKERS)
+                extra = massive_cfg.get("extra_tickers", [])
+                if extra:
+                    stock_tickers.extend(extra)
+                logger.info("Massive (Polygon) — scanning %d stock/crypto tickers", len(stock_tickers))
+
             levels = LevelsStrategy(
                 oanda_client=self.client,
                 snr_client=self.snr_client,
@@ -228,21 +249,30 @@ class LumiSignalsBot:
                 api_key=sig_cfg.get("api_key", ""),
                 min_score=levels_cfg.get("min_score", 50),
                 atr_stop_multiplier=levels_cfg.get("atr_stop_multiplier", 1.0),
-                tolerance_pct=levels_cfg.get("tolerance_pct", 0.003),
+                trading_timeframe=trading_tf,
+                zone_tolerances=zone_tolerances,
+                min_risk_reward=float(levels_cfg.get("min_risk_reward", 1.5)),
+                watchlist_interval=levels_cfg.get("watchlist_interval", 300),
+                monitor_interval=levels_cfg.get("monitor_interval", 30),
+                trigger_candle_count=levels_cfg.get("trigger_candle_count", 10),
+                zone_timeout=levels_cfg.get("zone_timeout", 14400),
                 on_signal=self._handle_signal,
+                massive_client=massive_client,
+                stock_tickers=stock_tickers,
+                stock_atr_multiplier=float(massive_cfg.get("stock_atr_multiplier", 0.5)),
             )
 
             logger.info(
-                "Levels strategy — min score: %d/100 (trend 60%% + candle 40%%) | ATR stop: %.1fx | tolerance: %.1f%%",
+                "Levels strategy — trading TF: %s | min score: %d/100 | "
+                "min R:R: %.1f | ATR stop: %.1fx | watchlist every %ds",
+                trading_tf,
                 levels_cfg.get("min_score", 50),
+                float(levels_cfg.get("min_risk_reward", 1.5)),
                 levels_cfg.get("atr_stop_multiplier", 1.0),
-                levels_cfg.get("tolerance_pct", 0.003) * 100,
+                levels_cfg.get("watchlist_interval", 300),
             )
 
-            levels.run(
-                interval=sig_cfg.get("poll_interval_seconds", 300),
-                stop_event=self._stop_event,
-            )
+            levels.run(stop_event=self._stop_event)
             return
 
         # Pick the signal handler based on strategy

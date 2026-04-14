@@ -221,6 +221,35 @@ body { font-family: 'Inter', sans-serif; background: var(--cream); color: var(--
     </div>
   </div>
 
+  <!-- Step 5: Stock/Crypto Settings -->
+  <div class="card">
+    <h2>5. Stock & Crypto Settings</h2>
+    <div class="field-row">
+      <div class="field">
+        <label>Stock Zone ATR Multiplier</label>
+        <input type="number" name="stock_atr_multiplier" value="{{ config.get('massive', {}).get('stock_atr_multiplier', 0.5) }}" step="0.1" min="0.1" max="5.0">
+        <small>Zone proximity = Daily ATR × this value. Lower = tighter (0.5 = very close to level, 3.0 = wider scan)</small>
+      </div>
+      <div class="field">
+        <label>Min Bias Score</label>
+        <input type="number" name="levels_min_score" value="{{ config.get('levels', {}).get('min_score', 50) }}" step="5" min="0" max="100">
+        <small>Minimum score (0-100) to watch a zone. Trend 60% + Candle 40%</small>
+      </div>
+    </div>
+    <div class="field-row">
+      <div class="field">
+        <label>Min Risk:Reward</label>
+        <input type="number" name="levels_min_rr" value="{{ config.get('levels', {}).get('min_risk_reward', 1.5) }}" step="0.1" min="0.5" max="5.0">
+        <small>Minimum R:R to accept a trigger</small>
+      </div>
+      <div class="field">
+        <label>ATR Stop Multiplier</label>
+        <input type="number" name="levels_atr_stop" value="{{ config.get('levels', {}).get('atr_stop_multiplier', 1.0) }}" step="0.1" min="0.5" max="3.0">
+        <small>Stop distance = ATR × this value</small>
+      </div>
+    </div>
+  </div>
+
   <div class="actions">
     <button type="submit" class="btn btn-primary">Save &amp; Launch Dashboard</button>
   </div>

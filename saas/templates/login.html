@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LumiSignals — Login</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+:root { --olive: #7F8464; --cream: #F5F3EE; --dark: #2E2E2C; --text-light: #8a847e; --white: #fff; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Inter', sans-serif; background: var(--cream); min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+.card { background: var(--white); border-radius: 16px; padding: 40px; width: 100%; max-width: 420px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }
+h1 { font-family: 'Playfair Display', serif; font-size: 1.6rem; text-align: center; margin-bottom: 8px; }
+.subtitle { text-align: center; color: var(--text-light); font-size: 0.85rem; margin-bottom: 28px; }
+label { display: block; font-size: 0.8rem; font-weight: 500; margin-bottom: 4px; color: var(--dark); }
+input[type="email"], input[type="password"] { width: 100%; padding: 10px 14px; border: 1px solid #ddd; border-radius: 8px; font-size: 0.9rem; margin-bottom: 16px; }
+input:focus { outline: none; border-color: var(--olive); }
+button { width: 100%; padding: 12px; background: var(--olive); color: white; border: none; border-radius: 8px; font-size: 0.9rem; font-weight: 500; cursor: pointer; }
+button:hover { opacity: 0.9; }
+.link { text-align: center; margin-top: 16px; font-size: 0.82rem; color: var(--text-light); }
+.link a { color: var(--olive); text-decoration: none; }
+.flash { padding: 10px; border-radius: 8px; margin-bottom: 16px; font-size: 0.82rem; background: #fdecea; color: #c0392b; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>LumiSignals</h1>
+  <p class="subtitle">Institutional-grade trade signals</p>
+  {% with messages = get_flashed_messages() %}
+  {% if messages %}
+  <div class="flash">{{ messages[0] }}</div>
+  {% endif %}
+  {% endwith %}
+  <form method="POST">
+    <label>Email</label>
+    <input type="email" name="email" required>
+    <label>Password</label>
+    <input type="password" name="password" required>
+    <button type="submit">Log In</button>
+  </form>
+  <p class="link">Don't have an account? <a href="/signup">Sign up</a></p>
+</div>
+</body>
+</html>

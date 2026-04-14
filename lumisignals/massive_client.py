@@ -1,0 +1,438 @@
+"""Massive (formerly Polygon) market data client for stocks and crypto."""
+
+import logging
+from datetime import datetime, timedelta, timezone
+from dataclasses import dataclass
+from typing import List, Optional
+
+import requests
+
+from .candle_classifier import CandleData
+
+logger = logging.getLogger(__name__)
+
+BASE_URL = "https://api.polygon.io"
+
+# -----------------------------------------------------------------------
+# Ticker watchlists — easy to extend, just add tickers to the lists
+# -----------------------------------------------------------------------
+
+# Core watchlist
+CORE_TICKERS = [
+    # Major ETFs / Indices
+    "SPY", "QQQ", "IWM",       # S&P 500, Nasdaq 100, Russell 2000
+    "DIA",                       # Dow 30
+
+    # 11 SPDR Sector ETFs
+    "XLK",   # Technology
+    "XLF",   # Financials
+    "XLV",   # Health Care
+    "XLE",   # Energy
+    "XLI",   # Industrials
+    "XLY",   # Consumer Discretionary
+    "XLP",   # Consumer Staples
+    "XLU",   # Utilities
+    "XLB",   # Materials
+    "XLRE",  # Real Estate
+    "XLC",   # Communication Services
+
+    # Mega-cap Tech
+    "AAPL", "MSFT", "GOOG", "GOOGL", "AMZN", "META", "NVDA", "TSLA",
+    "AVGO", "ORCL", "ADBE", "CRM", "AMD", "INTC", "QCOM", "AMAT",
+    "MU", "NFLX", "CSCO", "IBM", "NOW", "INTU", "SNPS", "CDNS",
+
+    # Financials
+    "JPM", "V", "MA", "BAC", "GS", "MS", "WFC", "C", "BLK", "SCHW",
+    "AXP", "BX", "KKR", "COIN",
+
+    # Health Care
+    "UNH", "JNJ", "LLY", "ABBV", "MRK", "PFE", "TMO", "ABT", "DHR", "BMY",
+
+    # Consumer
+    "WMT", "COST", "HD", "NKE", "MCD", "SBUX", "TGT", "LOW",
+    "PG", "KO", "PEP",
+
+    # Energy
+    "XOM", "CVX", "COP", "SLB", "EOG",
+
+    # Industrials / Transport
+    "CAT", "DE", "HON", "UPS", "FDX", "BA", "GE", "RTX", "LMT",
+
+    # Communication / Media
+    "DIS", "CMCSA", "T", "VZ", "TMUS",
+
+    # Hot / High-beta
+    "PLTR", "UBER", "SQ", "SHOP", "SNOW", "DKNG", "SOFI",
+    "RIVN", "LCID", "ARM", "SMCI", "MSTR",
+
+    # Crypto ETFs
+    "BITO", "IBIT", "FBTC",
+]
+
+# Crypto pairs (Massive/Polygon format: X:BTCUSD)
+CRYPTO_TICKERS = [
+    "X:BTCUSD",
+    "X:ETHUSD",
+    "X:SOLUSD",
+    "X:XRPUSD",
+]
+
+# Combined default watchlist
+DEFAULT_TICKERS = CORE_TICKERS + CRYPTO_TICKERS
+
+# Granularity mapping: our internal format → Massive API format
+# 1h and 4h are aggregated from 5m data to align with market open (9:30 ET)
+MASSIVE_TIMESPAN = {
+    "1mo": ("1", "month"),
+    "1w": ("1", "week"),
+    "1d": ("1", "day"),
+    "30m": ("30", "minute"),
+    "15m": ("15", "minute"),
+    "5m": ("5", "minute"),
+}
+
+# Timespans that need market-aligned aggregation from 5m data
+AGGREGATE_FROM_5M = {"1h", "4h"}
+
+# US market hours in ET → UTC offset (EDT = UTC-4)
+MARKET_OPEN_ET = (9, 30)   # 9:30 AM ET = 13:30 UTC
+MARKET_CLOSE_ET = (16, 0)  # 4:00 PM ET = 20:00 UTC
+
+
+class MassiveClient:
+    """Massive (Polygon.io) REST API client for stocks and crypto."""
+
+    def __init__(self, api_key: str):
+        self.api_key = api_key
+        self.session = requests.Session()
+
+    def _request(self, endpoint: str, params: dict = None) -> dict:
+        """Make a request to the Massive/Polygon API."""
+        params = params or {}
+        params["apiKey"] = self.api_key
+        url = f"{BASE_URL}{endpoint}"
+        resp = self.session.get(url, params=params, timeout=30)
+        if not resp.ok:
+            logger.error("Massive API error: %s - %s", resp.status_code, resp.text[:200])
+            resp.raise_for_status()
+        return resp.json()
+
+    def get_candles(self, ticker: str, timespan: str = "1d",
+                    count: int = 100) -> List[CandleData]:
+        """Fetch OHLC candles for a ticker.
+
+        Args:
+            ticker: e.g. "AAPL", "SPY", "X:BTCUSD"
+            timespan: our internal format ("1mo", "1w", "1d", "4h", "1h", "30m", "15m", "5m")
+            count: approximate number of candles to return
+
+        Returns:
+            List of CandleData.
+        """
+        # 1h and 4h for stocks: aggregate from 5m to align with market open (9:30 ET)
+        # Weekly for stocks: aggregate from daily to start on Monday (not Sunday)
+        is_stock = not ticker.startswith("X:")
+        if timespan in AGGREGATE_FROM_5M and is_stock:
+            return self._get_market_aligned_candles(ticker, timespan, count)
+        if timespan == "1w" and is_stock:
+            return self._get_monday_weekly_candles(ticker, count)
+        if timespan == "1mo" and is_stock:
+            return self._get_calendar_monthly_candles(ticker, count)
+
+        if timespan in AGGREGATE_FROM_5M:
+            # Crypto: use native hour candles (24h market, no alignment needed)
+            multiplier = "4" if timespan == "4h" else "1"
+            span = "hour"
+        else:
+            multiplier, span = MASSIVE_TIMESPAN.get(timespan, ("1", "day"))
+
+        # Calculate date range based on count and timespan
+        now = datetime.now(timezone.utc)
+        if span == "month":
+            start = now - timedelta(days=count * 31)
+        elif span == "week":
+            start = now - timedelta(weeks=count)
+        elif span == "day":
+            start = now - timedelta(days=count * 1.5)  # buffer for weekends
+        else:  # minute
+            start = now - timedelta(minutes=count * int(multiplier) * 1.5)
+
+        start_str = start.strftime("%Y-%m-%d")
+        end_str = now.strftime("%Y-%m-%d")
+
+        data = self._request(
+            f"/v2/aggs/ticker/{ticker}/range/{multiplier}/{span}/{start_str}/{end_str}",
+            params={"adjusted": "true", "sort": "asc", "limit": min(count + 10, 50000)},
+        )
+
+        results = data.get("results", [])
+        candles = []
+        for bar in results:
+            candles.append(CandleData(
+                open=float(bar["o"]),
+                high=float(bar["h"]),
+                low=float(bar["l"]),
+                close=float(bar["c"]),
+                timestamp=str(bar.get("t", 0) / 1000),  # ms → seconds
+            ))
+
+        return candles
+
+    def _get_market_aligned_candles(self, ticker: str, timespan: str,
+                                     count: int) -> List[CandleData]:
+        """Build market-aligned 1h or 4h candles from 5m data.
+
+        Stock market hourly candles should start at 9:30 AM ET (market open):
+          1h:  9:30-10:29, 10:30-11:29, 11:30-12:29, 12:30-1:29, 1:30-2:29, 2:30-3:29, 3:30-3:59
+          4h:  9:30-1:29, 1:30-3:59
+
+        We pull 5m bars from Massive, filter to regular market hours,
+        then aggregate into market-aligned buckets.
+        """
+        # How many trading days of 5m data do we need?
+        if timespan == "4h":
+            bars_per_day = 2  # two 4h candles per session
+        else:
+            bars_per_day = 7  # seven 1h candles per session (9:30-3:59)
+
+        days_needed = max(5, (count // bars_per_day) + 3)  # buffer for weekends
+        now = datetime.now(timezone.utc)
+        start = now - timedelta(days=days_needed * 1.5)
+
+        # Fetch 5m bars
+        data = self._request(
+            f"/v2/aggs/ticker/{ticker}/range/5/minute/{start.strftime('%Y-%m-%d')}/{now.strftime('%Y-%m-%d')}",
+            params={"adjusted": "true", "sort": "asc", "limit": 50000},
+        )
+
+        bars_5m = data.get("results", [])
+        if not bars_5m:
+            return []
+
+        # Market hours in UTC (EDT: ET + 4h)
+        # 9:30 ET = 13:30 UTC, 16:00 ET = 20:00 UTC
+        market_open_utc = (13, 30)
+        market_close_utc = (20, 0)
+
+        # Filter to regular market hours only
+        market_bars = []
+        for bar in bars_5m:
+            dt = datetime.fromtimestamp(bar["t"] / 1000, tz=timezone.utc)
+            bar_minutes = dt.hour * 60 + dt.minute
+            open_minutes = market_open_utc[0] * 60 + market_open_utc[1]
+            close_minutes = market_close_utc[0] * 60 + market_close_utc[1]
+            if open_minutes <= bar_minutes < close_minutes:
+                market_bars.append(bar)
+
+        if not market_bars:
+            return []
+
+        # Determine bucket boundaries
+        if timespan == "1h":
+            bucket_minutes = 60
+        else:  # 4h
+            bucket_minutes = 240
+
+        # Group bars into market-aligned buckets
+        # Bucket start = 9:30 ET (13:30 UTC), then +60m or +240m
+        buckets = {}  # key = (date_str, bucket_index) → list of bars
+
+        for bar in market_bars:
+            dt = datetime.fromtimestamp(bar["t"] / 1000, tz=timezone.utc)
+            date_key = dt.strftime("%Y-%m-%d")
+            minutes_since_open = (dt.hour * 60 + dt.minute) - (market_open_utc[0] * 60 + market_open_utc[1])
+            bucket_idx = minutes_since_open // bucket_minutes
+            key = (date_key, bucket_idx)
+
+            if key not in buckets:
+                buckets[key] = []
+            buckets[key].append(bar)
+
+        # Aggregate each bucket into a single candle
+        candles = []
+        for key in sorted(buckets.keys()):
+            bars = buckets[key]
+            if not bars:
+                continue
+
+            candle = CandleData(
+                open=float(bars[0]["o"]),
+                high=max(float(b["h"]) for b in bars),
+                low=min(float(b["l"]) for b in bars),
+                close=float(bars[-1]["c"]),
+                timestamp=str(bars[0]["t"] / 1000),
+            )
+            candles.append(candle)
+
+        # Return the last N candles
+        return candles[-count:] if len(candles) > count else candles
+
+    def _get_calendar_monthly_candles(self, ticker: str, count: int) -> List[CandleData]:
+        """Build calendar-month candles from daily data.
+
+        Massive/Polygon monthly candles don't always align with calendar months.
+        This aggregates daily bars into proper Jan, Feb, Mar, etc. candles.
+        """
+        days_needed = count * 31 + 10
+        now = datetime.now(timezone.utc)
+        start = now - timedelta(days=days_needed)
+
+        data = self._request(
+            f"/v2/aggs/ticker/{ticker}/range/1/day/{start.strftime('%Y-%m-%d')}/{now.strftime('%Y-%m-%d')}",
+            params={"adjusted": "true", "sort": "asc", "limit": 50000},
+        )
+
+        daily_bars = data.get("results", [])
+        if not daily_bars:
+            return []
+
+        # Group daily bars by (year, month)
+        months = {}
+        for bar in daily_bars:
+            dt = datetime.fromtimestamp(bar["t"] / 1000, tz=timezone.utc)
+            key = (dt.year, dt.month)
+            if key not in months:
+                months[key] = []
+            months[key].append(bar)
+
+        # Aggregate each month
+        candles = []
+        for key in sorted(months.keys()):
+            bars = months[key]
+            if not bars:
+                continue
+            candle = CandleData(
+                open=float(bars[0]["o"]),
+                high=max(float(b["h"]) for b in bars),
+                low=min(float(b["l"]) for b in bars),
+                close=float(bars[-1]["c"]),
+                timestamp=str(bars[0]["t"] / 1000),  # First trading day of month
+            )
+            candles.append(candle)
+
+        return candles[-count:] if len(candles) > count else candles
+
+    def _get_monday_weekly_candles(self, ticker: str, count: int) -> List[CandleData]:
+        """Build Monday-start weekly candles from daily data.
+
+        Massive/Polygon weekly candles start on Sunday, but TradingView
+        and most traders use Monday-start weeks. This aggregates daily
+        bars into Monday-Friday weekly candles.
+        """
+        # Fetch enough daily bars
+        days_needed = count * 7 + 10
+        now = datetime.now(timezone.utc)
+        start = now - timedelta(days=days_needed)
+
+        data = self._request(
+            f"/v2/aggs/ticker/{ticker}/range/1/day/{start.strftime('%Y-%m-%d')}/{now.strftime('%Y-%m-%d')}",
+            params={"adjusted": "true", "sort": "asc", "limit": 50000},
+        )
+
+        daily_bars = data.get("results", [])
+        if not daily_bars:
+            return []
+
+        # Group daily bars by ISO week (Monday-start)
+        weeks = {}
+        for bar in daily_bars:
+            dt = datetime.fromtimestamp(bar["t"] / 1000, tz=timezone.utc)
+            # ISO calendar: week starts Monday
+            iso_year, iso_week, _ = dt.isocalendar()
+            key = (iso_year, iso_week)
+            if key not in weeks:
+                weeks[key] = []
+            weeks[key].append(bar)
+
+        # Aggregate each week
+        candles = []
+        for key in sorted(weeks.keys()):
+            bars = weeks[key]
+            if not bars:
+                continue
+            candle = CandleData(
+                open=float(bars[0]["o"]),
+                high=max(float(b["h"]) for b in bars),
+                low=min(float(b["l"]) for b in bars),
+                close=float(bars[-1]["c"]),
+                timestamp=str(bars[0]["t"] / 1000),  # Monday's timestamp
+            )
+            candles.append(candle)
+
+        return candles[-count:] if len(candles) > count else candles
+
+    def get_price(self, ticker: str) -> Optional[float]:
+        """Get the current/latest price for a ticker.
+
+        Uses snapshot for stocks, last trade for crypto.
+        """
+        try:
+            if ticker.startswith("X:"):
+                # Crypto — use snapshot
+                pair = ticker.replace("X:", "")
+                data = self._request(f"/v2/snapshot/locale/global/markets/crypto/tickers/{ticker}")
+                day = data.get("ticker", {}).get("day", {})
+                if day.get("c"):
+                    return float(day["c"])
+                prev = data.get("ticker", {}).get("prevDay", {})
+                return float(prev.get("c", 0)) or None
+            else:
+                # Stocks — use snapshot
+                data = self._request(
+                    f"/v2/snapshot/locale/us/markets/stocks/tickers/{ticker}"
+                )
+                day = data.get("ticker", {}).get("day", {})
+                if day.get("c"):
+                    return float(day["c"])
+                # Fallback to previous day close
+                prev = data.get("ticker", {}).get("prevDay", {})
+                return float(prev.get("c", 0)) or None
+        except Exception as e:
+            logger.debug("Could not get price for %s: %s", ticker, e)
+            return None
+
+    def batch_get_prices(self, tickers: list) -> dict:
+        """Get prices for multiple stock tickers in one call.
+
+        Uses the snapshots endpoint for stocks. Crypto fetched individually.
+        """
+        prices = {}
+
+        # Split into stocks and crypto
+        stocks = [t for t in tickers if not t.startswith("X:")]
+        crypto = [t for t in tickers if t.startswith("X:")]
+
+        # Batch stocks via snapshot
+        if stocks:
+            try:
+                data = self._request(
+                    "/v2/snapshot/locale/us/markets/stocks/tickers",
+                    params={"tickers": ",".join(stocks)},
+                )
+                for item in data.get("tickers", []):
+                    ticker = item.get("ticker", "")
+                    day = item.get("day", {})
+                    price = day.get("c") or item.get("prevDay", {}).get("c")
+                    if price:
+                        prices[ticker] = float(price)
+            except Exception as e:
+                logger.debug("Batch stock price error: %s", e)
+
+        # Crypto individually
+        for t in crypto:
+            p = self.get_price(t)
+            if p:
+                prices[t] = p
+
+        return prices
+
+    def validate_connection(self) -> bool:
+        """Test that the API key works."""
+        try:
+            data = self._request("/v2/aggs/ticker/AAPL/prev")
+            if data.get("resultsCount", 0) > 0:
+                logger.info("Connected to Massive (Polygon) — API key valid")
+                return True
+        except Exception as e:
+            logger.error("Failed to connect to Massive: %s", e)
+        return False

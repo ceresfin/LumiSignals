@@ -66,14 +66,18 @@ def _enrich_with_signal_data(entry: dict, order_id: str) -> dict:
         entry["strategy"] = sig.get("strategy", "")
         entry["snr_grade"] = sig.get("snr_grade", "")
         entry["snr_summary"] = sig.get("snr_summary", "")
-        entry["final_score"] = sig.get("final_score", "")
+        entry["final_score"] = sig.get("final_score", "") or sig.get("bias_score", "")
         entry["trend_score"] = sig.get("trend_score", "")
         entry["candle_score"] = sig.get("candle_score", "")
         entry["candle_summary"] = sig.get("candle_summary", "")
         entry["candle_details"] = sig.get("candle_details", [])
-        entry["level_type"] = sig.get("level_type", "")
-        entry["level_timeframe"] = sig.get("level_timeframe", "")
-        entry["level_price"] = sig.get("level_price", "")
+        entry["level_type"] = sig.get("level_type", "") or sig.get("zone_type", "")
+        entry["level_timeframe"] = sig.get("level_timeframe", "") or sig.get("zone_timeframe", "")
+        entry["level_price"] = sig.get("level_price", "") or sig.get("zone_price", "")
+        entry["trigger_timeframe"] = sig.get("trigger_timeframe", "")
+        entry["trigger_pattern"] = sig.get("trigger_pattern", "")
+        entry["zone_visit_count"] = sig.get("zone_visit_count", 0)
+        entry["tf_details"] = sig.get("tf_details", {})
         entry["alert_matches"] = sig.get("alert_matches", [])
         entry["primary_matches"] = sig.get("primary_matches", [])
         entry["trends"] = sig.get("trends", {})
@@ -82,6 +86,7 @@ def _enrich_with_signal_data(entry: dict, order_id: str) -> dict:
         entry["snr_grade"] = ""
         entry["candle_summary"] = ""
         entry["candle_details"] = []
+        entry["tf_details"] = {}
     return entry
 
 
@@ -117,6 +122,9 @@ def get_pending_orders(client: OandaClient) -> list:
     except Exception as e:
         logger.error("Failed to get orders: %s", e)
         return []
+
+    # Filter out SL/TP orders — they belong to trades, not the watchlist
+    orders = [o for o in orders if o.get("type") not in ("STOP_LOSS", "TAKE_PROFIT", "TRAILING_STOP_LOSS")]
 
     # Fetch current prices for all instruments with pending orders
     instruments = [o.get("instrument", "") for o in orders if o.get("instrument")]
@@ -163,7 +171,14 @@ def get_pending_orders(client: OandaClient) -> list:
             "time": _parse_oanda_time(order.get("createTime", "")),
             "status": "PENDING",
         }
-        result.append(_enrich_with_signal_data(order_entry, order.get("id", "")))
+        oid = order.get("id", "")
+        order_entry = _enrich_with_signal_data(order_entry, oid)
+        if not order_entry.get("strategy") and oid.isdigit():
+            for offset in [1, 2, 3, -1, -2, -3]:
+                order_entry = _enrich_with_signal_data(order_entry, str(int(oid) - offset))
+                if order_entry.get("strategy"):
+                    break
+        result.append(order_entry)
 
     return result
 
@@ -221,12 +236,19 @@ def get_open_trades(client: OandaClient) -> list:
             "time_opened": _parse_oanda_time(trade.get("openTime", "")),
             "status": "OPEN",
         }
-        # Try matching by trade ID or the order that opened it
+        # Try matching by trade ID, opening transaction, or adjacent IDs
+        # Oanda order transaction (e.g. 16479) precedes the fill/trade (16480)
         open_id = trade.get("id", "")
         opening_order = trade.get("openingTransactionID", open_id)
         trade_entry = _enrich_with_signal_data(trade_entry, opening_order)
         if not trade_entry.get("strategy"):
             trade_entry = _enrich_with_signal_data(trade_entry, open_id)
+        # Try nearby IDs — Oanda order/fill/trade IDs are sequential
+        if not trade_entry.get("strategy") and open_id.isdigit():
+            for offset in [1, 2, 3, -1, -2, -3]:
+                trade_entry = _enrich_with_signal_data(trade_entry, str(int(open_id) - offset))
+                if trade_entry.get("strategy"):
+                    break
         result.append(trade_entry)
 
     return result
@@ -321,6 +343,14 @@ def get_closed_trades(client: OandaClient, count: int = 50) -> list:
         trade_entry = _enrich_with_signal_data(trade_entry, opening_order)
         if not trade_entry.get("strategy"):
             trade_entry = _enrich_with_signal_data(trade_entry, trade.get("id", ""))
+        # Try nearby IDs — Oanda order/fill/trade IDs are sequential
+        if not trade_entry.get("strategy"):
+            base_id = trade.get("id", "")
+            if base_id.isdigit():
+                for offset in [1, 2, 3, -1, -2, -3]:
+                    trade_entry = _enrich_with_signal_data(trade_entry, str(int(base_id) - offset))
+                    if trade_entry.get("strategy"):
+                        break
         result.append(trade_entry)
 
     return result

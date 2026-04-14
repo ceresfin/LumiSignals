@@ -27,6 +27,13 @@ def create_web_app():
     app = Flask(__name__, template_folder="templates")
     app.secret_key = os.urandom(24)
 
+    @app.after_request
+    def add_no_cache(response):
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
+
     # Shared state
     state = {
         "bot": None,
@@ -126,6 +133,23 @@ def create_web_app():
                     "risk_percent": float(request.form.get("risk_percent", 1.0)),
                     "max_position_units": int(request.form.get("max_units", 100000)),
                     "max_open_positions": int(request.form.get("max_positions", 5)),
+                },
+                "levels": {
+                    "min_score": int(request.form.get("levels_min_score", 50)),
+                    "atr_stop_multiplier": float(request.form.get("levels_atr_stop", 1.0)),
+                    "trading_timeframe": request.form.get("trading_timeframe", "1d"),
+                    "zone_tolerance_daily": 0.003,
+                    "zone_tolerance_weekly": 0.006,
+                    "zone_tolerance_monthly": 0.009,
+                    "watchlist_interval": 300,
+                    "monitor_interval": 30,
+                    "trigger_candle_count": 10,
+                    "min_risk_reward": float(request.form.get("levels_min_rr", 1.5)),
+                    "zone_timeout": 14400,
+                },
+                "massive": {
+                    "api_key": _get_config().get("massive", {}).get("api_key", ""),
+                    "stock_atr_multiplier": float(request.form.get("stock_atr_multiplier", 0.5)),
                 },
                 "bot": {
                     "dry_run": "dry_run" in request.form,
@@ -266,11 +290,53 @@ def create_web_app():
         closed = get_closed_trades(client, count=50)
         stats = get_performance_stats(closed)
 
+        # Get stock/crypto watchlist zones
+        from ..levels_strategy import get_watchlist_snapshot
+        watchlist = get_watchlist_snapshot()
+
         return jsonify({
+            "watchlist": watchlist,
             "pending": pending,
             "open": open_trades,
             "closed": closed,
             "stats": stats,
         })
+
+    @app.route("/api/options/<ticker>")
+    def api_options(ticker):
+        """Get options spread analysis for a stock in the watchlist."""
+        config = _get_config()
+        schwab_cfg = config.get("schwab", {})
+        if not schwab_cfg.get("client_id"):
+            return jsonify({"error": "No Schwab config"}), 400
+
+        zone_type = request.args.get("zone_type", "supply")
+        zone_price = float(request.args.get("zone_price", 0))
+        current_price = float(request.args.get("current_price", 0))
+
+        try:
+            from ..schwab_client import SchwabAuth, SchwabMarketData
+            from ..options_analyzer import analyze_spreads_at_zone, format_spread_for_display
+
+            auth = SchwabAuth(
+                client_id=schwab_cfg["client_id"],
+                client_secret=schwab_cfg["client_secret"],
+            )
+            if not auth.get_valid_token():
+                return jsonify({"error": "Schwab not authorized — run python3 schwab_auth.py"}), 401
+
+            md = SchwabMarketData(auth)
+            result = analyze_spreads_at_zone(md, ticker, zone_type, zone_price, current_price)
+
+            return jsonify({
+                "ticker": ticker,
+                "zone_type": zone_type,
+                "zone_price": zone_price,
+                "credit_spread": format_spread_for_display(result["credit_spread"]),
+                "debit_spread": format_spread_for_display(result["debit_spread"]),
+                "error": result.get("error"),
+            })
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
 
     return app

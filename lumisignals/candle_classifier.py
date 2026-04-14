@@ -96,6 +96,29 @@ BULLISH_ONLY = {
     "CDL3STARSINSOUTH", "CDLHOMINGPIGEON", "CDLMATCHINGLOW",
 }
 
+# Actionable formations — only these count for institutional bias scoring.
+# Generic candle colors (White Candle, Black Candle) are NOT actionable.
+ACTIONABLE_PATTERNS = {
+    # Bullish reversals
+    "Hammer", "Inverted Hammer", "Bullish Engulfing", "Engulfing",
+    "Piercing", "Belt Hold", "Bullish Belt Hold", "Closing Marubozu", "Marubozu",
+    "Bullish Marubozu", "Three White Soldiers", "Morning Star", "Morning Doji Star",
+    "Dragonfly Doji", "Takuri", "Harami", "Harami Cross", "Three Inside",
+    "Ladder Bottom", "Homing Pigeon", "Matching Low", "Three Stars In South",
+    "Rise Fall Three Methods",
+    # Bearish reversals
+    "Shooting Star", "Bearish Engulfing", "Dark Cloud Cover",
+    "Bearish Belt Hold", "Bearish Marubozu",
+    "Three Black Crows", "Identical Three Crows", "Evening Star", "Evening Doji Star",
+    "Gravestone Doji", "Hanging Man", "Two Crows", "Upside Gap Two Crows",
+    "Advance Block",
+    # Neutral but actionable
+    "Doji", "Doji Star", "Long Legged Doji", "Tri-Star",
+    "Abandoned Baby", "Breakaway", "Counterattack",
+    "Kicking", "Kicking By Length", "Separating Lines",
+    "Three Outside", "Three Line Strike",
+}
+
 
 @dataclass
 class CandleData:
@@ -166,8 +189,27 @@ def _classify_talib(candles: List[CandleData]) -> CandleClassification:
             pass
 
     if detected:
-        # Pick the strongest pattern
-        detected.sort(key=lambda x: x[2], reverse=True)
+        # Pick the most specific pattern — prefer directional over generic
+        # Higher priority = more specific/actionable
+        _pattern_priority = {
+            # Generic (low priority)
+            "CDLDOJI": 1, "CDLSPINNINGTOP": 1, "CDLHIGHWAVE": 2,
+            "CDLLONGLEGGEDDOJI": 2, "CDLSHORTLINE": 1, "CDLLONGLINE": 1,
+            # Specific directional (high priority)
+            "CDLDRAGONFLYDOJI": 10, "CDLGRAVESTONEDOJI": 10,
+            "CDLHAMMER": 10, "CDLSHOOTINGSTAR": 10, "CDLHANGINGMAN": 10,
+            "CDLINVERTEDHAMMER": 10, "CDLTAKURI": 10,
+            "CDLENGULFING": 12, "CDLPIERCING": 11, "CDLDARKCLOUDCOVER": 11,
+            "CDLMORNINGSTAR": 13, "CDLEVENINGSTAR": 13,
+            "CDLMORNINGDOJISTAR": 13, "CDLEVENINGDOJISTAR": 13,
+            "CDL3WHITESOLDIERS": 14, "CDL3BLACKCROWS": 14,
+            "CDLHARAMI": 8, "CDLHARAMICROSS": 9, "CDL3INSIDE": 9,
+            "CDL3OUTSIDE": 9, "CDLHIKKAKE": 5, "CDLHIKKAKEMOD": 6,
+            "CDLBELTHOLD": 7, "CDLCLOSINGMARUBOZU": 7, "CDLMARUBOZU": 7,
+            "CDLCOUNTERATTACK": 8, "CDLKICKING": 11,
+            "CDLABANDONEDBABY": 13, "CDLTRISTAR": 10,
+        }
+        detected.sort(key=lambda x: (_pattern_priority.get(x[3], 5), x[2]), reverse=True)
         best = detected[0]
         return CandleClassification(
             direction=best[1],
@@ -280,6 +322,93 @@ def classify_candle_series(candles: List[CandleData]) -> CandleClassification:
     if len(candles) >= 2:
         return _classify_basic(candles[-1], candles[-2])
     return _classify_basic(candles[-1])
+
+
+# Patterns valid at demand zones (bullish reversals)
+DEMAND_PATTERN_FUNCS = {
+    "CDLHAMMER", "CDLENGULFING", "CDLMORNINGSTAR", "CDLPIERCING",
+    "CDL3WHITESOLDIERS", "CDLDRAGONFLYDOJI", "CDLTAKURI",
+    "CDLHARAMI", "CDL3INSIDE", "CDLMORNINGDOJISTAR",
+    "CDLINVERTEDHAMMER", "CDLHOMINGPIGEON", "CDLMATCHINGLOW",
+    "CDL3STARSINSOUTH", "CDLLADDERBOTTOM",
+}
+
+# Patterns valid at supply zones (bearish reversals)
+SUPPLY_PATTERN_FUNCS = {
+    "CDLSHOOTINGSTAR", "CDLENGULFING", "CDLEVENINGSTAR", "CDLDARKCLOUDCOVER",
+    "CDL3BLACKCROWS", "CDLGRAVESTONEDOJI", "CDLHANGINGMAN",
+    "CDLHARAMI", "CDL3INSIDE", "CDLEVENINGDOJISTAR",
+    "CDL2CROWS", "CDLIDENTICAL3CROWS", "CDLUPSIDEGAP2CROWS",
+    "CDLADVANCEBLOCK",
+}
+
+
+def classify_for_zone(candles: List[CandleData], zone_type: str) -> Optional[CandleClassification]:
+    """Classify candles, returning a result only if the pattern is valid for the zone type.
+
+    Args:
+        candles: List of CandleData (at least 3 for multi-candle patterns).
+        zone_type: "demand" or "supply".
+
+    Returns:
+        CandleClassification if a zone-appropriate pattern is detected, else None.
+    """
+    if not HAS_TALIB or len(candles) < 2:
+        return None
+
+    allowed_funcs = DEMAND_PATTERN_FUNCS if zone_type == "demand" else SUPPLY_PATTERN_FUNCS
+    expected_direction = "bullish" if zone_type == "demand" else "bearish"
+
+    opens = np.array([c.open for c in candles], dtype=float)
+    highs = np.array([c.high for c in candles], dtype=float)
+    lows = np.array([c.low for c in candles], dtype=float)
+    closes = np.array([c.close for c in candles], dtype=float)
+
+    last = candles[-1]
+    total_range = last.high - last.low
+    body = abs(last.close - last.open)
+
+    if total_range > 0:
+        body_pct = round(body / total_range, 3)
+        if last.close >= last.open:
+            upper_wick_pct = round((last.high - last.close) / total_range, 3)
+            lower_wick_pct = round((last.open - last.low) / total_range, 3)
+        else:
+            upper_wick_pct = round((last.high - last.open) / total_range, 3)
+            lower_wick_pct = round((last.close - last.low) / total_range, 3)
+    else:
+        body_pct = upper_wick_pct = lower_wick_pct = 0.0
+
+    detected = []
+    for func_name in allowed_funcs:
+        try:
+            func = getattr(talib, func_name, None)
+            if func is None:
+                continue
+            result = func(opens, highs, lows, closes)
+            last_val = int(result[-1])
+            if last_val != 0:
+                direction = "bullish" if last_val > 0 else "bearish"
+                if direction == expected_direction:
+                    name = PATTERN_NAMES.get(func_name, func_name.replace("CDL", ""))
+                    strength = abs(last_val) / 100.0
+                    detected.append((name, direction, strength))
+        except Exception:
+            pass
+
+    if not detected:
+        return None
+
+    detected.sort(key=lambda x: x[2], reverse=True)
+    best = detected[0]
+    return CandleClassification(
+        direction=best[1],
+        pattern=best[0],
+        strength=best[2],
+        body_pct=body_pct,
+        upper_wick_pct=upper_wick_pct,
+        lower_wick_pct=lower_wick_pct,
+    )
 
 
 @dataclass

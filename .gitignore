@@ -1,6 +1,9 @@
 # Secrets — never commit these
 config.yaml
 .env
+schwab_tokens.json
+signal_log.json
+signal_log_user_*.json
 
 # Python
 __pycache__/
