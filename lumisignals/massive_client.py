@@ -75,6 +75,14 @@ CRYPTO_TICKERS = [
     "X:ETHUSD",
     "X:SOLUSD",
     "X:XRPUSD",
+    "X:DOGEUSD",
+    "X:ADAUSD",
+    "X:AVAXUSD",
+    "X:DOTUSD",
+    "X:LINKUSD",
+    "X:MATICUSD",
+    "X:LTCUSD",
+    "X:UNIUSD",
 ]
 
 # Combined default watchlist

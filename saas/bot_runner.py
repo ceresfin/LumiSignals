@@ -155,10 +155,17 @@ def run_bot_for_user(user_data, stop_check):
                 if not user_data.get("dry_run", True):
                     from lumisignals.order_manager import OrderManager
                     risk_pct = model_cfg.risk_percent
-                    om = OrderManager(client=oanda, risk_config={"risk_percent": risk_pct}, dry_run=False)
+                    om = OrderManager(client=oanda, risk_config={"risk_percent": risk_pct, "max_open_positions": 999}, dry_run=False)
                     result = om.execute_signal(signal)
                     if result.success:
                         log(f"[{model_name.upper()}] ORDER PLACED: {result.order_id}")
+                        # Also record under Oanda order ID for trade enrichment
+                        signal_log.record(result.order_id, log_entry)
+                        # And order_id + 1 (Oanda fill creates next ID)
+                        try:
+                            signal_log.record(str(int(result.order_id) + 1), log_entry)
+                        except (ValueError, TypeError):
+                            pass
                     else:
                         log(f"[{model_name.upper()}] ORDER FAILED: {result.error}")
             return handler
@@ -220,6 +227,10 @@ def run_bot_for_user(user_data, stop_check):
                 logger.debug("[%s] Trigger error: %s", model_name, e)
 
             strategy._watchlist = [z for z in strategy._watchlist if z.status != "triggered"]
+
+            # Publish current watchlist to Redis every cycle
+            zones = get_watchlist_snapshot(model_name)
+            publish_watchlist_model(user_id, model_name, zones)
 
         tick += 1
         time.sleep(30)

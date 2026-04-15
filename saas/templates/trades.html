@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>LumiSignals — Trades</title>
-<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600&family=Inter:wght@300;400;500;600&family=Open+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
 <style>
 :root { --olive: #7F8464; --cream: #F5F3EE; --dark: #2E2E2C; --text-light: #8a847e; --text-medium: #56665F; --white: #fff; --green: #27ae60; --red: #c0392b; }
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -18,7 +18,7 @@ body { font-family: 'Inter', sans-serif; background: var(--cream); color: var(--
 .header-nav a.active { background: var(--olive); color: #FFF5E1; }
 .container { max-width: 1400px; margin: 0 auto; padding: 24px; }
 .card { background: var(--white); border-radius: 12px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); margin-bottom: 20px; }
-.card h2 { font-family: 'Playfair Display', serif; font-size: 1.1rem; font-weight: 400; margin-bottom: 16px; padding-bottom: 10px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
+.card h2 { font-family: 'Playfair Display', serif; font-size: 1.1rem; font-weight: 400; margin-bottom: 16px; padding-bottom: 10px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; }
 .card h2 .count { font-family: 'Inter'; font-size: 0.8rem; color: var(--text-light); background: var(--cream); padding: 2px 10px; border-radius: 50px; }
 table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
 th { text-align: left; font-weight: 500; color: var(--text-light); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.5px; padding: 8px 10px; border-bottom: 2px solid #eee; }
@@ -30,19 +30,15 @@ tr:hover { background: rgba(0,0,0,0.015); }
 .pl-neg { color: var(--red); font-weight: 500; }
 .badge { display: inline-block; padding: 3px 10px; border-radius: 50px; font-size: 0.7rem; font-weight: 600; }
 .badge-open { background: #e8f5e9; color: var(--green); }
-.badge-pending { background: #fff3e0; color: #e67e22; }
 .badge-closed { background: #f0f0f0; color: var(--text-light); }
+.stats-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin-bottom: 24px; }
+.stat-card { background: var(--white); border-radius: 12px; padding: 16px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
+.stat-value { font-family: 'Playfair Display', serif; font-size: 1.6rem; color: var(--dark); }
+.stat-label { font-size: 0.72rem; color: var(--text-light); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 4px; }
 .loading { text-align: center; padding: 40px; color: var(--text-light); }
 .refresh-btn { font-size: 0.78rem; background: var(--cream); border: 1px solid #ddd; border-radius: 50px; padding: 6px 14px; cursor: pointer; color: var(--text-medium); }
 .refresh-btn:hover { background: #e8e6e1; }
 .disclaimer { text-align: center; font-size: 0.72rem; color: var(--text-light); margin-top: 24px; }
-.candle-row { display: flex; align-items: flex-end; gap: 24px; margin-top: 6px; height: 44px; }
-.candle { display: flex; flex-direction: column; align-items: center; width: 16px; height: 100%; position: relative; }
-.candle-wick { width: 1.5px; background: #555; }
-.candle-body { width: 12px; min-height: 2px; border-radius: 1px; }
-.candle-body.green { background: var(--green); }
-.candle-body.red { background: var(--red); }
-.candle-label { font-size: 0.6rem; color: var(--text-light); white-space: nowrap; margin-top: 3px; }
 </style>
 </head>
 <body>
@@ -51,6 +47,7 @@ tr:hover { background: rgba(0,0,0,0.015); }
     <h1>LumiSignals</h1>
     <nav class="header-nav">
       <a href="/dashboard">Dashboard</a>
+      <a href="/watchlist">Watchlist</a>
       <a href="/trades" class="active">Trades</a>
       <a href="/setup">Settings</a>
       <a href="/logout">Log out</a>
@@ -59,27 +56,37 @@ tr:hover { background: rgba(0,0,0,0.015); }
 </div>
 
 <div class="container">
-  <!-- Scalp Model (15m trigger at 1h/4h zones) -->
-  <div class="card">
-    <h2>Scalp Zones <span style="font-size:0.75rem;color:var(--text-light);font-weight:300">15m trigger | 1h/4h zones | 4h bias | 0.25% risk</span>
-      <span class="count" id="scalpCount">0</span>
-      <button class="refresh-btn" onclick="loadWatchlist()">Refresh</button></h2>
-    <div id="scalpTable"><div class="loading">Start the bot to see zones...</div></div>
+  <!-- Open Trades Stats -->
+  <div class="stats-grid">
+    <div class="stat-card"><div class="stat-value" id="openTradeCount">—</div><div class="stat-label">Open Trades</div></div>
+    <div class="stat-card"><div class="stat-value" id="unrealizedPL">—</div><div class="stat-label">Unrealized P&L</div></div>
+    <div class="stat-card"><div class="stat-value" id="openPips">—</div><div class="stat-label">Open Pips</div></div>
+    <div class="stat-card"><div class="stat-value" id="potentialProfit">—</div><div class="stat-label">Pot. Profit</div></div>
+    <div class="stat-card"><div class="stat-value" id="potentialLoss">—</div><div class="stat-label">Pot. Loss</div></div>
+    <div class="stat-card"><div class="stat-value" id="avgOpenRR">—</div><div class="stat-label">Avg R:R</div></div>
   </div>
 
-  <!-- Intraday Model (1h trigger at 4h/daily zones) -->
+  <!-- Open Trades -->
   <div class="card">
-    <h2>Intraday Zones <span style="font-size:0.75rem;color:var(--text-light);font-weight:300">1h trigger | 4h/daily zones | daily bias | 0.5% risk</span>
-      <span class="count" id="intradayCount">0</span></h2>
-    <div id="intradayTable"><div class="loading">Loading...</div></div>
+    <h2>Open Trades <span class="count" id="openCount">0</span>
+      <button class="refresh-btn" onclick="loadOandaTrades()">Refresh</button></h2>
+    <div id="openTable"><div class="loading">Loading...</div></div>
   </div>
 
-  <!-- Swing Model (daily trigger at weekly/monthly zones) -->
+  <!-- Closed Trades Stats -->
+  <div class="stats-grid">
+    <div class="stat-card"><div class="stat-value" id="totalTrades">—</div><div class="stat-label">Closed Trades</div></div>
+    <div class="stat-card"><div class="stat-value" id="winRate">—</div><div class="stat-label">Win Rate</div></div>
+    <div class="stat-card"><div class="stat-value" id="totalPL">—</div><div class="stat-label">Realized P&L</div></div>
+    <div class="stat-card"><div class="stat-value" id="totalPips">—</div><div class="stat-label">Total Pips</div></div>
+    <div class="stat-card"><div class="stat-value" id="avgWin">—</div><div class="stat-label">Avg Win</div></div>
+    <div class="stat-card"><div class="stat-value" id="avgLoss">—</div><div class="stat-label">Avg Loss</div></div>
+  </div>
+
+  <!-- Closed Trades -->
   <div class="card">
-    <h2>Swing Zones <span style="font-size:0.75rem;color:var(--text-light);font-weight:300">daily trigger | weekly/monthly zones | monthly bias | 1% risk</span>
-      <span class="count" id="swingCount">0</span>
-      <button class="refresh-btn" onclick="analyzeAllOptions()" style="background:#e8f5e9;">Analyze All Options</button></h2>
-    <div id="swingTable"><div class="loading">Loading...</div></div>
+    <h2>Trade History <span class="count" id="closedCount">0</span></h2>
+    <div id="closedTable"><div class="loading">Loading...</div></div>
   </div>
 
   <div class="disclaimer">
@@ -98,175 +105,134 @@ function buildTable(headers, rows) {
   return html;
 }
 
-function fmtTfCell(z, tfName) {
-  var d = (z.tf_details || {})[tfName];
-  if (!d) {
-    var trend = (z.trends || {})[tfName];
-    if (trend) {
-      var tc = trend === 'bullish' ? 'pl-pos' : 'pl-neg';
-      return '<span class="' + tc + '">trend: ' + trend + '</span>';
-    }
-    return '—';
-  }
-  var parts = [];
-  if (d.trend) {
-    var tc = d.trend === 'bullish' ? 'pl-pos' : 'pl-neg';
-    parts.push('<span class="' + tc + '">trend: ' + d.trend + '</span>');
-  }
-  var p1 = d.candle1_pattern || d.prev_candle;
-  var d1 = d.candle1_direction || d.prev_direction;
-  var l1 = d.candle1_label || '';
-  if (p1) {
-    var c1 = d1 === 'bullish' ? 'pl-pos' : (d1 === 'bearish' ? 'pl-neg' : '');
-    parts.push('<span class="' + c1 + '">' + (l1 ? l1 + ': ' : '') + p1 + '</span>');
-  }
-  var p2 = d.candle2_pattern || d.curr_candle;
-  var d2 = d.candle2_direction || d.curr_direction;
-  var l2 = d.candle2_label || '';
-  if (p2) {
-    var c2 = d2 === 'bullish' ? 'pl-pos' : (d2 === 'bearish' ? 'pl-neg' : '');
-    parts.push('<span class="' + c2 + '">' + (l2 ? l2 + ': ' : '') + p2 + '</span>');
-  }
-  if (d.candle3_pattern) {
-    var c3 = d.candle3_direction === 'bullish' ? 'pl-pos' : (d.candle3_direction === 'bearish' ? 'pl-neg' : '');
-    parts.push('<span class="' + c3 + '" style="opacity:0.7">' + (d.candle3_label ? d.candle3_label + ': ' : '') + d.candle3_pattern + '</span>');
-  }
-  // Visual candlesticks
-  var shapes = [];
-  ['candle1_', 'candle2_', 'candle3_'].forEach(function(pfx) {
-    var s = d[pfx + 'shape'];
-    if (s) shapes.push({shape: s, label: d[pfx + 'label'] || ''});
-  });
-  if (shapes.length) parts.push(renderCandles(shapes));
-  return parts.join('<br>') || '—';
+function plClass(val) { return val > 0 ? 'pl-pos' : (val < 0 ? 'pl-neg' : ''); }
+function fmt(val, dec) { return (val >= 0 ? '+' : '') + val.toFixed(dec || 2); }
+
+function assetBadge(instrument) {
+  if (!instrument) return '';
+  if (instrument.startsWith('X:')) return '<span class="badge" style="background:#f3e8ff;color:#7c3aed">CRYPTO</span>';
+  if (instrument.indexOf('_') >= 0) return '<span class="badge" style="background:#e0f2fe;color:#0284c7">FX</span>';
+  return '<span class="badge" style="background:#fef3c7;color:#d97706">STOCK</span>';
 }
 
-function renderCandles(shapes) {
-  var h = 32;
-  var html = '<div class="candle-row">';
-  shapes.forEach(function(item) {
-    var s = item.shape;
-    var upperH = Math.round(s.upper * h);
-    var bodyH = Math.max(1, Math.round(s.body * h));
-    var lowerH = Math.round(s.lower * h);
-    var color = s.green ? 'green' : 'red';
-    html += '<div class="candle">' +
-      '<div class="candle-wick" style="height:' + upperH + 'px"></div>' +
-      '<div class="candle-body ' + color + '" style="height:' + bodyH + 'px"></div>' +
-      '<div class="candle-wick" style="height:' + lowerH + 'px"></div>' +
-      '<div class="candle-label">' + item.label + '</div></div>';
-  });
-  html += '</div>';
-  return html;
+function modelBadge(strategy) {
+  if (!strategy) return '—';
+  var s = strategy.toLowerCase();
+  if (s.indexOf('scalp') >= 0) return '<span class="badge" style="background:#fce7f3;color:#be185d">SCALP</span>';
+  if (s.indexOf('intraday') >= 0) return '<span class="badge" style="background:#dbeafe;color:#1d4ed8">INTRADAY</span>';
+  if (s.indexOf('swing') >= 0) return '<span class="badge badge-open">SWING</span>';
+  return '<span class="badge badge-closed">' + strategy + '</span>';
 }
 
-var optionsActive = false;
-
-function wlRow(z, showOptions) {
-  var typeClass = z.zone_type === 'demand' ? 'dir-buy' : 'dir-sell';
-  var dir = z.zone_type === 'demand' ? 'BUY' : 'SELL';
-  var scColor = z.bias_score >= 70 ? 'pl-pos' : (z.bias_score >= 50 ? '' : 'pl-neg');
-  var dec = z.is_stock ? 2 : 5;
-  var statusBadge = z.status === 'activated' ? '<span class="badge badge-open">ACTIVE</span>' :
-                    '<span class="badge badge-closed">watching</span>';
-  var row = '<td>' + z.instrument + '</td>' +
-    '<td class="' + typeClass + '">' + dir + '</td>' +
-    '<td>' + z.zone_price.toFixed(dec) + '</td>' +
-    '<td>' + statusBadge + '</td>' +
-    '<td class="' + scColor + '">' + z.bias_score.toFixed(0) + '/100</td>' +
-    '<td><span class="badge badge-pending">' + (z.strategy || '') + '</span></td>' +
-    '<td style="font-size:0.72rem;line-height:1.4">' + fmtTfCell(z, 'Monthly') + '</td>' +
-    '<td style="font-size:0.72rem;line-height:1.4">' + fmtTfCell(z, 'Weekly') + '</td>' +
-    '<td style="font-size:0.72rem;line-height:1.4">' + fmtTfCell(z, 'Daily') + '</td>';
-  if (showOptions) {
-    var btnId = 'opt_' + z.instrument + '_' + z.zone_type + '_' + z.zone_price.toFixed(0);
-    row += '<td><button class="refresh-btn" onclick="loadOptions(\'' + z.instrument + '\',\'' + z.zone_type + '\',' + z.zone_price + ',this)" id="' + btnId + '">Analyze</button>' +
-      '<div id="' + btnId + '_result" style="font-size:0.7rem;margin-top:4px;"></div></td>';
-  }
-  return row;
+function scoreBadge(score) {
+  if (!score) return '';
+  var sc = parseFloat(score);
+  var color = sc >= 70 ? 'pl-pos' : (sc >= 50 ? '' : 'pl-neg');
+  return '<span class="' + color + '" style="font-size:0.75rem;font-weight:600">' + sc.toFixed(0) + '/100</span>';
 }
 
-var headers = ['Ticker', 'Dir', 'Zone Price', 'Status', 'Score', 'Strategy', 'Monthly', 'Weekly', 'Daily'];
-var headersOpt = headers.concat(['Options']);
-
-function renderModelTable(model, data, tableId, countId, showOptions) {
-  var zones = (data.forex || []).concat(data.stocks || []).concat(data.crypto || []);
-  document.getElementById(countId).textContent = zones.length;
-  if (showOptions && optionsActive) return; // Don't wipe options
-  var hdrs = showOptions ? headersOpt : headers;
-  document.getElementById(tableId).innerHTML = buildTable(hdrs, zones.map(function(z) { return wlRow(z, showOptions); }));
-}
-
-function loadWatchlist() {
-  fetch('/api/watchlist')
+function loadOandaTrades() {
+  fetch('/api/oanda/trades')
     .then(function(r) { return r.json(); })
-    .then(function(d) {
-      renderModelTable('scalp', d.scalp || {}, 'scalpTable', 'scalpCount', false);
-      renderModelTable('intraday', d.intraday || {}, 'intradayTable', 'intradayCount', false);
-      renderModelTable('swing', d.swing || {}, 'swingTable', 'swingCount', true);
+    .then(function(data) {
+      if (data.error) { console.error(data.error); return; }
+
+      // Open Trades Stats
+      var openTrades = data.open || [];
+      var totalUnrealized = openTrades.reduce(function(sum, t) { return sum + (t.unrealized_pl || 0); }, 0);
+      var totalOpenPips = openTrades.reduce(function(sum, t) { return sum + (t.pips || 0); }, 0);
+      var totalPotProfit = openTrades.reduce(function(sum, t) { return sum + (t.potential_profit || 0); }, 0);
+      var totalPotLoss = openTrades.reduce(function(sum, t) { return sum + (t.potential_loss || 0); }, 0);
+      var rrValues = openTrades.filter(function(t) { return t.risk_reward > 0; }).map(function(t) { return t.risk_reward; });
+      var avgRR = rrValues.length ? (rrValues.reduce(function(a,b) { return a+b; }, 0) / rrValues.length) : 0;
+
+      document.getElementById('openTradeCount').textContent = openTrades.length;
+      var upl = document.getElementById('unrealizedPL');
+      upl.textContent = '$' + fmt(totalUnrealized);
+      upl.className = 'stat-value ' + (totalUnrealized >= 0 ? 'pl-pos' : 'pl-neg');
+      var op = document.getElementById('openPips');
+      op.textContent = fmt(totalOpenPips, 1);
+      op.className = 'stat-value ' + (totalOpenPips >= 0 ? 'pl-pos' : 'pl-neg');
+      var pp = document.getElementById('potentialProfit');
+      pp.textContent = '$' + totalPotProfit.toFixed(2);
+      pp.className = 'stat-value pl-pos';
+      var ploss = document.getElementById('potentialLoss');
+      ploss.textContent = '-$' + totalPotLoss.toFixed(2);
+      ploss.className = 'stat-value pl-neg';
+      document.getElementById('avgOpenRR').textContent = avgRR ? avgRR.toFixed(1) : '—';
+
+      // Closed Trades Stats
+      var s = data.stats;
+      document.getElementById('totalTrades').textContent = s.total_trades;
+      var wr = document.getElementById('winRate');
+      wr.textContent = s.win_rate + '%';
+      wr.className = 'stat-value ' + (s.win_rate >= 50 ? 'pl-pos' : (s.win_rate > 0 ? 'pl-neg' : ''));
+      var pl = document.getElementById('totalPL');
+      pl.textContent = '$' + fmt(s.total_pl);
+      pl.className = 'stat-value ' + (s.total_pl >= 0 ? 'pl-pos' : 'pl-neg');
+      var pips = document.getElementById('totalPips');
+      pips.textContent = fmt(s.total_pips, 1);
+      pips.className = 'stat-value ' + (s.total_pips >= 0 ? 'pl-pos' : 'pl-neg');
+      document.getElementById('avgWin').textContent = s.avg_win ? '$' + fmt(s.avg_win) : '—';
+      document.getElementById('avgWin').className = 'stat-value pl-pos';
+      document.getElementById('avgLoss').textContent = s.avg_loss ? '$' + s.avg_loss.toFixed(2) : '—';
+      document.getElementById('avgLoss').className = 'stat-value pl-neg';
+
+      // Open trades
+      document.getElementById('openCount').textContent = data.open.length;
+      var openRows = data.open.map(function(t) {
+        var slCell = t.stop_loss ? t.stop_loss.toFixed(5) + '<br><span class="pl-neg" style="font-size:0.7rem">-$' + t.potential_loss.toFixed(2) + '</span>' : '—';
+        var tpCell = t.take_profit ? t.take_profit.toFixed(5) + '<br><span class="pl-pos" style="font-size:0.7rem">+$' + t.potential_profit.toFixed(2) + '</span>' : '—';
+        var dirClass = t.direction === 'BUY' ? 'dir-buy' : 'dir-sell';
+        var signalInfo = '';
+        if (t.trigger_pattern) signalInfo += '<strong>' + t.trigger_pattern + '</strong><br>';
+        if (t.level_timeframe) signalInfo += t.level_timeframe + ' ' + (t.level_type || '') + '<br>';
+        signalInfo += scoreBadge(t.final_score);
+        return '<td>' + t.instrument + '<br>' + assetBadge(t.instrument) + '</td>' +
+          '<td class="' + dirClass + '">' + t.direction + '</td>' +
+          '<td>' + t.entry.toFixed(5) + '</td>' +
+          '<td>' + t.current_price.toFixed(5) + '</td>' +
+          '<td>' + slCell + '</td>' +
+          '<td>' + tpCell + '</td>' +
+          '<td>' + (t.risk_reward || '—') + '</td>' +
+          '<td class="' + plClass(t.pips) + '">' + fmt(t.pips, 1) + '</td>' +
+          '<td class="' + plClass(t.unrealized_pl) + '">$' + fmt(t.unrealized_pl) + '</td>' +
+          '<td>' + modelBadge(t.strategy) + '</td>' +
+          '<td style="font-size:0.75rem">' + signalInfo + '</td>';
+      });
+      document.getElementById('openTable').innerHTML = buildTable(
+        ['Pair', 'Dir', 'Entry', 'Current', 'SL', 'TP', 'R:R', 'Pips', 'P&L', 'Model', 'Signal'], openRows
+      );
+
+      // Closed trades
+      document.getElementById('closedCount').textContent = data.closed.length;
+      var closedRows = data.closed.map(function(t) {
+        var badge = t.won ? '<span class="badge" style="background:#e8f5e9;color:#27ae60">WIN</span>' : '<span class="badge" style="background:#fdecea;color:#c0392b">LOSS</span>';
+        var dirClass = t.direction === 'BUY' ? 'dir-buy' : 'dir-sell';
+        var signalInfo = '';
+        if (t.trigger_pattern) signalInfo += t.trigger_pattern + '<br>';
+        if (t.level_timeframe) signalInfo += t.level_timeframe + ' ' + (t.level_type || '') + '<br>';
+        signalInfo += scoreBadge(t.final_score);
+        return '<td>' + t.instrument + '<br>' + assetBadge(t.instrument) + '</td>' +
+          '<td class="' + dirClass + '">' + t.direction + '</td>' +
+          '<td>' + t.entry.toFixed(5) + '</td>' +
+          '<td>' + t.close_price.toFixed(5) + '</td>' +
+          '<td>' + (t.planned_rr ? t.planned_rr.toFixed(1) : '—') + '</td>' +
+          '<td class="' + plClass(t.pips) + '">' + fmt(t.pips, 1) + '</td>' +
+          '<td class="' + plClass(t.realized_pl) + '">$' + fmt(t.realized_pl) + '</td>' +
+          '<td>' + t.close_reason + '</td>' +
+          '<td>' + badge + '</td>' +
+          '<td>' + modelBadge(t.strategy) + '</td>' +
+          '<td style="font-size:0.75rem">' + signalInfo + '</td>';
+      });
+      document.getElementById('closedTable').innerHTML = buildTable(
+        ['Pair', 'Dir', 'Entry', 'Close', 'Plan R:R', 'Pips', 'P&L', 'Reason', 'Result', 'Model', 'Signal'], closedRows
+      );
     })
-    .catch(function(e) { console.error('Watchlist error:', e); });
+    .catch(function(e) { console.error('Oanda trades error:', e); });
 }
 
-function analyzeAllOptions() {
-  var buttons = document.querySelectorAll('[id^="opt_"]');
-  var delay = 0;
-  buttons.forEach(function(btn) {
-    if (btn.tagName === 'BUTTON') {
-      setTimeout(function() { btn.click(); }, delay);
-      delay += 1500;
-    }
-  });
-}
-
-function loadOptions(ticker, zoneType, zonePrice, btn) {
-  optionsActive = true;
-  btn.textContent = '...';
-  btn.disabled = true;
-  var resultDiv = document.getElementById(btn.id + '_result');
-  fetch('/api/options/' + ticker + '?zone_type=' + zoneType + '&zone_price=' + zonePrice + '&current_price=' + zonePrice)
-    .then(function(r) { return r.json(); })
-    .then(function(d) {
-      if (d.error) {
-        resultDiv.innerHTML = '<span class="pl-neg">' + d.error + '</span>';
-        btn.textContent = 'Retry'; btn.disabled = false; return;
-      }
-      var html = '';
-      if (d.credit_spread) {
-        var cs = d.credit_spread;
-        var vc = cs.verdict === 'GOOD' ? 'pl-pos' : (cs.verdict === 'FAIR' ? '' : 'pl-neg');
-        html += '<div style="margin-bottom:6px;padding:4px;background:#f9f9f6;border-radius:4px;">' +
-          '<strong>' + cs.type + '</strong> <span class="' + vc + '">' + cs.verdict + '</span><br>' +
-          'SELL ' + cs.short_strike + ' / BUY ' + cs.long_strike + ' ' + cs.option_type + '<br>' +
-          '<span class="pl-pos">Credit: $' + cs.net_credit.toFixed(2) + '</span> | ' +
-          'Profit: $' + cs.max_profit.toFixed(0) + ' | Loss: $' + cs.max_loss.toFixed(0) + '<br>' +
-          'R:R: ' + cs.risk_reward + ' | ' + cs.days_to_expiry + 'd | IV: ' + cs.iv_rank +
-          '<br><span style="color:var(--text-light)">' + cs.reason + '</span></div>';
-      }
-      if (d.debit_spread) {
-        var ds = d.debit_spread;
-        var vd = ds.verdict === 'GOOD' ? 'pl-pos' : (ds.verdict === 'FAIR' ? '' : 'pl-neg');
-        html += '<div style="padding:4px;background:#f9f9f6;border-radius:4px;">' +
-          '<strong>' + ds.type + '</strong> <span class="' + vd + '">' + ds.verdict + '</span><br>' +
-          'BUY ' + ds.long_strike + ' / SELL ' + ds.short_strike + ' ' + ds.option_type + '<br>' +
-          '<span class="pl-neg">Debit: $' + ds.net_debit.toFixed(2) + '</span> | ' +
-          'Profit: $' + ds.max_profit.toFixed(0) + ' | Loss: $' + ds.max_loss.toFixed(0) + '<br>' +
-          'R:R: ' + ds.risk_reward + ' | ' + ds.days_to_expiry + 'd | IV: ' + ds.iv_rank +
-          '<br><span style="color:var(--text-light)">' + ds.reason + '</span></div>';
-      }
-      if (!html) html = '<span class="pl-neg">No spreads found</span>';
-      resultDiv.innerHTML = html;
-      btn.textContent = 'Refresh'; btn.disabled = false;
-    })
-    .catch(function(e) {
-      resultDiv.innerHTML = '<span class="pl-neg">Error: ' + e + '</span>';
-      btn.textContent = 'Retry'; btn.disabled = false;
-    });
-}
-
-loadWatchlist();
-// Don't auto-refresh — user clicks Refresh manually. Prevents wiping options data.
-// setInterval(function() { loadWatchlist(); }, 30000);
+loadOandaTrades();
 </script>
 </body>
 </html>

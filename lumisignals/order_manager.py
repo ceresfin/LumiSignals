@@ -44,15 +44,21 @@ def calculate_position_size(
     risk_percent: float,
     entry_price: float,
     stop_price: float,
+    instrument: str = "",
     max_units: int = 100000,
 ) -> int:
     """Calculate position size in units based on risk management.
+
+    For JPY pairs, the stop distance is in yen (e.g. 1.5) while for others
+    it's in the 4th decimal (e.g. 0.0097). We normalize by converting
+    the stop distance to pips and using pip value per unit.
 
     Args:
         account_balance: Account balance in account currency.
         risk_percent: Percentage of account to risk (e.g. 1.0 for 1%).
         entry_price: Entry price.
         stop_price: Stop loss price.
+        instrument: e.g. "EUR_USD", "USD_JPY" — needed for pip normalization.
         max_units: Maximum allowed position size.
 
     Returns:
@@ -63,7 +69,33 @@ def calculate_position_size(
         return 0
 
     risk_amount = account_balance * (risk_percent / 100)
-    units = int(risk_amount / stop_distance)
+
+    # Convert stop distance to pips
+    pip_value, _ = get_pip_precision(instrument)
+    stop_pips = stop_distance / pip_value if pip_value else stop_distance
+
+    # Approximate pip cost per unit in USD
+    # For XXX_USD pairs: 1 pip = pip_value per unit (e.g. $0.0001)
+    # For USD_JPY: 1 pip = 0.01 / price per unit (e.g. 0.01/150 = $0.0000667)
+    # For crosses: approximate using entry price
+    parts = instrument.split("_") if instrument else []
+    if len(parts) == 2:
+        base, quote = parts
+        if quote == "USD":
+            pip_cost = pip_value  # Direct: 1 pip = pip_value USD per unit
+        elif base == "USD":
+            pip_cost = pip_value / entry_price if entry_price else pip_value
+        else:
+            # Cross pair — rough approximation
+            pip_cost = pip_value / entry_price if entry_price else pip_value
+    else:
+        pip_cost = pip_value
+
+    if pip_cost == 0:
+        return 0
+
+    # units = risk_amount / (stop_pips * pip_cost_per_unit)
+    units = int(risk_amount / (stop_pips * pip_cost))
     return min(units, max_units)
 
 
@@ -104,6 +136,7 @@ class OrderManager:
                 risk_percent=self.risk_percent,
                 entry_price=signal.entry,
                 stop_price=signal.stop,
+                instrument=instrument,
                 max_units=self.max_units,
             )
             if units == 0:
@@ -134,6 +167,7 @@ class OrderManager:
                 risk_percent=self.risk_percent,
                 entry_price=signal.entry,
                 stop_price=signal.stop,
+                instrument=instrument,
                 max_units=self.max_units,
             )
 

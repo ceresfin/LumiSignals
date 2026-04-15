@@ -172,6 +172,11 @@ def create_app():
     def dashboard():
         return render_template("dashboard.html", user=current_user)
 
+    @app.route("/watchlist")
+    @login_required
+    def watchlist():
+        return render_template("watchlist.html", user=current_user)
+
     @app.route("/trades")
     @login_required
     def trades():
@@ -227,6 +232,9 @@ def create_app():
         for model in ["scalp", "intraday", "swing"]:
             raw = rdb.get(f"watchlist:{current_user.id}:{model}")
             zones = json.loads(raw) if raw else []
+            # Tag each zone with its model
+            for z in zones:
+                z["model"] = model
             stocks = [z for z in zones if z.get("is_stock") and not z.get("instrument", "").startswith("X:")]
             crypto = [z for z in zones if z.get("instrument", "").startswith("X:")]
             forex = [z for z in zones if not z.get("is_stock")]
@@ -259,6 +267,49 @@ def create_app():
                 "error": result.get("error"),
             })
         except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/oanda/trades")
+    @login_required
+    def api_oanda_trades():
+        """Get open trades, pending orders, and closed trades from Oanda."""
+        if not current_user.oanda_api_key:
+            return jsonify({"error": "No Oanda credentials"}), 400
+        try:
+            from lumisignals.oanda_client import OandaClient
+            from lumisignals.trade_tracker import get_open_trades, get_pending_orders, get_closed_trades, get_performance_stats
+            from lumisignals.signal_log import SignalLog
+
+            client = OandaClient(
+                account_id=current_user.oanda_account_id,
+                api_key=current_user.oanda_api_key,
+                environment=current_user.oanda_environment or "practice",
+            )
+
+            # Use the user's signal log for enrichment
+            sig_log_path = f"/opt/lumisignals/signal_log_user_{current_user.id}.json"
+            from lumisignals.signal_log import _log, get_signal_log
+            # Temporarily override the global signal log
+            import lumisignals.signal_log as _sl
+            old_log = _sl._log
+            _sl._log = SignalLog(path=sig_log_path)
+
+            open_trades = get_open_trades(client)
+            pending = get_pending_orders(client)
+            closed = get_closed_trades(client, count=50)
+            stats = get_performance_stats(closed)
+
+            # Restore
+            _sl._log = old_log
+
+            return jsonify({
+                "open": open_trades,
+                "pending": pending,
+                "closed": closed,
+                "stats": stats,
+            })
+        except Exception as e:
+            logger.error("Oanda trades error: %s", e)
             return jsonify({"error": str(e)}), 500
 
     @app.route("/api/log")

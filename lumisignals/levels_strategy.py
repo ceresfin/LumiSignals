@@ -391,8 +391,8 @@ class LevelsStrategy:
                 logger.error("Error scanning %s for zones: %s", instrument, e)
             time.sleep(0.5)  # Rate limiting
 
-        # Scan stocks/crypto (via Massive)
-        if self.massive and self.stock_tickers:
+        # Scan stocks/crypto (via Massive) — only for swing model (weekly/monthly zones)
+        if self.massive and self.stock_tickers and self.model_name == "swing":
             for ticker in self.stock_tickers:
                 try:
                     self._scan_stock_for_zones(ticker, new_watchlist)
