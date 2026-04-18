@@ -56,6 +56,22 @@ class PolygonOptionsClient:
         results = data.get("results", [])
         return results[0] if results else {}
 
+    def get_option_snapshots(self, underlying: str, exp_gte: str = None, exp_lte: str = None,
+                             strike_gte: float = None, strike_lte: float = None,
+                             limit: int = 250) -> list:
+        """Get snapshots for options of an underlying — includes greeks, prices, OI."""
+        params = {"limit": limit}
+        if exp_gte:
+            params["expiration_date.gte"] = exp_gte
+        if exp_lte:
+            params["expiration_date.lte"] = exp_lte
+        if strike_gte:
+            params["strike_price.gte"] = strike_gte
+        if strike_lte:
+            params["strike_price.lte"] = strike_lte
+        data = self._request(f"/v3/snapshot/options/{underlying}", params)
+        return data.get("results", [])
+
     def get_stock_price(self, ticker: str) -> float:
         """Get current/last stock price."""
         data = self._request(f"/v2/aggs/ticker/{ticker}/prev")
@@ -93,130 +109,63 @@ def analyze_spreads_polygon(api_key: str, ticker: str, zone_type: str,
         strike_gte = current_price - strike_range
         strike_lte = current_price + strike_range
 
-        # Get option contracts from reference data (free tier)
-        # First get contracts to find available expirations and strikes
-        contracts = client.get_option_contracts(
-            ticker, min_exp, max_exp,
+        # Get all option snapshots in one API call (requires options subscription)
+        snapshots = client.get_option_snapshots(
+            ticker, exp_gte=min_exp, exp_lte=max_exp,
             strike_gte=strike_gte, strike_lte=strike_lte,
             limit=250,
         )
 
-        if not contracts:
-            result["error"] = "No option contracts found"
+        if not snapshots:
+            result["error"] = "No options data available"
             return result
 
-        # Build a lookup of available contracts by (exp, strike, type)
-        contract_map = {}
-        for c in contracts:
-            exp = c.get("expiration_date", "")
-            strike = c.get("strike_price", 0)
-            ctype = c.get("contract_type", "").lower()
-            poly_ticker = c.get("ticker", "")
-            if exp and strike and ctype in ("call", "put"):
-                exp_date = datetime.strptime(exp, "%Y-%m-%d").date()
-                dte = (exp_date - today).days
-                right = "C" if ctype == "call" else "P"
-                contract_map[(exp, strike, right)] = {
-                    "poly_ticker": poly_ticker,
-                    "strike": strike,
-                    "expiration": exp.replace("-", ""),
-                    "dte": dte,
-                    "right": right,
-                }
-
-        # Find available expirations
-        exp_set = {}
-        for (exp, strike, right), info in contract_map.items():
-            if exp not in exp_set:
-                exp_set[exp] = info["dte"]
-
-        exp_list = [(exp.replace("-", ""), dte) for exp, dte in exp_set.items()]
-        if not exp_list:
-            result["error"] = "No valid expirations found"
-            return result
-
-        credit_exp = _best_exp_poly(exp_list, 30, 45)
-        debit_exp = _best_exp_poly(exp_list, 14, 30)
-
-        # Get strikes for the chosen expirations, filtered to $5 increments for expensive stocks
-        all_strikes = sorted(set(s for (e, s, r) in contract_map.keys()))
-        if current_price > 50:
-            all_strikes = [s for s in all_strikes if s % 5 == 0]
-
-        # Determine which specific contracts we need (max ~8 contracts for 2 spreads × 2 legs)
-        needed_contracts = []
-
-        if zone_type == "supply":
-            # Bear Call Credit: sell call near current, buy call above
-            sell_strikes = sorted([s for s in all_strikes if s >= current_price])[:2]
-            for ss in sell_strikes:
-                buy_strikes = sorted([s for s in all_strikes if s > ss])[:2]
-                for bs in buy_strikes:
-                    exp_raw = credit_exp[0][:4] + "-" + credit_exp[0][4:6] + "-" + credit_exp[0][6:]
-                    if (exp_raw, ss, "C") in contract_map:
-                        needed_contracts.append(contract_map[(exp_raw, ss, "C")])
-                    if (exp_raw, bs, "C") in contract_map:
-                        needed_contracts.append(contract_map[(exp_raw, bs, "C")])
-            # Bear Put Debit: buy put near current, sell put below
-            buy_strikes = sorted([s for s in all_strikes if s <= current_price], reverse=True)[:2]
-            for bs in buy_strikes:
-                sell_strikes2 = sorted([s for s in all_strikes if s < bs], reverse=True)[:2]
-                for ss in sell_strikes2:
-                    exp_raw = debit_exp[0][:4] + "-" + debit_exp[0][4:6] + "-" + debit_exp[0][6:]
-                    if (exp_raw, bs, "P") in contract_map:
-                        needed_contracts.append(contract_map[(exp_raw, bs, "P")])
-                    if (exp_raw, ss, "P") in contract_map:
-                        needed_contracts.append(contract_map[(exp_raw, ss, "P")])
-        else:
-            # Bull Put Credit: sell put near current, buy put below
-            sell_strikes = sorted([s for s in all_strikes if s <= current_price], reverse=True)[:2]
-            for ss in sell_strikes:
-                buy_strikes = sorted([s for s in all_strikes if s < ss], reverse=True)[:2]
-                for bs in buy_strikes:
-                    exp_raw = credit_exp[0][:4] + "-" + credit_exp[0][4:6] + "-" + credit_exp[0][6:]
-                    if (exp_raw, ss, "P") in contract_map:
-                        needed_contracts.append(contract_map[(exp_raw, ss, "P")])
-                    if (exp_raw, bs, "P") in contract_map:
-                        needed_contracts.append(contract_map[(exp_raw, bs, "P")])
-            # Bull Call Debit: buy call near current, sell call above
-            buy_strikes = sorted([s for s in all_strikes if s >= current_price])[:2]
-            for bs in buy_strikes:
-                sell_strikes2 = sorted([s for s in all_strikes if s > bs])[:2]
-                for ss in sell_strikes2:
-                    exp_raw = debit_exp[0][:4] + "-" + debit_exp[0][4:6] + "-" + debit_exp[0][6:]
-                    if (exp_raw, bs, "C") in contract_map:
-                        needed_contracts.append(contract_map[(exp_raw, bs, "C")])
-                    if (exp_raw, ss, "C") in contract_map:
-                        needed_contracts.append(contract_map[(exp_raw, ss, "C")])
-
-        # Deduplicate
-        seen = set()
-        unique_contracts = []
-        for c in needed_contracts:
-            key = c["poly_ticker"]
-            if key not in seen:
-                seen.add(key)
-                unique_contracts.append(c)
-
-        # Fetch prev close for only the needed contracts (with rate limiting)
-        import time
+        # Parse snapshots into usable data
         options = []
-        for i, c in enumerate(unique_contracts):
-            if i > 0 and i % 4 == 0:
-                time.sleep(12)  # Rate limit: 5 req/min on free tier
-            prev = client.get_option_prev_close(c["poly_ticker"])
-            if not prev:
+        for snap in snapshots:
+            details = snap.get("details", {})
+            day = snap.get("day", {})
+            greeks = snap.get("greeks", {})
+            last_quote = snap.get("last_quote", {})
+
+            exp_str = details.get("expiration_date", "")
+            if not exp_str:
                 continue
-            close = prev.get("c", 0)
-            if not close or close <= 0:
+
+            exp_date = datetime.strptime(exp_str, "%Y-%m-%d").date()
+            dte = (exp_date - today).days
+
+            strike = details.get("strike_price", 0)
+            contract_type = details.get("contract_type", "").lower()
+            if contract_type not in ("call", "put"):
                 continue
-            c["bid"] = round(close * 0.97, 2)
-            c["ask"] = round(close * 1.03, 2)
-            c["mid"] = close
-            c["delta"] = 0
-            c["iv"] = 0
-            c["oi"] = 0
-            options.append(c)
+
+            close = day.get("close", 0)
+            bid = last_quote.get("bid", 0) or (round(close * 0.97, 2) if close else 0)
+            ask = last_quote.get("ask", 0) or (round(close * 1.03, 2) if close else 0)
+
+            if not bid and not ask and not close:
+                continue
+
+            if not bid:
+                bid = round(close * 0.97, 2) if close else 0
+            if not ask:
+                ask = round(close * 1.03, 2) if close else 0
+
+            iv_raw = snap.get("implied_volatility", 0) or 0
+
+            options.append({
+                "strike": strike,
+                "expiration": exp_str.replace("-", ""),
+                "dte": dte,
+                "right": "C" if contract_type == "call" else "P",
+                "bid": bid,
+                "ask": ask,
+                "mid": close or (bid + ask) / 2,
+                "delta": abs(greeks.get("delta", 0)),
+                "iv": round(iv_raw * 100, 1),
+                "oi": snap.get("open_interest", 0),
+            })
 
         if not options:
             result["error"] = "No options data in 14-60 DTE range"

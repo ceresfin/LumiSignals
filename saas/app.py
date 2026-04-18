@@ -283,7 +283,7 @@ def create_app():
     @app.route("/api/options/<ticker>")
     @login_required
     def api_options(ticker):
-        """Analyze options using Polygon (server-side) and optionally IB (via sync script)."""
+        """Analyze options using all available sources: Schwab, Polygon, IB."""
         import redis as _redis
         import uuid
         rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
@@ -292,54 +292,73 @@ def create_app():
         zone_price = float(request.args.get("zone_price", 0))
         current_price = float(request.args.get("current_price", 0))
 
-        # Run Polygon analysis server-side (always available)
-        polygon_result = None
+        response = {"ticker": ticker, "sources": []}
+
+        # --- Source 1: Schwab (instant if authorized) ---
+        try:
+            from lumisignals.schwab_client import SchwabAuth, SchwabMarketData
+            from lumisignals.options_analyzer import analyze_spreads_at_zone, format_spread_for_display
+            auth = SchwabAuth(
+                client_id=os.environ.get("SCHWAB_CLIENT_ID", ""),
+                client_secret=os.environ.get("SCHWAB_CLIENT_SECRET", ""),
+                token_file="/opt/lumisignals/schwab_tokens.json",
+            )
+            if auth.get_valid_token():
+                md = SchwabMarketData(auth)
+                schwab_result = analyze_spreads_at_zone(md, ticker, zone_type, zone_price, current_price)
+                response["sources"].append({
+                    "name": "Schwab",
+                    "credit_spread": format_spread_for_display(schwab_result["credit_spread"]),
+                    "debit_spread": format_spread_for_display(schwab_result["debit_spread"]),
+                    "error": schwab_result.get("error"),
+                })
+        except Exception as e:
+            logger.debug("Schwab options: %s", e)
+
+        # --- Source 2: Polygon (run inline — fast with snapshot endpoint) ---
         massive_key = current_user.massive_api_key or os.environ.get("MASSIVE_API_KEY", "")
         if massive_key:
             try:
                 from lumisignals.polygon_options import analyze_spreads_polygon
-                polygon_result = analyze_spreads_polygon(massive_key, ticker, zone_type, zone_price, current_price)
+                poly_result = analyze_spreads_polygon(massive_key, ticker, zone_type, zone_price, current_price)
+                response["sources"].append({
+                    "name": "Polygon",
+                    "credit_spread": poly_result.get("credit_spread"),
+                    "debit_spread": poly_result.get("debit_spread"),
+                    "error": poly_result.get("error"),
+                })
             except Exception as e:
-                logger.error("Polygon options error: %s", e)
-                polygon_result = {"error": str(e), "data_source": "polygon"}
+                logger.debug("Polygon options: %s", e)
 
-        # Check for cached IB result
-        ib_result = None
-        cached = rdb.get(f"ibkr:analyze:result:{ticker}")
-        if cached:
-            ib_result = json.loads(cached)
-        else:
-            # Queue IB analysis if sync script is running
-            request_id = str(uuid.uuid4())[:8]
-            req_data = json.dumps({
-                "request_id": request_id,
-                "ticker": ticker,
-                "zone_type": zone_type,
-                "zone_price": zone_price,
-                "current_price": current_price,
+        # --- Source 3: IB (cached or queue) ---
+        ib_cached = rdb.get(f"ibkr:analyze:result:{ticker}")
+        if ib_cached:
+            ib_data = json.loads(ib_cached)
+            response["sources"].append({
+                "name": "IB" + (" (Friday close)" if ib_data.get("data_mode") == "friday_close" else " (live)" if ib_data.get("data_mode") == "live" else ""),
+                "credit_spread": ib_data.get("credit_spread"),
+                "debit_spread": ib_data.get("debit_spread"),
+                "error": ib_data.get("error"),
             })
-            rdb.setex(f"ibkr:analyze:request:{request_id}", 120, req_data)
+        else:
+            request_id = str(uuid.uuid4())[:8]
+            rdb.setex(f"ibkr:analyze:request:{request_id}", 120, json.dumps({
+                "request_id": request_id, "ticker": ticker,
+                "zone_type": zone_type, "zone_price": zone_price,
+                "current_price": current_price,
+            }))
 
-        # Return both results
-        response = {
-            "ticker": ticker,
-            "polygon": polygon_result,
-            "ib": ib_result,
-            "ib_request_id": request_id if not ib_result else None,
-        }
+        # Use first available source for primary display
+        for src in response["sources"]:
+            if src.get("credit_spread") or src.get("debit_spread"):
+                response["credit_spread"] = src.get("credit_spread")
+                response["debit_spread"] = src.get("debit_spread")
+                response["data_mode"] = src.get("name", "")
+                break
 
-        # For backward compatibility — use polygon as primary if available
-        if polygon_result and (polygon_result.get("credit_spread") or polygon_result.get("debit_spread")):
-            response["credit_spread"] = polygon_result.get("credit_spread")
-            response["debit_spread"] = polygon_result.get("debit_spread")
-            response["data_mode"] = "polygon"
-        elif ib_result and (ib_result.get("credit_spread") or ib_result.get("debit_spread")):
-            response["credit_spread"] = ib_result.get("credit_spread")
-            response["debit_spread"] = ib_result.get("debit_spread")
-            response["data_mode"] = ib_result.get("data_mode", "ib")
-        elif not polygon_result or polygon_result.get("error"):
+        if not response.get("credit_spread") and not response.get("debit_spread") and not response["sources"]:
             response["status"] = "pending"
-            response["request_id"] = request_id if not ib_result else None
+            response["message"] = "Analyzing — results will appear shortly"
 
         return jsonify(response)
 

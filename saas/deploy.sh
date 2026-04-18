@@ -21,8 +21,9 @@ scp saas/requirements.txt $SERVER:$APP_DIR/
 echo "Installing dependencies on server..."
 ssh $SERVER "cd $APP_DIR && source /opt/lumisignals/venv/bin/activate && pip install -r requirements.txt"
 
-echo "Setting up systemd service..."
-ssh $SERVER 'cat > /etc/systemd/system/lumisignals.service << EOF
+# Only set up systemd service if it doesn't exist (preserves env vars)
+ssh $SERVER 'if [ ! -f /etc/systemd/system/lumisignals.service ]; then
+cat > /etc/systemd/system/lumisignals.service << EOF
 [Unit]
 Description=LumiSignals Bot SaaS
 After=network.target postgresql.service redis.service
@@ -38,7 +39,11 @@ RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
-EOF'
+EOF
+echo "Systemd service created"
+else
+echo "Systemd service already exists — skipping (preserving env vars)"
+fi'
 
 ssh $SERVER "systemctl daemon-reload && systemctl enable lumisignals && systemctl restart lumisignals"
 
