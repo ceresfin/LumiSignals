@@ -189,19 +189,20 @@ def analyze_spreads_polygon(api_key: str, ticker: str, zone_type: str,
             result["error"] = "No valid expirations found"
             return result
 
-        credit_exp = _best_exp_poly(exp_list, 30, 45)
-        debit_exp = _best_exp_poly(exp_list, 14, 30)
+        # Use same expiration for both credit and debit (target ~30 DTE)
+        # This matches Schwab's preferred range for apples-to-apples comparison
+        target_exp = _best_exp_poly(exp_list, 25, 40)
 
-        # Analyze based on zone type
-        credit_options = exps.get(credit_exp[0], {}).get("options", [])
-        debit_options = exps.get(debit_exp[0], {}).get("options", [])
+        # Analyze based on zone type — both use same expiration
+        credit_options = exps.get(target_exp[0], {}).get("options", [])
+        debit_options = credit_options  # same expiration
 
         if zone_type == "supply":
-            credit = _find_bear_call_credit_poly(credit_options, credit_exp, zone_price, current_price)
-            debit = _find_bear_put_debit_poly(debit_options, debit_exp, zone_price, current_price)
+            credit = _find_bear_call_credit_poly(credit_options, target_exp, zone_price, current_price)
+            debit = _find_bear_put_debit_poly(debit_options, target_exp, zone_price, current_price)
         else:
-            credit = _find_bull_put_credit_poly(credit_options, credit_exp, zone_price, current_price)
-            debit = _find_bull_call_debit_poly(debit_options, debit_exp, zone_price, current_price)
+            credit = _find_bull_put_credit_poly(credit_options, target_exp, zone_price, current_price)
+            debit = _find_bull_call_debit_poly(debit_options, target_exp, zone_price, current_price)
 
         result["credit_spread"] = format_spread_for_display(credit) if credit else None
         result["debit_spread"] = format_spread_for_display(debit) if debit else None

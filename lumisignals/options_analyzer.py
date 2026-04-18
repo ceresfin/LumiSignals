@@ -182,7 +182,7 @@ def _find_best_bear_call_credit(call_map, zone_price, price, overall_iv) -> Opti
     for exp, strikes_list in by_exp.items():
         strikes_list.sort(key=lambda x: x[0])
         dte = _days_to_expiry(exp)
-        if dte < 14 or dte > 45:
+        if dte < 25 or dte > 40:
             continue
 
         for i, (sell_strike, sell_opt) in enumerate(strikes_list):
@@ -270,7 +270,7 @@ def _find_best_bull_put_credit(put_map, zone_price, price, overall_iv) -> Option
     for exp, strikes_list in by_exp.items():
         strikes_list.sort(key=lambda x: x[0])
         dte = _days_to_expiry(exp)
-        if dte < 14 or dte > 45:
+        if dte < 25 or dte > 40:
             continue
 
         for i, (sell_strike, sell_opt) in enumerate(strikes_list):
@@ -359,7 +359,7 @@ def _find_best_bear_put_debit(put_map, zone_price, price, overall_iv) -> Optiona
     for exp, strikes_list in by_exp.items():
         strikes_list.sort(key=lambda x: x[0])
         dte = _days_to_expiry(exp)
-        if dte < 21 or dte > 60:
+        if dte < 25 or dte > 40:
             continue
 
         for i, (buy_strike, buy_opt) in enumerate(strikes_list):
@@ -448,7 +448,7 @@ def _find_best_bull_call_debit(call_map, zone_price, price, overall_iv) -> Optio
     for exp, strikes_list in by_exp.items():
         strikes_list.sort(key=lambda x: x[0])
         dte = _days_to_expiry(exp)
-        if dte < 21 or dte > 60:
+        if dte < 25 or dte > 40:
             continue
 
         for i, (buy_strike, buy_opt) in enumerate(strikes_list):
