@@ -75,7 +75,24 @@ button:hover { opacity: 0.9; }
     </div>
 
     <div class="card">
-      <h2>2. Strategy Settings</h2>
+      <h2>2. API Keys</h2>
+      <div class="field-row">
+        <div>
+          <label>LumiTrade API Key</label>
+          <input type="password" name="lumitrade_api_key" value="{{ user.lumitrade_api_key or '' }}" placeholder="trk_live_...">
+          <small>For S&R level data (SNR frequency analysis)</small>
+        </div>
+        <div>
+          <label>Massive / Polygon API Key</label>
+          <input type="password" name="massive_api_key" value="{{ user.massive_api_key or '' }}" placeholder="Your Polygon.io API key">
+          <small>For stock & crypto candle data</small>
+        </div>
+      </div>
+      <p style="font-size:0.78rem;color:var(--text-light);margin-top:4px;">IB Gateway connects locally via socket — no API key needed.</p>
+    </div>
+
+    <div class="card">
+      <h2>3. Strategy Settings</h2>
       <div class="field-row">
         <div>
           <label>Trading Timeframe</label>
@@ -111,8 +128,100 @@ button:hover { opacity: 0.9; }
       </div>
     </div>
 
+    <div class="card">
+      <h2>4. Position Sizing & Risk</h2>
+      <p style="font-size:0.8rem;color:var(--text-light);margin-bottom:16px;">Configure risk per trade for each model. Choose between a percentage of your account or a fixed dollar amount. Set a daily loss limit to stop trading once the budget is hit (0 = unlimited).</p>
+
+      {% set models = [
+        ('scalp', 'Scalp (15m)', user.scalp_risk_mode or 'percent', user.scalp_risk_value if user.scalp_risk_value is not none else 0.25, user.scalp_daily_budget or 0),
+        ('intraday', 'Intraday (1h)', user.intraday_risk_mode or 'percent', user.intraday_risk_value if user.intraday_risk_value is not none else 0.5, user.intraday_daily_budget or 0),
+        ('swing', 'Swing (Daily)', user.swing_risk_mode or 'percent', user.swing_risk_value if user.swing_risk_value is not none else 1.0, user.swing_daily_budget or 0)
+      ] %}
+
+      {% for key, label, mode, value, budget in models %}
+      <div style="{% if not loop.first %}margin-top:16px;padding-top:16px;border-top:1px solid #eee;{% endif %}">
+        <label style="font-size:0.85rem;font-weight:600;margin-bottom:8px;">{{ label }}</label>
+        <div class="field-row" style="grid-template-columns: 1fr 1fr 1fr;">
+          <div>
+            <label>Risk Mode</label>
+            <select name="{{ key }}_risk_mode" id="{{ key }}_risk_mode" onchange="toggleRiskLabel('{{ key }}')">
+              <option value="percent" {{ 'selected' if mode == 'percent' else '' }}>% of Account</option>
+              <option value="fixed" {{ 'selected' if mode == 'fixed' else '' }}>Fixed Dollar</option>
+            </select>
+          </div>
+          <div>
+            <label id="{{ key }}_risk_label">{{ 'Risk %' if mode == 'percent' else 'Risk $' }}</label>
+            <input type="number" name="{{ key }}_risk_value" value="{{ value }}" min="0" max="10000" step="0.01">
+            <small id="{{ key }}_risk_hint">{{ 'e.g. 0.5 = 0.5% of account' if mode == 'percent' else 'e.g. 50 = $50 per trade' }}</small>
+          </div>
+          <div>
+            <label>Daily Loss Limit ($)</label>
+            <input type="number" name="{{ key }}_daily_budget" value="{{ budget }}" min="0" max="100000" step="1">
+            <small>0 = no limit</small>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="card">
+      <h2>5. Options Position Sizing (Interactive Brokers)</h2>
+      <p style="font-size:0.8rem;color:var(--text-light);margin-bottom:16px;">Controls how the bot sizes credit and debit spreads. The bot auto-calculates the number of contracts based on your max risk per spread.</p>
+
+      <div class="field-row">
+        <div>
+          <label>Max Risk Per Spread ($)</label>
+          <input type="number" name="options_max_risk_per_spread" value="{{ user.options_max_risk_per_spread if user.options_max_risk_per_spread is not none else 200 }}" min="25" max="50000" step="25">
+          <small>Dollar cap per trade. Bot calculates contracts from this.</small>
+        </div>
+        <div>
+          <label>Max Contracts Per Spread</label>
+          <input type="number" name="options_max_contracts" value="{{ user.options_max_contracts if user.options_max_contracts is not none else 5 }}" min="1" max="100" step="1">
+          <small>Hard cap even if risk allows more</small>
+        </div>
+      </div>
+      <div class="field-row">
+        <div>
+          <label>Max Total Options Risk ($)</label>
+          <input type="number" name="options_max_total_risk" value="{{ user.options_max_total_risk if user.options_max_total_risk is not none else 2000 }}" min="100" max="500000" step="100">
+          <small>Portfolio-wide cap across all open spreads</small>
+        </div>
+        <div>
+          <label>Max Simultaneous Spreads</label>
+          <input type="number" name="options_max_spreads" value="{{ user.options_max_spreads if user.options_max_spreads is not none else 10 }}" min="1" max="50" step="1">
+          <small>Cap on total open positions</small>
+        </div>
+      </div>
+      <div class="field-row">
+        <div>
+          <label>Preferred Spread Width ($)</label>
+          <input type="number" name="options_spread_width" value="{{ user.options_spread_width if user.options_spread_width is not none else 5.0 }}" min="0.5" max="50" step="0.5">
+          <small>Target width between strikes (e.g. $2.50, $5)</small>
+        </div>
+        <div>
+          <label>Min Credit (% of Width)</label>
+          <input type="number" name="options_min_credit_pct" value="{{ user.options_min_credit_pct if user.options_min_credit_pct is not none else 25 }}" min="5" max="90" step="5">
+          <small>Reject credit spreads below this threshold</small>
+        </div>
+      </div>
+    </div>
+
     <button type="submit">Save Settings</button>
   </form>
 </div>
+<script>
+function toggleRiskLabel(model) {
+  var mode = document.getElementById(model + '_risk_mode').value;
+  var label = document.getElementById(model + '_risk_label');
+  var hint = document.getElementById(model + '_risk_hint');
+  if (mode === 'fixed') {
+    label.textContent = 'Risk $';
+    hint.textContent = 'e.g. 50 = $50 per trade';
+  } else {
+    label.textContent = 'Risk %';
+    hint.textContent = 'e.g. 0.5 = 0.5% of account';
+  }
+}
+</script>
 </body>
 </html>

@@ -42,8 +42,9 @@ EOF'
 
 ssh $SERVER "systemctl daemon-reload && systemctl enable lumisignals && systemctl restart lumisignals"
 
-echo "Setting up Nginx..."
-ssh $SERVER 'cat > /etc/nginx/sites-available/lumisignals << EOF
+# Only set up Nginx if config doesn't already exist (preserves SSL config from certbot)
+ssh $SERVER 'if [ ! -f /etc/nginx/sites-available/lumisignals ]; then
+cat > /etc/nginx/sites-available/lumisignals << EOF
 server {
     listen 80;
     server_name bot.lumitrade.ai;
@@ -56,9 +57,14 @@ server {
         proxy_set_header X-Forwarded-Proto \$scheme;
     }
 }
-EOF'
+EOF
+ln -sf /etc/nginx/sites-available/lumisignals /etc/nginx/sites-enabled/
+echo "Nginx config created"
+else
+echo "Nginx config already exists — skipping (preserving SSL)"
+fi'
 
-ssh $SERVER "ln -sf /etc/nginx/sites-available/lumisignals /etc/nginx/sites-enabled/ && nginx -t && systemctl restart nginx"
+ssh $SERVER "nginx -t && systemctl reload nginx"
 
 echo ""
 echo "Done! Visit http://bot.lumitrade.ai (or http://174.138.46.187)"

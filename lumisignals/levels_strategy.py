@@ -1064,7 +1064,8 @@ class LevelsStrategy:
         candle_score_approx = max(0, min(3, candle_score_approx))
 
         levels_meta = {
-            "strategy": f"levels-{self.model_name}",
+            "strategy": "htf_levels",
+            "strategy_id": "htf_levels",
             "model": self.model_name,
             "zone_timeframe": self._tf_label(zone.zone_timeframe),
             "zone_type": zone.zone_type,

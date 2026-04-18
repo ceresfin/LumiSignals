@@ -46,6 +46,7 @@ def calculate_position_size(
     stop_price: float,
     instrument: str = "",
     max_units: int = 100000,
+    risk_dollar: float = 0.0,
 ) -> int:
     """Calculate position size in units based on risk management.
 
@@ -60,6 +61,7 @@ def calculate_position_size(
         stop_price: Stop loss price.
         instrument: e.g. "EUR_USD", "USD_JPY" — needed for pip normalization.
         max_units: Maximum allowed position size.
+        risk_dollar: Fixed dollar amount to risk per trade (overrides risk_percent when > 0).
 
     Returns:
         Position size in units (always positive).
@@ -68,7 +70,10 @@ def calculate_position_size(
     if stop_distance == 0:
         return 0
 
-    risk_amount = account_balance * (risk_percent / 100)
+    if risk_dollar > 0:
+        risk_amount = risk_dollar
+    else:
+        risk_amount = account_balance * (risk_percent / 100)
 
     # Convert stop distance to pips
     pip_value, _ = get_pip_precision(instrument)
@@ -105,6 +110,7 @@ class OrderManager:
     def __init__(self, client: OandaClient, risk_config: dict, dry_run: bool = False):
         self.client = client
         self.risk_percent = risk_config.get("risk_percent", 1.0)
+        self.risk_dollar = risk_config.get("risk_dollar", 0.0)
         self.max_units = risk_config.get("max_position_units", 100000)
         self.max_open = risk_config.get("max_open_positions", 5)
         self.dry_run = dry_run
@@ -138,6 +144,7 @@ class OrderManager:
                 stop_price=signal.stop,
                 instrument=instrument,
                 max_units=self.max_units,
+                risk_dollar=self.risk_dollar,
             )
             if units == 0:
                 return OrderResult(success=False, error="Calculated position size is 0 — check stop distance")
@@ -169,6 +176,7 @@ class OrderManager:
                 stop_price=signal.stop,
                 instrument=instrument,
                 max_units=self.max_units,
+                risk_dollar=self.risk_dollar,
             )
 
             if units == 0:

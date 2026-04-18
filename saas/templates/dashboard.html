@@ -19,7 +19,8 @@ body { font-family: 'Inter', sans-serif; background: var(--cream); color: var(--
 .container { max-width: 1200px; margin: 0 auto; padding: 24px; }
 .card { background: var(--white); border-radius: 12px; padding: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); margin-bottom: 20px; }
 .card h2 { font-family: 'Playfair Display', serif; font-size: 1.1rem; font-weight: 400; margin-bottom: 16px; }
-.stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 24px; }
+.stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 24px; }
+.stats-grid-wide { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 24px; }
 .stat-card { background: var(--white); border-radius: 12px; padding: 20px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
 .stat-value { font-family: 'Playfair Display', serif; font-size: 1.8rem; }
 .stat-label { font-size: 0.72rem; color: var(--text-light); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 4px; }
@@ -50,7 +51,28 @@ body { font-family: 'Inter', sans-serif; background: var(--cream); color: var(--
 </div>
 
 <div class="container">
-  <div class="stats-grid">
+  {% if user.oanda_api_key %}
+  <div class="stats-grid-wide">
+    <div class="stat-card">
+      <div class="stat-value" id="acctBalance">—</div>
+      <div class="stat-label">Account Balance</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value" id="acctNAV">—</div>
+      <div class="stat-label">Net Asset Value</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value" id="acctPL">—</div>
+      <div class="stat-label">Unrealized P&L</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value" id="acctMargin">—</div>
+      <div class="stat-label">Margin Used</div>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="stats-grid-wide">
     <div class="stat-card">
       <div class="stat-value" id="botStatus">—</div>
       <div class="stat-label">Bot Status</div>
@@ -154,6 +176,30 @@ function loadLog() {
       }
     });
 }
+
+// Load account balance
+function loadBalance() {
+  fetch('/api/account/balance')
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.error) return;
+      var fmt = function(v) { return '$' + Number(v).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}); };
+      var el;
+      el = document.getElementById('acctBalance');
+      if (el) el.textContent = fmt(d.balance);
+      el = document.getElementById('acctNAV');
+      if (el) el.textContent = fmt(d.nav);
+      el = document.getElementById('acctPL');
+      if (el) {
+        el.textContent = fmt(d.unrealized_pl);
+        el.style.color = d.unrealized_pl >= 0 ? 'var(--green)' : 'var(--red)';
+      }
+      el = document.getElementById('acctMargin');
+      if (el) el.textContent = fmt(d.margin_used);
+    })
+    .catch(function() {});
+}
+loadBalance();
 
 // Check status on load
 fetch('/api/status')

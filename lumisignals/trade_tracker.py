@@ -63,7 +63,14 @@ def _enrich_with_signal_data(entry: dict, order_id: str) -> dict:
     """Merge local signal log data into a trade/order entry."""
     sig = get_signal_log().get(order_id)
     if sig:
-        entry["strategy"] = sig.get("strategy", "")
+        # Normalize strategy_id: new format uses "htf_levels", old format was "levels-scalp"
+        raw_strategy = sig.get("strategy_id") or sig.get("strategy", "")
+        if raw_strategy.startswith("levels"):
+            entry["strategy_id"] = "htf_levels"
+        else:
+            entry["strategy_id"] = raw_strategy or "htf_levels"
+        entry["strategy"] = entry["strategy_id"]
+        entry["model"] = sig.get("model", "")
         entry["snr_grade"] = sig.get("snr_grade", "")
         entry["snr_summary"] = sig.get("snr_summary", "")
         entry["final_score"] = sig.get("final_score", "") or sig.get("bias_score", "")
@@ -82,7 +89,9 @@ def _enrich_with_signal_data(entry: dict, order_id: str) -> dict:
         entry["primary_matches"] = sig.get("primary_matches", [])
         entry["trends"] = sig.get("trends", {})
     else:
+        entry["strategy_id"] = ""
         entry["strategy"] = ""
+        entry["model"] = ""
         entry["snr_grade"] = ""
         entry["candle_summary"] = ""
         entry["candle_details"] = []
@@ -351,7 +360,9 @@ def get_closed_trades(client: OandaClient, count: int = 50) -> list:
                     trade_entry = _enrich_with_signal_data(trade_entry, str(int(base_id) - offset))
                     if trade_entry.get("strategy"):
                         break
-        result.append(trade_entry)
+        # Only include trades placed by the bot (matched in signal log)
+        if sig or trade_entry.get("strategy"):
+            result.append(trade_entry)
 
     return result
 

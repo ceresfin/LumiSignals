@@ -294,44 +294,138 @@ function analyzeAllOptions() {
   });
 }
 
+function makePlaceBtn(spread, ticker, type) {
+  var dataAttr = 'data-ticker="' + ticker + '" ' +
+    'data-type="' + type + '" ' +
+    'data-spread-type="' + spread.type + '" ' +
+    'data-buy-strike="' + spread.long_strike + '" ' +
+    'data-sell-strike="' + spread.short_strike + '" ' +
+    'data-right="' + (spread.option_type === 'CALL' ? 'C' : 'P') + '" ' +
+    'data-expiration="' + spread.expiration + '" ' +
+    'data-limit="' + (spread.net_credit || spread.net_debit || 0) + '"';
+  return '<button class="refresh-btn" style="margin-top:4px;background:#e8f5e9;color:#27ae60;font-weight:600;" ' +
+    'onclick="placeSpreadOrder(this)" ' + dataAttr + '>Place 1 contract</button>';
+}
+
+function placeSpreadOrder(btn) {
+  var data = {
+    ticker: btn.getAttribute('data-ticker'),
+    spread_type: btn.getAttribute('data-spread-type'),
+    buy_strike: btn.getAttribute('data-buy-strike'),
+    sell_strike: btn.getAttribute('data-sell-strike'),
+    right: btn.getAttribute('data-right'),
+    expiration: btn.getAttribute('data-expiration'),
+    limit_price: parseFloat(btn.getAttribute('data-limit')),
+    quantity: 1,
+  };
+  btn.textContent = 'Placing...';
+  btn.disabled = true;
+  fetch('/api/ibkr/order', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(data),
+  })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.status === 'queued') {
+        btn.textContent = 'Queued';
+        btn.style.background = '#dbeafe';
+        btn.style.color = '#1d4ed8';
+      } else {
+        btn.textContent = 'Error';
+        btn.style.background = '#fdecea';
+        btn.disabled = false;
+      }
+    })
+    .catch(function() { btn.textContent = 'Error'; btn.disabled = false; });
+}
+
+function renderSpreadResult(d, resultDiv, btn) {
+  if (d.error && !d.credit_spread && !d.debit_spread) {
+    resultDiv.innerHTML = '<span class="pl-neg">' + d.error + '</span>';
+    btn.textContent = 'Retry'; btn.disabled = false; return;
+  }
+  var sourceLabel = '';
+  if (d.data_mode === 'polygon') {
+    sourceLabel = '<div style="font-size:0.7rem;color:var(--olive);margin-bottom:4px;font-weight:500;">Source: Polygon (prev close)</div>';
+  } else if (d.data_mode === 'friday_close') {
+    sourceLabel = '<div style="font-size:0.7rem;color:var(--text-light);margin-bottom:4px;font-style:italic;">Source: IB (Friday close)</div>';
+  } else if (d.data_mode === 'live') {
+    sourceLabel = '<div style="font-size:0.7rem;color:var(--green);margin-bottom:4px;font-weight:500;">Source: IB (live)</div>';
+  }
+  var modeLabel = sourceLabel;
+  var html = modeLabel;
+  var ticker = d.ticker || '';
+  if (d.credit_spread) {
+    var cs = d.credit_spread;
+    var vc = cs.verdict === 'GOOD' ? 'pl-pos' : (cs.verdict === 'FAIR' ? '' : 'pl-neg');
+    html += '<div style="margin-bottom:6px;padding:4px;background:#f9f9f6;border-radius:4px;">' +
+      '<strong>' + cs.type + '</strong> <span class="' + vc + '">' + cs.verdict + '</span><br>' +
+      'SELL ' + cs.short_strike + ' / BUY ' + cs.long_strike + ' ' + cs.option_type + '<br>' +
+      '<span class="pl-pos">Credit: $' + cs.net_credit.toFixed(2) + '</span> | ' +
+      'Profit: $' + cs.max_profit.toFixed(0) + ' | Loss: $' + cs.max_loss.toFixed(0) + '<br>' +
+      'R:R: ' + cs.risk_reward + ' | ' + cs.days_to_expiry + 'd | IV: ' + cs.iv_rank +
+      '<br><span style="color:var(--text-light)">' + cs.reason + '</span><br>' +
+      makePlaceBtn(cs, ticker, 'credit') + '</div>';
+  }
+  if (d.debit_spread) {
+    var ds = d.debit_spread;
+    var vd = ds.verdict === 'GOOD' ? 'pl-pos' : (ds.verdict === 'FAIR' ? '' : 'pl-neg');
+    html += '<div style="padding:4px;background:#f9f9f6;border-radius:4px;">' +
+      '<strong>' + ds.type + '</strong> <span class="' + vd + '">' + ds.verdict + '</span><br>' +
+      'BUY ' + ds.long_strike + ' / SELL ' + ds.short_strike + ' ' + ds.option_type + '<br>' +
+      '<span class="pl-neg">Debit: $' + ds.net_debit.toFixed(2) + '</span> | ' +
+      'Profit: $' + ds.max_profit.toFixed(0) + ' | Loss: $' + ds.max_loss.toFixed(0) + '<br>' +
+      'R:R: ' + ds.risk_reward + ' | ' + ds.days_to_expiry + 'd | IV: ' + ds.iv_rank +
+      '<br><span style="color:var(--text-light)">' + ds.reason + '</span><br>' +
+      makePlaceBtn(ds, ticker, 'debit') + '</div>';
+  }
+  if (!html || html === modeLabel) html += '<span class="pl-neg">No spreads found</span>';
+  resultDiv.innerHTML = html;
+  btn.textContent = 'Refresh'; btn.disabled = false;
+}
+
+function pollForResult(requestId, resultDiv, btn, attempts) {
+  if (attempts > 30) {
+    resultDiv.innerHTML = '<span class="pl-neg">IB Gateway not responding — is the sync script running?</span>';
+    btn.textContent = 'Retry'; btn.disabled = false;
+    return;
+  }
+  fetch('/api/ibkr/analyze/status/' + requestId)
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.status === 'pending') {
+        btn.textContent = 'Analyzing... (' + attempts + ')';
+        setTimeout(function() { pollForResult(requestId, resultDiv, btn, attempts + 1); }, 2000);
+      } else {
+        renderSpreadResult(d, resultDiv, btn);
+      }
+    })
+    .catch(function(e) {
+      resultDiv.innerHTML = '<span class="pl-neg">Error: ' + e + '</span>';
+      btn.textContent = 'Retry'; btn.disabled = false;
+    });
+}
+
 function loadOptions(ticker, zoneType, zonePrice, btn) {
   optionsActive = true;
-  btn.textContent = '...';
+  btn.textContent = 'Queuing...';
   btn.disabled = true;
   var resultDiv = document.getElementById(btn.id + '_result');
   fetch('/api/options/' + ticker + '?zone_type=' + zoneType + '&zone_price=' + zonePrice + '&current_price=' + zonePrice)
     .then(function(r) { return r.json(); })
     .then(function(d) {
-      if (d.error) {
+      if (d.status === 'pending') {
+        // Async flow — poll for result
+        resultDiv.innerHTML = '<span style="color:var(--text-light)">Sent to IB Gateway...</span>';
+        setTimeout(function() { pollForResult(d.request_id, resultDiv, btn, 1); }, 3000);
+      } else if (d.credit_spread || d.debit_spread) {
+        // Cached result returned immediately
+        renderSpreadResult(d, resultDiv, btn);
+      } else if (d.error) {
         resultDiv.innerHTML = '<span class="pl-neg">' + d.error + '</span>';
-        btn.textContent = 'Retry'; btn.disabled = false; return;
+        btn.textContent = 'Retry'; btn.disabled = false;
       }
-      var html = '';
-      if (d.credit_spread) {
-        var cs = d.credit_spread;
-        var vc = cs.verdict === 'GOOD' ? 'pl-pos' : (cs.verdict === 'FAIR' ? '' : 'pl-neg');
-        html += '<div style="margin-bottom:6px;padding:4px;background:#f9f9f6;border-radius:4px;">' +
-          '<strong>' + cs.type + '</strong> <span class="' + vc + '">' + cs.verdict + '</span><br>' +
-          'SELL ' + cs.short_strike + ' / BUY ' + cs.long_strike + ' ' + cs.option_type + '<br>' +
-          '<span class="pl-pos">Credit: $' + cs.net_credit.toFixed(2) + '</span> | ' +
-          'Profit: $' + cs.max_profit.toFixed(0) + ' | Loss: $' + cs.max_loss.toFixed(0) + '<br>' +
-          'R:R: ' + cs.risk_reward + ' | ' + cs.days_to_expiry + 'd | IV: ' + cs.iv_rank +
-          '<br><span style="color:var(--text-light)">' + cs.reason + '</span></div>';
-      }
-      if (d.debit_spread) {
-        var ds = d.debit_spread;
-        var vd = ds.verdict === 'GOOD' ? 'pl-pos' : (ds.verdict === 'FAIR' ? '' : 'pl-neg');
-        html += '<div style="padding:4px;background:#f9f9f6;border-radius:4px;">' +
-          '<strong>' + ds.type + '</strong> <span class="' + vd + '">' + ds.verdict + '</span><br>' +
-          'BUY ' + ds.long_strike + ' / SELL ' + ds.short_strike + ' ' + ds.option_type + '<br>' +
-          '<span class="pl-neg">Debit: $' + ds.net_debit.toFixed(2) + '</span> | ' +
-          'Profit: $' + ds.max_profit.toFixed(0) + ' | Loss: $' + ds.max_loss.toFixed(0) + '<br>' +
-          'R:R: ' + ds.risk_reward + ' | ' + ds.days_to_expiry + 'd | IV: ' + ds.iv_rank +
-          '<br><span style="color:var(--text-light)">' + ds.reason + '</span></div>';
-      }
-      if (!html) html = '<span class="pl-neg">No spreads found</span>';
-      resultDiv.innerHTML = html;
-      btn.textContent = 'Refresh'; btn.disabled = false;
     })
     .catch(function(e) {
       resultDiv.innerHTML = '<span class="pl-neg">Error: ' + e + '</span>';

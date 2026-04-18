@@ -39,7 +39,11 @@ def get_active_users():
     cur.execute("""
         SELECT id, email, oanda_account_id, oanda_api_key, oanda_environment,
                massive_api_key, trading_timeframe, min_score, min_risk_reward,
-               stock_atr_multiplier, dry_run
+               stock_atr_multiplier, dry_run,
+               scalp_risk_mode, scalp_risk_value, scalp_daily_budget,
+               intraday_risk_mode, intraday_risk_value, intraday_daily_budget,
+               swing_risk_mode, swing_risk_value, swing_daily_budget,
+               lumitrade_api_key
         FROM users WHERE bot_active = true AND oanda_api_key IS NOT NULL
     """)
     rows = cur.fetchall()
@@ -109,7 +113,7 @@ def run_bot_for_user(user_data, stop_check):
         log("Dry-run mode — skipping Oanda validation")
 
     snr_base_url = "https://app.lumitrade.ai/api/v1"
-    snr_api_key = os.environ.get("LUMITRADE_API_KEY", "")
+    snr_api_key = user_data.get("lumitrade_api_key") or os.environ.get("LUMITRADE_API_KEY", "")
     snr = SNRClient(base_url=snr_base_url, api_key=snr_api_key)
 
     massive = None
@@ -134,31 +138,66 @@ def run_bot_for_user(user_data, stop_check):
         signal_log.record(f"{signal.symbol}_{int(time.time())}", log_entry)
 
     from lumisignals.levels_strategy import SCALP_MODEL, INTRADAY_MODEL, SWING_MODEL, ALL_MODELS
+    from lumisignals.risk_budget import record_loss, is_budget_exceeded
 
     import threading
+
+    def get_risk_config(user_data, model_name, model_cfg):
+        """Build risk config dict from user settings, falling back to ModelConfig defaults."""
+        mode = user_data.get(f"{model_name}_risk_mode") or "percent"
+        value = user_data.get(f"{model_name}_risk_value")
+        if value is None:
+            value = model_cfg.risk_percent
+        config = {"max_open_positions": 999}
+        if mode == "fixed":
+            config["risk_percent"] = 0
+            config["risk_dollar"] = float(value)
+        else:
+            config["risk_percent"] = float(value)
+            config["risk_dollar"] = 0.0
+        return config
 
     # Create all three model strategies
     models = {}
     for model_cfg in [SCALP_MODEL, INTRADAY_MODEL, SWING_MODEL]:
-        def make_signal_handler(model_name):
+        def make_signal_handler(model_name, _model_cfg=model_cfg):
+            risk_cfg = get_risk_config(user_data, model_name, _model_cfg)
+            daily_budget = float(user_data.get(f"{model_name}_daily_budget") or 0)
+            risk_mode = user_data.get(f"{model_name}_risk_mode") or "percent"
+            risk_val = risk_cfg.get("risk_dollar") if risk_mode == "fixed" else risk_cfg.get("risk_percent")
+            log(f"[{model_name.upper()}] Risk: {risk_mode} {'$' if risk_mode == 'fixed' else ''}{risk_val}{'%' if risk_mode == 'percent' else ''} | Daily budget: {'$' + str(daily_budget) if daily_budget > 0 else 'unlimited'}")
+
             def handler(signal, extra_meta=None):
                 log(f"[{model_name.upper()}] SIGNAL: {signal.action} {signal.symbol} @ {signal.entry:.5f} | R:R {signal.risk_reward:.1f}")
                 log_entry = {
                     "action": signal.action, "symbol": signal.symbol,
                     "entry": signal.entry, "stop": signal.stop, "target": signal.target,
-                    "risk_reward": signal.risk_reward, "model": model_name,
+                    "risk_reward": signal.risk_reward,
+                    "strategy_id": "htf_levels", "model": model_name,
                 }
                 if extra_meta:
                     log_entry.update(extra_meta)
                 signal_log.record(f"{model_name}_{signal.symbol}_{int(time.time())}", log_entry)
 
                 if not user_data.get("dry_run", True):
+                    # Check daily budget before placing order
+                    if daily_budget > 0 and is_budget_exceeded(user_id, model_name, daily_budget):
+                        log(f"[{model_name.upper()}] SKIPPED — daily loss budget ${daily_budget:.0f} exceeded")
+                        return
+
                     from lumisignals.order_manager import OrderManager
-                    risk_pct = model_cfg.risk_percent
-                    om = OrderManager(client=oanda, risk_config={"risk_percent": risk_pct, "max_open_positions": 999}, dry_run=False)
+                    om = OrderManager(client=oanda, risk_config=risk_cfg, dry_run=False)
                     result = om.execute_signal(signal)
                     if result.success:
                         log(f"[{model_name.upper()}] ORDER PLACED: {result.order_id}")
+                        # Record risk amount against daily budget
+                        risk_amt = risk_cfg.get("risk_dollar") or 0
+                        if risk_amt <= 0 and result.details:
+                            # Estimate from percentage: risk_percent * balance / 100
+                            bal = result.details.get("balance", 0)
+                            risk_amt = bal * (risk_cfg.get("risk_percent", 0) / 100)
+                        if risk_amt > 0:
+                            record_loss(user_id, model_name, risk_amt)
                         # Also record under Oanda order ID for trade enrichment
                         signal_log.record(result.order_id, log_entry)
                         # And order_id + 1 (Oanda fill creates next ID)
@@ -179,7 +218,7 @@ def run_bot_for_user(user_data, stop_check):
             on_signal=make_signal_handler(model_cfg.name),
         )
         models[model_cfg.name] = strategy
-        log(f"[{model_cfg.name.upper()}] Configured — zones: {model_cfg.zone_tfs}, trigger: {model_cfg.trigger_tf}, bias: {model_cfg.bias_tf}, risk: {model_cfg.risk_percent}%")
+        log(f"[{model_cfg.name.upper()}] Configured — zones: {model_cfg.zone_tfs}, trigger: {model_cfg.trigger_tf}, bias: {model_cfg.bias_tf}")
 
     # Patch each strategy's watchlist refresh to publish to Redis per model
     for model_name, strategy in models.items():
