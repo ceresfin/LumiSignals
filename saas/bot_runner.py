@@ -139,6 +139,9 @@ def run_bot_for_user(user_data, stop_check):
 
     from lumisignals.levels_strategy import SCALP_MODEL, INTRADAY_MODEL, SWING_MODEL, ALL_MODELS
     from lumisignals.risk_budget import record_loss, is_budget_exceeded
+    from lumisignals.alerts import alert_signal, alert_trade_opened, alert_budget_hit
+
+    alert_pass = os.environ.get("ALERT_EMAIL_PASSWORD", "")
 
     import threading
 
@@ -179,10 +182,33 @@ def run_bot_for_user(user_data, stop_check):
                     log_entry.update(extra_meta)
                 signal_log.record(f"{model_name}_{signal.symbol}_{int(time.time())}", log_entry)
 
+                # Email alert for every signal
+                if alert_pass:
+                    try:
+                        alert_signal(
+                            model=model_name, action=signal.action, symbol=signal.symbol,
+                            entry=signal.entry, risk_reward=signal.risk_reward,
+                            score=extra_meta.get("bias_score", 0) if extra_meta else 0,
+                            stop=signal.stop, target=signal.target,
+                            zone_type=extra_meta.get("zone_type", "") if extra_meta else "",
+                            zone_timeframe=extra_meta.get("zone_timeframe", "") if extra_meta else "",
+                            trigger_pattern=extra_meta.get("trigger_pattern", "") if extra_meta else "",
+                            to_email=email, smtp_pass=alert_pass,
+                        )
+                    except Exception as e:
+                        logger.debug("Alert error: %s", e)
+
                 if not user_data.get("dry_run", True):
                     # Check daily budget before placing order
                     if daily_budget > 0 and is_budget_exceeded(user_id, model_name, daily_budget):
                         log(f"[{model_name.upper()}] SKIPPED — daily loss budget ${daily_budget:.0f} exceeded")
+                        if alert_pass:
+                            try:
+                                from lumisignals.risk_budget import get_daily_loss
+                                spent = get_daily_loss(user_id, model_name)
+                                alert_budget_hit(model_name, daily_budget, spent, to_email=email, smtp_pass=alert_pass)
+                            except Exception:
+                                pass
                         return
 
                     from lumisignals.order_manager import OrderManager
@@ -190,17 +216,27 @@ def run_bot_for_user(user_data, stop_check):
                     result = om.execute_signal(signal)
                     if result.success:
                         log(f"[{model_name.upper()}] ORDER PLACED: {result.order_id}")
+                        # Email alert for trade placed
+                        if alert_pass:
+                            try:
+                                alert_trade_opened(
+                                    model=model_name, action=signal.action, symbol=signal.symbol,
+                                    units=result.details.get("units", 0) if result.details else 0,
+                                    entry=signal.entry, order_id=result.order_id,
+                                    risk_amount=risk_cfg.get("risk_dollar") or (result.details.get("balance", 0) * risk_cfg.get("risk_percent", 0) / 100) if result.details else 0,
+                                    to_email=email, smtp_pass=alert_pass,
+                                )
+                            except Exception as e:
+                                logger.debug("Trade alert error: %s", e)
                         # Record risk amount against daily budget
                         risk_amt = risk_cfg.get("risk_dollar") or 0
                         if risk_amt <= 0 and result.details:
-                            # Estimate from percentage: risk_percent * balance / 100
                             bal = result.details.get("balance", 0)
                             risk_amt = bal * (risk_cfg.get("risk_percent", 0) / 100)
                         if risk_amt > 0:
                             record_loss(user_id, model_name, risk_amt)
                         # Also record under Oanda order ID for trade enrichment
                         signal_log.record(result.order_id, log_entry)
-                        # And order_id + 1 (Oanda fill creates next ID)
                         try:
                             signal_log.record(str(int(result.order_id) + 1), log_entry)
                         except (ValueError, TypeError):
