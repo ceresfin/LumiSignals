@@ -3,7 +3,7 @@
 import json
 import os
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from flask import Flask, render_template, request, jsonify, redirect, url_for, session, flash
 from flask_sqlalchemy import SQLAlchemy
@@ -174,6 +174,8 @@ def create_app():
             current_user.oanda_environment = request.form.get("oanda_environment", "practice")
             current_user.massive_api_key = request.form.get("massive_api_key", "").strip()
             current_user.lumitrade_api_key = request.form.get("lumitrade_api_key", "").strip()
+            current_user.schwab_client_id = request.form.get("schwab_client_id", "").strip()
+            current_user.schwab_client_secret = request.form.get("schwab_client_secret", "").strip()
             current_user.trading_timeframe = request.form.get("trading_timeframe", "1d")
             current_user.min_score = int(request.form.get("min_score", 50))
             current_user.min_risk_reward = float(request.form.get("min_risk_reward", 1.5))
@@ -228,13 +230,57 @@ def create_app():
     @login_required
     def api_status():
         running = current_user.bot_active
+
+        # Check Schwab token status
+        schwab_status = {"connected": False, "expires_in_days": None, "warning": None}
+        for tf in [f"/opt/lumisignals/schwab_tokens_user_{current_user.id}.json", "/opt/lumisignals/schwab_tokens.json"]:
+            if not os.path.exists(tf):
+                continue
+            try:
+                with open(tf) as f:
+                    tokens = json.load(f)
+                saved_at = tokens.get("saved_at", "")
+                token_expiry = tokens.get("token_expiry", 0)
+                if saved_at:
+                    import re
+                    # Extract just the datetime part, ignore timezone for simplicity
+                    match = re.match(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})", saved_at)
+                    if match:
+                        saved_dt = datetime.strptime(match.group(1), "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
+                        refresh_expiry = saved_dt + timedelta(days=7)
+                        now = datetime.now(timezone.utc)
+                        days_left = (refresh_expiry - now).days
+                        schwab_status["connected"] = days_left > 0
+                        schwab_status["expires_in_days"] = max(days_left, 0)
+                        if days_left <= 0:
+                            schwab_status["connected"] = False
+                            schwab_status["warning"] = "Schwab token expired — run schwab_auth.py to re-authorize"
+                        elif days_left <= 2:
+                            schwab_status["warning"] = f"Schwab token expires in {days_left} day{'s' if days_left != 1 else ''} — re-authorize soon"
+                        break
+                elif token_expiry > 0:
+                    schwab_status["connected"] = True
+                    schwab_status["expires_in_days"] = 7
+                    break
+            except Exception as e:
+                logger.error("Schwab token check error for %s: %s", tf, e)
+
+        # Check IB sync status
+        import redis as _redis
+        rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+        ib_data = rdb.get(f"ibkr:data:{current_user.id}")
+        ib_connected = bool(ib_data)
+
         return jsonify({
             "user": current_user.email,
             "plan": current_user.plan,
             "bot_active": running,
             "dry_run": current_user.dry_run,
             "has_oanda": bool(current_user.oanda_api_key),
-            "has_schwab": bool(current_user.schwab_client_id),
+            "has_schwab": bool(current_user.schwab_client_id) or schwab_status.get("connected", False),
+            "has_massive": bool(current_user.massive_api_key),
+            "schwab": schwab_status,
+            "ib_connected": ib_connected,
             "trading_timeframe": current_user.trading_timeframe,
         })
 
@@ -298,11 +344,20 @@ def create_app():
         try:
             from lumisignals.schwab_client import SchwabAuth, SchwabMarketData
             from lumisignals.options_analyzer import analyze_spreads_at_zone, format_spread_for_display
+            schwab_id = current_user.schwab_client_id or os.environ.get("SCHWAB_CLIENT_ID", "")
+            schwab_secret = current_user.schwab_client_secret or os.environ.get("SCHWAB_CLIENT_SECRET", "")
             auth = SchwabAuth(
-                client_id=os.environ.get("SCHWAB_CLIENT_ID", ""),
-                client_secret=os.environ.get("SCHWAB_CLIENT_SECRET", ""),
-                token_file="/opt/lumisignals/schwab_tokens.json",
+                client_id=schwab_id,
+                client_secret=schwab_secret,
+                token_file=f"/opt/lumisignals/schwab_tokens_user_{current_user.id}.json",
             )
+            # Fall back to shared token file
+            if not auth.get_valid_token():
+                auth = SchwabAuth(
+                    client_id=schwab_id,
+                    client_secret=schwab_secret,
+                    token_file="/opt/lumisignals/schwab_tokens.json",
+                )
             if auth.get_valid_token():
                 md = SchwabMarketData(auth)
                 schwab_result = analyze_spreads_at_zone(md, ticker, zone_type, zone_price, current_price)

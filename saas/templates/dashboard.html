@@ -91,6 +91,18 @@ body { font-family: 'Inter', sans-serif; background: var(--cream); color: var(--
     </div>
   </div>
 
+  <div id="alertBanner" style="display:none;padding:12px 20px;border-radius:8px;margin-bottom:20px;font-size:0.82rem;font-weight:500;"></div>
+
+  <div class="card" id="connectionStatus" style="margin-bottom:20px;">
+    <h2>Connections</h2>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:0.82rem;">
+      <span id="connOanda" style="padding:6px 14px;border-radius:50px;">Oanda: —</span>
+      <span id="connSchwab" style="padding:6px 14px;border-radius:50px;">Schwab: —</span>
+      <span id="connPolygon" style="padding:6px 14px;border-radius:50px;">Polygon: —</span>
+      <span id="connIB" style="padding:6px 14px;border-radius:50px;">IB Gateway: —</span>
+    </div>
+  </div>
+
   <div class="card">
     <h2>Bot Control</h2>
     {% if not user.oanda_api_key %}
@@ -201,6 +213,15 @@ function loadBalance() {
 }
 loadBalance();
 
+function setConn(id, label, ok) {
+  var el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = label;
+  el.style.background = ok ? '#e8f5e9' : '#f0f0f0';
+  el.style.color = ok ? '#27ae60' : '#8a847e';
+  el.style.fontWeight = '500';
+}
+
 // Check status on load
 fetch('/api/status')
   .then(function(r) { return r.json(); })
@@ -211,6 +232,43 @@ fetch('/api/status')
       document.getElementById('statusBadge').textContent = 'Running';
       startLogPolling();
     }
+
+    // Connection status
+    setConn('connOanda', 'Oanda: ' + (d.has_oanda ? 'Connected' : 'Not set'), d.has_oanda);
+    setConn('connPolygon', 'Polygon: ' + (d.has_massive ? 'Connected' : 'Not set'), d.has_massive);
+    setConn('connIB', 'IB Gateway: ' + (d.ib_connected ? 'Syncing' : 'Offline'), d.ib_connected);
+
+    // Schwab status with expiry warning
+    var schwab = d.schwab || {};
+    if (schwab.connected) {
+      var days = schwab.expires_in_days;
+      if (days <= 2) {
+        setConn('connSchwab', 'Schwab: Expires in ' + days + 'd', false);
+        document.getElementById('connSchwab').style.background = '#fff3e0';
+        document.getElementById('connSchwab').style.color = '#e67e22';
+      } else {
+        setConn('connSchwab', 'Schwab: Connected (' + days + 'd left)', true);
+      }
+    } else if (schwab.warning) {
+      setConn('connSchwab', 'Schwab: Expired', false);
+    } else {
+      setConn('connSchwab', 'Schwab: ' + (d.has_schwab ? 'Token expired' : 'Not set'), false);
+    }
+
+    // Alert banner for urgent warnings
+    var banner = document.getElementById('alertBanner');
+    if (schwab.warning && schwab.expires_in_days <= 1) {
+      banner.style.display = 'block';
+      banner.style.background = '#fdecea';
+      banner.style.color = '#c0392b';
+      banner.innerHTML = schwab.warning + ' &mdash; run <code style="background:#f0f0f0;padding:2px 6px;border-radius:4px;">python3 schwab_auth.py</code>';
+    } else if (schwab.warning && schwab.expires_in_days <= 2) {
+      banner.style.display = 'block';
+      banner.style.background = '#fff3e0';
+      banner.style.color = '#e67e22';
+      banner.textContent = schwab.warning;
+    }
+
     // Always load log on page open (shows history even if bot stopped)
     loadLog();
   });

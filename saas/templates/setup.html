@@ -76,16 +76,29 @@ button:hover { opacity: 0.9; }
 
     <div class="card">
       <h2>2. API Keys</h2>
-      <div class="field-row">
+      <div class="field-row" style="grid-template-columns: 1fr 1fr 1fr;">
         <div>
           <label>LumiTrade API Key</label>
           <input type="password" name="lumitrade_api_key" value="{{ user.lumitrade_api_key or '' }}" placeholder="trk_live_...">
-          <small>For S&R level data (SNR frequency analysis)</small>
+          <small>For S&R level data</small>
         </div>
         <div>
           <label>Massive / Polygon API Key</label>
           <input type="password" name="massive_api_key" value="{{ user.massive_api_key or '' }}" placeholder="Your Polygon.io API key">
-          <small>For stock & crypto candle data</small>
+          <small>For stock, crypto & options data</small>
+        </div>
+        <div>
+          <label>Schwab API Key</label>
+          <input type="password" name="schwab_client_id" value="{{ user.schwab_client_id or '' }}" placeholder="Your Schwab Client ID">
+          <small>For options chain data</small>
+        </div>
+      </div>
+      <div class="field-row" style="grid-template-columns: 1fr 1fr 1fr;">
+        <div></div>
+        <div></div>
+        <div>
+          <label>Schwab Client Secret</label>
+          <input type="password" name="schwab_client_secret" value="{{ user.schwab_client_secret or '' }}" placeholder="Your Schwab Client Secret">
         </div>
       </div>
       <p style="font-size:0.78rem;color:var(--text-light);margin-top:4px;">IB Gateway connects locally via socket — no API key needed.</p>
