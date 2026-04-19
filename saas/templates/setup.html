@@ -178,8 +178,40 @@ button:hover { opacity: 0.9; }
     </div>
 
     <div class="card">
-      <h2>5. Options Position Sizing (Interactive Brokers)</h2>
-      <p style="font-size:0.8rem;color:var(--text-light);margin-bottom:16px;">Controls how the bot sizes credit and debit spreads. The bot auto-calculates the number of contracts based on your max risk per spread.</p>
+      <h2>5. Options Auto-Trading & Position Sizing</h2>
+      <p style="font-size:0.8rem;color:var(--text-light);margin-bottom:16px;">When a stock signal fires (zone + trigger candle confirmation), the bot can automatically analyze and place options spreads. Position sizing controls how many contracts to trade.</p>
+
+      <div style="padding:12px 16px;background:#f9f9f6;border-radius:8px;margin-bottom:16px;border-left:4px solid var(--olive);">
+        <div class="checkbox-field" style="margin-bottom:8px;">
+          <input type="checkbox" name="options_auto_trade" id="optionsAutoTrade" {{ 'checked' if user.options_auto_trade else '' }}>
+          <label for="optionsAutoTrade" style="font-size:0.85rem;font-weight:600;">Auto-trade options on stock signals</label>
+        </div>
+        <div class="field-row" style="grid-template-columns: 1fr 1fr 1fr;">
+          <div>
+            <label>Spread Type to Auto-Trade</label>
+            <select name="options_auto_spread_type">
+              <option value="credit" {{ 'selected' if (user.options_auto_spread_type or 'credit') == 'credit' else '' }}>Credit Spreads Only</option>
+              <option value="debit" {{ 'selected' if user.options_auto_spread_type == 'debit' else '' }}>Debit Spreads Only</option>
+              <option value="both" {{ 'selected' if user.options_auto_spread_type == 'both' else '' }}>Both Credit & Debit</option>
+            </select>
+            <small>Credit = sell premium. Debit = directional.</small>
+          </div>
+          <div>
+            <label>Stock Options Trigger TF</label>
+            <select name="options_trigger_tf">
+              <option value="15m" {{ 'selected' if user.options_trigger_tf == '15m' else '' }}>15 minute</option>
+              <option value="30m" {{ 'selected' if user.options_trigger_tf == '30m' else '' }}>30 minute</option>
+              <option value="1h" {{ 'selected' if user.options_trigger_tf == '1h' else '' }}>1 hour</option>
+              <option value="4h" {{ 'selected' if (user.options_trigger_tf or '4h') == '4h' else '' }}>4 hour (default)</option>
+              <option value="1d" {{ 'selected' if user.options_trigger_tf == '1d' else '' }}>Daily</option>
+            </select>
+            <small>Candle TF for entry confirmation at weekly/monthly zones</small>
+          </div>
+          <div>
+            <p style="font-size:0.78rem;color:var(--text-light);margin-top:20px;">When enabled, the bot will:<br>1. Detect stock at S/R zone<br>2. Wait for trigger candle<br>3. Analyze spreads (Polygon)<br>4. Place order on IB</p>
+          </div>
+        </div>
+      </div>
 
       <div class="field-row">
         <div>

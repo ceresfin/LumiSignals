@@ -92,6 +92,9 @@ def create_app():
         options_spread_width = db.Column(db.Float, default=5.0)
         options_min_credit_pct = db.Column(db.Float, default=25.0)
         options_max_spreads = db.Column(db.Integer, default=10)
+        options_auto_trade = db.Column(db.Boolean, default=False)
+        options_auto_spread_type = db.Column(db.String(10), default="credit")  # credit, debit, both
+        options_trigger_tf = db.Column(db.String(10), default="4h")  # trigger TF for stock options
 
     @login_manager.user_loader
     def load_user(user_id):
@@ -196,6 +199,9 @@ def create_app():
             current_user.options_spread_width = float(request.form.get("options_spread_width", 5) or 5)
             current_user.options_min_credit_pct = float(request.form.get("options_min_credit_pct", 25) or 25)
             current_user.options_max_spreads = int(request.form.get("options_max_spreads", 10) or 10)
+            current_user.options_auto_trade = "options_auto_trade" in request.form
+            current_user.options_auto_spread_type = request.form.get("options_auto_spread_type", "credit")
+            current_user.options_trigger_tf = request.form.get("options_trigger_tf", "4h")
 
             db.session.commit()
             flash("Settings saved", "success")

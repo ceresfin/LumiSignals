@@ -43,7 +43,11 @@ def get_active_users():
                scalp_risk_mode, scalp_risk_value, scalp_daily_budget,
                intraday_risk_mode, intraday_risk_value, intraday_daily_budget,
                swing_risk_mode, swing_risk_value, swing_daily_budget,
-               lumitrade_api_key
+               lumitrade_api_key,
+               options_auto_trade, options_auto_spread_type, options_trigger_tf,
+               options_max_risk_per_spread, options_max_contracts,
+               options_max_total_risk, options_spread_width,
+               options_min_credit_pct, options_max_spreads
         FROM users WHERE bot_active = true AND oanda_api_key IS NOT NULL
     """)
     rows = cur.fetchall()
@@ -72,6 +76,137 @@ def publish_watchlist_model(user_id, model_name, zones):
 def publish_log(user_id, entries):
     """Store log entries in Redis."""
     rdb.setex(f"botlog:{user_id}", 600, json.dumps(entries[-100:]))
+
+
+def _auto_trade_options(user_data, signal, extra_meta, model_name, log, alert_pass, email):
+    """Analyze and queue options spread when a stock signal fires."""
+    from lumisignals.polygon_options import analyze_spreads_polygon
+    from lumisignals.ibkr_client import calculate_spread_contracts, OptionsRiskConfig
+
+    user_id = user_data["id"]
+    symbol = signal.symbol
+    zone_type = (extra_meta or {}).get("zone_type", "demand" if signal.action == "BUY" else "supply")
+    zone_price = (extra_meta or {}).get("zone_price", signal.entry)
+    spread_pref = user_data.get("options_auto_spread_type") or "credit"
+
+    massive_key = user_data.get("massive_api_key") or os.environ.get("MASSIVE_API_KEY", "")
+    if not massive_key:
+        log(f"[{model_name.upper()}] OPTIONS: No Polygon API key — skipping")
+        return
+
+    log(f"[{model_name.upper()}] OPTIONS: Analyzing {symbol} ({zone_type} zone @ {zone_price:.2f})")
+
+    # Run Polygon analysis
+    result = analyze_spreads_polygon(massive_key, symbol, zone_type, zone_price, signal.entry)
+
+    if result.get("error"):
+        log(f"[{model_name.upper()}] OPTIONS: Analysis error — {result['error']}")
+        return
+
+    # Build risk config from user settings
+    risk_config = OptionsRiskConfig(
+        max_risk_per_spread=float(user_data.get("options_max_risk_per_spread") or 200),
+        max_contracts=int(user_data.get("options_max_contracts") or 5),
+        max_total_risk=float(user_data.get("options_max_total_risk") or 2000),
+        spread_width=float(user_data.get("options_spread_width") or 5),
+        min_credit_pct=float(user_data.get("options_min_credit_pct") or 25),
+        max_spreads=int(user_data.get("options_max_spreads") or 10),
+    )
+
+    orders_queued = []
+
+    # Process credit spread
+    credit = result.get("credit_spread")
+    if credit and spread_pref in ("credit", "both"):
+        if credit.get("verdict") in ("GOOD", "FAIR"):
+            is_credit = credit["net_credit"] > 0
+            premium = credit["net_credit"] if is_credit else credit["net_debit"]
+            width = credit["width"]
+
+            sizing = calculate_spread_contracts(
+                spread_width=width, credit_or_debit=premium,
+                is_credit=is_credit, risk_config=risk_config,
+            )
+
+            if sizing["contracts"] > 0:
+                order = {
+                    "ticker": symbol,
+                    "spread_type": credit["type"],
+                    "buy_strike": credit["long_strike"],
+                    "sell_strike": credit["short_strike"],
+                    "right": "C" if "Call" in credit["option_type"] else "P",
+                    "expiration": credit["expiration"],
+                    "quantity": sizing["contracts"],
+                    "limit_price": premium,
+                }
+                # Queue in Redis for IB sync script
+                import uuid
+                order_id = str(uuid.uuid4())[:8]
+                order["order_id"] = order_id
+                order["user_id"] = user_id
+                order["status"] = "queued"
+                order["auto"] = True
+                rdb.setex(f"ibkr:order:pending:{order_id}", 86400, json.dumps(order))
+                orders_queued.append(f"{credit['type']} {sizing['contracts']}x @ ${premium:.2f}")
+                log(f"[{model_name.upper()}] OPTIONS QUEUED: {credit['type']} {symbol} SELL {credit['short_strike']} / BUY {credit['long_strike']} x{sizing['contracts']} @ ${premium:.2f} (risk ${sizing['total_risk']:.0f})")
+            else:
+                log(f"[{model_name.upper()}] OPTIONS SKIP: {credit['type']} — {sizing.get('reason', 'sizing rejected')}")
+        else:
+            log(f"[{model_name.upper()}] OPTIONS SKIP: {credit['type']} — verdict: {credit.get('verdict')}")
+
+    # Process debit spread
+    debit = result.get("debit_spread")
+    if debit and spread_pref in ("debit", "both"):
+        if debit.get("verdict") in ("GOOD", "FAIR"):
+            is_credit = False
+            premium = debit["net_debit"]
+            width = debit["width"]
+
+            sizing = calculate_spread_contracts(
+                spread_width=width, credit_or_debit=premium,
+                is_credit=False, risk_config=risk_config,
+            )
+
+            if sizing["contracts"] > 0:
+                order = {
+                    "ticker": symbol,
+                    "spread_type": debit["type"],
+                    "buy_strike": debit["long_strike"],
+                    "sell_strike": debit["short_strike"],
+                    "right": "C" if "Call" in debit["option_type"] else "P",
+                    "expiration": debit["expiration"],
+                    "quantity": sizing["contracts"],
+                    "limit_price": premium,
+                }
+                import uuid
+                order_id = str(uuid.uuid4())[:8]
+                order["order_id"] = order_id
+                order["user_id"] = user_id
+                order["status"] = "queued"
+                order["auto"] = True
+                rdb.setex(f"ibkr:order:pending:{order_id}", 86400, json.dumps(order))
+                orders_queued.append(f"{debit['type']} {sizing['contracts']}x @ ${premium:.2f}")
+                log(f"[{model_name.upper()}] OPTIONS QUEUED: {debit['type']} {symbol} BUY {debit['long_strike']} / SELL {debit['short_strike']} x{sizing['contracts']} @ ${premium:.2f} (risk ${sizing['total_risk']:.0f})")
+            else:
+                log(f"[{model_name.upper()}] OPTIONS SKIP: {debit['type']} — {sizing.get('reason', 'sizing rejected')}")
+        else:
+            log(f"[{model_name.upper()}] OPTIONS SKIP: {debit['type']} — verdict: {debit.get('verdict')}")
+
+    # Alert on queued orders
+    if orders_queued and alert_pass:
+        from lumisignals.alerts import send_alert, AlertType
+        send_alert(
+            AlertType.TRADE_OPENED,
+            f"Options queued: {symbol}",
+            f"Stock signal triggered auto-options analysis. Orders queued for IB:\n" + "\n".join(orders_queued),
+            details={
+                "Symbol": symbol,
+                "Zone": f"{zone_type} @ {zone_price:.2f}",
+                "Signal": f"{signal.action} @ {signal.entry:.2f}",
+                "Orders": ", ".join(orders_queued),
+            },
+            to_email=email, smtp_pass=alert_pass,
+        )
 
 
 def run_bot_for_user(user_data, stop_check):
@@ -198,6 +333,19 @@ def run_bot_for_user(user_data, stop_check):
                     except Exception as e:
                         logger.debug("Alert error: %s", e)
 
+                # --- Auto-trade options for stock signals ---
+                is_stock = extra_meta and extra_meta.get("is_stock")
+                auto_trade = user_data.get("options_auto_trade", False)
+                if is_stock and auto_trade and model_name == "swing":
+                    try:
+                        _auto_trade_options(
+                            user_data, signal, extra_meta, model_name,
+                            log, alert_pass, email,
+                        )
+                    except Exception as e:
+                        log(f"[{model_name.upper()}] OPTIONS AUTO-TRADE ERROR: {e}")
+                        logger.error("Options auto-trade error: %s", e)
+
                 if not user_data.get("dry_run", True):
                     # Check daily budget before placing order
                     if daily_budget > 0 and is_budget_exceeded(user_id, model_name, daily_budget):
@@ -271,7 +419,56 @@ def run_bot_for_user(user_data, stop_check):
 
         strategy._refresh_watchlist = make_patched(original, mn)
 
-    log("All 3 models running — SCALP (15m) + INTRADAY (1h) + SWING (daily)")
+    # Create stock options model with custom trigger TF (if different from swing's daily)
+    options_trigger_tf = user_data.get("options_trigger_tf") or "4h"
+    if user_data.get("options_auto_trade") and options_trigger_tf != "1d" and massive:
+        from lumisignals.levels_strategy import ModelConfig
+        from copy import copy
+
+        stock_options_model = ModelConfig(
+            name="swing_options",
+            trigger_tf=options_trigger_tf,
+            zone_tfs=["1w", "1mo"],
+            bias_tf="1mo",
+            bias_candle_tfs=["1w", "1mo"],
+            risk_percent=1.0,
+            zone_tolerance_pct={"1w": 0.006, "1mo": 0.009},
+            min_score=50,
+            min_risk_reward=1.5,
+            watchlist_interval=300,
+        )
+
+        # This model only scans stocks — no forex
+        stock_options_strategy = LevelsStrategy(
+            oanda_client=oanda, snr_client=snr,
+            trade_builder_url=snr_base_url, api_key=snr_api_key,
+            model=stock_options_model,
+            massive_client=massive, stock_tickers=stock_tickers,
+            stock_atr_multiplier=user_data.get("stock_atr_multiplier") or 0.5,
+            on_signal=make_signal_handler("swing_options"),
+        )
+        # Override watchlist refresh to skip forex — only scan stocks
+        original_refresh = stock_options_strategy._refresh_watchlist
+        def stock_only_refresh(pairs=None):
+            original_refresh(pairs=[])  # empty forex list — only stocks via Massive
+        stock_options_strategy._refresh_watchlist = stock_only_refresh
+        models["swing_options"] = stock_options_strategy
+
+        # Patch watchlist refresh
+        original = stock_options_strategy._refresh_watchlist
+        def make_patched_opts(orig):
+            def patched(pairs=None):
+                orig(pairs)
+                zones = get_watchlist_snapshot("swing_options")
+                publish_watchlist_model(user_id, "swing_options", zones)
+                log(f"[SWING_OPTIONS] Watchlist: {len(zones)} zones")
+            return patched
+        stock_options_strategy._refresh_watchlist = make_patched_opts(original)
+
+        log(f"[SWING_OPTIONS] Configured — zones: {stock_options_model.zone_tfs}, trigger: {options_trigger_tf}, stocks only")
+        log(f"All 4 models running — SCALP (15m) + INTRADAY (1h) + SWING (daily) + SWING_OPTIONS ({options_trigger_tf})")
+    else:
+        log("All 3 models running — SCALP (15m) + INTRADAY (1h) + SWING (daily)")
 
     # Run all models in a unified loop
     tick = 0
