@@ -66,13 +66,25 @@ def create_app():
         massive_api_key = db.Column(db.String(255))
         lumitrade_api_key = db.Column(db.String(255))
 
-        # Bot settings
+        # Bot settings (legacy globals — kept for backward compat)
         trading_timeframe = db.Column(db.String(10), default="1d")
         min_score = db.Column(db.Integer, default=50)
         min_risk_reward = db.Column(db.Float, default=1.5)
         stock_atr_multiplier = db.Column(db.Float, default=0.5)
         dry_run = db.Column(db.Boolean, default=True)
+        dry_run_stocks = db.Column(db.Boolean, default=True)
         bot_active = db.Column(db.Boolean, default=False)
+
+        # Per-model strategy settings
+        scalp_min_score = db.Column(db.Integer, default=50)
+        scalp_min_rr = db.Column(db.Float, default=1.5)
+        scalp_atr_multiplier = db.Column(db.Float, default=0.5)
+        intraday_min_score = db.Column(db.Integer, default=50)
+        intraday_min_rr = db.Column(db.Float, default=1.5)
+        intraday_atr_multiplier = db.Column(db.Float, default=0.5)
+        swing_min_score = db.Column(db.Integer, default=50)
+        swing_min_rr = db.Column(db.Float, default=1.5)
+        swing_atr_multiplier = db.Column(db.Float, default=0.5)
 
         # Per-model risk settings: mode is "percent" or "fixed" (dollar amount)
         scalp_risk_mode = db.Column(db.String(10), default="percent")
@@ -180,11 +192,15 @@ def create_app():
             current_user.lumitrade_api_key = request.form.get("lumitrade_api_key", "").strip()
             current_user.schwab_client_id = request.form.get("schwab_client_id", "").strip()
             current_user.schwab_client_secret = request.form.get("schwab_client_secret", "").strip()
-            current_user.trading_timeframe = request.form.get("trading_timeframe", "1d")
-            current_user.min_score = int(request.form.get("min_score", 50))
-            current_user.min_risk_reward = float(request.form.get("min_risk_reward", 1.5))
-            current_user.stock_atr_multiplier = float(request.form.get("stock_atr_multiplier", 0.5))
             current_user.dry_run = "dry_run" in request.form
+            current_user.dry_run_stocks = "dry_run_stocks" in request.form
+            current_user.stock_atr_multiplier = float(request.form.get("stock_atr_multiplier", 0.5))
+
+            # Per-model strategy settings
+            for model in ["scalp", "intraday", "swing"]:
+                setattr(current_user, f"{model}_min_score", int(request.form.get(f"{model}_min_score", 50) or 50))
+                setattr(current_user, f"{model}_min_rr", float(request.form.get(f"{model}_min_rr", 1.5) or 1.5))
+                setattr(current_user, f"{model}_atr_multiplier", float(request.form.get(f"{model}_atr_multiplier", 0.5) or 0.5))
 
             # Per-model risk settings
             for model in ["scalp", "intraday", "swing"]:

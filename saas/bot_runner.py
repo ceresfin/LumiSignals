@@ -44,6 +44,10 @@ def get_active_users():
                intraday_risk_mode, intraday_risk_value, intraday_daily_budget,
                swing_risk_mode, swing_risk_value, swing_daily_budget,
                lumitrade_api_key,
+               scalp_min_score, scalp_min_rr, scalp_atr_multiplier,
+               intraday_min_score, intraday_min_rr, intraday_atr_multiplier,
+               swing_min_score, swing_min_rr, swing_atr_multiplier,
+               dry_run_stocks,
                options_auto_trade, options_auto_spread_type, options_trigger_tf, options_min_verdict,
                options_max_risk_per_spread, options_max_contracts,
                options_max_total_risk, options_spread_width,
@@ -297,9 +301,26 @@ def run_bot_for_user(user_data, stop_check):
             config["risk_dollar"] = 0.0
         return config
 
+    # Apply per-model user settings to model configs
+    from copy import copy
+    user_models = []
+    for base_cfg in [SCALP_MODEL, INTRADAY_MODEL, SWING_MODEL]:
+        cfg = copy(base_cfg)
+        name = cfg.name
+        user_score = user_data.get(f"{name}_min_score")
+        user_rr = user_data.get(f"{name}_min_rr")
+        user_atr = user_data.get(f"{name}_atr_multiplier")
+        if user_score is not None:
+            cfg.min_score = int(user_score)
+        if user_rr is not None:
+            cfg.min_risk_reward = float(user_rr)
+        if user_atr is not None:
+            cfg.atr_stop_multiplier = float(user_atr)
+        user_models.append(cfg)
+
     # Create all three model strategies
     models = {}
-    for model_cfg in [SCALP_MODEL, INTRADAY_MODEL, SWING_MODEL]:
+    for model_cfg in user_models:
         def make_signal_handler(model_name, _model_cfg=model_cfg):
             risk_cfg = get_risk_config(user_data, model_name, _model_cfg)
             daily_budget = float(user_data.get(f"{model_name}_daily_budget") or 0)

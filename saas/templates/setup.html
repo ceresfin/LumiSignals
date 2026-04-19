@@ -106,38 +106,69 @@ button:hover { opacity: 0.9; }
 
     <div class="card">
       <h2>3. Strategy Settings</h2>
-      <div class="field-row">
-        <div>
-          <label>Trading Timeframe</label>
-          <select name="trading_timeframe">
-            <option value="5m" {{ 'selected' if user.trading_timeframe == '5m' else '' }}>5 minute</option>
-            <option value="15m" {{ 'selected' if user.trading_timeframe == '15m' else '' }}>15 minute</option>
-            <option value="30m" {{ 'selected' if user.trading_timeframe == '30m' else '' }}>30 minute</option>
-            <option value="1h" {{ 'selected' if user.trading_timeframe == '1h' else '' }}>1 hour</option>
-            <option value="4h" {{ 'selected' if user.trading_timeframe == '4h' else '' }}>4 hour</option>
-            <option value="1d" {{ 'selected' if user.trading_timeframe == '1d' else '' }}>Daily</option>
-          </select>
-        </div>
-        <div>
-          <label>Min Bias Score</label>
-          <input type="number" name="min_score" value="{{ user.min_score }}" min="0" max="100" step="5">
-          <small>0-100. Trend 60% + Candle 40%</small>
+      <p style="font-size:0.8rem;color:var(--text-light);margin-bottom:16px;">Per-model settings for signal filtering. ATR multiplier controls zone tightness — lower = price must be closer to the level before triggering.</p>
+
+      <table style="width:100%;border-collapse:collapse;font-size:0.85rem;margin-bottom:16px;">
+        <thead>
+          <tr style="border-bottom:2px solid #eee;">
+            <th style="text-align:left;padding:8px 10px;font-weight:500;color:var(--text-light);font-size:0.75rem;">MODEL</th>
+            <th style="text-align:left;padding:8px 10px;font-weight:500;color:var(--text-light);font-size:0.75rem;">ZONES</th>
+            <th style="text-align:left;padding:8px 10px;font-weight:500;color:var(--text-light);font-size:0.75rem;">TRIGGER</th>
+            <th style="text-align:center;padding:8px 10px;font-weight:500;color:var(--text-light);font-size:0.75rem;">MIN SCORE</th>
+            <th style="text-align:center;padding:8px 10px;font-weight:500;color:var(--text-light);font-size:0.75rem;">MIN R:R</th>
+            <th style="text-align:center;padding:8px 10px;font-weight:500;color:var(--text-light);font-size:0.75rem;">ATR MULT</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr style="border-bottom:1px solid #f0f0f0;">
+            <td style="padding:10px;"><span style="font-weight:600;color:#be185d;">Scalp</span><br><span style="font-size:0.72rem;color:var(--text-light);">1H ATR</span></td>
+            <td style="padding:10px;font-size:0.8rem;">1h + 4h</td>
+            <td style="padding:10px;font-size:0.8rem;">15m candle</td>
+            <td style="padding:10px;text-align:center;"><input type="number" name="scalp_min_score" value="{{ user.scalp_min_score if user.scalp_min_score is not none else 50 }}" min="0" max="100" step="5" style="width:70px;text-align:center;"></td>
+            <td style="padding:10px;text-align:center;"><input type="number" name="scalp_min_rr" value="{{ user.scalp_min_rr if user.scalp_min_rr is not none else 1.5 }}" min="0.5" max="10" step="0.1" style="width:70px;text-align:center;"></td>
+            <td style="padding:10px;text-align:center;"><input type="number" name="scalp_atr_multiplier" value="{{ user.scalp_atr_multiplier if user.scalp_atr_multiplier is not none else 0.5 }}" min="0.1" max="5" step="0.1" style="width:70px;text-align:center;"></td>
+          </tr>
+          <tr style="border-bottom:1px solid #f0f0f0;">
+            <td style="padding:10px;"><span style="font-weight:600;color:#1d4ed8;">Intraday</span><br><span style="font-size:0.72rem;color:var(--text-light);">4H ATR</span></td>
+            <td style="padding:10px;font-size:0.8rem;">4h + Daily</td>
+            <td style="padding:10px;font-size:0.8rem;">1h candle</td>
+            <td style="padding:10px;text-align:center;"><input type="number" name="intraday_min_score" value="{{ user.intraday_min_score if user.intraday_min_score is not none else 50 }}" min="0" max="100" step="5" style="width:70px;text-align:center;"></td>
+            <td style="padding:10px;text-align:center;"><input type="number" name="intraday_min_rr" value="{{ user.intraday_min_rr if user.intraday_min_rr is not none else 1.5 }}" min="0.5" max="10" step="0.1" style="width:70px;text-align:center;"></td>
+            <td style="padding:10px;text-align:center;"><input type="number" name="intraday_atr_multiplier" value="{{ user.intraday_atr_multiplier if user.intraday_atr_multiplier is not none else 0.5 }}" min="0.1" max="5" step="0.1" style="width:70px;text-align:center;"></td>
+          </tr>
+          <tr>
+            <td style="padding:10px;"><span style="font-weight:600;color:#27ae60;">Swing</span><br><span style="font-size:0.72rem;color:var(--text-light);">Daily ATR</span></td>
+            <td style="padding:10px;font-size:0.8rem;">Weekly + Monthly</td>
+            <td style="padding:10px;font-size:0.8rem;">Daily candle</td>
+            <td style="padding:10px;text-align:center;"><input type="number" name="swing_min_score" value="{{ user.swing_min_score if user.swing_min_score is not none else 50 }}" min="0" max="100" step="5" style="width:70px;text-align:center;"></td>
+            <td style="padding:10px;text-align:center;"><input type="number" name="swing_min_rr" value="{{ user.swing_min_rr if user.swing_min_rr is not none else 1.5 }}" min="0.5" max="10" step="0.1" style="width:70px;text-align:center;"></td>
+            <td style="padding:10px;text-align:center;"><input type="number" name="swing_atr_multiplier" value="{{ user.swing_atr_multiplier if user.swing_atr_multiplier is not none else 0.5 }}" min="0.1" max="5" step="0.1" style="width:70px;text-align:center;"></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div style="border-top:1px solid #eee;padding-top:12px;">
+        <label style="font-size:0.85rem;font-weight:600;margin-bottom:8px;">Stock Zone ATR Multiplier</label>
+        <div class="field-row" style="grid-template-columns: 1fr 2fr;">
+          <div>
+            <input type="number" name="stock_atr_multiplier" value="{{ user.stock_atr_multiplier }}" min="0.1" max="5" step="0.1">
+            <small>For swing stock zones (Daily ATR). Lower = tighter.</small>
+          </div>
+          <div></div>
         </div>
       </div>
-      <div class="field-row">
-        <div>
-          <label>Min Risk:Reward</label>
-          <input type="number" name="min_risk_reward" value="{{ user.min_risk_reward }}" min="0.5" max="5" step="0.1">
+
+      <div style="border-top:1px solid #eee;padding-top:12px;margin-top:12px;">
+        <div class="field-row" style="grid-template-columns: 1fr 1fr;">
+          <div class="checkbox-field">
+            <input type="checkbox" name="dry_run" id="dryRun" {{ 'checked' if user.dry_run else '' }}>
+            <label for="dryRun">Dry-run mode — Forex (log signals without executing)</label>
+          </div>
+          <div class="checkbox-field">
+            <input type="checkbox" name="dry_run_stocks" id="dryRunStocks" {{ 'checked' if user.dry_run_stocks else '' }}>
+            <label for="dryRunStocks">Dry-run mode — Stocks/Options</label>
+          </div>
         </div>
-        <div>
-          <label>Stock Zone ATR Multiplier</label>
-          <input type="number" name="stock_atr_multiplier" value="{{ user.stock_atr_multiplier }}" min="0.1" max="5" step="0.1">
-          <small>Lower = tighter zones</small>
-        </div>
-      </div>
-      <div class="checkbox-field">
-        <input type="checkbox" name="dry_run" id="dryRun" {{ 'checked' if user.dry_run else '' }}>
-        <label for="dryRun">Dry-run mode (log signals without executing)</label>
       </div>
     </div>
 
