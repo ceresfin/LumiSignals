@@ -208,7 +208,12 @@ button:hover { opacity: 0.9; }
             <small>Candle TF for entry confirmation at weekly/monthly zones</small>
           </div>
           <div>
-            <p style="font-size:0.78rem;color:var(--text-light);margin-top:20px;">When enabled, the bot will:<br>1. Detect stock at S/R zone<br>2. Wait for trigger candle<br>3. Analyze spreads (Polygon)<br>4. Place order on IB</p>
+            <label>Min Verdict to Auto-Trade</label>
+            <select name="options_min_verdict">
+              <option value="good" {{ 'selected' if (user.options_min_verdict or 'good') == 'good' else '' }}>GOOD only (selective)</option>
+              <option value="fair" {{ 'selected' if user.options_min_verdict == 'fair' else '' }}>GOOD + FAIR (more trades)</option>
+            </select>
+            <small>GOOD = strong setup. FAIR = acceptable but weaker.</small>
           </div>
         </div>
       </div>

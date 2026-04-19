@@ -44,7 +44,7 @@ def get_active_users():
                intraday_risk_mode, intraday_risk_value, intraday_daily_budget,
                swing_risk_mode, swing_risk_value, swing_daily_budget,
                lumitrade_api_key,
-               options_auto_trade, options_auto_spread_type, options_trigger_tf,
+               options_auto_trade, options_auto_spread_type, options_trigger_tf, options_min_verdict,
                options_max_risk_per_spread, options_max_contracts,
                options_max_total_risk, options_spread_width,
                options_min_credit_pct, options_max_spreads
@@ -88,6 +88,8 @@ def _auto_trade_options(user_data, signal, extra_meta, model_name, log, alert_pa
     zone_type = (extra_meta or {}).get("zone_type", "demand" if signal.action == "BUY" else "supply")
     zone_price = (extra_meta or {}).get("zone_price", signal.entry)
     spread_pref = user_data.get("options_auto_spread_type") or "credit"
+    min_verdict = user_data.get("options_min_verdict") or "good"
+    allowed_verdicts = ["GOOD"] if min_verdict == "good" else ["GOOD", "FAIR"]
 
     massive_key = user_data.get("massive_api_key") or os.environ.get("MASSIVE_API_KEY", "")
     if not massive_key:
@@ -118,7 +120,7 @@ def _auto_trade_options(user_data, signal, extra_meta, model_name, log, alert_pa
     # Process credit spread
     credit = result.get("credit_spread")
     if credit and spread_pref in ("credit", "both"):
-        if credit.get("verdict") in ("GOOD", "FAIR"):
+        if credit.get("verdict") in allowed_verdicts:
             is_credit = credit["net_credit"] > 0
             premium = credit["net_credit"] if is_credit else credit["net_debit"]
             width = credit["width"]
@@ -157,7 +159,7 @@ def _auto_trade_options(user_data, signal, extra_meta, model_name, log, alert_pa
     # Process debit spread
     debit = result.get("debit_spread")
     if debit and spread_pref in ("debit", "both"):
-        if debit.get("verdict") in ("GOOD", "FAIR"):
+        if debit.get("verdict") in allowed_verdicts:
             is_credit = False
             premium = debit["net_debit"]
             width = debit["width"]
