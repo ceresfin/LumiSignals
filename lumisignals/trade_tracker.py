@@ -59,16 +59,16 @@ def _estimate_usd_pl(instrument: str, units: int, entry: float, target_price: fl
         return 0.0
 
 
-def _enrich_by_instrument(entry: dict, instrument: str, entry_price: float) -> dict:
-    """Fallback enrichment: match by instrument and entry price in the signal log."""
+def _enrich_by_instrument(entry: dict, instrument: str, entry_price: float, stop_price: float = 0) -> dict:
+    """Fallback enrichment: match by instrument, entry price, and stop loss in the signal log."""
     sig_log = get_signal_log()
     all_entries = sig_log.get_all() if sig_log else {}
     if not all_entries:
         return entry
-    # Search all signal log entries for matching instrument + close entry price
+    # Search all signal log entries for matching instrument + entry price + stop loss
     symbol_clean = instrument.replace("_", "")
     best_match = None
-    best_distance = float("inf")
+    best_score = float("inf")
     for key, sig in all_entries.items():
         if not isinstance(sig, dict):
             continue
@@ -77,11 +77,18 @@ def _enrich_by_instrument(entry: dict, instrument: str, entry_price: float) -> d
             continue
         sig_entry = sig.get("entry", 0)
         if sig_entry and entry_price:
-            distance = abs(sig_entry - entry_price)
-            # Match if within 0.1% of entry price
-            if distance < entry_price * 0.001 and distance < best_distance:
+            entry_dist = abs(sig_entry - entry_price)
+            # Must be within 0.1% of entry price
+            if entry_dist >= entry_price * 0.001:
+                continue
+            # Score by entry distance + stop loss distance (lower = better match)
+            score = entry_dist
+            if stop_price and sig.get("stop"):
+                stop_dist = abs(sig["stop"] - stop_price)
+                score += stop_dist
+            if score < best_score:
                 best_match = sig
-                best_distance = distance
+                best_score = score
     if best_match:
         # Normalize strategy_id
         raw_strategy = best_match.get("strategy_id") or best_match.get("strategy", "")
@@ -299,7 +306,7 @@ def get_open_trades(client: OandaClient) -> list:
                     break
         # Fallback: match by instrument + entry price in the signal log
         if not trade_entry.get("strategy"):
-            trade_entry = _enrich_by_instrument(trade_entry, instrument, entry)
+            trade_entry = _enrich_by_instrument(trade_entry, instrument, entry, sl)
         result.append(trade_entry)
 
     return result
@@ -404,7 +411,7 @@ def get_closed_trades(client: OandaClient, count: int = 50) -> list:
                         break
         # Fallback: match by instrument + entry price
         if not trade_entry.get("strategy"):
-            trade_entry = _enrich_by_instrument(trade_entry, instrument, entry)
+            trade_entry = _enrich_by_instrument(trade_entry, instrument, entry, sl)
         # Only include trades placed by the bot (matched in signal log)
         if sig or trade_entry.get("strategy"):
             result.append(trade_entry)
