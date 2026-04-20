@@ -62,13 +62,14 @@ def _estimate_usd_pl(instrument: str, units: int, entry: float, target_price: fl
 def _enrich_by_instrument(entry: dict, instrument: str, entry_price: float) -> dict:
     """Fallback enrichment: match by instrument and entry price in the signal log."""
     sig_log = get_signal_log()
-    if not hasattr(sig_log, '_data'):
+    all_entries = sig_log.get_all() if sig_log else {}
+    if not all_entries:
         return entry
     # Search all signal log entries for matching instrument + close entry price
     symbol_clean = instrument.replace("_", "")
     best_match = None
     best_distance = float("inf")
-    for key, sig in sig_log._data.items():
+    for key, sig in all_entries.items():
         if not isinstance(sig, dict):
             continue
         sig_symbol = sig.get("symbol", "").replace("_", "")
