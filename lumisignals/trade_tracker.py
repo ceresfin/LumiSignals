@@ -259,9 +259,26 @@ def get_open_trades(client: OandaClient) -> list:
         sl = float(trade.get("stopLossOrder", {}).get("price", 0)) if trade.get("stopLossOrder") else 0
         tp = float(trade.get("takeProfitOrder", {}).get("price", 0)) if trade.get("takeProfitOrder") else 0
 
-        # Calculate pips P&L
+        # Get current price from Oanda pricing (more accurate than deriving from P&L)
         pip = _pip_value(instrument)
-        current_price = entry + (unrealized_pl / abs(units)) if units != 0 else entry
+        # Derive approximate current price from unrealized P&L
+        # unrealizedPL is in account currency (USD), direction-aware
+        if units != 0:
+            # For BUY trades: positive P&L means price went up
+            # For SELL trades: positive P&L means price went down
+            # The sign of units already encodes direction
+            pl_per_unit = unrealized_pl / units  # units is signed (negative for SELL)
+            parts = instrument.split("_")
+            if len(parts) == 2 and parts[1] == "USD":
+                current_price = entry + pl_per_unit
+            elif len(parts) == 2 and parts[0] == "USD":
+                # USD_XXX: P&L = units * (1/entry - 1/current) * entry ≈ units * (current - entry) / current
+                # Approximate: current ≈ entry * (1 + pl_per_unit / entry)
+                current_price = entry + pl_per_unit * entry if entry else entry
+            else:
+                current_price = entry + pl_per_unit
+        else:
+            current_price = entry
         pips_pl = round((current_price - entry) / pip, 1) if direction == "BUY" else round((entry - current_price) / pip, 1)
 
         # Potential profit/loss from current price to TP/SL
