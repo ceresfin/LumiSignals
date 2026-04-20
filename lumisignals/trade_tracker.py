@@ -411,7 +411,7 @@ def get_closed_trades(client: OandaClient, count: int = 50) -> list:
                         break
         # Fallback: match by instrument + entry price
         if not trade_entry.get("strategy"):
-            trade_entry = _enrich_by_instrument(trade_entry, instrument, entry, sl)
+            trade_entry = _enrich_by_instrument(trade_entry, instrument, entry, planned_sl)
         # Only include trades placed by the bot (matched in signal log)
         if sig or trade_entry.get("strategy"):
             result.append(trade_entry)
