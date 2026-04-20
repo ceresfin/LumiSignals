@@ -59,6 +59,45 @@ def _estimate_usd_pl(instrument: str, units: int, entry: float, target_price: fl
         return 0.0
 
 
+def _enrich_by_instrument(entry: dict, instrument: str, entry_price: float) -> dict:
+    """Fallback enrichment: match by instrument and entry price in the signal log."""
+    sig_log = get_signal_log()
+    if not hasattr(sig_log, '_data'):
+        return entry
+    # Search all signal log entries for matching instrument + close entry price
+    symbol_clean = instrument.replace("_", "")
+    best_match = None
+    best_distance = float("inf")
+    for key, sig in sig_log._data.items():
+        if not isinstance(sig, dict):
+            continue
+        sig_symbol = sig.get("symbol", "").replace("_", "")
+        if sig_symbol.upper() != symbol_clean.upper():
+            continue
+        sig_entry = sig.get("entry", 0)
+        if sig_entry and entry_price:
+            distance = abs(sig_entry - entry_price)
+            # Match if within 0.1% of entry price
+            if distance < entry_price * 0.001 and distance < best_distance:
+                best_match = sig
+                best_distance = distance
+    if best_match:
+        # Normalize strategy_id
+        raw_strategy = best_match.get("strategy_id") or best_match.get("strategy", "")
+        if raw_strategy.startswith("levels"):
+            entry["strategy_id"] = "htf_levels"
+        else:
+            entry["strategy_id"] = raw_strategy or "htf_levels"
+        entry["strategy"] = entry["strategy_id"]
+        entry["model"] = best_match.get("model", "")
+        entry["final_score"] = best_match.get("final_score", "") or best_match.get("bias_score", "")
+        entry["trigger_pattern"] = best_match.get("trigger_pattern", "")
+        entry["level_type"] = best_match.get("level_type", "") or best_match.get("zone_type", "")
+        entry["level_timeframe"] = best_match.get("level_timeframe", "") or best_match.get("zone_timeframe", "")
+        entry["trends"] = best_match.get("trends", {})
+    return entry
+
+
 def _enrich_with_signal_data(entry: dict, order_id: str) -> dict:
     """Merge local signal log data into a trade/order entry."""
     sig = get_signal_log().get(order_id)
@@ -246,7 +285,6 @@ def get_open_trades(client: OandaClient) -> list:
             "status": "OPEN",
         }
         # Try matching by trade ID, opening transaction, or adjacent IDs
-        # Oanda order transaction (e.g. 16479) precedes the fill/trade (16480)
         open_id = trade.get("id", "")
         opening_order = trade.get("openingTransactionID", open_id)
         trade_entry = _enrich_with_signal_data(trade_entry, opening_order)
@@ -258,6 +296,9 @@ def get_open_trades(client: OandaClient) -> list:
                 trade_entry = _enrich_with_signal_data(trade_entry, str(int(open_id) - offset))
                 if trade_entry.get("strategy"):
                     break
+        # Fallback: match by instrument + entry price in the signal log
+        if not trade_entry.get("strategy"):
+            trade_entry = _enrich_by_instrument(trade_entry, instrument, entry)
         result.append(trade_entry)
 
     return result
@@ -360,6 +401,9 @@ def get_closed_trades(client: OandaClient, count: int = 50) -> list:
                     trade_entry = _enrich_with_signal_data(trade_entry, str(int(base_id) - offset))
                     if trade_entry.get("strategy"):
                         break
+        # Fallback: match by instrument + entry price
+        if not trade_entry.get("strategy"):
+            trade_entry = _enrich_by_instrument(trade_entry, instrument, entry)
         # Only include trades placed by the bot (matched in signal log)
         if sig or trade_entry.get("strategy"):
             result.append(trade_entry)
