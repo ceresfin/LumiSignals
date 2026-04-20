@@ -187,6 +187,29 @@ function scoreBadge(score) {
   return '<span class="' + color + '" style="font-size:0.75rem;font-weight:600">' + sc.toFixed(0) + '/100</span>';
 }
 
+function fmtTime(t) {
+  if (!t) return '—';
+  // "2026-04-17 14:30" → "Apr 17 2:30 PM"
+  try {
+    var d = new Date(t + ' UTC');
+    if (isNaN(d)) return t;
+    return d.toLocaleString('en-US', {month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'America/New_York'});
+  } catch(e) { return t; }
+}
+
+function duration(opened, closed) {
+  if (!opened) return '—';
+  try {
+    var start = new Date(opened + ' UTC');
+    var end = closed ? new Date(closed + ' UTC') : new Date();
+    if (isNaN(start)) return '—';
+    var diff = Math.abs(end - start) / 1000;
+    if (diff < 3600) return Math.round(diff / 60) + 'm';
+    if (diff < 86400) return Math.round(diff / 3600) + 'h';
+    return Math.round(diff / 86400) + 'd ' + Math.round((diff % 86400) / 3600) + 'h';
+  } catch(e) { return '—'; }
+}
+
 function getModel(t) {
   // Extract model from trade data — check model field first, then parse from strategy
   if (t.model) return t.model.toLowerCase();
@@ -194,6 +217,13 @@ function getModel(t) {
   if (s.indexOf('scalp') >= 0) return 'scalp';
   if (s.indexOf('intraday') >= 0) return 'intraday';
   if (s.indexOf('swing') >= 0) return 'swing';
+  // Infer from level timeframe if available
+  var ltf = (t.level_timeframe || '').toLowerCase();
+  if (ltf.indexOf('month') >= 0 || ltf.indexOf('week') >= 0) return 'swing';
+  if (ltf.indexOf('daily') >= 0 || ltf.indexOf('4h') >= 0) return 'intraday';
+  if (ltf.indexOf('1h') >= 0 || ltf.indexOf('hour') >= 0) return 'scalp';
+  // If we have a strategy_id but no model, still show as identified
+  if (t.strategy_id) return 'swing';
   return '';
 }
 
@@ -318,10 +348,11 @@ function loadOandaTrades() {
           '<td class="' + plClass(t.pips) + '">' + fmt(t.pips, 1) + '</td>' +
           '<td class="' + plClass(t.unrealized_pl) + '">$' + fmt(t.unrealized_pl) + '</td>' +
           '<td>' + modelBadge(getModel(t)) + '</td>' +
+          '<td style="font-size:0.72rem">' + fmtTime(t.time_opened) + '<br><span style="color:var(--text-light)">' + duration(t.time_opened) + '</span></td>' +
           '<td style="font-size:0.75rem">' + signalInfo + '</td>';
       });
       document.getElementById('openTable').innerHTML = buildTable(
-        ['Pair', 'Dir', 'Entry', 'Current', 'SL', 'TP', 'R:R', 'Pips', 'P&L', 'Model', 'Signal'], openRows
+        ['Pair', 'Dir', 'Entry', 'Current', 'SL', 'TP', 'R:R', 'Pips', 'P&L', 'Model', 'Opened', 'Signal'], openRows
       );
 
       // Closed trades table
@@ -343,10 +374,11 @@ function loadOandaTrades() {
           '<td>' + t.close_reason + '</td>' +
           '<td>' + badge + '</td>' +
           '<td>' + modelBadge(getModel(t)) + '</td>' +
+          '<td style="font-size:0.72rem">' + fmtTime(t.time_opened) + '<br><span style="color:var(--text-light)">' + duration(t.time_opened, t.time_closed) + '</span></td>' +
           '<td style="font-size:0.75rem">' + signalInfo + '</td>';
       });
       document.getElementById('closedTable').innerHTML = buildTable(
-        ['Pair', 'Dir', 'Entry', 'Close', 'Plan R:R', 'Pips', 'P&L', 'Reason', 'Result', 'Model', 'Signal'], closedRows
+        ['Pair', 'Dir', 'Entry', 'Close', 'Plan R:R', 'Pips', 'P&L', 'Reason', 'Result', 'Model', 'Duration', 'Signal'], closedRows
       );
     })
     .catch(function(e) { console.error('Oanda trades error:', e); });
