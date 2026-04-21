@@ -74,25 +74,26 @@ tr:hover { background: rgba(0,0,0,0.015); }
 </div>
 
 <div class="container">
-  <!-- Combined Stats -->
-  <div class="stats-grid">
-    <div class="stat-card"><div class="stat-value" id="openTradeCount">—</div><div class="stat-label">Open Trades</div></div>
-    <div class="stat-card"><div class="stat-value" id="unrealizedPL">—</div><div class="stat-label">Unrealized P&L</div></div>
-    <div class="stat-card"><div class="stat-value" id="totalTrades">—</div><div class="stat-label">Closed Trades</div></div>
-    <div class="stat-card"><div class="stat-value" id="winRate">—</div><div class="stat-label">Win Rate</div></div>
-    <div class="stat-card"><div class="stat-value" id="totalPL">—</div><div class="stat-label">Realized P&L</div></div>
-    <div class="stat-card"><div class="stat-value" id="totalPips">—</div><div class="stat-label">Total Pips</div></div>
+  <!-- Tab Toggle -->
+  <div style="display:flex;gap:0;margin-bottom:20px;border-bottom:2px solid #eee;">
+    <button id="tabFX" onclick="showTab('fx')" style="padding:12px 28px;font-size:0.9rem;font-weight:600;border:none;cursor:pointer;background:var(--olive);color:#FFF5E1;border-radius:8px 8px 0 0;">Forex (Oanda)</button>
+    <button id="tabOptions" onclick="showTab('options')" style="padding:12px 28px;font-size:0.9rem;font-weight:600;border:none;cursor:pointer;background:var(--cream);color:var(--text-light);border-radius:8px 8px 0 0;margin-left:4px;">Options (IB)</button>
   </div>
 
-  <!-- Strategy Breakdown -->
-  <div id="strategyBreakdown"><div class="loading">Loading strategy breakdown...</div></div>
-
-  <!-- ============ FX TRADES (Oanda) ============ -->
-  <div class="strategy-section">
-    <div class="strategy-header"><span class="strategy-tag" style="background:#0284c7">FX</span> Forex Trades — Oanda
-      <button class="refresh-btn" onclick="loadOandaTrades()" style="margin-left:auto;">Refresh</button>
+  <!-- ============ FX SECTION ============ -->
+  <div id="sectionFX">
+    <!-- Combined Stats -->
+    <div class="stats-grid">
+      <div class="stat-card"><div class="stat-value" id="openTradeCount">—</div><div class="stat-label">Open Trades</div></div>
+      <div class="stat-card"><div class="stat-value" id="unrealizedPL">—</div><div class="stat-label">Unrealized P&L</div></div>
+      <div class="stat-card"><div class="stat-value" id="totalTrades">—</div><div class="stat-label">Closed Trades</div></div>
+      <div class="stat-card"><div class="stat-value" id="winRate">—</div><div class="stat-label">Win Rate</div></div>
+      <div class="stat-card"><div class="stat-value" id="totalPL">—</div><div class="stat-label">Realized P&L</div></div>
+      <div class="stat-card"><div class="stat-value" id="totalPips">—</div><div class="stat-label">Total Pips</div></div>
     </div>
-  </div>
+
+    <!-- Strategy Breakdown -->
+    <div id="strategyBreakdown"><div class="loading">Loading strategy breakdown...</div></div>
 
   <div class="card">
     <h2>Open FX Trades <span class="count" id="openCount">0</span></h2>
@@ -103,13 +104,10 @@ tr:hover { background: rgba(0,0,0,0.015); }
     <h2>Closed FX Trades <span class="count" id="closedCount">0</span></h2>
     <div id="closedTable"><div class="loading">Loading...</div></div>
   </div>
+  </div><!-- end sectionFX -->
 
-  <!-- ============ OPTIONS TRADES (IB) ============ -->
-  <div class="strategy-section">
-    <div class="strategy-header"><span class="strategy-tag" style="background:#7c3aed">OPTIONS</span> Options Trades — Interactive Brokers
-      <button class="refresh-btn" onclick="loadIBTrades()" style="margin-left:auto;">Refresh</button>
-    </div>
-  </div>
+  <!-- ============ OPTIONS SECTION ============ -->
+  <div id="sectionOptions" style="display:none;">
 
   <div id="ibkrSection">
     <div class="stats-grid" style="grid-template-columns: repeat(5, 1fr);">
@@ -136,6 +134,7 @@ tr:hover { background: rgba(0,0,0,0.015); }
       IB Gateway not connected — sync script offline
     </div>
   </div>
+  </div><!-- end sectionOptions -->
 
   <div class="disclaimer">
     LumiTrade is a financial publishing company. All signals are for educational and informational purposes only.
@@ -143,6 +142,28 @@ tr:hover { background: rgba(0,0,0,0.015); }
 </div>
 
 <script>
+function showTab(tab) {
+  var fxSection = document.getElementById('sectionFX');
+  var optSection = document.getElementById('sectionOptions');
+  var tabFX = document.getElementById('tabFX');
+  var tabOpt = document.getElementById('tabOptions');
+  if (tab === 'fx') {
+    fxSection.style.display = 'block';
+    optSection.style.display = 'none';
+    tabFX.style.background = 'var(--olive)';
+    tabFX.style.color = '#FFF5E1';
+    tabOpt.style.background = 'var(--cream)';
+    tabOpt.style.color = 'var(--text-light)';
+  } else {
+    fxSection.style.display = 'none';
+    optSection.style.display = 'block';
+    tabOpt.style.background = '#7c3aed';
+    tabOpt.style.color = '#FFF5E1';
+    tabFX.style.background = 'var(--cream)';
+    tabFX.style.color = 'var(--text-light)';
+  }
+}
+
 var STRATEGY_NAMES = {
   'htf_levels': 'Front-Side HTF Untouched Levels',
   'gap_fill': 'Gap Fill',
@@ -429,7 +450,7 @@ function loadIBTrades() {
     if (!data.connected && !storedOrders.length) {
       document.getElementById('ibOffline').style.display = 'block';
       document.getElementById('ibkrSection').style.display = 'none';
-      return;
+      return;  // still show the tab, just show offline message
       }
 
       document.getElementById('ibOffline').style.display = 'none';
