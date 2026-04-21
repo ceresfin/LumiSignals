@@ -266,6 +266,14 @@ function renderFilteredTable(model, tab) {
   else if (tab === 'crypto') zones = md.data.crypto;
   else zones = md.data.currencies.concat(md.data.stocks).concat(md.data.crypto);
 
+  // Sort: ACTIVE (activated) first, then by score descending
+  zones.sort(function(a, b) {
+    var aActive = a.status === 'activated' ? 0 : 1;
+    var bActive = b.status === 'activated' ? 0 : 1;
+    if (aActive !== bActive) return aActive - bActive;
+    return (b.bias_score || 0) - (a.bias_score || 0);
+  });
+
   if (md.showOptions && optionsActive) return;
   var showOpt = md.showOptions && tab !== 'currencies';
   var hdrs = showOpt ? headersOpt : headers;
