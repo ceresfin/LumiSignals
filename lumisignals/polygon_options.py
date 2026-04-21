@@ -82,7 +82,8 @@ class PolygonOptionsClient:
 
 
 def analyze_spreads_polygon(api_key: str, ticker: str, zone_type: str,
-                            zone_price: float, current_price: float) -> dict:
+                            zone_price: float, current_price: float,
+                            max_risk_per_spread: float = 0, preferred_width: float = 5.0) -> dict:
     """Analyze best credit and debit spreads using Polygon data.
 
     Same output format as analyze_spreads_ib for side-by-side comparison.
@@ -201,12 +202,23 @@ def analyze_spreads_polygon(api_key: str, ticker: str, zone_type: str,
         credit_options = exps.get(target_exp[0], {}).get("options", [])
         debit_options = credit_options  # same expiration
 
+        # Auto-adjust width: try preferred, then narrower, to fit max_risk
+        widths_to_try = [preferred_width]
+        if preferred_width > 2.5:
+            widths_to_try.append(2.5)
+        if preferred_width > 1.0:
+            widths_to_try.append(1.0)
+
         if zone_type == "supply":
-            credit = _find_bear_call_credit_poly(credit_options, target_exp, zone_price, current_price)
-            debit = _find_bear_put_debit_poly(debit_options, target_exp, zone_price, current_price)
+            credit = _find_best_spread_width(credit_options, target_exp, zone_price, current_price,
+                                             _find_bear_call_credit_poly, widths_to_try, max_risk_per_spread, is_credit=True)
+            debit = _find_best_spread_width(debit_options, target_exp, zone_price, current_price,
+                                            _find_bear_put_debit_poly, widths_to_try, max_risk_per_spread, is_credit=False)
         else:
-            credit = _find_bull_put_credit_poly(credit_options, target_exp, zone_price, current_price)
-            debit = _find_bull_call_debit_poly(debit_options, target_exp, zone_price, current_price)
+            credit = _find_best_spread_width(credit_options, target_exp, zone_price, current_price,
+                                             _find_bull_put_credit_poly, widths_to_try, max_risk_per_spread, is_credit=True)
+            debit = _find_best_spread_width(debit_options, target_exp, zone_price, current_price,
+                                            _find_bull_call_debit_poly, widths_to_try, max_risk_per_spread, is_credit=False)
 
         result["credit_spread"] = format_spread_for_display(credit) if credit else None
         result["debit_spread"] = format_spread_for_display(debit) if debit else None
@@ -316,56 +328,72 @@ def _find_opts(options, right, near_strike, direction="above"):
     return candidates
 
 
-def _find_bear_call_credit_poly(options, exp_info, zone_price, current_price):
+def _find_best_spread_width(options, exp_info, zone_price, current_price,
+                            finder_fn, widths_to_try, max_risk, is_credit):
+    """Try multiple spread widths, pick the widest one that fits max_risk."""
+    for target_width in widths_to_try:
+        spread = finder_fn(options, exp_info, zone_price, current_price, target_width)
+        if spread:
+            # Let calculate_spread_contracts handle risk limits — it will
+            # size to 0 contracts if risk is too high for even 1 contract
+            return spread
+    return None
+
+
+def _find_bear_call_credit_poly(options, exp_info, zone_price, current_price, target_width=1.0):
     exp, dte = exp_info
     sells = _find_opts(options, "C", current_price, "above")
     for short_opt in sells[:3]:
         buys = [o for o in options if o["right"] == "C" and o["strike"] > short_opt["strike"]]
         buys.sort(key=lambda o: o["strike"])
-        for long_opt in buys[:2]:
-            if long_opt["strike"] - short_opt["strike"] >= 1.0:
+        for long_opt in buys[:3]:
+            gap = long_opt["strike"] - short_opt["strike"]
+            if abs(gap - target_width) < 0.01 or (gap >= target_width and gap <= target_width + 1):
                 result = _build_spread_poly("Bear Call Credit", short_opt, long_opt, True)
                 if result:
                     return result
     return None
 
 
-def _find_bull_put_credit_poly(options, exp_info, zone_price, current_price):
+def _find_bull_put_credit_poly(options, exp_info, zone_price, current_price, target_width=1.0):
     exp, dte = exp_info
     sells = _find_opts(options, "P", current_price, "below")
     for short_opt in sells[:3]:
         buys = [o for o in options if o["right"] == "P" and o["strike"] < short_opt["strike"]]
         buys.sort(key=lambda o: -o["strike"])
-        for long_opt in buys[:2]:
-            if short_opt["strike"] - long_opt["strike"] >= 1.0:
+        for long_opt in buys[:3]:
+            gap = short_opt["strike"] - long_opt["strike"]
+            if abs(gap - target_width) < 0.01 or (gap >= target_width and gap <= target_width + 1):
                 result = _build_spread_poly("Bull Put Credit", short_opt, long_opt, True)
                 if result:
                     return result
     return None
 
 
-def _find_bear_put_debit_poly(options, exp_info, zone_price, current_price):
+def _find_bear_put_debit_poly(options, exp_info, zone_price, current_price, target_width=1.0):
     exp, dte = exp_info
     buys = _find_opts(options, "P", current_price, "below")
     for long_opt in buys[:3]:
         sells = [o for o in options if o["right"] == "P" and o["strike"] < long_opt["strike"]]
         sells.sort(key=lambda o: -o["strike"])
-        for short_opt in sells[:2]:
-            if long_opt["strike"] - short_opt["strike"] >= 1.0:
+        for short_opt in sells[:3]:
+            gap = long_opt["strike"] - short_opt["strike"]
+            if abs(gap - target_width) < 0.01 or (gap >= target_width and gap <= target_width + 1):
                 result = _build_spread_poly("Bear Put Debit", short_opt, long_opt, False)
                 if result:
                     return result
     return None
 
 
-def _find_bull_call_debit_poly(options, exp_info, zone_price, current_price):
+def _find_bull_call_debit_poly(options, exp_info, zone_price, current_price, target_width=1.0):
     exp, dte = exp_info
     buys = _find_opts(options, "C", current_price, "above")
     for long_opt in buys[:3]:
         sells = [o for o in options if o["right"] == "C" and o["strike"] > long_opt["strike"]]
         sells.sort(key=lambda o: o["strike"])
-        for short_opt in sells[:2]:
-            if short_opt["strike"] - long_opt["strike"] >= 1.0:
+        for short_opt in sells[:3]:
+            gap = short_opt["strike"] - long_opt["strike"]
+            if abs(gap - target_width) < 0.01 or (gap >= target_width and gap <= target_width + 1):
                 result = _build_spread_poly("Bull Call Debit", short_opt, long_opt, False)
                 if result:
                     return result

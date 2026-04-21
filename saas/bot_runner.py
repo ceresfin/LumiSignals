@@ -104,7 +104,11 @@ def _auto_trade_options(user_data, signal, extra_meta, model_name, log, alert_pa
 
     # Run Polygon analysis (with timeout protection)
     try:
-        result = analyze_spreads_polygon(massive_key, symbol, zone_type, zone_price, signal.entry)
+        result = analyze_spreads_polygon(
+            massive_key, symbol, zone_type, zone_price, signal.entry,
+            max_risk_per_spread=risk_config.max_risk_per_spread,
+            preferred_width=risk_config.spread_width,
+        )
     except Exception as e:
         log(f"[{model_name.upper()}] OPTIONS: Polygon analysis failed — {e}")
         return
