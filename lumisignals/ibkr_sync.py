@@ -472,7 +472,10 @@ def main():
 
     ib = IB()
     try:
-        ib.connect(IB_HOST, IB_PORT, clientId=10)
+        import random
+        cid = random.randint(20, 99)
+        ib.connect(IB_HOST, IB_PORT, clientId=cid)
+        logger.info("Using clientId %d", cid)
         ib.reqMarketDataType(3)  # delayed data
     except Exception as e:
         logger.error("Failed to connect to IB Gateway: %s", e)
