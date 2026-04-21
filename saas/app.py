@@ -529,7 +529,24 @@ def create_app():
         data = request.get_json()
         order_id = data.get("order_id", "")
         rdb.setex(f"ibkr:order:done:{order_id}", 3600, json.dumps(data))
+        # Store details by IB order ID for enriching open orders display
+        ib_order_id = data.get("ib_order_id")
+        if ib_order_id or data.get("store_details"):
+            rdb.setex(f"ibkr:order:details:{ib_order_id or order_id}", 604800, json.dumps(data))
         return jsonify({"status": "ok"})
+
+    @app.route("/api/ibkr/order/details/<ib_order_id>")
+    def api_ibkr_order_details(ib_order_id):
+        """Look up stored order details by IB order ID."""
+        sync_key = request.headers.get("X-Sync-Key", "")
+        if sync_key != os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026"):
+            return jsonify({"error": "Invalid sync key"}), 403
+        import redis as _redis
+        rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+        stored = rdb.get(f"ibkr:order:details:{ib_order_id}")
+        if stored:
+            return jsonify(json.loads(stored))
+        return jsonify({})
 
     @app.route("/api/account/balance")
     @login_required

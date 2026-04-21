@@ -105,20 +105,29 @@ def collect_ib_data(ib: IB) -> dict:
                 except Exception:
                     pass
                 legs.append(leg_info)
-            # If leg resolution failed, look up stored order details from Redis
+            # If leg resolution failed, look up stored order details from server
             if not right:
                 try:
-                    import redis as _redis
-                    rdb = _redis.from_url("redis://localhost:6379/0")
-                    stored = rdb.get(f"ibkr:order:details:{o.orderId}")
-                    if stored:
-                        details = json.loads(stored)
-                        right = details.get("right", right)
-                        sell_strike = float(details.get("sell_strike", sell_strike))
-                        buy_strike = float(details.get("buy_strike", buy_strike))
-                        expiration = details.get("expiration", expiration)
-                        order_entry["spread_type"] = details.get("spread_type", "")
-                        order_entry["is_credit"] = details.get("is_credit", False)
+                    resp = requests.get(
+                        f"{SERVER_URL}/api/ibkr/order/details/{o.orderId}",
+                        headers={"X-Sync-Key": SYNC_KEY},
+                        timeout=5,
+                    )
+                    if resp.status_code == 200:
+                        details = resp.json()
+                        if details.get("right"):
+                            right = details["right"]
+                            sell_strike = float(details.get("sell_strike", sell_strike))
+                            buy_strike = float(details.get("buy_strike", buy_strike))
+                            expiration = details.get("expiration", expiration)
+                            order_entry["spread_type"] = details.get("spread_type", "")
+                            order_entry["is_credit"] = details.get("is_credit", False)
+                            order_entry["model"] = details.get("model", "")
+                            order_entry["trigger_pattern"] = details.get("trigger_pattern", "")
+                            order_entry["bias_score"] = details.get("bias_score", 0)
+                            order_entry["zone_type"] = details.get("zone_type", "")
+                            order_entry["zone_timeframe"] = details.get("zone_timeframe", "")
+                            order_entry["verdict"] = details.get("verdict", "")
                 except Exception:
                     pass
             order_entry["legs"] = legs
@@ -433,10 +442,16 @@ def check_order_requests(ib: IB):
                     "max_profit": order.get("max_profit", 0),
                     "risk_reward": order.get("risk_reward", 0),
                 }
-                # Store order details keyed by IB order ID for later lookup
-                import redis as _redis
-                rdb_local = _redis.from_url("redis://localhost:6379/0")
-                rdb_local.setex(f"ibkr:order:details:{trade.order.orderId}", 604800, json.dumps(result))
+                # Store order details on server for later lookup
+                try:
+                    requests.post(
+                        f"{SERVER_URL}/api/ibkr/order/result",
+                        json={**result, "store_details": True},
+                        headers={"X-Sync-Key": SYNC_KEY},
+                        timeout=10,
+                    )
+                except Exception:
+                    pass
                 logger.info("Order placed: %s — %s", ticker, trade.orderStatus.status)
 
             except Exception as e:
@@ -460,7 +475,9 @@ def check_order_requests(ib: IB):
     except requests.exceptions.ConnectionError:
         pass
     except Exception as e:
-        logger.debug("Order check: %s", e)
+        logger.error("Order check error: %s", e)
+        import traceback
+        traceback.print_exc()
 
 
 def push_to_server(data: dict):
