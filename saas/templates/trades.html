@@ -465,6 +465,11 @@ function loadIBTrades() {
         var isCredit = s.spread_type && s.spread_type.indexOf('Credit') >= 0;
         var costLabel = isCredit ? '<span class="pl-pos">$' + fmtNum(Math.abs(s.net_cost)) + ' cr</span>' : '<span class="pl-neg">$' + fmtNum(Math.abs(s.net_cost)) + ' dr</span>';
         var rr = (s.max_profit && s.max_risk) ? (s.max_profit / s.max_risk).toFixed(1) : '—';
+        var mdl = s.model ? modelBadge(s.model) : '—';
+        var signalInfo = '';
+        if (s.trigger_pattern) signalInfo += '<strong>' + s.trigger_pattern + '</strong><br>';
+        if (s.zone_timeframe) signalInfo += s.zone_timeframe + ' ' + (s.zone_type || '') + '<br>';
+        if (s.bias_score) signalInfo += '<span style="font-weight:600;' + (s.bias_score >= 70 ? 'color:var(--green)' : '') + '">' + Math.round(s.bias_score) + '/100</span>';
         return '<td><strong>' + s.symbol + '</strong></td>' +
           '<td>' + spreadTypeBadge(s.spread_type) + '</td>' +
           '<td>' + strikes + ' ' + (s.right === 'C' ? 'Call' : 'Put') + '</td>' +
@@ -473,10 +478,12 @@ function loadIBTrades() {
           '<td>' + costLabel + '</td>' +
           '<td class="pl-pos">$' + fmtNum(s.max_profit || 0) + '</td>' +
           '<td class="pl-neg">$' + fmtNum(s.max_risk || 0) + '</td>' +
-          '<td>' + rr + '</td>';
+          '<td>' + rr + '</td>' +
+          '<td>' + mdl + '</td>' +
+          '<td style="font-size:0.75rem">' + signalInfo + '</td>';
       });
       document.getElementById('ibSpreadsTable').innerHTML = buildTable(
-        ['Ticker', 'Type', 'Strikes', 'Expiration', 'Qty', 'Entry', 'Max Profit', 'Max Risk', 'R:R'], spreadRows
+        ['Ticker', 'Type', 'Strikes', 'Exp', 'Qty', 'Entry', 'Max Profit', 'Max Risk', 'R:R', 'Model', 'Signal'], spreadRows
       );
 
       // Open orders table — enriched with spread details

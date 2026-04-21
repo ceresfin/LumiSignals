@@ -61,6 +61,31 @@ def collect_ib_data(ib: IB) -> dict:
     # Group option positions into spreads
     spreads = _detect_spreads(positions)
 
+    # Enrich spreads with signal metadata from stored order details
+    for spread in spreads:
+        try:
+            # Search order details by ticker + strikes
+            for key_suffix in ["done", "details"]:
+                resp = requests.get(
+                    f"{SERVER_URL}/api/ibkr/order/search",
+                    params={"ticker": spread["symbol"], "sell_strike": spread.get("short_strike", 0), "buy_strike": spread.get("long_strike", 0)},
+                    headers={"X-Sync-Key": SYNC_KEY},
+                    timeout=5,
+                )
+                if resp.status_code == 200:
+                    details = resp.json()
+                    if details.get("model"):
+                        spread["model"] = details.get("model", "")
+                        spread["strategy"] = details.get("strategy", "")
+                        spread["trigger_pattern"] = details.get("trigger_pattern", "")
+                        spread["bias_score"] = details.get("bias_score", 0)
+                        spread["zone_type"] = details.get("zone_type", "")
+                        spread["zone_timeframe"] = details.get("zone_timeframe", "")
+                        spread["verdict"] = details.get("verdict", "")
+                        break
+        except Exception:
+            pass
+
     # Open orders — resolve combo legs to get strike/expiration details
     open_orders = []
     for trade in ib.openTrades():

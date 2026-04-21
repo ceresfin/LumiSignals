@@ -535,6 +535,37 @@ def create_app():
             rdb.setex(f"ibkr:order:details:{ib_order_id or order_id}", 604800, json.dumps(data))
         return jsonify({"status": "ok"})
 
+    @app.route("/api/ibkr/order/search")
+    def api_ibkr_order_search():
+        """Search stored order details by ticker + strikes."""
+        sync_key = request.headers.get("X-Sync-Key", "")
+        if sync_key != os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026"):
+            return jsonify({"error": "Invalid sync key"}), 403
+        import redis as _redis
+        rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+        ticker = request.args.get("ticker", "")
+        sell_strike = float(request.args.get("sell_strike", 0))
+        buy_strike = float(request.args.get("buy_strike", 0))
+        # Search through all stored order details
+        for key in rdb.scan_iter("ibkr:order:details:*"):
+            raw = rdb.get(key)
+            if raw:
+                details = json.loads(raw)
+                if (details.get("ticker") == ticker and
+                    abs(float(details.get("sell_strike", 0)) - sell_strike) < 0.01 and
+                    abs(float(details.get("buy_strike", 0)) - buy_strike) < 0.01):
+                    return jsonify(details)
+        # Also search done orders
+        for key in rdb.scan_iter("ibkr:order:done:*"):
+            raw = rdb.get(key)
+            if raw:
+                details = json.loads(raw)
+                if (details.get("ticker") == ticker and
+                    abs(float(details.get("sell_strike", 0)) - sell_strike) < 0.01 and
+                    abs(float(details.get("buy_strike", 0)) - buy_strike) < 0.01):
+                    return jsonify(details)
+        return jsonify({})
+
     @app.route("/api/ibkr/order/details/<ib_order_id>")
     def api_ibkr_order_details(ib_order_id):
         """Look up stored order details by IB order ID."""
