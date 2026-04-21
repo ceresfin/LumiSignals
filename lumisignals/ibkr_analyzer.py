@@ -114,9 +114,10 @@ def analyze_spreads_ib(ib: IB, ticker: str, zone_type: str,
         # Get available strikes near the zone
         # Filter to $5-wide strikes for high-priced stocks, $1 for cheaper ones
         all_strikes = sorted(chain.strikes)
-        if current_price > 50:
-            # Use only $5-increment strikes to avoid non-existent $2.50 strikes
+        if current_price > 200:
             all_strikes = [s for s in all_strikes if s % 5 == 0]
+        elif current_price > 50:
+            all_strikes = [s for s in all_strikes if s % 1 == 0]
         near_strikes = [s for s in all_strikes if abs(s - zone_price) <= current_price * 0.10]
         if len(near_strikes) < 4:
             near_strikes = [s for s in all_strikes if abs(s - zone_price) <= current_price * 0.20]

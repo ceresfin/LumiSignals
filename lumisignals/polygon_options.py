@@ -171,9 +171,13 @@ def analyze_spreads_polygon(api_key: str, ticker: str, zone_type: str,
             result["error"] = "No options data in 14-60 DTE range"
             return result
 
-        # Filter to $5-wide strikes for high-priced stocks
-        if current_price > 50:
+        # Filter strikes to avoid illiquid $0.50 increments on expensive stocks
+        # Only filter to $5 increments for stocks over $200 (AAPL, MSFT, etc.)
+        # Stocks $50-$200: use $1 increments. Under $50: use all available.
+        if current_price > 200:
             options = [o for o in options if o["strike"] % 5 == 0]
+        elif current_price > 50:
+            options = [o for o in options if o["strike"] % 1 == 0]
 
         # Group by expiration
         exps = {}
@@ -319,7 +323,7 @@ def _find_bear_call_credit_poly(options, exp_info, zone_price, current_price):
         buys = [o for o in options if o["right"] == "C" and o["strike"] > short_opt["strike"]]
         buys.sort(key=lambda o: o["strike"])
         for long_opt in buys[:2]:
-            if long_opt["strike"] - short_opt["strike"] >= 2.5:
+            if long_opt["strike"] - short_opt["strike"] >= 1.0:
                 result = _build_spread_poly("Bear Call Credit", short_opt, long_opt, True)
                 if result:
                     return result
@@ -333,7 +337,7 @@ def _find_bull_put_credit_poly(options, exp_info, zone_price, current_price):
         buys = [o for o in options if o["right"] == "P" and o["strike"] < short_opt["strike"]]
         buys.sort(key=lambda o: -o["strike"])
         for long_opt in buys[:2]:
-            if short_opt["strike"] - long_opt["strike"] >= 2.5:
+            if short_opt["strike"] - long_opt["strike"] >= 1.0:
                 result = _build_spread_poly("Bull Put Credit", short_opt, long_opt, True)
                 if result:
                     return result
@@ -347,7 +351,7 @@ def _find_bear_put_debit_poly(options, exp_info, zone_price, current_price):
         sells = [o for o in options if o["right"] == "P" and o["strike"] < long_opt["strike"]]
         sells.sort(key=lambda o: -o["strike"])
         for short_opt in sells[:2]:
-            if long_opt["strike"] - short_opt["strike"] >= 2.5:
+            if long_opt["strike"] - short_opt["strike"] >= 1.0:
                 result = _build_spread_poly("Bear Put Debit", short_opt, long_opt, False)
                 if result:
                     return result
@@ -361,7 +365,7 @@ def _find_bull_call_debit_poly(options, exp_info, zone_price, current_price):
         sells = [o for o in options if o["right"] == "C" and o["strike"] > long_opt["strike"]]
         sells.sort(key=lambda o: o["strike"])
         for short_opt in sells[:2]:
-            if short_opt["strike"] - long_opt["strike"] >= 2.5:
+            if short_opt["strike"] - long_opt["strike"] >= 1.0:
                 result = _build_spread_poly("Bull Call Debit", short_opt, long_opt, False)
                 if result:
                     return result
