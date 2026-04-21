@@ -475,33 +475,41 @@ function loadIBTrades() {
         ['Symbol', 'Type', 'Strikes', 'Expiration', 'Qty', 'Net Cost', 'Max Profit', 'Max Risk'], spreadRows
       );
 
-      // Open orders table
+      // Open orders table — enriched with spread details
       var orders = data.open_orders || [];
       document.getElementById('ibOrderCount').textContent = orders.length;
       var orderRows = orders.map(function(o) {
-        var desc = '<strong>' + o.symbol + '</strong>';
-        var legs = '';
-        if (o.legs && o.legs.length === 2) {
-          var sellLeg = o.legs.find(function(l) { return l.action === 'SELL'; });
-          var buyLeg = o.legs.find(function(l) { return l.action === 'BUY'; });
-          legs = 'Spread';
+        var strikes = '';
+        if (o.sell_strike && o.buy_strike) {
+          strikes = 'SELL ' + o.sell_strike + ' / BUY ' + o.buy_strike;
         }
+        var optType = o.right === 'C' ? 'Call' : (o.right === 'P' ? 'Put' : '');
+        var spreadBadge = '';
+        if (o.spread_type) {
+          var isCredit = o.spread_type.indexOf('Credit') >= 0;
+          spreadBadge = '<span class="badge" style="background:' + (isCredit ? '#e8f5e9;color:#27ae60' : '#fef3c7;color:#d97706') + '">' + o.spread_type.toUpperCase() + '</span>';
+        }
+        var premium = o.net_premium ? '$' + fmtNum(o.net_premium) : '—';
+        var premLabel = o.limit_price < 0 ? '<span class="pl-pos">' + premium + ' cr</span>' : '<span class="pl-neg">' + premium + ' dr</span>';
         var statusColor = '';
-        var statusBg = '';
-        if (o.status === 'Filled') { statusColor = 'pl-pos'; statusBg = 'background:#e8f5e9;'; }
-        else if (o.status === 'Cancelled') { statusColor = 'pl-neg'; statusBg = 'background:#fdecea;'; }
-        else if (o.status === 'Submitted') { statusColor = 'pl-pos'; statusBg = 'background:#e8f5e9;'; }
-        else { statusBg = 'background:#fff3e0;'; }
-        var price = o.limit_price ? '$' + fmtNum(Math.abs(o.limit_price)) : '—';
-        var priceLabel = o.limit_price < 0 ? '<span class="pl-pos">Credit ' + price + '</span>' : '<span class="pl-neg">Debit ' + price + '</span>';
-        return '<td>' + desc + '</td>' +
-          '<td>' + (o.sec_type === 'SPREAD' ? '<span class="badge" style="background:#f3e8ff;color:#7c3aed">SPREAD</span>' : o.sec_type) + '</td>' +
+        if (o.status === 'Submitted') statusColor = 'pl-pos';
+        else if (o.status === 'Cancelled') statusColor = 'pl-neg';
+        var exp = formatExp(o.expiration || '');
+        var rr = o.risk_reward ? o.risk_reward.toFixed(1) : '—';
+        return '<td><strong>' + o.symbol + '</strong></td>' +
+          '<td>' + spreadBadge + '</td>' +
+          '<td>' + strikes + ' ' + optType + '</td>' +
+          '<td>' + exp + '</td>' +
           '<td>' + o.quantity + '</td>' +
-          '<td>' + priceLabel + '</td>' +
-          '<td><span class="badge ' + statusColor + '" style="' + statusBg + '">' + o.status + '</span></td>';
+          '<td>' + premLabel + '</td>' +
+          '<td class="pl-pos">$' + fmtNum(o.max_profit || 0) + '</td>' +
+          '<td class="pl-neg">$' + fmtNum(o.max_risk || 0) + '</td>' +
+          '<td>' + rr + '</td>' +
+          '<td><span class="badge ' + statusColor + '">' + o.status + '</span></td>' +
+          '<td style="font-size:0.72rem">' + fmtTime(o.time || '') + '</td>';
       });
       document.getElementById('ibOrdersTable').innerHTML = buildTable(
-        ['Symbol', 'Type', 'Qty', 'Price', 'Status'], orderRows
+        ['Ticker', 'Type', 'Strikes', 'Exp', 'Qty', 'Premium', 'Max Profit', 'Max Risk', 'R:R', 'Status', 'Submitted'], orderRows
       );
     })
     .catch(function(e) {

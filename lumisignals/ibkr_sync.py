@@ -61,7 +61,7 @@ def collect_ib_data(ib: IB) -> dict:
     # Group option positions into spreads
     spreads = _detect_spreads(positions)
 
-    # Open orders
+    # Open orders — resolve combo legs to get strike/expiration details
     open_orders = []
     for trade in ib.openTrades():
         o = trade.order
@@ -75,18 +75,59 @@ def collect_ib_data(ib: IB) -> dict:
             "order_type": o.orderType,
             "limit_price": o.lmtPrice,
             "status": trade.orderStatus.status,
+            "time": str(trade.log[0].time) if trade.log else "",
         }
         if c.secType == "BAG":
-            # Combo order (spread)
+            # Combo order (spread) — resolve leg details
             legs = []
+            sell_strike = 0
+            buy_strike = 0
+            expiration = ""
+            right = ""
             for leg in c.comboLegs:
-                legs.append({
-                    "con_id": leg.conId,
-                    "action": leg.action,
-                    "ratio": leg.ratio,
-                })
+                leg_info = {"con_id": leg.conId, "action": leg.action, "ratio": leg.ratio}
+                # Try to resolve contract details
+                try:
+                    from ib_insync import Contract as IBContract
+                    leg_contract = IBContract(conId=leg.conId)
+                    ib.qualifyContracts(leg_contract)
+                    leg_info["strike"] = getattr(leg_contract, "strike", 0)
+                    leg_info["expiration"] = getattr(leg_contract, "lastTradeDateOrContractMonth", "")
+                    leg_info["right"] = getattr(leg_contract, "right", "")
+                    if leg.action == "SELL":
+                        sell_strike = leg_info["strike"]
+                    else:
+                        buy_strike = leg_info["strike"]
+                    if not expiration:
+                        expiration = leg_info["expiration"]
+                    if not right:
+                        right = leg_info["right"]
+                except Exception:
+                    pass
+                legs.append(leg_info)
             order_entry["legs"] = legs
             order_entry["sec_type"] = "SPREAD"
+            order_entry["sell_strike"] = sell_strike
+            order_entry["buy_strike"] = buy_strike
+            order_entry["expiration"] = expiration
+            order_entry["right"] = right
+            # Determine spread type
+            is_credit = o.lmtPrice < 0
+            width = abs(sell_strike - buy_strike) if sell_strike and buy_strike else 0
+            if right == "C":
+                order_entry["spread_type"] = "Bear Call Credit" if is_credit else "Bull Call Debit"
+                order_entry["direction"] = "SELL"
+            elif right == "P":
+                order_entry["spread_type"] = "Bull Put Credit" if is_credit else "Bear Put Debit"
+                order_entry["direction"] = "BUY" if "Bull" in order_entry.get("spread_type", "") else "SELL"
+            else:
+                order_entry["spread_type"] = "Credit Spread" if is_credit else "Debit Spread"
+                order_entry["direction"] = ""
+            order_entry["width"] = width
+            order_entry["net_premium"] = abs(o.lmtPrice)
+            order_entry["max_risk"] = round((width - abs(o.lmtPrice)) * 100, 2) if is_credit and width else round(abs(o.lmtPrice) * 100, 2)
+            order_entry["max_profit"] = round(abs(o.lmtPrice) * 100, 2) if is_credit else round((width - abs(o.lmtPrice)) * 100, 2) if width else 0
+            order_entry["risk_reward"] = round(order_entry["max_profit"] / order_entry["max_risk"], 2) if order_entry["max_risk"] > 0 else 0
         elif c.secType == "OPT":
             order_entry["expiration"] = c.lastTradeDateOrContractMonth
             order_entry["strike"] = c.strike
