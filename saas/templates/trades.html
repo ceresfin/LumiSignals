@@ -418,13 +418,18 @@ function formatExp(exp) {
 }
 
 function loadIBTrades() {
-  fetch('/api/ibkr/trades')
-    .then(function(r) { return r.json(); })
-    .then(function(data) {
-      if (!data.connected) {
-        document.getElementById('ibOffline').style.display = 'block';
-        document.getElementById('ibkrSection').style.display = 'none';
-        return;
+  // Fetch both IB sync data and stored orders
+  Promise.all([
+    fetch('/api/ibkr/trades').then(function(r) { return r.json(); }),
+    fetch('/api/ibkr/orders/all').then(function(r) { return r.json(); }).catch(function() { return {orders: []}; }),
+  ]).then(function(results) {
+    var data = results[0];
+    var storedOrders = results[1].orders || [];
+
+    if (!data.connected && !storedOrders.length) {
+      document.getElementById('ibOffline').style.display = 'block';
+      document.getElementById('ibkrSection').style.display = 'none';
+      return;
       }
 
       document.getElementById('ibOffline').style.display = 'none';
@@ -486,8 +491,8 @@ function loadIBTrades() {
         ['Ticker', 'Type', 'Strikes', 'Exp', 'Qty', 'Entry', 'Max Profit', 'Max Risk', 'R:R', 'Model', 'Signal'], spreadRows
       );
 
-      // Open orders table — enriched with spread details
-      var orders = data.open_orders || [];
+      // Orders table — use stored orders (shows all states: queued/placing/submitted/filled/failed)
+      var orders = storedOrders.length ? storedOrders : (data.open_orders || []);
       document.getElementById('ibOrderCount').textContent = orders.length;
       var orderRows = orders.map(function(o) {
         var strikes = '';
@@ -503,8 +508,9 @@ function loadIBTrades() {
         var premium = o.net_premium ? '$' + fmtNum(o.net_premium) : '—';
         var premLabel = o.is_credit ? '<span class="pl-pos">' + premium + ' cr</span>' : '<span class="pl-neg">' + premium + ' dr</span>';
         var statusColor = '';
-        if (o.status === 'Submitted') statusColor = 'pl-pos';
-        else if (o.status === 'Cancelled') statusColor = 'pl-neg';
+        if (o.status === 'Submitted' || o.status === 'PreSubmitted' || o.status === 'filled') statusColor = 'pl-pos';
+        else if (o.status === 'Cancelled' || o.status === 'failed') statusColor = 'pl-neg';
+        else if (o.status === 'queued' || o.status === 'placing') statusColor = '';
         var exp = formatExp(o.expiration || '');
         var rr = o.risk_reward ? o.risk_reward.toFixed(1) : '—';
         var signalInfo = '';

@@ -467,11 +467,11 @@ def check_order_requests(ib: IB):
                     "max_profit": order.get("max_profit", 0),
                     "risk_reward": order.get("risk_reward", 0),
                 }
-                # Store order details on server for later lookup
+                # Update order status on server
                 try:
                     requests.post(
-                        f"{SERVER_URL}/api/ibkr/order/result",
-                        json={**result, "store_details": True},
+                        f"{SERVER_URL}/api/ibkr/order/update",
+                        json=result,
                         headers={"X-Sync-Key": SYNC_KEY},
                         timeout=10,
                     )
@@ -482,20 +482,23 @@ def check_order_requests(ib: IB):
             except Exception as e:
                 result = {
                     "order_id": order_id,
-                    "status": "FAILED",
+                    "status": "failed",
                     "ticker": ticker,
                     "error": str(e),
                     "message": f"Order failed: {e}",
                 }
                 logger.error("Order failed for %s: %s", ticker, e)
 
-            # Push result back
-            requests.post(
-                f"{SERVER_URL}/api/ibkr/order/result",
-                json=result,
-                headers={"X-Sync-Key": SYNC_KEY},
-                timeout=10,
-            )
+            # Update order status on server
+            try:
+                requests.post(
+                    f"{SERVER_URL}/api/ibkr/order/update",
+                    json=result,
+                    headers={"X-Sync-Key": SYNC_KEY},
+                    timeout=10,
+                )
+            except Exception:
+                pass
 
     except requests.exceptions.ConnectionError:
         pass

@@ -504,23 +504,47 @@ def create_app():
 
     @app.route("/api/ibkr/orders/pending")
     def api_ibkr_orders_pending():
-        """Return pending orders for the sync script."""
+        """Return orders with status 'queued' for the sync script to place."""
         sync_key = request.headers.get("X-Sync-Key", "")
         if sync_key != os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026"):
             return jsonify({"error": "Invalid sync key"}), 403
         import redis as _redis
         rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
         orders = []
-        for key in rdb.scan_iter("ibkr:order:pending:*"):
+        for key in rdb.scan_iter("ibkr:order:*"):
             raw = rdb.get(key)
             if raw:
-                orders.append(json.loads(raw))
-                rdb.delete(key)
+                order = json.loads(raw)
+                if order.get("status") == "queued":
+                    orders.append(order)
+                    # Mark as "placing" so we don't pick it up again
+                    order["status"] = "placing"
+                    rdb.setex(key, 86400, json.dumps(order))
         return jsonify({"orders": orders})
 
-    @app.route("/api/ibkr/order/result", methods=["POST"])
-    def api_ibkr_order_result():
-        """Receive order placement result from sync script."""
+    @app.route("/api/ibkr/orders/all")
+    @login_required
+    def api_ibkr_orders_all():
+        """Return all options orders for the Trades page (queued, placing, submitted, filled, failed)."""
+        import redis as _redis
+        rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+        orders = []
+        for key in rdb.scan_iter("ibkr:order:*"):
+            if ":details:" in key.decode() if isinstance(key, bytes) else ":details:" in key:
+                continue  # skip detail lookups
+            raw = rdb.get(key)
+            if raw:
+                order = json.loads(raw)
+                if order.get("user_id") == current_user.id and order.get("ticker"):
+                    orders.append(order)
+        # Sort: queued/placing first, then by time
+        status_order = {"queued": 0, "placing": 1, "submitted": 2, "filled": 3, "failed": 4, "cancelled": 5}
+        orders.sort(key=lambda o: (status_order.get(o.get("status", ""), 9), o.get("order_id", "")))
+        return jsonify({"orders": orders})
+
+    @app.route("/api/ibkr/order/update", methods=["POST"])
+    def api_ibkr_order_update():
+        """Update order status (called by sync script after placing)."""
         sync_key = request.headers.get("X-Sync-Key", "")
         if sync_key != os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026"):
             return jsonify({"error": "Invalid sync key"}), 403
@@ -528,12 +552,20 @@ def create_app():
         rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
         data = request.get_json()
         order_id = data.get("order_id", "")
-        rdb.setex(f"ibkr:order:done:{order_id}", 3600, json.dumps(data))
-        # Store details by IB order ID for enriching open orders display
-        ib_order_id = data.get("ib_order_id")
-        if ib_order_id or data.get("store_details"):
-            rdb.setex(f"ibkr:order:details:{ib_order_id or order_id}", 604800, json.dumps(data))
-        return jsonify({"status": "ok"})
+        # Find and update the order
+        for key in rdb.scan_iter("ibkr:order:*"):
+            raw = rdb.get(key)
+            if raw:
+                order = json.loads(raw)
+                if order.get("order_id") == order_id:
+                    order.update(data)
+                    rdb.setex(key, 86400, json.dumps(order))
+                    # Also store by IB order ID for enrichment
+                    ib_order_id = data.get("ib_order_id")
+                    if ib_order_id:
+                        rdb.setex(f"ibkr:order:details:{ib_order_id}", 604800, json.dumps(order))
+                    return jsonify({"status": "ok"})
+        return jsonify({"status": "not_found"})
 
     @app.route("/api/ibkr/order/search")
     def api_ibkr_order_search():
