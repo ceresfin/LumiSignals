@@ -496,12 +496,15 @@ function loadIBTrades() {
         if (s.trigger_pattern) signalInfo += '<strong>' + s.trigger_pattern + '</strong><br>';
         if (s.zone_timeframe) signalInfo += s.zone_timeframe + ' ' + (s.zone_type || '') + '<br>';
         if (s.bias_score) signalInfo += '<span style="font-weight:600;' + (s.bias_score >= 70 ? 'color:var(--green)' : '') + '">' + Math.round(s.bias_score) + '/100</span>';
+        var pnl = s.unrealized_pnl || 0;
+        var pnlClass = plClass(pnl);
         return '<td><strong>' + s.symbol + '</strong></td>' +
           '<td>' + spreadTypeBadge(s.spread_type) + '</td>' +
           '<td>' + strikes + ' ' + (s.right === 'C' ? 'Call' : 'Put') + '</td>' +
           '<td>' + formatExp(s.expiration) + '</td>' +
           '<td>' + s.quantity + '</td>' +
           '<td>' + costLabel + '</td>' +
+          '<td class="' + pnlClass + '">$' + fmt(pnl) + '</td>' +
           '<td class="pl-pos">$' + fmtNum(s.max_profit || 0) + '</td>' +
           '<td class="pl-neg">$' + fmtNum(s.max_risk || 0) + '</td>' +
           '<td>' + rr + '</td>' +
@@ -509,7 +512,7 @@ function loadIBTrades() {
           '<td style="font-size:0.75rem">' + signalInfo + '</td>';
       });
       document.getElementById('ibSpreadsTable').innerHTML = buildTable(
-        ['Ticker', 'Type', 'Strikes', 'Exp', 'Qty', 'Entry', 'Max Profit', 'Max Risk', 'R:R', 'Model', 'Signal'], spreadRows
+        ['Ticker', 'Type', 'Strikes', 'Exp', 'Qty', 'Entry', 'P&L', 'Max Profit', 'Max Risk', 'R:R', 'Model', 'Signal'], spreadRows
       );
 
       // Orders table — use stored orders, filter out ones that became positions

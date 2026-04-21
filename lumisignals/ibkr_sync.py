@@ -40,23 +40,45 @@ def collect_ib_data(ib: IB) -> dict:
                         "AvailableFunds", "InitMarginReq", "MaintMarginReq"):
             account[item.tag] = float(item.value)
 
-    # Positions
+    # Positions with market values and P&L
     positions = []
-    for pos in ib.positions():
-        c = pos.contract
+    portfolio_items = ib.portfolio()
+    for item in portfolio_items:
+        c = item.contract
         entry = {
             "symbol": c.symbol,
             "sec_type": c.secType,
-            "quantity": float(pos.position),
-            "avg_cost": pos.avgCost,
+            "quantity": float(item.position),
+            "avg_cost": item.averageCost,
+            "market_price": item.marketPrice,
+            "market_value": item.marketValue,
+            "unrealized_pnl": item.unrealizedPNL,
+            "realized_pnl": item.realizedPNL,
             "con_id": c.conId,
         }
         if c.secType == "OPT":
             entry["expiration"] = c.lastTradeDateOrContractMonth
             entry["strike"] = c.strike
-            entry["right"] = c.right  # C or P
+            entry["right"] = c.right
             entry["multiplier"] = int(c.multiplier or 100)
         positions.append(entry)
+    # Fallback to ib.positions() if portfolio is empty
+    if not positions:
+        for pos in ib.positions():
+            c = pos.contract
+            entry = {
+                "symbol": c.symbol,
+                "sec_type": c.secType,
+                "quantity": float(pos.position),
+                "avg_cost": pos.avgCost,
+                "con_id": c.conId,
+            }
+            if c.secType == "OPT":
+                entry["expiration"] = c.lastTradeDateOrContractMonth
+                entry["strike"] = c.strike
+                entry["right"] = c.right
+                entry["multiplier"] = int(c.multiplier or 100)
+            positions.append(entry)
 
     # Group option positions into spreads
     spreads = _detect_spreads(positions)
@@ -265,6 +287,16 @@ def _detect_spreads(positions: list) -> list:
                 # Net cost = what we paid (debit) or received (credit)
                 net_cost = (long_leg["avg_cost"] - short_leg["avg_cost"])
 
+                # Calculate unrealized P&L from position data
+                long_pnl = long_leg.get("unrealized_pnl", 0) or 0
+                short_pnl = short_leg.get("unrealized_pnl", 0) or 0
+                spread_pnl = round(long_pnl + short_pnl, 2)
+
+                # Current market value of the spread
+                long_mkt = long_leg.get("market_value", 0) or 0
+                short_mkt = short_leg.get("market_value", 0) or 0
+                current_value = round(long_mkt + short_mkt, 2)
+
                 spreads.append({
                     "symbol": symbol,
                     "expiration": expiration,
@@ -277,6 +309,8 @@ def _detect_spreads(positions: list) -> list:
                     "net_cost": round(net_cost, 2),
                     "max_risk": round((width * 100) - abs(net_cost), 2) if "Credit" in spread_type else round(abs(net_cost), 2),
                     "max_profit": round(abs(net_cost), 2) if "Credit" in spread_type else round((width * 100) - abs(net_cost), 2),
+                    "unrealized_pnl": spread_pnl,
+                    "current_value": current_value,
                 })
             else:
                 # Naked option positions
