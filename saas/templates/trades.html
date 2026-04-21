@@ -509,10 +509,11 @@ function loadIBTrades() {
           '<td class="pl-neg">$' + fmtNum(s.max_risk || 0) + '</td>' +
           '<td>' + rr + '</td>' +
           '<td>' + mdl + '</td>' +
+          '<td style="font-size:0.72rem">' + fmtTime(s.opened_at || '') + '<br><span style="color:var(--text-light)">' + duration(s.opened_at) + '</span></td>' +
           '<td style="font-size:0.75rem">' + signalInfo + '</td>';
       });
       document.getElementById('ibSpreadsTable').innerHTML = buildTable(
-        ['Ticker', 'Type', 'Strikes', 'Exp', 'Qty', 'Entry', 'P&L', 'Max Profit', 'Max Risk', 'R:R', 'Model', 'Signal'], spreadRows
+        ['Ticker', 'Type', 'Strikes', 'Exp', 'Qty', 'Entry', 'P&L', 'Max Profit', 'Max Risk', 'R:R', 'Model', 'Opened', 'Signal'], spreadRows
       );
 
       // Orders table — use stored orders, filter out ones that became positions

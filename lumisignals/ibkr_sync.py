@@ -104,6 +104,7 @@ def collect_ib_data(ib: IB) -> dict:
                         spread["zone_type"] = details.get("zone_type", "")
                         spread["zone_timeframe"] = details.get("zone_timeframe", "")
                         spread["verdict"] = details.get("verdict", "")
+                        spread["opened_at"] = details.get("queued_at", "")
                         break
         except Exception:
             pass
