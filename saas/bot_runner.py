@@ -143,7 +143,11 @@ def _auto_trade_options(user_data, signal, extra_meta, model_name, log, alert_pa
             )
 
             if sizing["contracts"] > 0:
+                import uuid
+                order_id = str(uuid.uuid4())[:8]
                 order = {
+                    "order_id": order_id,
+                    "user_id": user_id,
                     "ticker": symbol,
                     "spread_type": credit["type"],
                     "buy_strike": credit["long_strike"],
@@ -152,14 +156,24 @@ def _auto_trade_options(user_data, signal, extra_meta, model_name, log, alert_pa
                     "expiration": credit["expiration"],
                     "quantity": sizing["contracts"],
                     "limit_price": premium,
+                    "is_credit": True,
+                    "width": width,
+                    "max_risk": sizing["total_risk"],
+                    "max_profit": sizing["max_profit"],
+                    "risk_reward": credit["risk_reward"],
+                    "verdict": credit["verdict"],
+                    "status": "queued",
+                    "auto": True,
+                    "model": model_name,
+                    "strategy": "htf_levels",
+                    "zone_type": zone_type,
+                    "zone_price": zone_price,
+                    "trigger_pattern": (extra_meta or {}).get("trigger_pattern", ""),
+                    "bias_score": (extra_meta or {}).get("bias_score", 0),
+                    "zone_timeframe": (extra_meta or {}).get("zone_timeframe", ""),
+                    "signal_action": signal.action,
+                    "signal_entry": signal.entry,
                 }
-                # Queue in Redis for IB sync script
-                import uuid
-                order_id = str(uuid.uuid4())[:8]
-                order["order_id"] = order_id
-                order["user_id"] = user_id
-                order["status"] = "queued"
-                order["auto"] = True
                 rdb.setex(f"ibkr:order:pending:{order_id}", 86400, json.dumps(order))
                 orders_queued.append(f"{credit['type']} {sizing['contracts']}x @ ${premium:.2f}")
                 log(f"[{model_name.upper()}] OPTIONS QUEUED: {credit['type']} {symbol} SELL {credit['short_strike']} / BUY {credit['long_strike']} x{sizing['contracts']} @ ${premium:.2f} (risk ${sizing['total_risk']:.0f})")
@@ -182,7 +196,11 @@ def _auto_trade_options(user_data, signal, extra_meta, model_name, log, alert_pa
             )
 
             if sizing["contracts"] > 0:
+                import uuid
+                order_id = str(uuid.uuid4())[:8]
                 order = {
+                    "order_id": order_id,
+                    "user_id": user_id,
                     "ticker": symbol,
                     "spread_type": debit["type"],
                     "buy_strike": debit["long_strike"],
@@ -191,13 +209,24 @@ def _auto_trade_options(user_data, signal, extra_meta, model_name, log, alert_pa
                     "expiration": debit["expiration"],
                     "quantity": sizing["contracts"],
                     "limit_price": premium,
+                    "is_credit": False,
+                    "width": width,
+                    "max_risk": sizing["total_risk"],
+                    "max_profit": sizing["max_profit"],
+                    "risk_reward": debit["risk_reward"],
+                    "verdict": debit["verdict"],
+                    "status": "queued",
+                    "auto": True,
+                    "model": model_name,
+                    "strategy": "htf_levels",
+                    "zone_type": zone_type,
+                    "zone_price": zone_price,
+                    "trigger_pattern": (extra_meta or {}).get("trigger_pattern", ""),
+                    "bias_score": (extra_meta or {}).get("bias_score", 0),
+                    "zone_timeframe": (extra_meta or {}).get("zone_timeframe", ""),
+                    "signal_action": signal.action,
+                    "signal_entry": signal.entry,
                 }
-                import uuid
-                order_id = str(uuid.uuid4())[:8]
-                order["order_id"] = order_id
-                order["user_id"] = user_id
-                order["status"] = "queued"
-                order["auto"] = True
                 rdb.setex(f"ibkr:order:pending:{order_id}", 86400, json.dumps(order))
                 orders_queued.append(f"{debit['type']} {sizing['contracts']}x @ ${premium:.2f}")
                 log(f"[{model_name.upper()}] OPTIONS QUEUED: {debit['type']} {symbol} BUY {debit['long_strike']} / SELL {debit['short_strike']} x{sizing['contracts']} @ ${premium:.2f} (risk ${sizing['total_risk']:.0f})")

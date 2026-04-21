@@ -419,6 +419,19 @@ def check_order_requests(ib: IB):
                     "limit_price": limit_price,
                     "is_credit": is_credit,
                     "message": f"Order placed: {trade.orderStatus.status}",
+                    # Pass through signal metadata
+                    "model": order.get("model", ""),
+                    "strategy": order.get("strategy", ""),
+                    "zone_type": order.get("zone_type", ""),
+                    "zone_price": order.get("zone_price", 0),
+                    "trigger_pattern": order.get("trigger_pattern", ""),
+                    "bias_score": order.get("bias_score", 0),
+                    "zone_timeframe": order.get("zone_timeframe", ""),
+                    "verdict": order.get("verdict", ""),
+                    "width": order.get("width", 0),
+                    "max_risk": order.get("max_risk", 0),
+                    "max_profit": order.get("max_profit", 0),
+                    "risk_reward": order.get("risk_reward", 0),
                 }
                 # Store order details keyed by IB order ID for later lookup
                 import redis as _redis
