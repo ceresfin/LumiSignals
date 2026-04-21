@@ -275,17 +275,21 @@ def check_order_requests(ib: IB):
             quantity = int(order["quantity"])
             limit_price = float(order["limit_price"])
 
-            logger.info("Placing %s order: %s %s/%s %s exp %s x%d @ $%.2f",
-                        spread_type, ticker, sell_strike, buy_strike, right, expiration, quantity, limit_price)
+            is_credit = "Credit" in spread_type
+            logger.info("Placing %s order: %s SELL %s / BUY %s %s exp %s x%d @ $%.2f (%s)",
+                        spread_type, ticker, sell_strike, buy_strike, right, expiration, quantity, limit_price,
+                        "credit" if is_credit else "debit")
 
             try:
-                from .ibkr_client import IBKRClient
-                # Use the existing ib connection
                 from ib_insync import Option, ComboLeg, Contract, LimitOrder
 
                 buy_contract = Option(ticker, expiration, buy_strike, right, "SMART")
                 sell_contract = Option(ticker, expiration, sell_strike, right, "SMART")
                 ib.qualifyContracts(buy_contract, sell_contract)
+
+                # Verify strikes are valid
+                if not buy_contract.conId or not sell_contract.conId:
+                    raise ValueError(f"Could not qualify contracts: buy={buy_strike} sell={sell_strike}")
 
                 combo = Contract()
                 combo.symbol = ticker
@@ -293,22 +297,36 @@ def check_order_requests(ib: IB):
                 combo.currency = "USD"
                 combo.exchange = "SMART"
 
+                # For credit spreads: sell the expensive leg, buy the cheap leg
+                # For debit spreads: buy the expensive leg, sell the cheap leg
+                # IB combo: leg actions are absolute (BUY/SELL per leg)
+                # Order action "BUY" with negative price = receive credit
+                # Order action "BUY" with positive price = pay debit
+
                 leg1 = ComboLeg()
-                leg1.conId = buy_contract.conId
+                leg1.conId = sell_contract.conId
                 leg1.ratio = 1
-                leg1.action = "BUY"
+                leg1.action = "SELL"
                 leg1.exchange = "SMART"
 
                 leg2 = ComboLeg()
-                leg2.conId = sell_contract.conId
+                leg2.conId = buy_contract.conId
                 leg2.ratio = 1
-                leg2.action = "SELL"
+                leg2.action = "BUY"
                 leg2.exchange = "SMART"
 
                 combo.comboLegs = [leg1, leg2]
 
-                ib_order = LimitOrder("BUY", quantity, limit_price)
-                ib_order.tif = "GTC"  # Good till cancelled
+                if is_credit:
+                    # Credit spread: we receive premium
+                    # IB: BUY the combo at negative price = receive credit
+                    ib_order = LimitOrder("BUY", quantity, -limit_price)
+                else:
+                    # Debit spread: we pay premium
+                    # IB: BUY the combo at positive price = pay debit
+                    ib_order = LimitOrder("BUY", quantity, limit_price)
+
+                ib_order.tif = "GTC"
 
                 trade = ib.placeOrder(combo, ib_order)
                 ib.sleep(2)
