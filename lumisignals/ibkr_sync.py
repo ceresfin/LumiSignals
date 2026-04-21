@@ -86,14 +86,14 @@ def collect_ib_data(ib: IB) -> dict:
             right = ""
             for leg in c.comboLegs:
                 leg_info = {"con_id": leg.conId, "action": leg.action, "ratio": leg.ratio}
-                # Try to resolve contract details
+                # Resolve contract details using Option contract
                 try:
-                    from ib_insync import Contract as IBContract
-                    leg_contract = IBContract(conId=leg.conId)
+                    from ib_insync import Option as IBOption
+                    leg_contract = IBOption(conId=leg.conId)
                     ib.qualifyContracts(leg_contract)
-                    leg_info["strike"] = getattr(leg_contract, "strike", 0)
-                    leg_info["expiration"] = getattr(leg_contract, "lastTradeDateOrContractMonth", "")
-                    leg_info["right"] = getattr(leg_contract, "right", "")
+                    leg_info["strike"] = leg_contract.strike
+                    leg_info["expiration"] = leg_contract.lastTradeDateOrContractMonth
+                    leg_info["right"] = leg_contract.right
                     if leg.action == "SELL":
                         sell_strike = leg_info["strike"]
                     else:
@@ -105,6 +105,22 @@ def collect_ib_data(ib: IB) -> dict:
                 except Exception:
                     pass
                 legs.append(leg_info)
+            # If leg resolution failed, look up stored order details from Redis
+            if not right:
+                try:
+                    import redis as _redis
+                    rdb = _redis.from_url("redis://localhost:6379/0")
+                    stored = rdb.get(f"ibkr:order:details:{o.orderId}")
+                    if stored:
+                        details = json.loads(stored)
+                        right = details.get("right", right)
+                        sell_strike = float(details.get("sell_strike", sell_strike))
+                        buy_strike = float(details.get("buy_strike", buy_strike))
+                        expiration = details.get("expiration", expiration)
+                        order_entry["spread_type"] = details.get("spread_type", "")
+                        order_entry["is_credit"] = details.get("is_credit", False)
+                except Exception:
+                    pass
             order_entry["legs"] = legs
             order_entry["sec_type"] = "SPREAD"
             order_entry["sell_strike"] = sell_strike
@@ -395,8 +411,19 @@ def check_order_requests(ib: IB):
                     "status": trade.orderStatus.status,
                     "ticker": ticker,
                     "spread_type": spread_type,
+                    "sell_strike": sell_strike,
+                    "buy_strike": buy_strike,
+                    "right": right,
+                    "expiration": expiration,
+                    "quantity": quantity,
+                    "limit_price": limit_price,
+                    "is_credit": is_credit,
                     "message": f"Order placed: {trade.orderStatus.status}",
                 }
+                # Store order details keyed by IB order ID for later lookup
+                import redis as _redis
+                rdb_local = _redis.from_url("redis://localhost:6379/0")
+                rdb_local.setex(f"ibkr:order:details:{trade.order.orderId}", 604800, json.dumps(result))
                 logger.info("Order placed: %s — %s", ticker, trade.orderStatus.status)
 
             except Exception as e:
