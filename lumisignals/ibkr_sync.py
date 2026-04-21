@@ -111,22 +111,39 @@ def collect_ib_data(ib: IB) -> dict:
             order_entry["buy_strike"] = buy_strike
             order_entry["expiration"] = expiration
             order_entry["right"] = right
-            # Determine spread type
-            is_credit = o.lmtPrice < 0
+            # Determine spread type from leg structure
+            # Credit spread: sell the more expensive (closer to money) option
+            # For calls: sell lower strike = bear call credit
+            # For puts: sell higher strike = bull put credit
             width = abs(sell_strike - buy_strike) if sell_strike and buy_strike else 0
+            premium = abs(o.lmtPrice)
             if right == "C":
-                order_entry["spread_type"] = "Bear Call Credit" if is_credit else "Bull Call Debit"
-                order_entry["direction"] = "SELL"
+                if sell_strike < buy_strike:
+                    order_entry["spread_type"] = "Bear Call Credit"
+                    order_entry["direction"] = "SELL"
+                else:
+                    order_entry["spread_type"] = "Bull Call Debit"
+                    order_entry["direction"] = "BUY"
             elif right == "P":
-                order_entry["spread_type"] = "Bull Put Credit" if is_credit else "Bear Put Debit"
-                order_entry["direction"] = "BUY" if "Bull" in order_entry.get("spread_type", "") else "SELL"
+                if sell_strike > buy_strike:
+                    order_entry["spread_type"] = "Bull Put Credit"
+                    order_entry["direction"] = "BUY"
+                else:
+                    order_entry["spread_type"] = "Bear Put Debit"
+                    order_entry["direction"] = "SELL"
             else:
-                order_entry["spread_type"] = "Credit Spread" if is_credit else "Debit Spread"
+                order_entry["spread_type"] = "Spread"
                 order_entry["direction"] = ""
+            is_credit = "Credit" in order_entry["spread_type"]
             order_entry["width"] = width
-            order_entry["net_premium"] = abs(o.lmtPrice)
-            order_entry["max_risk"] = round((width - abs(o.lmtPrice)) * 100, 2) if is_credit and width else round(abs(o.lmtPrice) * 100, 2)
-            order_entry["max_profit"] = round(abs(o.lmtPrice) * 100, 2) if is_credit else round((width - abs(o.lmtPrice)) * 100, 2) if width else 0
+            order_entry["net_premium"] = premium
+            order_entry["is_credit"] = is_credit
+            if is_credit:
+                order_entry["max_profit"] = round(premium * 100, 2)
+                order_entry["max_risk"] = round((width - premium) * 100, 2) if width else 0
+            else:
+                order_entry["max_risk"] = round(premium * 100, 2)
+                order_entry["max_profit"] = round((width - premium) * 100, 2) if width else 0
             order_entry["risk_reward"] = round(order_entry["max_profit"] / order_entry["max_risk"], 2) if order_entry["max_risk"] > 0 else 0
         elif c.secType == "OPT":
             order_entry["expiration"] = c.lastTradeDateOrContractMonth

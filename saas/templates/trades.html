@@ -490,7 +490,7 @@ function loadIBTrades() {
           spreadBadge = '<span class="badge" style="background:' + (isCredit ? '#e8f5e9;color:#27ae60' : '#fef3c7;color:#d97706') + '">' + o.spread_type.toUpperCase() + '</span>';
         }
         var premium = o.net_premium ? '$' + fmtNum(o.net_premium) : '—';
-        var premLabel = o.limit_price < 0 ? '<span class="pl-pos">' + premium + ' cr</span>' : '<span class="pl-neg">' + premium + ' dr</span>';
+        var premLabel = o.is_credit ? '<span class="pl-pos">' + premium + ' cr</span>' : '<span class="pl-neg">' + premium + ' dr</span>';
         var statusColor = '';
         if (o.status === 'Submitted') statusColor = 'pl-pos';
         else if (o.status === 'Cancelled') statusColor = 'pl-neg';
