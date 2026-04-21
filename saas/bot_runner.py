@@ -85,7 +85,7 @@ def publish_log(user_id, entries):
 def _auto_trade_options(user_data, signal, extra_meta, model_name, log, alert_pass, email):
     """Analyze and queue options spread when a stock signal fires."""
     from lumisignals.polygon_options import analyze_spreads_polygon
-    from lumisignals.ibkr_client import calculate_spread_contracts, OptionsRiskConfig
+    from lumisignals.options_sizing import OptionsRiskConfig, calculate_spread_contracts
 
     user_id = user_data["id"]
     symbol = signal.symbol
@@ -102,12 +102,20 @@ def _auto_trade_options(user_data, signal, extra_meta, model_name, log, alert_pa
 
     log(f"[{model_name.upper()}] OPTIONS: Analyzing {symbol} ({zone_type} zone @ {zone_price:.2f})")
 
-    # Run Polygon analysis
-    result = analyze_spreads_polygon(massive_key, symbol, zone_type, zone_price, signal.entry)
+    # Run Polygon analysis (with timeout protection)
+    try:
+        result = analyze_spreads_polygon(massive_key, symbol, zone_type, zone_price, signal.entry)
+    except Exception as e:
+        log(f"[{model_name.upper()}] OPTIONS: Polygon analysis failed — {e}")
+        return
 
     if result.get("error"):
         log(f"[{model_name.upper()}] OPTIONS: Analysis error — {result['error']}")
         return
+
+    credit = result.get("credit_spread")
+    debit = result.get("debit_spread")
+    log(f"[{model_name.upper()}] OPTIONS: {symbol} — credit: {credit.get('verdict') if credit else 'none'}, debit: {debit.get('verdict') if debit else 'none'}")
 
     # Build risk config from user settings
     risk_config = OptionsRiskConfig(
