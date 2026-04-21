@@ -87,25 +87,31 @@ tr:hover { background: rgba(0,0,0,0.015); }
   <!-- Strategy Breakdown -->
   <div id="strategyBreakdown"><div class="loading">Loading strategy breakdown...</div></div>
 
-  <!-- Open Trades -->
+  <!-- ============ FX TRADES (Oanda) ============ -->
+  <div class="strategy-section">
+    <div class="strategy-header"><span class="strategy-tag" style="background:#0284c7">FX</span> Forex Trades — Oanda
+      <button class="refresh-btn" onclick="loadOandaTrades()" style="margin-left:auto;">Refresh</button>
+    </div>
+  </div>
+
   <div class="card">
-    <h2>Open Trades <span class="count" id="openCount">0</span>
-      <button class="refresh-btn" onclick="loadOandaTrades()">Refresh</button></h2>
+    <h2>Open FX Trades <span class="count" id="openCount">0</span></h2>
     <div id="openTable"><div class="loading">Loading...</div></div>
   </div>
 
-  <!-- Closed Trades -->
   <div class="card">
-    <h2>Trade History <span class="count" id="closedCount">0</span></h2>
+    <h2>Closed FX Trades <span class="count" id="closedCount">0</span></h2>
     <div id="closedTable"><div class="loading">Loading...</div></div>
   </div>
 
-  <!-- Options Trades (Interactive Brokers) -->
-  <div id="ibkrSection" style="display:none;">
-    <div class="strategy-section">
-      <div class="strategy-header"><span class="strategy-tag">BROKER</span> Interactive Brokers — Options</div>
+  <!-- ============ OPTIONS TRADES (IB) ============ -->
+  <div class="strategy-section">
+    <div class="strategy-header"><span class="strategy-tag" style="background:#7c3aed">OPTIONS</span> Options Trades — Interactive Brokers
+      <button class="refresh-btn" onclick="loadIBTrades()" style="margin-left:auto;">Refresh</button>
     </div>
+  </div>
 
+  <div id="ibkrSection">
     <div class="stats-grid" style="grid-template-columns: repeat(5, 1fr);">
       <div class="stat-card"><div class="stat-value" id="ibNav">—</div><div class="stat-label">IB Net Liquidation</div></div>
       <div class="stat-card"><div class="stat-value" id="ibCash">—</div><div class="stat-label">Cash Balance</div></div>
@@ -115,20 +121,19 @@ tr:hover { background: rgba(0,0,0,0.015); }
     </div>
 
     <div class="card">
-      <h2>Open Spreads & Positions <span class="count" id="ibPositionCount">0</span></h2>
-      <div id="ibSpreadsTable"><div class="loading">Loading...</div></div>
+      <h2>Pending Options Orders <span class="count" id="ibOrderCount">0</span></h2>
+      <div id="ibOrdersTable"><div class="loading">Loading...</div></div>
     </div>
 
     <div class="card">
-      <h2>Pending Orders <span class="count" id="ibOrderCount">0</span></h2>
-      <div id="ibOrdersTable"><div class="loading">Loading...</div></div>
+      <h2>Open Spreads & Positions <span class="count" id="ibPositionCount">0</span></h2>
+      <div id="ibSpreadsTable"><div class="loading">Loading...</div></div>
     </div>
   </div>
 
   <div id="ibOffline" style="display:none;">
-    <div class="card" style="text-align:center;color:var(--text-light);padding:30px;">
-      <p style="font-size:0.9rem;">IB Gateway not connected — run the sync script locally to see options trades</p>
-      <p style="font-size:0.78rem;margin-top:8px;font-family:monospace;">python3 -m lumisignals.ibkr_sync</p>
+    <div class="card" style="text-align:center;color:var(--text-light);padding:20px;">
+      IB Gateway not connected — sync script offline
     </div>
   </div>
 
@@ -474,19 +479,29 @@ function loadIBTrades() {
       var orders = data.open_orders || [];
       document.getElementById('ibOrderCount').textContent = orders.length;
       var orderRows = orders.map(function(o) {
-        var desc = o.symbol;
-        if (o.sec_type === 'SPREAD') desc += ' (spread)';
-        else if (o.sec_type === 'OPT') desc += ' ' + o.strike + (o.right === 'C' ? 'C' : 'P');
-        var statusColor = o.status === 'Filled' ? 'pl-pos' : (o.status === 'Cancelled' ? 'pl-neg' : '');
-        return '<td><strong>' + desc + '</strong></td>' +
-          '<td>' + o.action + '</td>' +
+        var desc = '<strong>' + o.symbol + '</strong>';
+        var legs = '';
+        if (o.legs && o.legs.length === 2) {
+          var sellLeg = o.legs.find(function(l) { return l.action === 'SELL'; });
+          var buyLeg = o.legs.find(function(l) { return l.action === 'BUY'; });
+          legs = 'Spread';
+        }
+        var statusColor = '';
+        var statusBg = '';
+        if (o.status === 'Filled') { statusColor = 'pl-pos'; statusBg = 'background:#e8f5e9;'; }
+        else if (o.status === 'Cancelled') { statusColor = 'pl-neg'; statusBg = 'background:#fdecea;'; }
+        else if (o.status === 'Submitted') { statusColor = 'pl-pos'; statusBg = 'background:#e8f5e9;'; }
+        else { statusBg = 'background:#fff3e0;'; }
+        var price = o.limit_price ? '$' + fmtNum(Math.abs(o.limit_price)) : '—';
+        var priceLabel = o.limit_price < 0 ? '<span class="pl-pos">Credit ' + price + '</span>' : '<span class="pl-neg">Debit ' + price + '</span>';
+        return '<td>' + desc + '</td>' +
+          '<td>' + (o.sec_type === 'SPREAD' ? '<span class="badge" style="background:#f3e8ff;color:#7c3aed">SPREAD</span>' : o.sec_type) + '</td>' +
           '<td>' + o.quantity + '</td>' +
-          '<td>' + o.order_type + '</td>' +
-          '<td>' + (o.limit_price ? '$' + fmtNum(o.limit_price) : '—') + '</td>' +
-          '<td class="' + statusColor + '">' + o.status + '</td>';
+          '<td>' + priceLabel + '</td>' +
+          '<td><span class="badge ' + statusColor + '" style="' + statusBg + '">' + o.status + '</span></td>';
       });
       document.getElementById('ibOrdersTable').innerHTML = buildTable(
-        ['Contract', 'Action', 'Qty', 'Type', 'Price', 'Status'], orderRows
+        ['Symbol', 'Type', 'Qty', 'Price', 'Status'], orderRows
       );
     })
     .catch(function(e) {
