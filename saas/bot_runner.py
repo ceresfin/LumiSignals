@@ -359,7 +359,7 @@ def run_bot_for_user(user_data, stop_check):
                 # --- Auto-trade options for stock signals ---
                 is_stock = extra_meta and extra_meta.get("is_stock")
                 auto_trade = user_data.get("options_auto_trade", False)
-                if is_stock and auto_trade and model_name == "swing":
+                if is_stock and auto_trade and model_name in ("swing", "swing_options"):
                     try:
                         _auto_trade_options(
                             user_data, signal, extra_meta, model_name,
@@ -368,6 +368,10 @@ def run_bot_for_user(user_data, stop_check):
                     except Exception as e:
                         log(f"[{model_name.upper()}] OPTIONS AUTO-TRADE ERROR: {e}")
                         logger.error("Options auto-trade error: %s", e)
+
+                # Skip forex execution for stock signals (stocks go through options, not Oanda)
+                if is_stock:
+                    return
 
                 if not user_data.get("dry_run", True):
                     # Check daily budget before placing order
