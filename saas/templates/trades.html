@@ -491,8 +491,14 @@ function loadIBTrades() {
         ['Ticker', 'Type', 'Strikes', 'Exp', 'Qty', 'Entry', 'Max Profit', 'Max Risk', 'R:R', 'Model', 'Signal'], spreadRows
       );
 
-      // Orders table — use stored orders (shows all states: queued/placing/submitted/filled/failed)
-      var orders = storedOrders.length ? storedOrders : (data.open_orders || []);
+      // Orders table — use stored orders, filter out ones that became positions
+      var spreadSymbols = (data.spreads || []).map(function(s) { return s.symbol; });
+      var orders = storedOrders.length ? storedOrders.filter(function(o) {
+        // Hide orders that have become open positions (avoid duplicates)
+        var ticker = o.ticker || o.symbol || '';
+        var isPosition = spreadSymbols.indexOf(ticker) >= 0 && (o.status === 'PreSubmitted' || o.status === 'Submitted' || o.status === 'filled');
+        return !isPosition;
+      }) : (data.open_orders || []);
       document.getElementById('ibOrderCount').textContent = orders.length;
       var orderRows = orders.map(function(o) {
         var strikes = '';
@@ -518,7 +524,7 @@ function loadIBTrades() {
         if (o.zone_timeframe) signalInfo += o.zone_timeframe + ' ' + (o.zone_type || '') + '<br>';
         if (o.bias_score) signalInfo += '<span style="font-weight:600;' + (o.bias_score >= 70 ? 'color:var(--green)' : '') + '">' + Math.round(o.bias_score) + '/100</span>';
         var mdl = o.model ? modelBadge(o.model) : '—';
-        return '<td><strong>' + o.symbol + '</strong></td>' +
+        return '<td><strong>' + (o.ticker || o.symbol || '') + '</strong></td>' +
           '<td>' + (o.direction === 'BUY' ? '<span class="dir-buy">BUY</span>' : '<span class="dir-sell">SELL</span>') + '</td>' +
           '<td>' + spreadBadge + '</td>' +
           '<td>' + strikes + ' ' + optType + '</td>' +
