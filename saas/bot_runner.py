@@ -144,9 +144,11 @@ def _auto_trade_options(user_data, signal, extra_meta, model_name, log, alert_pa
 
             if sizing["contracts"] > 0:
                 import uuid
+                from datetime import datetime as _dt
                 order_id = str(uuid.uuid4())[:8]
                 order = {
                     "order_id": order_id,
+                    "queued_at": _dt.now(timezone.utc).isoformat(),
                     "user_id": user_id,
                     "ticker": symbol,
                     "spread_type": credit["type"],
@@ -197,9 +199,11 @@ def _auto_trade_options(user_data, signal, extra_meta, model_name, log, alert_pa
 
             if sizing["contracts"] > 0:
                 import uuid
+                from datetime import datetime as _dt
                 order_id = str(uuid.uuid4())[:8]
                 order = {
                     "order_id": order_id,
+                    "queued_at": _dt.now(timezone.utc).isoformat(),
                     "user_id": user_id,
                     "ticker": symbol,
                     "spread_type": debit["type"],

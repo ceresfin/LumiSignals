@@ -525,15 +525,33 @@ def create_app():
     @app.route("/api/ibkr/orders/all")
     @login_required
     def api_ibkr_orders_all():
-        """Return all options orders for the Trades page (queued, placing, submitted, filled, failed)."""
+        """Return all options orders for the Trades page. Auto-cleans old cancelled/failed orders."""
         import redis as _redis
         rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
         orders = []
+        now = datetime.now(timezone.utc)
         for key in rdb.scan_iter("ibkr:order:*"):
-            if ":details:" in key.decode() if isinstance(key, bytes) else ":details:" in key:
-                continue  # skip detail lookups
+            key_str = key.decode() if isinstance(key, bytes) else key
+            if ":details:" in key_str:
+                continue
             raw = rdb.get(key)
-            if raw:
+            if not raw:
+                continue
+            order = json.loads(raw)
+            # Auto-clean: remove cancelled/failed orders older than 24h
+            status = order.get("status", "")
+            if status in ("cancelled", "Cancelled", "failed", "FAILED"):
+                queued_at = order.get("queued_at", "")
+                if queued_at:
+                    try:
+                        order_time = datetime.fromisoformat(queued_at.replace("Z", "+00:00"))
+                        if (now - order_time).total_seconds() > 86400:
+                            rdb.delete(key)
+                            continue
+                    except Exception:
+                        pass
+            if not order.get("ticker") and not order.get("symbol"):
+                continue
                 order = json.loads(raw)
                 if order.get("user_id") == current_user.id and order.get("ticker"):
                     orders.append(order)
