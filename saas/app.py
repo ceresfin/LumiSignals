@@ -592,10 +592,13 @@ def create_app():
                 if order.get("order_id") == order_id:
                     order.update(data)
                     rdb.setex(key, 86400, json.dumps(order))
-                    # Also store by IB order ID for enrichment
+                    # Also store by IB order ID and permId for enrichment
                     ib_order_id = data.get("ib_order_id")
+                    perm_id = data.get("perm_id")
                     if ib_order_id:
                         rdb.setex(f"ibkr:order:details:{ib_order_id}", 604800, json.dumps(order))
+                    if perm_id:
+                        rdb.setex(f"ibkr:order:perm:{perm_id}", 604800, json.dumps(order))
                     return jsonify({"status": "ok"})
         return jsonify({"status": "not_found"})
 

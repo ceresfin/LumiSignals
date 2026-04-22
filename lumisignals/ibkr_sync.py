@@ -84,28 +84,44 @@ def collect_ib_data(ib: IB) -> dict:
     spreads = _detect_spreads(positions)
 
     # Enrich spreads with signal metadata from stored order details
+    # First, build a map of permId → execution details from recent fills
+    perm_id_map = {}
+    for fill in ib.fills():
+        if fill.execution.permId:
+            perm_id_map[fill.execution.permId] = {
+                "symbol": fill.contract.symbol,
+                "perm_id": fill.execution.permId,
+            }
+
     for spread in spreads:
         try:
-            # Search order details by ticker + strikes
-            for key_suffix in ["done", "details"]:
-                resp = requests.get(
-                    f"{SERVER_URL}/api/ibkr/order/search",
-                    params={"ticker": spread["symbol"], "sell_strike": spread.get("short_strike", 0), "buy_strike": spread.get("long_strike", 0)},
-                    headers={"X-Sync-Key": SYNC_KEY},
-                    timeout=5,
-                )
-                if resp.status_code == 200:
-                    details = resp.json()
-                    if details.get("model"):
-                        spread["model"] = details.get("model", "")
-                        spread["strategy"] = details.get("strategy", "")
-                        spread["trigger_pattern"] = details.get("trigger_pattern", "")
-                        spread["bias_score"] = details.get("bias_score", 0)
-                        spread["zone_type"] = details.get("zone_type", "")
-                        spread["zone_timeframe"] = details.get("zone_timeframe", "")
-                        spread["verdict"] = details.get("verdict", "")
-                        spread["opened_at"] = details.get("queued_at", "")
-                        break
+            # Search by ticker + strikes
+            resp = requests.get(
+                f"{SERVER_URL}/api/ibkr/order/search",
+                params={
+                    "ticker": spread["symbol"],
+                    "sell_strike": spread.get("short_strike", 0),
+                    "buy_strike": spread.get("long_strike", 0),
+                },
+                headers={"X-Sync-Key": SYNC_KEY},
+                timeout=5,
+            )
+            if resp.status_code == 200:
+                details = resp.json()
+                if details.get("model") or details.get("perm_id"):
+                    spread["perm_id"] = details.get("perm_id", "")
+                    spread["order_id"] = details.get("order_id", "")
+                    spread["model"] = details.get("model", "")
+                    spread["strategy"] = details.get("strategy", "")
+                    spread["trigger_pattern"] = details.get("trigger_pattern", "")
+                    spread["bias_score"] = details.get("bias_score", 0)
+                    spread["zone_type"] = details.get("zone_type", "")
+                    spread["zone_timeframe"] = details.get("zone_timeframe", "")
+                    spread["verdict"] = details.get("verdict", "")
+                    spread["opened_at"] = details.get("queued_at", "")
+                    spread["max_profit_planned"] = details.get("max_profit", 0)
+                    spread["max_risk_planned"] = details.get("max_risk", 0)
+                    spread["risk_reward"] = details.get("risk_reward", 0)
         except Exception:
             pass
 
@@ -500,9 +516,14 @@ def check_order_requests(ib: IB):
                 trade = ib.placeOrder(combo, ib_order)
                 ib.sleep(2)
 
+                # Wait a moment for permId to be assigned
+                ib.sleep(1)
+                perm_id = trade.order.permId
+
                 result = {
                     "order_id": order_id,
                     "ib_order_id": trade.order.orderId,
+                    "perm_id": perm_id,
                     "status": trade.orderStatus.status,
                     "ticker": ticker,
                     "spread_type": spread_type,
@@ -749,6 +770,8 @@ def _close_spread(ib: IB, spread: dict, reason: str):
     try:
         from datetime import datetime, timezone
         closed_trade = {
+            "perm_id": spread.get("perm_id", ""),
+            "order_id": spread.get("order_id", ""),
             "symbol": symbol,
             "spread_type": spread.get("spread_type", ""),
             "long_strike": spread.get("long_strike", 0),
