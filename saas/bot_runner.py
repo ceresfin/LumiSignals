@@ -131,8 +131,8 @@ def _auto_trade_options(user_data, signal, extra_meta, model_name, log, alert_pa
 
     # Model-specific DTE ranges
     dte_ranges = {
-        "scalp": (7, 14),
-        "intraday": (14, 30),
+        "scalp": (3, 7),
+        "intraday": (7, 14),
         "swing": (25, 40),
         "swing_options": (25, 40),
     }
