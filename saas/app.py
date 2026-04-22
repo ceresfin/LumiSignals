@@ -661,6 +661,45 @@ def create_app():
         trades.sort(key=lambda t: t.get("closed_at", ""), reverse=True)
         return jsonify({"trades": trades})
 
+    @app.route("/api/ibkr/signal-lookup/<ticker>")
+    def api_ibkr_signal_lookup(ticker):
+        """Look up signal metadata for a ticker from the signal log."""
+        sync_key = request.headers.get("X-Sync-Key", "")
+        if sync_key != os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026"):
+            return jsonify({"error": "Invalid sync key"}), 403
+        try:
+            from lumisignals.signal_log import SignalLog
+            sig_log = SignalLog(path="/opt/lumisignals/signal_log_user_1.json")
+            entries = sig_log.get_all()
+            # Find most recent signal for this ticker
+            best = None
+            best_time = ""
+            for key, sig in entries.items():
+                if not isinstance(sig, dict):
+                    continue
+                sym = sig.get("symbol", "").replace("_", "").upper()
+                if sym == ticker.upper():
+                    logged = sig.get("logged_at", "")
+                    if logged > best_time:
+                        best = sig
+                        best_time = logged
+            if best:
+                return jsonify({
+                    "model": best.get("model", ""),
+                    "strategy": best.get("strategy", ""),
+                    "trigger_pattern": best.get("trigger_pattern", ""),
+                    "bias_score": best.get("bias_score", 0),
+                    "zone_type": best.get("zone_type", ""),
+                    "zone_timeframe": best.get("zone_timeframe", ""),
+                    "zone_price": best.get("zone_price", 0),
+                    "signal_action": best.get("action", ""),
+                    "entry": best.get("entry", 0),
+                    "risk_reward": best.get("risk_reward", 0),
+                })
+        except Exception as e:
+            logger.debug("Signal lookup error: %s", e)
+        return jsonify({})
+
     @app.route("/api/ibkr/order/search")
     def api_ibkr_order_search():
         """Search stored order details by ticker + strikes."""

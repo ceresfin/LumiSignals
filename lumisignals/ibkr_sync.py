@@ -129,6 +129,25 @@ def collect_ib_data(ib: IB) -> dict:
                     spread["risk_reward"] = details.get("risk_reward", 0)
         except Exception:
             pass
+        # Signal log fallback if model still missing
+        if not spread.get("model") and spread.get("symbol"):
+            try:
+                resp = requests.get(
+                    f"{SERVER_URL}/api/ibkr/signal-lookup/{spread['symbol']}",
+                    headers={"X-Sync-Key": SYNC_KEY},
+                    timeout=5,
+                )
+                if resp.status_code == 200:
+                    sig = resp.json()
+                    if sig.get("model"):
+                        spread["model"] = sig["model"]
+                        spread["trigger_pattern"] = sig.get("trigger_pattern", "")
+                        spread["bias_score"] = sig.get("bias_score", 0)
+                        spread["zone_type"] = sig.get("zone_type", "")
+                        spread["zone_timeframe"] = sig.get("zone_timeframe", "")
+                        spread["risk_reward"] = sig.get("risk_reward", 0)
+            except Exception:
+                pass
 
     # Open orders — resolve combo legs to get strike/expiration details
     open_orders = []
@@ -209,8 +228,8 @@ def collect_ib_data(ib: IB) -> dict:
                                 break
                     except Exception:
                         pass
-                # Also try searching by symbol + strikes
-                if not right and c.symbol:
+                # Try searching by symbol + strikes
+                if not order_entry.get("model") and c.symbol:
                     try:
                         resp = requests.get(
                             f"{SERVER_URL}/api/ibkr/order/search",
@@ -247,6 +266,26 @@ def collect_ib_data(ib: IB) -> dict:
                     except Exception:
                         pass
             order_entry["legs"] = legs
+            # Always try to enrich with signal metadata if model is missing
+            if not order_entry.get("model") and c.symbol:
+                try:
+                    resp = requests.get(
+                        f"{SERVER_URL}/api/ibkr/signal-lookup/{c.symbol}",
+                        headers={"X-Sync-Key": SYNC_KEY},
+                        timeout=5,
+                    )
+                    if resp.status_code == 200:
+                        sig = resp.json()
+                        if sig.get("model"):
+                            order_entry["model"] = sig["model"]
+                            order_entry["trigger_pattern"] = sig.get("trigger_pattern", "")
+                            order_entry["bias_score"] = sig.get("bias_score", 0)
+                            order_entry["zone_type"] = sig.get("zone_type", "")
+                            order_entry["zone_timeframe"] = sig.get("zone_timeframe", "")
+                            order_entry["signal_action"] = sig.get("signal_action", "")
+                            order_entry["risk_reward"] = sig.get("risk_reward", 0)
+                except Exception:
+                    pass
             order_entry["sec_type"] = "SPREAD"
             order_entry["sell_strike"] = sell_strike
             order_entry["buy_strike"] = buy_strike
