@@ -392,7 +392,18 @@ class LevelsStrategy:
             time.sleep(0.5)  # Rate limiting
 
         # Scan stocks/crypto — scalp uses a small high-vol list, swing only during market hours
-        SCALP_STOCKS = {"SPY", "QQQ", "IWM", "MU", "MSTR", "AAPL", "AMD", "MSFT", "TSLA", "NFLX", "GOOG"}
+        SCALP_STOCKS = {
+            # Core ETFs
+            "SPY", "QQQ", "IWM", "DIA", "XLF", "EEM", "GLD", "SLV", "BITO",
+            # Mega cap tech
+            "AAPL", "MSFT", "GOOG", "AMZN", "META", "NVDA", "NFLX", "AVGO",
+            # Semiconductors
+            "AMD", "MU", "INTC", "QCOM", "SMCI",
+            # High beta / momentum
+            "TSLA", "MSTR", "COIN", "PLTR", "RIVN", "SOFI", "SNAP",
+            # High volume movers
+            "BA", "NKE", "DIS", "UBER", "SQ", "BABA", "JPM",
+        }
 
         # Check if within US market hours
         from datetime import datetime as _dt, timezone as _tz, timedelta as _td
