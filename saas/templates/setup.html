@@ -287,6 +287,61 @@ button:hover { opacity: 0.9; }
       </div>
     </div>
 
+    <div class="card">
+      <h2>6. Options Exit Rules</h2>
+      <p style="font-size:0.8rem;color:var(--text-light);margin-bottom:16px;">Auto-close spreads when profit targets, stop losses, or time limits are hit. The sync script monitors open spreads every 30 seconds.</p>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
+        <div style="padding:12px;background:#e8f5e9;border-radius:8px;">
+          <label style="font-size:0.85rem;font-weight:600;color:var(--green);margin-bottom:8px;">Credit Spreads</label>
+          <div class="field-row">
+            <div>
+              <label>Take Profit (%)</label>
+              <input type="number" name="credit_tp_pct" value="{{ user.credit_tp_pct if user.credit_tp_pct is not none else 50 }}" min="10" max="100" step="5">
+              <small>Close when X% of credit captured. 50% = collect half, close.</small>
+            </div>
+            <div>
+              <label>Stop Loss (%)</label>
+              <input type="number" name="credit_sl_pct" value="{{ user.credit_sl_pct if user.credit_sl_pct is not none else 100 }}" min="50" max="300" step="10">
+              <small>Close when loss = X% of credit. 100% = 2x credit paid.</small>
+            </div>
+          </div>
+        </div>
+
+        <div style="padding:12px;background:#fef3c7;border-radius:8px;">
+          <label style="font-size:0.85rem;font-weight:600;color:#d97706;margin-bottom:8px;">Debit Spreads</label>
+          <div class="field-row">
+            <div>
+              <label>Take Profit (%)</label>
+              <input type="number" name="debit_tp_pct" value="{{ user.debit_tp_pct if user.debit_tp_pct is not none else 75 }}" min="10" max="200" step="5">
+              <small>Close when spread gains X%. 75% = $0.40 paid → close at $0.70.</small>
+            </div>
+            <div>
+              <label>Stop Loss (%)</label>
+              <input type="number" name="debit_sl_pct" value="{{ user.debit_sl_pct if user.debit_sl_pct is not none else 50 }}" min="20" max="100" step="5">
+              <small>Close when spread loses X%. 50% = $0.40 paid → close at $0.20.</small>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-top:12px;">
+        <div class="field-row" style="grid-template-columns: 1fr 2fr;">
+          <div>
+            <label>Time Stop (DTE)</label>
+            <input type="number" name="options_time_stop_dte" value="{{ user.options_time_stop_dte if user.options_time_stop_dte is not none else 7 }}" min="1" max="21" step="1">
+            <small>Close all spreads at X days before expiration</small>
+          </div>
+          <div>
+            <p style="font-size:0.78rem;color:var(--text-light);margin-top:20px;">
+              <strong>Credit example:</strong> Collect $0.50 credit → TP at 50% = buy back at $0.25 → SL at 100% = buy back at $1.00<br>
+              <strong>Debit example:</strong> Pay $0.40 debit → TP at 75% = sell at $0.70 → SL at 50% = sell at $0.20
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <button type="submit">Save Settings</button>
   </form>
 </div>

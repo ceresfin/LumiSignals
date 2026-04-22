@@ -109,6 +109,13 @@ def create_app():
         options_trigger_tf = db.Column(db.String(10), default="4h")  # trigger TF for stock options
         options_min_verdict = db.Column(db.String(10), default="good")  # good, fair
 
+        # Options exit rules
+        credit_tp_pct = db.Column(db.Float, default=50.0)     # Take profit at X% of credit collected
+        credit_sl_pct = db.Column(db.Float, default=100.0)    # Stop loss at X% of credit (2x = 100%)
+        debit_tp_pct = db.Column(db.Float, default=75.0)      # Take profit at X% gain
+        debit_sl_pct = db.Column(db.Float, default=50.0)      # Stop loss at X% loss
+        options_time_stop_dte = db.Column(db.Integer, default=7)  # Close at X DTE
+
     @login_manager.user_loader
     def load_user(user_id):
         return User.query.get(int(user_id))
@@ -220,6 +227,13 @@ def create_app():
             current_user.options_auto_spread_type = request.form.get("options_auto_spread_type", "credit")
             current_user.options_trigger_tf = request.form.get("options_trigger_tf", "4h")
             current_user.options_min_verdict = request.form.get("options_min_verdict", "good")
+
+            # Options exit rules
+            current_user.credit_tp_pct = float(request.form.get("credit_tp_pct", 50) or 50)
+            current_user.credit_sl_pct = float(request.form.get("credit_sl_pct", 100) or 100)
+            current_user.debit_tp_pct = float(request.form.get("debit_tp_pct", 75) or 75)
+            current_user.debit_sl_pct = float(request.form.get("debit_sl_pct", 50) or 50)
+            current_user.options_time_stop_dte = int(request.form.get("options_time_stop_dte", 7) or 7)
 
             db.session.commit()
             flash("Settings saved", "success")
@@ -584,6 +598,29 @@ def create_app():
                         rdb.setex(f"ibkr:order:details:{ib_order_id}", 604800, json.dumps(order))
                     return jsonify({"status": "ok"})
         return jsonify({"status": "not_found"})
+
+    @app.route("/api/ibkr/exit-rules")
+    def api_ibkr_exit_rules():
+        """Return options exit rules for the sync script."""
+        sync_key = request.headers.get("X-Sync-Key", "")
+        if sync_key != os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026"):
+            return jsonify({"error": "Invalid sync key"}), 403
+        # Get first active user's exit rules (single-user for now)
+        from sqlalchemy import text
+        result = db.session.execute(text(
+            "SELECT credit_tp_pct, credit_sl_pct, debit_tp_pct, debit_sl_pct, options_time_stop_dte "
+            "FROM users WHERE bot_active = true LIMIT 1"
+        ))
+        row = result.fetchone()
+        if row:
+            return jsonify({
+                "credit_tp_pct": row[0] or 50,
+                "credit_sl_pct": row[1] or 100,
+                "debit_tp_pct": row[2] or 75,
+                "debit_sl_pct": row[3] or 50,
+                "time_stop_dte": row[4] or 7,
+            })
+        return jsonify({})
 
     @app.route("/api/ibkr/order/search")
     def api_ibkr_order_search():

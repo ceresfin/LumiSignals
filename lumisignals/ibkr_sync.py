@@ -560,6 +560,166 @@ def push_to_server(data: dict):
         logger.error("Failed to push to server: %s", e)
 
 
+def monitor_spreads(ib: IB, spreads: list):
+    """Monitor open spreads and auto-close when TP/SL/time stop is hit."""
+    if not spreads:
+        return
+
+    # Fetch exit rules from server
+    try:
+        resp = requests.get(
+            f"{SERVER_URL}/api/ibkr/exit-rules",
+            headers={"X-Sync-Key": SYNC_KEY},
+            timeout=5,
+        )
+        if resp.status_code != 200:
+            return
+        rules = resp.json()
+    except Exception:
+        return
+
+    credit_tp_pct = rules.get("credit_tp_pct", 50)
+    credit_sl_pct = rules.get("credit_sl_pct", 100)
+    debit_tp_pct = rules.get("debit_tp_pct", 75)
+    debit_sl_pct = rules.get("debit_sl_pct", 50)
+    time_stop_dte = rules.get("time_stop_dte", 7)
+
+    from datetime import datetime, timezone
+
+    for spread in spreads:
+        symbol = spread["symbol"]
+        spread_type = spread.get("spread_type", "")
+        is_credit = "Credit" in spread_type
+        net_cost = abs(spread.get("net_cost", 0))
+        pnl = spread.get("unrealized_pnl", 0)
+        expiration = spread.get("expiration", "")
+        quantity = spread.get("quantity", 0)
+
+        if not net_cost or not expiration or not quantity:
+            continue
+
+        # Calculate DTE
+        try:
+            exp_date = datetime.strptime(expiration, "%Y%m%d").date()
+            dte = (exp_date - datetime.now().date()).days
+        except Exception:
+            dte = 999
+
+        close_reason = None
+        close_price = None  # limit price for closing order
+
+        if is_credit:
+            # Credit spread: net_cost is the credit received (positive)
+            credit_received = net_cost  # per contract, in dollars (e.g. $34.40 for 1 contract)
+            credit_per_contract = credit_received / quantity if quantity else credit_received
+
+            # TP: close when we can buy back at (100 - tp_pct)% of credit
+            # e.g. 50% TP on $0.50 credit = buy back at $0.25
+            tp_threshold = credit_per_contract * (1 - credit_tp_pct / 100)
+            # Current value: credit_received + pnl (pnl negative = spread moved against us)
+            current_value = credit_received + pnl
+
+            if pnl > 0 and pnl >= credit_received * (credit_tp_pct / 100):
+                close_reason = f"TAKE PROFIT — captured {credit_tp_pct}% of credit (P&L: ${pnl:+.2f})"
+
+            # SL: close when loss exceeds X% of credit
+            elif pnl < 0 and abs(pnl) >= credit_received * (credit_sl_pct / 100):
+                close_reason = f"STOP LOSS — loss exceeded {credit_sl_pct}% of credit (P&L: ${pnl:+.2f})"
+
+        else:
+            # Debit spread: net_cost is what we paid (positive)
+            debit_paid = net_cost
+
+            # TP: close when gain >= tp_pct% of debit paid
+            if pnl > 0 and pnl >= debit_paid * (debit_tp_pct / 100):
+                close_reason = f"TAKE PROFIT — {debit_tp_pct}% gain (P&L: ${pnl:+.2f})"
+
+            # SL: close when loss >= sl_pct% of debit paid
+            elif pnl < 0 and abs(pnl) >= debit_paid * (debit_sl_pct / 100):
+                close_reason = f"STOP LOSS — {debit_sl_pct}% loss (P&L: ${pnl:+.2f})"
+
+        # Time stop
+        if not close_reason and dte <= time_stop_dte:
+            close_reason = f"TIME STOP — {dte} DTE remaining (limit: {time_stop_dte})"
+
+        if close_reason:
+            logger.info("CLOSING %s %s: %s", symbol, spread_type, close_reason)
+            try:
+                _close_spread(ib, spread, close_reason)
+            except Exception as e:
+                logger.error("Failed to close %s spread: %s", symbol, e)
+
+
+def _close_spread(ib: IB, spread: dict, reason: str):
+    """Close an open spread by placing an opposite market order."""
+    from ib_insync import Option, ComboLeg, Contract, MarketOrder
+
+    symbol = spread["symbol"]
+    expiration = spread.get("expiration", "")
+    right = spread.get("right", "")
+    long_strike = spread.get("long_strike", 0)
+    short_strike = spread.get("short_strike", 0)
+    quantity = int(spread.get("quantity", 0))
+
+    if not all([symbol, expiration, right, long_strike, short_strike, quantity]):
+        logger.error("Missing data to close spread: %s", spread)
+        return
+
+    # Build closing combo — reverse the legs
+    long_contract = Option(symbol, expiration, long_strike, right, "SMART")
+    short_contract = Option(symbol, expiration, short_strike, right, "SMART")
+    ib.qualifyContracts(long_contract, short_contract)
+
+    combo = Contract()
+    combo.symbol = symbol
+    combo.secType = "BAG"
+    combo.currency = "USD"
+    combo.exchange = "SMART"
+
+    # Close: SELL the long leg, BUY the short leg
+    leg1 = ComboLeg()
+    leg1.conId = long_contract.conId
+    leg1.ratio = 1
+    leg1.action = "SELL"
+    leg1.exchange = "SMART"
+
+    leg2 = ComboLeg()
+    leg2.conId = short_contract.conId
+    leg2.ratio = 1
+    leg2.action = "BUY"
+    leg2.exchange = "SMART"
+
+    combo.comboLegs = [leg1, leg2]
+
+    order = MarketOrder("BUY", quantity)
+    order.tif = "DAY"
+
+    trade = ib.placeOrder(combo, order)
+    ib.sleep(3)
+
+    logger.info("Close order for %s: status=%s reason=%s", symbol, trade.orderStatus.status, reason)
+
+    # Send alert
+    try:
+        from lumisignals.alerts import send_alert, AlertType
+        alert_pass = os.environ.get("ALERT_EMAIL_PASSWORD", "")
+        if alert_pass:
+            send_alert(
+                AlertType.TRADE_CLOSED,
+                f"{symbol} spread closed — {reason}",
+                f"Auto-closed {spread.get('spread_type', '')} on {symbol}",
+                details={
+                    "Symbol": symbol,
+                    "Spread": spread.get("spread_type", ""),
+                    "P&L": f"${spread.get('unrealized_pnl', 0):+.2f}",
+                    "Reason": reason,
+                },
+                smtp_pass=alert_pass,
+            )
+    except Exception:
+        pass
+
+
 def main():
     logger.info("IB Sync starting — connecting to IB Gateway at %s:%s", IB_HOST, IB_PORT)
 
@@ -598,6 +758,10 @@ def main():
 
             # Check for pending orders to place
             check_order_requests(ib)
+
+            # Monitor open spreads for TP/SL/time stop
+            if data.get("spreads"):
+                monitor_spreads(ib, data["spreads"])
 
         except Exception as e:
             logger.error("Sync error: %s", e)
