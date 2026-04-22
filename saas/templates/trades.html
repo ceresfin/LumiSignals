@@ -590,6 +590,9 @@ function loadIBTrades() {
         if (t.trigger_pattern) signalInfo += '<strong>' + t.trigger_pattern + '</strong><br>';
         if (t.zone_timeframe) signalInfo += t.zone_timeframe + ' ' + (t.zone_type || '') + '<br>';
         if (t.bias_score) signalInfo += '<span style="font-weight:600">' + Math.round(t.bias_score) + '/100</span>';
+        var maxProfit = t.max_profit || 0;
+        var maxRisk = t.max_risk || 0;
+        var rr = maxRisk > 0 ? (maxProfit / maxRisk).toFixed(1) : '—';
         return '<td><strong>' + t.symbol + '</strong></td>' +
           '<td>' + spreadTypeBadge(t.spread_type || '') + '</td>' +
           '<td>' + strikes + ' ' + optType + '</td>' +
@@ -597,6 +600,9 @@ function loadIBTrades() {
           '<td>' + (t.quantity || '') + '</td>' +
           '<td>' + entryLabel + '</td>' +
           '<td class="' + plClass(pnl) + '">$' + fmt(pnl) + '</td>' +
+          '<td class="pl-pos">$' + fmtNum(maxProfit) + '</td>' +
+          '<td class="pl-neg">$' + fmtNum(maxRisk) + '</td>' +
+          '<td>' + rr + '</td>' +
           '<td>' + (t.close_reason || '—') + '</td>' +
           '<td>' + badge + '</td>' +
           '<td>' + mdl + '</td>' +
@@ -604,7 +610,7 @@ function loadIBTrades() {
           '<td style="font-size:0.75rem">' + signalInfo + '</td>';
       });
       document.getElementById('ibClosedTable').innerHTML = buildTable(
-        ['Ticker', 'Type', 'Strikes', 'Exp', 'Qty', 'Entry', 'P&L', 'Reason', 'Result', 'Model', 'Open/Close', 'Signal'], closedRows
+        ['Ticker', 'Type', 'Strikes', 'Exp', 'Qty', 'Entry', 'P&L', 'Max Profit', 'Max Risk', 'R:R', 'Reason', 'Result', 'Model', 'Open/Close', 'Signal'], closedRows
       );
     })
     .catch(function(e) {
