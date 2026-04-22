@@ -392,7 +392,7 @@ class LevelsStrategy:
             time.sleep(0.5)  # Rate limiting
 
         # Scan stocks/crypto (via Massive) — only for swing model (weekly/monthly zones)
-        if self.massive and self.stock_tickers and self.model_name in ("swing", "swing_options"):
+        if self.massive and self.stock_tickers and self.model_name in ("scalp", "intraday", "swing", "swing_options"):
             for ticker in self.stock_tickers:
                 try:
                     self._scan_stock_for_zones(ticker, new_watchlist)

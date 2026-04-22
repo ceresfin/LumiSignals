@@ -100,14 +100,34 @@ def _auto_trade_options(user_data, signal, extra_meta, model_name, log, alert_pa
         log(f"[{model_name.upper()}] OPTIONS: No Polygon API key — skipping")
         return
 
-    log(f"[{model_name.upper()}] OPTIONS: Analyzing {symbol} ({zone_type} zone @ {zone_price:.2f})")
+    # Build risk config from user settings
+    risk_config = OptionsRiskConfig(
+        max_risk_per_spread=float(user_data.get("options_max_risk_per_spread") or 200),
+        max_contracts=int(user_data.get("options_max_contracts") or 5),
+        max_total_risk=float(user_data.get("options_max_total_risk") or 2000),
+        spread_width=float(user_data.get("options_spread_width") or 5),
+        min_credit_pct=float(user_data.get("options_min_credit_pct") or 25),
+        max_spreads=int(user_data.get("options_max_spreads") or 10),
+    )
 
-    # Run Polygon analysis (with timeout protection)
+    # Model-specific DTE ranges
+    dte_ranges = {
+        "scalp": (7, 14),
+        "intraday": (14, 30),
+        "swing": (25, 40),
+        "swing_options": (25, 40),
+    }
+    min_dte, max_dte = dte_ranges.get(model_name, (25, 40))
+
+    log(f"[{model_name.upper()}] OPTIONS: Analyzing {symbol} ({zone_type} zone @ {zone_price:.2f}, DTE {min_dte}-{max_dte}d)")
+
+    # Run Polygon analysis
     try:
         result = analyze_spreads_polygon(
             massive_key, symbol, zone_type, zone_price, signal.entry,
             max_risk_per_spread=risk_config.max_risk_per_spread,
             preferred_width=risk_config.spread_width,
+            min_dte=min_dte, max_dte=max_dte,
         )
     except Exception as e:
         log(f"[{model_name.upper()}] OPTIONS: Polygon analysis failed — {e}")
@@ -120,16 +140,6 @@ def _auto_trade_options(user_data, signal, extra_meta, model_name, log, alert_pa
     credit = result.get("credit_spread")
     debit = result.get("debit_spread")
     log(f"[{model_name.upper()}] OPTIONS: {symbol} — credit: {credit.get('verdict') if credit else 'none'}, debit: {debit.get('verdict') if debit else 'none'}")
-
-    # Build risk config from user settings
-    risk_config = OptionsRiskConfig(
-        max_risk_per_spread=float(user_data.get("options_max_risk_per_spread") or 200),
-        max_contracts=int(user_data.get("options_max_contracts") or 5),
-        max_total_risk=float(user_data.get("options_max_total_risk") or 2000),
-        spread_width=float(user_data.get("options_spread_width") or 5),
-        min_credit_pct=float(user_data.get("options_min_credit_pct") or 25),
-        max_spreads=int(user_data.get("options_max_spreads") or 10),
-    )
 
     orders_queued = []
 
@@ -404,7 +414,7 @@ def run_bot_for_user(user_data, stop_check):
                 # --- Auto-trade options for stock signals ---
                 is_stock = extra_meta and extra_meta.get("is_stock")
                 auto_trade = user_data.get("options_auto_trade", False)
-                if is_stock and auto_trade and model_name in ("swing", "swing_options"):
+                if is_stock and auto_trade:
                     try:
                         _auto_trade_options(
                             user_data, signal, extra_meta, model_name,

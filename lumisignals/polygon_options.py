@@ -83,7 +83,8 @@ class PolygonOptionsClient:
 
 def analyze_spreads_polygon(api_key: str, ticker: str, zone_type: str,
                             zone_price: float, current_price: float,
-                            max_risk_per_spread: float = 0, preferred_width: float = 5.0) -> dict:
+                            max_risk_per_spread: float = 0, preferred_width: float = 5.0,
+                            min_dte: int = 14, max_dte: int = 60) -> dict:
     """Analyze best credit and debit spreads using Polygon data.
 
     Same output format as analyze_spreads_ib for side-by-side comparison.
@@ -100,10 +101,10 @@ def analyze_spreads_polygon(api_key: str, ticker: str, zone_type: str,
                 result["error"] = f"Could not get price for {ticker}"
                 return result
 
-        # Date range: 14-60 DTE
+        # Date range based on model
         today = datetime.now().date()
-        min_exp = (today + timedelta(days=14)).strftime("%Y-%m-%d")
-        max_exp = (today + timedelta(days=60)).strftime("%Y-%m-%d")
+        min_exp = (today + timedelta(days=min_dte)).strftime("%Y-%m-%d")
+        max_exp = (today + timedelta(days=max_dte)).strftime("%Y-%m-%d")
 
         # Strike range: within 10% of current price
         strike_range = current_price * 0.10
@@ -194,9 +195,8 @@ def analyze_spreads_polygon(api_key: str, ticker: str, zone_type: str,
             result["error"] = "No valid expirations found"
             return result
 
-        # Use same expiration for both credit and debit (target ~30 DTE)
-        # This matches Schwab's preferred range for apples-to-apples comparison
-        target_exp = _best_exp_poly(exp_list, 25, 40)
+        # Use same expiration for both credit and debit
+        target_exp = _best_exp_poly(exp_list, min_dte, max_dte)
 
         # Analyze based on zone type — both use same expiration
         credit_options = exps.get(target_exp[0], {}).get("options", [])
