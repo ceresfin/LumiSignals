@@ -266,7 +266,40 @@ def collect_ib_data(ib: IB) -> dict:
                     except Exception:
                         pass
             order_entry["legs"] = legs
-            # Always try to enrich with signal metadata if model is missing
+            # Try to enrich with stored order data by searching ticker + strikes
+            if c.symbol and sell_strike and buy_strike:
+                try:
+                    resp = requests.get(
+                        f"{SERVER_URL}/api/ibkr/order/search",
+                        params={"ticker": c.symbol, "sell_strike": sell_strike, "buy_strike": buy_strike},
+                        headers={"X-Sync-Key": SYNC_KEY},
+                        timeout=5,
+                    )
+                    if resp.status_code == 200:
+                        details = resp.json()
+                        if details.get("limit_price"):
+                            if not order_entry.get("limit_price") or order_entry["limit_price"] == 0:
+                                order_entry["limit_price"] = float(details["limit_price"])
+                                order_entry["net_premium"] = float(details["limit_price"])
+                            if not order_entry.get("max_profit"):
+                                order_entry["max_profit"] = float(details.get("max_profit", 0))
+                            if not order_entry.get("max_risk") or order_entry["max_risk"] == 100:
+                                order_entry["max_risk"] = float(details.get("max_risk", 0))
+                            if not order_entry.get("risk_reward"):
+                                order_entry["risk_reward"] = float(details.get("risk_reward", 0))
+                            if not order_entry.get("is_credit") and details.get("is_credit") is not None:
+                                order_entry["is_credit"] = details["is_credit"]
+                            if not order_entry.get("model"):
+                                order_entry["model"] = details.get("model", "")
+                                order_entry["trigger_pattern"] = details.get("trigger_pattern", "")
+                                order_entry["bias_score"] = details.get("bias_score", 0)
+                                order_entry["zone_type"] = details.get("zone_type", "")
+                                order_entry["zone_timeframe"] = details.get("zone_timeframe", "")
+                                order_entry["signal_action"] = details.get("signal_action", "")
+                                order_entry["queued_at"] = details.get("queued_at", "")
+                except Exception:
+                    pass
+            # Fallback to signal log if model still missing
             if not order_entry.get("model") and c.symbol:
                 try:
                     resp = requests.get(
