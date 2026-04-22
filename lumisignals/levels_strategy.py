@@ -394,21 +394,20 @@ class LevelsStrategy:
         # Scan stocks/crypto — scalp uses a small high-vol list, swing only during market hours
         SCALP_STOCKS = {"SPY", "QQQ", "IWM", "MU", "MSTR", "AAPL", "AMD", "MSFT", "TSLA", "NFLX", "GOOG"}
 
-        # Check if within US market hours (9:15 AM - 5:15 PM ET)
+        # Check if within US market hours
         from datetime import datetime as _dt, timezone as _tz, timedelta as _td
         now_utc = _dt.now(_tz.utc)
         et_hour = (now_utc + _td(hours=-4)).hour  # EDT approximation
         et_minute = (now_utc + _td(hours=-4)).minute
-        in_market_hours = (et_hour > 9 or (et_hour == 9 and et_minute >= 15)) and (et_hour < 17 or (et_hour == 17 and et_minute <= 15))
+        regular_hours = (et_hour > 9 or (et_hour == 9 and et_minute >= 30)) and et_hour < 16  # 9:30am-4pm ET
+        extended_hours = (et_hour > 9 or (et_hour == 9 and et_minute >= 15)) and (et_hour < 17 or (et_hour == 17 and et_minute <= 15))  # 9:15am-5:15pm ET
 
         should_scan_stocks = False
         if self.massive and self.stock_tickers and self.model_name in ("scalp", "intraday", "swing", "swing_options"):
-            if self.model_name == "scalp":
-                should_scan_stocks = True  # always scan (small list, fast)
+            if self.model_name in ("scalp", "intraday"):
+                should_scan_stocks = regular_hours  # 9:30am-4pm ET
             elif self.model_name in ("swing", "swing_options"):
-                should_scan_stocks = in_market_hours  # only during market hours
-            else:
-                should_scan_stocks = True  # intraday scans anytime
+                should_scan_stocks = extended_hours  # 9:15am-5:15pm ET
 
         if should_scan_stocks:
             scan_list = [t for t in self.stock_tickers if t in SCALP_STOCKS] if self.model_name == "scalp" else self.stock_tickers
