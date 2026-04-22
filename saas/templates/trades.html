@@ -220,9 +220,13 @@ function scoreBadge(score) {
 
 function fmtTime(t) {
   if (!t) return '—';
-  // "2026-04-17 14:30" → "Apr 17 2:30 PM"
   try {
-    var d = new Date(t + ' UTC');
+    var d;
+    if (t.indexOf('T') >= 0) {
+      d = new Date(t);
+    } else {
+      d = new Date(t + ' UTC');
+    }
     if (isNaN(d)) return t;
     return d.toLocaleString('en-US', {month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'America/New_York'});
   } catch(e) { return t; }
@@ -618,7 +622,7 @@ function loadIBTrades() {
           '<td>' + (t.close_reason || '—') + '</td>' +
           '<td>' + badge + '</td>' +
           '<td>' + mdl + '</td>' +
-          '<td style="font-size:0.72rem">' + fmtTime(t.opened_at || '') + '<br>' + fmtTime(t.closed_at || '') + '</td>' +
+          '<td style="font-size:0.72rem"><span style="color:var(--text-light)">Open:</span> ' + fmtTime(t.opened_at || '') + '<br><span style="color:var(--text-light)">Close:</span> ' + fmtTime(t.closed_at || '') + '<br><span style="color:var(--text-light)">' + duration(t.opened_at, t.closed_at) + '</span></td>' +
           '<td style="font-size:0.75rem">' + signalInfo + '</td>';
       });
       document.getElementById('ibClosedTable').innerHTML = buildTable(
