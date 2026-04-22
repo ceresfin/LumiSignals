@@ -141,6 +141,30 @@ body { font-family: 'Inter', sans-serif; background: var(--cream); color: var(--
       <strong>Options Model (SWING_OPTIONS):</strong> A 4th model runs specifically for stock options trading. It uses weekly/monthly zones with a {{ user.options_trigger_tf or '4h' }} trigger candle and automatically places credit/debit spreads on IB.
     </div>
 
+    <h3>Scan Schedule</h3>
+    <table class="flow-table">
+      <tr><th>Model</th><th>Stock List</th><th>Scan Interval</th><th>Market Hours Only?</th></tr>
+      <tr>
+        <td><span class="badge" style="background:#fce7f3;color:#be185d">SCALP</span></td>
+        <td>11 high-vol (SPY, QQQ, IWM, AAPL, AMD, MSFT, TSLA, NFLX, GOOG, MU, MSTR)</td>
+        <td>Every 5 min</td>
+        <td>No — scans 24/7</td>
+      </tr>
+      <tr>
+        <td><span class="badge" style="background:#dbeafe;color:#1d4ed8">INTRADAY</span></td>
+        <td>All 120 stocks</td>
+        <td>Every 5 min</td>
+        <td>No — scans 24/7</td>
+      </tr>
+      <tr>
+        <td><span class="badge" style="background:#e8f5e9;color:var(--green)">SWING</span></td>
+        <td>All 120 stocks</td>
+        <td>Every 2 hours</td>
+        <td>Yes — 9:15 AM to 5:15 PM ET only</td>
+      </tr>
+    </table>
+    <p style="font-size:0.82rem;color:var(--text-light);margin-top:8px;">Forex pairs (27) are scanned every 5 minutes on all models regardless of market hours. Trigger candle monitoring and zone activation checks run every 30 seconds on all models.</p>
+
     <h3>Zone Overlap: 4H Zones</h3>
     <p>The 4H timeframe appears in both Scalp (1h + <strong>4h</strong>) and Intraday (<strong>4h</strong> + Daily). A stock at a 4h zone can trigger both models, but each produces a different trade:</p>
     <table class="flow-table">
