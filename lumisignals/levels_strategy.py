@@ -657,8 +657,13 @@ class LevelsStrategy:
         # 2. Get SNR levels from LumiTrade
         market_type = "crypto" if ticker.startswith("X:") else "stock"
         snr_ticker = ticker.replace("X:", "")
+        # Use model's zone timeframes instead of hardcoded monthly/weekly/daily
+        stock_intervals = list(self.zone_tfs)
+        # Add daily if not present (needed for ATR/price context)
+        if "1d" not in stock_intervals:
+            stock_intervals.append("1d")
         snr_data = self.snr_client.get_snr_levels(
-            ticker=snr_ticker, intervals=["1mo", "1w", "1d"], market_type=market_type,
+            ticker=snr_ticker, intervals=stock_intervals, market_type=market_type,
         )
         if not snr_data:
             return
@@ -678,11 +683,10 @@ class LevelsStrategy:
                 logger.debug("No ATR for %s — skipping", ticker)
                 return
 
-        # 4. Get candle series from Massive
-        # Keep counts small enough that API returns recent data
+        # 4. Get candle series from Massive for the model's zone timeframes
         candle_series = {}
-        tf_counts = {"1mo": 24, "1w": 20, "1d": 30}
-        for tf in ["1mo", "1w", "1d"]:
+        tf_counts = {"1mo": 24, "1w": 20, "1d": 30, "4h": 40, "1h": 50}
+        for tf in stock_intervals:
             candles = self.massive.get_candles(ticker, timespan=tf, count=tf_counts.get(tf, 30))
             if candles:
                 candle_series[tf] = candles
@@ -692,7 +696,7 @@ class LevelsStrategy:
 
         # Classify candles — only actionable formations count for bias
         scores = []
-        for tf in ["1mo", "1w", "1d"]:
+        for tf in stock_intervals:
             series = candle_series.get(tf)
             if not series:
                 continue
@@ -751,7 +755,7 @@ class LevelsStrategy:
                     "lower": round(lower / rng, 2), "green": green}
 
         tf_details = {}
-        for tf in ["1mo", "1w", "1d"]:
+        for tf in stock_intervals:
             tf_label = self._tf_label(tf)
             detail = {"trend": trends.get(tf_label, "")}
             series = candle_series.get(tf)
