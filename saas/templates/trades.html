@@ -592,6 +592,18 @@ function loadIBTrades() {
         if (t.bias_score) signalInfo += '<span style="font-weight:600">' + Math.round(t.bias_score) + '/100</span>';
         var maxProfit = t.max_profit || 0;
         var maxRisk = t.max_risk || 0;
+        // Reconstruct from width + entry if not stored
+        if (!maxProfit && !maxRisk && t.width && t.entry_cost) {
+          var w = t.width;
+          var cost = Math.abs(t.entry_cost);
+          if (isCredit) {
+            maxProfit = cost;
+            maxRisk = (w * 100) - cost;
+          } else {
+            maxRisk = cost;
+            maxProfit = (w * 100) - cost;
+          }
+        }
         var rr = maxRisk > 0 ? (maxProfit / maxRisk).toFixed(1) : '—';
         return '<td><strong>' + t.symbol + '</strong></td>' +
           '<td>' + spreadTypeBadge(t.spread_type || '') + '</td>' +
