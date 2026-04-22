@@ -391,9 +391,11 @@ class LevelsStrategy:
                 logger.error("Error scanning %s for zones: %s", instrument, e)
             time.sleep(0.5)  # Rate limiting
 
-        # Scan stocks/crypto (via Massive) — only for swing model (weekly/monthly zones)
+        # Scan stocks/crypto — scalp uses a small high-vol list, others scan all
+        SCALP_STOCKS = {"SPY", "QQQ", "IWM", "MU", "MSTR", "AAPL", "AMD", "MSFT", "TSLA", "NFLX", "GOOG"}
         if self.massive and self.stock_tickers and self.model_name in ("scalp", "intraday", "swing", "swing_options"):
-            for ticker in self.stock_tickers:
+            scan_list = [t for t in self.stock_tickers if t in SCALP_STOCKS] if self.model_name == "scalp" else self.stock_tickers
+            for ticker in scan_list:
                 try:
                     self._scan_stock_for_zones(ticker, new_watchlist)
                 except Exception as e:
