@@ -1,0 +1,135 @@
+//@version=6
+indicator("VWAP Scalp", overlay=true, max_labels_count=50)
+
+touchThresholdPct = input.float(0.15, "Touch Zone (%)", step=0.01, group="Entry")
+wickRatioPct = input.float(25.0, "Min Wick Rejection (%)", step=5.0, group="Entry")
+cooldownBars = input.int(6, "Cooldown (bars)", minval=1, group="Entry")
+minScore = input.int(2, "Min Score to Trade", minval=1, maxval=5, group="Entry")
+showBands = input.bool(true, "Show SD Bands", group="Display")
+sdMult1 = input.float(1.0, "SD Band 1", step=0.1, group="Display")
+sdMult2 = input.float(2.0, "SD Band 2", step=0.1, group="Display")
+
+touchThreshold = touchThresholdPct / 100
+
+vwapVal = ta.vwap
+vwapDev = ta.stdev(close - vwapVal, 20)
+upperBand1 = vwapVal + vwapDev * sdMult1
+lowerBand1 = vwapVal - vwapDev * sdMult1
+upperBand2 = vwapVal + vwapDev * sdMult2
+lowerBand2 = vwapVal - vwapDev * sdMult2
+
+etHour = hour(time, "America/New_York")
+etMinute = minute(time, "America/New_York")
+etTime = etHour * 100 + etMinute
+primeTime = (etTime >= 1015 and etTime <= 1130) or (etTime >= 1330 and etTime <= 1445)
+inSession = etTime >= 1015 and etTime <= 1500
+
+candleRange = high - low
+lowerWick = close > open ? open - low : close - low
+upperWick = close > open ? high - close : high - open
+lowerWickPct = candleRange > 0 ? lowerWick / candleRange * 100 : 0
+upperWickPct = candleRange > 0 ? upperWick / candleRange * 100 : 0
+
+avgVol = ta.sma(volume, 20)
+hasVolume = volume > avgVol * 0.6
+strongVolume = volume > avgVol * 1.2
+
+priceChange3 = math.abs(close - close[3]) / close[3] * 100
+slowApproach = priceChange3 < 0.4
+
+// BUY: price touches or dips below VWAP, bullish candle
+nearVwapBelow = low <= vwapVal * (1 + touchThreshold) and low[1] > vwapVal
+bullCandle = close > open
+bullWick = lowerWickPct >= wickRatioPct
+buyBase = nearVwapBelow and (bullCandle or bullWick) and hasVolume
+
+// SELL: price touches or pops above VWAP, bearish candle
+nearVwapAbove = high >= vwapVal * (1 - touchThreshold) and high[1] < vwapVal
+bearCandle = close < open
+bearWick = upperWickPct >= wickRatioPct
+sellBase = nearVwapAbove and (bearCandle or bearWick) and hasVolume
+
+// Also trigger on SD band bounces
+atLowerBand = low <= lowerBand1 and close > open
+atUpperBand = high >= upperBand1 and close < open
+buyBand = atLowerBand and hasVolume
+sellBand = atUpperBand and hasVolume
+
+buySetup = buyBase or buyBand
+sellSetup = sellBase or sellBand
+
+// Touch tracking
+var touchCountBuy = 0
+var touchCountSell = 0
+var lastBuyBar = 0
+var lastSellBar = 0
+isNewDay = ta.change(time("D")) != 0
+if isNewDay
+    touchCountBuy := 0
+    touchCountSell := 0
+
+buyCooled = bar_index - lastBuyBar >= cooldownBars
+sellCooled = bar_index - lastSellBar >= cooldownBars
+
+// Score
+buyScore = 0
+buyScore := buySetup ? 1 : 0
+buyScore := buySetup and primeTime ? buyScore + 1 : buyScore
+buyScore := buySetup and strongVolume ? buyScore + 1 : buyScore
+buyScore := buySetup and slowApproach ? buyScore + 1 : buyScore
+buyScore := buySetup and touchCountBuy == 0 ? buyScore + 1 : buyScore
+buyScore := buySetup and atLowerBand ? buyScore + 1 : buyScore
+
+sellScore = 0
+sellScore := sellSetup ? 1 : 0
+sellScore := sellSetup and primeTime ? sellScore + 1 : sellScore
+sellScore := sellSetup and strongVolume ? sellScore + 1 : sellScore
+sellScore := sellSetup and slowApproach ? sellScore + 1 : sellScore
+sellScore := sellSetup and touchCountSell == 0 ? sellScore + 1 : sellScore
+sellScore := sellSetup and atUpperBand ? sellScore + 1 : sellScore
+
+buySignal = buyScore >= minScore and buyCooled and inSession
+sellSignal = sellScore >= minScore and sellCooled and inSession
+
+if buySignal
+    touchCountBuy += 1
+    lastBuyBar := bar_index
+if sellSignal
+    touchCountSell += 1
+    lastSellBar := bar_index
+
+// Plot
+plot(vwapVal, "VWAP", color=color.orange, linewidth=2)
+p1u = plot(showBands ? upperBand1 : na, "Upper 1SD", color=color.new(color.red, 60))
+p1l = plot(showBands ? lowerBand1 : na, "Lower 1SD", color=color.new(color.green, 60))
+p2u = plot(showBands ? upperBand2 : na, "Upper 2SD", color=color.new(color.red, 80))
+p2l = plot(showBands ? lowerBand2 : na, "Lower 2SD", color=color.new(color.green, 80))
+pv = plot(vwapVal, "VWAP fill", color=na, display=display.none)
+fill(pv, p1u, color=color.new(color.red, 93))
+fill(pv, p1l, color=color.new(color.green, 93))
+bgcolor(primeTime ? color.new(color.blue, 95) : na, title="Prime Time")
+
+goodBuy = buySignal and buyScore >= 3
+greatBuy = buySignal and buyScore >= 4
+goodSell = sellSignal and sellScore >= 3
+greatSell = sellSignal and sellScore >= 4
+
+plotshape(buySignal and buyScore == 2, "Buy", shape.triangleup, location.belowbar, color.new(color.green, 30), size=size.tiny)
+plotshape(goodBuy and not greatBuy, "Good Buy", shape.triangleup, location.belowbar, color.green, size=size.small, text="B")
+plotshape(greatBuy, "Great Buy", shape.triangleup, location.belowbar, color.lime, size=size.normal, text="A+")
+plotshape(sellSignal and sellScore == 2, "Sell", shape.triangledown, location.abovebar, color.new(color.red, 30), size=size.tiny)
+plotshape(goodSell and not greatSell, "Good Sell", shape.triangledown, location.abovebar, color.red, size=size.small, text="S")
+plotshape(greatSell, "Great Sell", shape.triangledown, location.abovebar, color.fuchsia, size=size.normal, text="A+")
+
+if buySignal
+    label.new(bar_index, low, "T" + str.tostring(touchCountBuy), style=label.style_none, textcolor=color.new(color.green, 30), size=size.tiny)
+if sellSignal
+    label.new(bar_index, high, "T" + str.tostring(touchCountSell), style=label.style_none, textcolor=color.new(color.red, 30), size=size.tiny)
+
+contracts = buyScore >= 4 ? 3 : buyScore >= 3 ? 2 : 1
+contractsS = sellScore >= 4 ? 3 : sellScore >= 3 ? 2 : 1
+
+if buySignal
+    alert('{"ticker":"SPY","direction":"BUY","strategy":"vwap_scalp_t' + str.tostring(touchCountBuy) + '","key":"lumisignals2026","dte":0,"contracts":' + str.tostring(contracts) + '}', alert.freq_once_per_bar)
+if sellSignal
+    alert('{"ticker":"SPY","direction":"SELL","strategy":"vwap_scalp_t' + str.tostring(touchCountSell) + '","key":"lumisignals2026","dte":0,"contracts":' + str.tostring(contractsS) + '}', alert.freq_once_per_bar)

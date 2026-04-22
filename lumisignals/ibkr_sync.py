@@ -749,10 +749,10 @@ def monitor_spreads(ib: IB, spreads: list):
     except Exception:
         return
 
-    credit_tp_pct = rules.get("credit_tp_pct", 50)
-    credit_sl_pct = rules.get("credit_sl_pct", 100)
-    debit_tp_pct = rules.get("debit_tp_pct", 75)
-    debit_sl_pct = rules.get("debit_sl_pct", 50)
+    default_credit_tp = rules.get("credit_tp_pct", 50)
+    default_credit_sl = rules.get("credit_sl_pct", 100)
+    default_debit_tp = rules.get("debit_tp_pct", 75)
+    default_debit_sl = rules.get("debit_sl_pct", 50)
     time_stop_dte = rules.get("time_stop_dte", 7)
 
     from datetime import datetime, timezone
@@ -765,6 +765,11 @@ def monitor_spreads(ib: IB, spreads: list):
         pnl = spread.get("unrealized_pnl", 0)
         expiration = spread.get("expiration", "")
         quantity = spread.get("quantity", 0)
+
+        # Per-spread TP/SL overrides (from 0DTE webhook orders)
+        spread_tp = spread.get("tp_pct")
+        spread_sl = spread.get("sl_pct")
+        spread_time_stop_min = spread.get("time_stop_min", 0)
 
         if not net_cost or not expiration or not quantity:
             continue
@@ -780,36 +785,40 @@ def monitor_spreads(ib: IB, spreads: list):
         close_price = None  # limit price for closing order
 
         if is_credit:
-            # Credit spread: net_cost is the credit received (positive)
-            credit_received = net_cost  # per contract, in dollars (e.g. $34.40 for 1 contract)
-            credit_per_contract = credit_received / quantity if quantity else credit_received
+            credit_received = net_cost
+            tp_pct = spread_tp if spread_tp else default_credit_tp
+            sl_pct = spread_sl if spread_sl else default_credit_sl
 
-            # TP: close when we can buy back at (100 - tp_pct)% of credit
-            # e.g. 50% TP on $0.50 credit = buy back at $0.25
-            tp_threshold = credit_per_contract * (1 - credit_tp_pct / 100)
-            # Current value: credit_received + pnl (pnl negative = spread moved against us)
-            current_value = credit_received + pnl
-
-            if pnl > 0 and pnl >= credit_received * (credit_tp_pct / 100):
-                close_reason = f"TAKE PROFIT — captured {credit_tp_pct}% of credit (P&L: ${pnl:+.2f})"
-
-            # SL: close when loss exceeds X% of credit
-            elif pnl < 0 and abs(pnl) >= credit_received * (credit_sl_pct / 100):
-                close_reason = f"STOP LOSS — loss exceeded {credit_sl_pct}% of credit (P&L: ${pnl:+.2f})"
-
+            if pnl > 0 and pnl >= credit_received * (tp_pct / 100):
+                close_reason = f"TAKE PROFIT — captured {tp_pct}% of credit (P&L: ${pnl:+.2f})"
+            elif pnl < 0 and abs(pnl) >= credit_received * (sl_pct / 100):
+                close_reason = f"STOP LOSS — loss exceeded {sl_pct}% of credit (P&L: ${pnl:+.2f})"
         else:
-            # Debit spread: net_cost is what we paid (positive)
             debit_paid = net_cost
+            tp_pct = spread_tp if spread_tp else default_debit_tp
+            sl_pct = spread_sl if spread_sl else default_debit_sl
 
-            # TP: close when gain >= tp_pct% of debit paid
-            if pnl > 0 and pnl >= debit_paid * (debit_tp_pct / 100):
-                close_reason = f"TAKE PROFIT — {debit_tp_pct}% gain (P&L: ${pnl:+.2f})"
+            if pnl > 0 and pnl >= debit_paid * (tp_pct / 100):
+                close_reason = f"TAKE PROFIT — {tp_pct}% gain (P&L: ${pnl:+.2f})"
+            elif pnl < 0 and abs(pnl) >= debit_paid * (sl_pct / 100):
+                close_reason = f"STOP LOSS — {sl_pct}% loss (P&L: ${pnl:+.2f})"
 
-            # SL: close when loss >= sl_pct% of debit paid
-            elif pnl < 0 and abs(pnl) >= debit_paid * (debit_sl_pct / 100):
-                close_reason = f"STOP LOSS — {debit_sl_pct}% loss (P&L: ${pnl:+.2f})"
+        # Minute-based time stop (for 0DTE scalps)
+        if not close_reason and spread_time_stop_min > 0:
+            opened_at = spread.get("opened_at", "")
+            if opened_at:
+                try:
+                    opened_str = opened_at.replace("Z", "+00:00")
+                    if "T" not in opened_str and " " in opened_str:
+                        opened_str = opened_str.replace(" ", "T", 1)
+                    opened_dt = datetime.fromisoformat(opened_str)
+                    minutes_held = (datetime.now(timezone.utc) - opened_dt).total_seconds() / 60
+                    if minutes_held >= spread_time_stop_min:
+                        close_reason = f"TIME STOP — held {int(minutes_held)} min (limit: {spread_time_stop_min} min)"
+                except Exception:
+                    pass
 
-        # Time stop
+        # DTE-based time stop (for swing trades)
         if not close_reason and dte <= time_stop_dte:
             close_reason = f"TIME STOP — {dte} DTE remaining (limit: {time_stop_dte})"
 

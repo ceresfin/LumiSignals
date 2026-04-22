@@ -871,7 +871,10 @@ def create_app():
             "key": "lumisignals2026",  # simple auth key
             "spread_type": "credit",   # credit, debit, or both (default: credit)
             "contracts": 2,            # override contract count (optional)
-            "dte": 0                   # 0 for 0DTE, or specific days (optional)
+            "dte": 0,                  # 0 for 0DTE, or specific days (optional)
+            "tp_pct": 35,              # take profit % (optional, default by dte)
+            "sl_pct": 25,              # stop loss % (optional, default by dte)
+            "time_stop_min": 15        # close after X minutes (optional)
         }
         """
         import redis as _redis
@@ -890,6 +893,19 @@ def create_app():
         spread_pref = data.get("spread_type", "credit")
         override_contracts = data.get("contracts")
         dte = data.get("dte", 0)
+
+        # 0DTE exit rules: tighter than swing
+        if dte == 0:
+            default_tp = 35
+            default_sl = 25
+            default_time_stop = 15  # minutes
+        else:
+            default_tp = 50
+            default_sl = 50
+            default_time_stop = 0  # use DTE-based time stop
+        tp_pct = data.get("tp_pct", default_tp)
+        sl_pct = data.get("sl_pct", default_sl)
+        time_stop_min = data.get("time_stop_min", default_time_stop)
 
         if not ticker:
             return jsonify({"error": "Missing ticker"}), 400
@@ -1033,6 +1049,9 @@ def create_app():
                 "zone_timeframe": f"0DTE ({dte}d)",
                 "signal_action": direction,
                 "signal_entry": current_price,
+                "tp_pct": tp_pct,
+                "sl_pct": sl_pct,
+                "time_stop_min": time_stop_min,
             }
             rdb.setex(f"ibkr:order:pending:{order_id}", 86400, json.dumps(order))
             queued.append(f"{spread['type']} {contracts}x @ ${premium:.2f}")

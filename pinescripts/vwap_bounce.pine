@@ -1,0 +1,122 @@
+//@version=6
+indicator("VWAP Bounce", overlay=true)
+
+thresholdDpct = input.float(0.3, "Daily VWAP Distance", step=0.1, group="Entry")
+thresholdWpct = input.float(0.4, "Weekly VWAP Distance", step=0.1, group="Entry")
+thresholdMpct = input.float(0.5, "Monthly VWAP Distance", step=0.1, group="Entry")
+confluenceZonePct = input.float(0.2, "Confluence Zone", step=0.05, group="Entry")
+
+thresholdD = thresholdDpct / 100
+thresholdW = thresholdWpct / 100
+thresholdM = thresholdMpct / 100
+confluenceZone = confluenceZonePct / 100
+
+vwapDaily = ta.vwap
+
+isNewWeek = ta.change(time("W")) != 0
+var weeklyVwapNum = 0.0
+var weeklyVwapDen = 0.0
+if isNewWeek
+    weeklyVwapNum := 0.0
+    weeklyVwapDen := 0.0
+weeklyVwapNum += hlc3 * volume
+weeklyVwapDen += volume
+vwapWeekly = weeklyVwapDen > 0 ? weeklyVwapNum / weeklyVwapDen : hlc3
+
+isNewMonth = ta.change(time("M")) != 0
+var monthlyVwapNum = 0.0
+var monthlyVwapDen = 0.0
+if isNewMonth
+    monthlyVwapNum := 0.0
+    monthlyVwapDen := 0.0
+monthlyVwapNum += hlc3 * volume
+monthlyVwapDen += volume
+vwapMonthly = monthlyVwapDen > 0 ? monthlyVwapNum / monthlyVwapDen : hlc3
+
+etHour = hour(time, "America/New_York")
+etMinute = minute(time, "America/New_York")
+marketOpen = etHour > 9 or (etHour == 9 and etMinute >= 30)
+marketClose = etHour < 15 or (etHour == 15 and etMinute <= 45)
+inSession = marketOpen and marketClose
+
+isBullishCandle = close > open and close > low + (high - low) * 0.4
+isBearishCandle = close < open and close < high - (high - low) * 0.4
+hasVolume = volume > ta.sma(volume, 20) * 0.8
+
+dailyBuyBounce = low < vwapDaily * (1 - thresholdD) and isBullishCandle and hasVolume
+dailySellFade = high > vwapDaily * (1 + thresholdD) and isBearishCandle and hasVolume
+
+weeklyBuyBounce = low < vwapWeekly * (1 - thresholdW) and isBullishCandle and hasVolume
+weeklySellFade = high > vwapWeekly * (1 + thresholdW) and isBearishCandle and hasVolume
+
+monthlyBuyBounce = low < vwapMonthly * (1 - thresholdM) and isBullishCandle and hasVolume
+monthlySellFade = high > vwapMonthly * (1 + thresholdM) and isBearishCandle and hasVolume
+
+dwClose = math.abs(vwapDaily - vwapWeekly) / vwapDaily < confluenceZone
+dmClose = math.abs(vwapDaily - vwapMonthly) / vwapDaily < confluenceZone
+wmClose = math.abs(vwapWeekly - vwapMonthly) / vwapWeekly < confluenceZone
+
+buyScore = 0
+buyScore := dailyBuyBounce ? buyScore + 1 : buyScore
+buyScore := weeklyBuyBounce ? buyScore + 2 : buyScore
+buyScore := monthlyBuyBounce ? buyScore + 3 : buyScore
+
+sellScore = 0
+sellScore := dailySellFade ? sellScore + 1 : sellScore
+sellScore := weeklySellFade ? sellScore + 2 : sellScore
+sellScore := monthlySellFade ? sellScore + 3 : sellScore
+
+buyDW = dailyBuyBounce and weeklyBuyBounce and dwClose
+sellDW = dailySellFade and weeklySellFade and dwClose
+buyDM = dailyBuyBounce and monthlyBuyBounce and dmClose
+sellDM = dailySellFade and monthlySellFade and dmClose
+buyWM = weeklyBuyBounce and monthlyBuyBounce and wmClose
+sellWM = weeklySellFade and monthlySellFade and wmClose
+buyTriple = dailyBuyBounce and weeklyBuyBounce and monthlyBuyBounce
+sellTriple = dailySellFade and weeklySellFade and monthlySellFade
+
+plot(vwapDaily, "Daily VWAP", color=color.orange, linewidth=2)
+plot(vwapWeekly, "Weekly VWAP", color=color.blue, linewidth=2)
+plot(vwapMonthly, "Monthly VWAP", color=color.purple, linewidth=3)
+
+anyConfluence = dwClose or dmClose or wmClose
+bgcolor(anyConfluence ? color.new(color.yellow, 90) : na, title="Confluence Zone")
+
+dailyOnly = dailyBuyBounce and not weeklyBuyBounce and not monthlyBuyBounce
+weeklyOnly = weeklyBuyBounce and not dailyBuyBounce and not monthlyBuyBounce
+monthlyOnly = monthlyBuyBounce and not dailyBuyBounce and not weeklyBuyBounce
+dailyOnlyS = dailySellFade and not weeklySellFade and not monthlySellFade
+weeklyOnlyS = weeklySellFade and not dailySellFade and not monthlySellFade
+monthlyOnlyS = monthlySellFade and not dailySellFade and not weeklySellFade
+
+plotshape(inSession and dailyOnly, "Daily Buy", shape.triangleup, location.belowbar, color.new(color.green, 40), size=size.tiny)
+plotshape(inSession and dailyOnlyS, "Daily Sell", shape.triangledown, location.abovebar, color.new(color.red, 40), size=size.tiny)
+plotshape(inSession and weeklyOnly, "Weekly Buy", shape.triangleup, location.belowbar, color.green, size=size.small)
+plotshape(inSession and weeklyOnlyS, "Weekly Sell", shape.triangledown, location.abovebar, color.red, size=size.small)
+plotshape(inSession and monthlyOnly, "Monthly Buy", shape.triangleup, location.belowbar, color.new(color.purple, 20), size=size.small, text="M")
+plotshape(inSession and monthlyOnlyS, "Monthly Sell", shape.triangledown, location.abovebar, color.new(color.purple, 20), size=size.small, text="M")
+plotshape(inSession and (buyDW or buyDM or buyWM) and not buyTriple, "2x CONF BUY", shape.triangleup, location.belowbar, color.lime, size=size.normal, text="2x")
+plotshape(inSession and (sellDW or sellDM or sellWM) and not sellTriple, "2x CONF SELL", shape.triangledown, location.abovebar, color.fuchsia, size=size.normal, text="2x")
+plotshape(inSession and buyTriple, "3x CONF BUY", shape.triangleup, location.belowbar, color.lime, size=size.large, text="3x")
+plotshape(inSession and sellTriple, "3x CONF SELL", shape.triangledown, location.abovebar, color.fuchsia, size=size.large, text="3x")
+
+if inSession and dailyOnly
+    alert('{"ticker":"SPY","direction":"BUY","strategy":"vwap_daily_bounce","key":"lumisignals2026","dte":0,"contracts":1}', alert.freq_once_per_bar)
+if inSession and dailyOnlyS
+    alert('{"ticker":"SPY","direction":"SELL","strategy":"vwap_daily_fade","key":"lumisignals2026","dte":0,"contracts":1}', alert.freq_once_per_bar)
+if inSession and weeklyOnly
+    alert('{"ticker":"SPY","direction":"BUY","strategy":"vwap_weekly_bounce","key":"lumisignals2026","dte":0,"contracts":2}', alert.freq_once_per_bar)
+if inSession and weeklyOnlyS
+    alert('{"ticker":"SPY","direction":"SELL","strategy":"vwap_weekly_fade","key":"lumisignals2026","dte":0,"contracts":2}', alert.freq_once_per_bar)
+if inSession and monthlyOnly
+    alert('{"ticker":"SPY","direction":"BUY","strategy":"vwap_monthly_bounce","key":"lumisignals2026","dte":0,"contracts":3}', alert.freq_once_per_bar)
+if inSession and monthlyOnlyS
+    alert('{"ticker":"SPY","direction":"SELL","strategy":"vwap_monthly_fade","key":"lumisignals2026","dte":0,"contracts":3}', alert.freq_once_per_bar)
+if inSession and (buyDW or buyDM or buyWM) and not buyTriple
+    alert('{"ticker":"SPY","direction":"BUY","strategy":"vwap_2x_confluence","key":"lumisignals2026","dte":0,"contracts":4}', alert.freq_once_per_bar)
+if inSession and (sellDW or sellDM or sellWM) and not sellTriple
+    alert('{"ticker":"SPY","direction":"SELL","strategy":"vwap_2x_confluence","key":"lumisignals2026","dte":0,"contracts":4}', alert.freq_once_per_bar)
+if inSession and buyTriple
+    alert('{"ticker":"SPY","direction":"BUY","strategy":"vwap_3x_confluence","key":"lumisignals2026","dte":0,"contracts":5}', alert.freq_once_per_bar)
+if inSession and sellTriple
+    alert('{"ticker":"SPY","direction":"SELL","strategy":"vwap_3x_confluence","key":"lumisignals2026","dte":0,"contracts":5}', alert.freq_once_per_bar)
