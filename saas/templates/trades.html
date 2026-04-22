@@ -127,6 +127,11 @@ tr:hover { background: rgba(0,0,0,0.015); }
       <h2>Open Spreads & Positions <span class="count" id="ibPositionCount">0</span></h2>
       <div id="ibSpreadsTable"><div class="loading">Loading...</div></div>
     </div>
+
+    <div class="card">
+      <h2>Closed Options Trades <span class="count" id="ibClosedCount">0</span></h2>
+      <div id="ibClosedTable"><div class="loading">Loading...</div></div>
+    </div>
   </div>
 
   <div id="ibOffline" style="display:none;">
@@ -443,9 +448,11 @@ function loadIBTrades() {
   Promise.all([
     fetch('/api/ibkr/trades').then(function(r) { return r.json(); }),
     fetch('/api/ibkr/orders/all').then(function(r) { return r.json(); }).catch(function() { return {orders: []}; }),
+    fetch('/api/ibkr/closed-trades').then(function(r) { return r.json(); }).catch(function() { return {trades: []}; }),
   ]).then(function(results) {
     var data = results[0];
     var storedOrders = results[1].orders || [];
+    var closedTrades = results[2].trades || [];
 
     if (!data.connected && !storedOrders.length) {
       document.getElementById('ibOffline').style.display = 'block';
@@ -566,6 +573,38 @@ function loadIBTrades() {
       });
       document.getElementById('ibOrdersTable').innerHTML = buildTable(
         ['Ticker', 'Dir', 'Type', 'Strikes', 'Exp', 'Qty', 'Premium', 'Max Profit', 'Max Risk', 'R:R', 'Model', 'Status', 'Time', 'Signal'], orderRows
+      );
+      // Closed options trades
+      document.getElementById('ibClosedCount').textContent = closedTrades.length;
+      var closedRows = closedTrades.map(function(t) {
+        var pnl = t.realized_pnl || 0;
+        var won = pnl > 0;
+        var badge = won ? '<span class="badge" style="background:#e8f5e9;color:#27ae60">WIN</span>' : '<span class="badge" style="background:#fdecea;color:#c0392b">LOSS</span>';
+        var strikes = '';
+        if (t.short_strike && t.long_strike) strikes = 'SELL ' + t.short_strike + ' / BUY ' + t.long_strike;
+        var optType = t.right === 'C' ? 'Call' : (t.right === 'P' ? 'Put' : '');
+        var isCredit = t.spread_type && t.spread_type.indexOf('Credit') >= 0;
+        var entryLabel = isCredit ? '<span class="pl-pos">$' + fmtNum(Math.abs(t.entry_cost || 0)) + ' cr</span>' : '<span class="pl-neg">$' + fmtNum(Math.abs(t.entry_cost || 0)) + ' dr</span>';
+        var mdl = t.model ? modelBadge(t.model) : '—';
+        var signalInfo = '';
+        if (t.trigger_pattern) signalInfo += '<strong>' + t.trigger_pattern + '</strong><br>';
+        if (t.zone_timeframe) signalInfo += t.zone_timeframe + ' ' + (t.zone_type || '') + '<br>';
+        if (t.bias_score) signalInfo += '<span style="font-weight:600">' + Math.round(t.bias_score) + '/100</span>';
+        return '<td><strong>' + t.symbol + '</strong></td>' +
+          '<td>' + spreadTypeBadge(t.spread_type || '') + '</td>' +
+          '<td>' + strikes + ' ' + optType + '</td>' +
+          '<td>' + formatExp(t.expiration || '') + '</td>' +
+          '<td>' + (t.quantity || '') + '</td>' +
+          '<td>' + entryLabel + '</td>' +
+          '<td class="' + plClass(pnl) + '">$' + fmt(pnl) + '</td>' +
+          '<td>' + (t.close_reason || '—') + '</td>' +
+          '<td>' + badge + '</td>' +
+          '<td>' + mdl + '</td>' +
+          '<td style="font-size:0.72rem">' + fmtTime(t.opened_at || '') + '<br>' + fmtTime(t.closed_at || '') + '</td>' +
+          '<td style="font-size:0.75rem">' + signalInfo + '</td>';
+      });
+      document.getElementById('ibClosedTable').innerHTML = buildTable(
+        ['Ticker', 'Type', 'Strikes', 'Exp', 'Qty', 'Entry', 'P&L', 'Reason', 'Result', 'Model', 'Open/Close', 'Signal'], closedRows
       );
     })
     .catch(function(e) {

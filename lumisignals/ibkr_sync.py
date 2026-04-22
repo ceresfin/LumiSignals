@@ -254,8 +254,11 @@ def collect_ib_data(ib: IB) -> dict:
 
 
 def _detect_spreads(positions: list) -> list:
-    """Group option positions into vertical spreads."""
-    # Group by symbol + expiration + right
+    """Group option positions into vertical spreads.
+
+    Handles multiple spreads on the same symbol by pairing each short leg
+    with the nearest long leg at a different strike, matching quantities.
+    """
     from collections import defaultdict
     groups = defaultdict(list)
     for pos in positions:
@@ -265,37 +268,65 @@ def _detect_spreads(positions: list) -> list:
 
     spreads = []
     for (symbol, expiration, right), legs in groups.items():
-        if len(legs) == 2:
-            # Sort by strike
-            legs.sort(key=lambda x: x["strike"])
-            long_leg = next((l for l in legs if l["quantity"] > 0), None)
-            short_leg = next((l for l in legs if l["quantity"] < 0), None)
+        # Separate into long and short legs
+        longs = [l for l in legs if l["quantity"] > 0]
+        shorts = [l for l in legs if l["quantity"] < 0]
 
-            if long_leg and short_leg:
-                width = abs(long_leg["strike"] - short_leg["strike"])
+        # Sort by strike
+        longs.sort(key=lambda x: x["strike"])
+        shorts.sort(key=lambda x: x["strike"])
+
+        # Pair each short leg with the nearest long leg
+        used_longs = set()
+        for short_leg in shorts:
+            # Find closest long leg by strike that hasn't been fully used
+            best_long = None
+            best_dist = float("inf")
+            for i, long_leg in enumerate(longs):
+                if i in used_longs:
+                    continue
+                dist = abs(long_leg["strike"] - short_leg["strike"])
+                if dist > 0 and dist < best_dist:
+                    best_long = long_leg
+                    best_long_idx = i
+                    best_dist = dist
+
+            if best_long:
+                used_longs.add(best_long_idx)
+                # Determine quantity (use the smaller of the two)
+                qty = min(abs(short_leg["quantity"]), abs(best_long["quantity"]))
+                width = abs(best_long["strike"] - short_leg["strike"])
+
                 # Determine spread type
                 if right == "P":
-                    if short_leg["strike"] > long_leg["strike"]:
+                    if short_leg["strike"] > best_long["strike"]:
                         spread_type = "Put Credit Spread"
                     else:
                         spread_type = "Put Debit Spread"
                 else:
-                    if short_leg["strike"] < long_leg["strike"]:
+                    if short_leg["strike"] < best_long["strike"]:
                         spread_type = "Call Credit Spread"
                     else:
                         spread_type = "Call Debit Spread"
 
-                # Net cost = what we paid (debit) or received (credit)
-                net_cost = (long_leg["avg_cost"] - short_leg["avg_cost"])
+                net_cost = (best_long["avg_cost"] - short_leg["avg_cost"]) * qty / qty if qty else 0
 
-                # Calculate unrealized P&L from position data
-                long_pnl = long_leg.get("unrealized_pnl", 0) or 0
-                short_pnl = short_leg.get("unrealized_pnl", 0) or 0
+                # P&L
+                long_pnl = (best_long.get("unrealized_pnl", 0) or 0)
+                short_pnl = (short_leg.get("unrealized_pnl", 0) or 0)
+                # Scale P&L if quantities don't match exactly
+                if abs(best_long["quantity"]) != qty:
+                    long_pnl = long_pnl * qty / abs(best_long["quantity"])
+                if abs(short_leg["quantity"]) != qty:
+                    short_pnl = short_pnl * qty / abs(short_leg["quantity"])
                 spread_pnl = round(long_pnl + short_pnl, 2)
 
-                # Current market value of the spread
-                long_mkt = long_leg.get("market_value", 0) or 0
-                short_mkt = short_leg.get("market_value", 0) or 0
+                long_mkt = (best_long.get("market_value", 0) or 0)
+                short_mkt = (short_leg.get("market_value", 0) or 0)
+                if abs(best_long["quantity"]) != qty:
+                    long_mkt = long_mkt * qty / abs(best_long["quantity"])
+                if abs(short_leg["quantity"]) != qty:
+                    short_mkt = short_mkt * qty / abs(short_leg["quantity"])
                 current_value = round(long_mkt + short_mkt, 2)
 
                 spreads.append({
@@ -303,9 +334,9 @@ def _detect_spreads(positions: list) -> list:
                     "expiration": expiration,
                     "right": right,
                     "spread_type": spread_type,
-                    "long_strike": long_leg["strike"],
+                    "long_strike": best_long["strike"],
                     "short_strike": short_leg["strike"],
-                    "quantity": abs(long_leg["quantity"]),
+                    "quantity": qty,
                     "width": width,
                     "net_cost": round(net_cost, 2),
                     "max_risk": round((width * 100) - abs(net_cost), 2) if "Credit" in spread_type else round(abs(net_cost), 2),
@@ -314,41 +345,36 @@ def _detect_spreads(positions: list) -> list:
                     "current_value": current_value,
                 })
             else:
-                # Naked option positions
-                for leg in legs:
-                    spreads.append({
-                        "symbol": symbol,
-                        "expiration": expiration,
-                        "right": right,
-                        "spread_type": "Long " + ("Call" if right == "C" else "Put") if leg["quantity"] > 0 else "Short " + ("Call" if right == "C" else "Put"),
-                        "long_strike": leg["strike"] if leg["quantity"] > 0 else 0,
-                        "short_strike": leg["strike"] if leg["quantity"] < 0 else 0,
-                        "quantity": abs(leg["quantity"]),
-                        "width": 0,
-                        "net_cost": round(leg["avg_cost"], 2),
-                        "max_risk": round(leg["avg_cost"], 2),
-                        "max_profit": 0,
-                    })
-        else:
-            # Single option leg (not a spread)
-            for leg in legs:
-                direction = "Long" if leg["quantity"] > 0 else "Short"
-                opt_type = "Call" if right == "C" else "Put"
-                spreads.append({
-                    "symbol": symbol,
-                    "expiration": expiration,
-                    "right": right,
-                    "spread_type": f"{direction} {opt_type}",
-                    "long_strike": leg["strike"] if leg["quantity"] > 0 else 0,
-                    "short_strike": leg["strike"] if leg["quantity"] < 0 else 0,
-                    "quantity": abs(leg["quantity"]),
-                    "width": 0,
-                    "net_cost": round(leg["avg_cost"], 2),
-                    "max_risk": round(leg["avg_cost"], 2),
-                    "max_profit": 0,
-                })
+                # Unpaired short leg
+                spreads.append(_single_leg_entry(symbol, expiration, right, short_leg))
+
+        # Any unpaired long legs
+        for i, long_leg in enumerate(longs):
+            if i not in used_longs:
+                spreads.append(_single_leg_entry(symbol, expiration, right, long_leg))
 
     return spreads
+
+
+def _single_leg_entry(symbol, expiration, right, leg):
+    """Create a spread entry for an unpaired single option leg."""
+    direction = "Long" if leg["quantity"] > 0 else "Short"
+    opt_type = "Call" if right == "C" else "Put"
+    return {
+        "symbol": symbol,
+        "expiration": expiration,
+        "right": right,
+        "spread_type": f"{direction} {opt_type}",
+        "long_strike": leg["strike"] if leg["quantity"] > 0 else 0,
+        "short_strike": leg["strike"] if leg["quantity"] < 0 else 0,
+        "quantity": abs(leg["quantity"]),
+        "width": 0,
+        "net_cost": round(leg["avg_cost"], 2),
+        "max_risk": round(leg["avg_cost"], 2),
+        "max_profit": 0,
+        "unrealized_pnl": round(leg.get("unrealized_pnl", 0) or 0, 2),
+        "current_value": round(leg.get("market_value", 0) or 0, 2),
+    }
 
 
 def check_analyze_requests(ib: IB):
@@ -716,6 +742,38 @@ def _close_spread(ib: IB, spread: dict, reason: str):
                 },
                 smtp_pass=alert_pass,
             )
+    except Exception:
+        pass
+
+    # Record closed trade on server
+    try:
+        from datetime import datetime, timezone
+        closed_trade = {
+            "symbol": symbol,
+            "spread_type": spread.get("spread_type", ""),
+            "long_strike": spread.get("long_strike", 0),
+            "short_strike": spread.get("short_strike", 0),
+            "right": spread.get("right", ""),
+            "expiration": expiration,
+            "quantity": quantity,
+            "entry_cost": spread.get("net_cost", 0),
+            "realized_pnl": spread.get("unrealized_pnl", 0),
+            "close_reason": reason,
+            "closed_at": datetime.now(timezone.utc).isoformat(),
+            "model": spread.get("model", ""),
+            "strategy": spread.get("strategy", ""),
+            "trigger_pattern": spread.get("trigger_pattern", ""),
+            "bias_score": spread.get("bias_score", 0),
+            "zone_type": spread.get("zone_type", ""),
+            "zone_timeframe": spread.get("zone_timeframe", ""),
+            "opened_at": spread.get("opened_at", ""),
+        }
+        requests.post(
+            f"{SERVER_URL}/api/ibkr/closed-trade",
+            json=closed_trade,
+            headers={"X-Sync-Key": SYNC_KEY},
+            timeout=10,
+        )
     except Exception:
         pass
 

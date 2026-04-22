@@ -622,6 +622,37 @@ def create_app():
             })
         return jsonify({})
 
+    @app.route("/api/ibkr/closed-trade", methods=["POST"])
+    def api_ibkr_closed_trade():
+        """Record a closed options trade."""
+        sync_key = request.headers.get("X-Sync-Key", "")
+        if sync_key != os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026"):
+            return jsonify({"error": "Invalid sync key"}), 403
+        import redis as _redis
+        import uuid
+        rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+        data = request.get_json()
+        trade_id = str(uuid.uuid4())[:8]
+        data["trade_id"] = trade_id
+        # Store with 30-day TTL
+        rdb.setex(f"ibkr:closed:{trade_id}", 2592000, json.dumps(data))
+        return jsonify({"status": "ok", "trade_id": trade_id})
+
+    @app.route("/api/ibkr/closed-trades")
+    @login_required
+    def api_ibkr_closed_trades():
+        """Return all closed options trades."""
+        import redis as _redis
+        rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+        trades = []
+        for key in rdb.scan_iter("ibkr:closed:*"):
+            raw = rdb.get(key)
+            if raw:
+                trades.append(json.loads(raw))
+        # Sort by closed_at descending
+        trades.sort(key=lambda t: t.get("closed_at", ""), reverse=True)
+        return jsonify({"trades": trades})
+
     @app.route("/api/ibkr/order/search")
     def api_ibkr_order_search():
         """Search stored order details by ticker + strikes."""
