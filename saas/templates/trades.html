@@ -511,7 +511,20 @@ function loadIBTrades() {
         }
         var isCredit = s.spread_type && s.spread_type.indexOf('Credit') >= 0;
         var costLabel = isCredit ? '<span class="pl-pos">$' + fmtNum(Math.abs(s.net_cost)) + ' cr</span>' : '<span class="pl-neg">$' + fmtNum(Math.abs(s.net_cost)) + ' dr</span>';
-        var rr = s.risk_reward ? s.risk_reward.toFixed(1) : ((s.max_profit && s.max_risk) ? (s.max_profit / s.max_risk).toFixed(1) : '—');
+        // Calculate max profit/risk from width + cost if not provided
+        var sMaxProfit = s.max_profit || 0;
+        var sMaxRisk = s.max_risk || 0;
+        if ((!sMaxProfit || !sMaxRisk) && s.width && s.net_cost) {
+          var cost = Math.abs(s.net_cost);
+          if (isCredit) {
+            sMaxProfit = cost;
+            sMaxRisk = (s.width * 100 * (s.quantity || 1)) - cost;
+          } else {
+            sMaxRisk = cost;
+            sMaxProfit = (s.width * 100 * (s.quantity || 1)) - cost;
+          }
+        }
+        var rr = s.risk_reward ? s.risk_reward.toFixed(1) : ((sMaxProfit && sMaxRisk) ? (sMaxProfit / sMaxRisk).toFixed(1) : '—');
         var mdl = s.model ? modelBadge(s.model) : '—';
         var signalInfo = '';
         if (s.trigger_pattern) signalInfo += '<strong>' + s.trigger_pattern + '</strong><br>';
@@ -526,8 +539,8 @@ function loadIBTrades() {
           '<td>' + s.quantity + '</td>' +
           '<td>' + costLabel + '</td>' +
           '<td class="' + pnlClass + '">$' + fmt(pnl) + '</td>' +
-          '<td class="pl-pos">$' + fmtNum(s.max_profit || 0) + '</td>' +
-          '<td class="pl-neg">$' + fmtNum(s.max_risk || 0) + '</td>' +
+          '<td class="pl-pos">$' + fmtNum(sMaxProfit) + '</td>' +
+          '<td class="pl-neg">$' + fmtNum(sMaxRisk) + '</td>' +
           '<td>' + rr + '</td>' +
           '<td>' + mdl + '</td>' +
           '<td style="font-size:0.72rem">' + fmtTime(s.opened_at || '') + '<br><span style="color:var(--text-light)">' + duration(s.opened_at) + '</span></td>' +
@@ -592,15 +605,29 @@ function loadIBTrades() {
           var isCredit = o.spread_type.indexOf('Credit') >= 0;
           spreadBadge = '<span class="badge" style="background:' + (isCredit ? '#e8f5e9;color:#27ae60' : '#fef3c7;color:#d97706') + '">' + o.spread_type.toUpperCase() + '</span>';
         }
+        var isCredit2 = o.is_credit || (o.spread_type && o.spread_type.indexOf('Credit') >= 0);
         var premVal = o.net_premium || o.limit_price || 0;
+        // Calculate max profit/risk from width if missing
+        var maxProfit = o.max_profit || 0;
+        var maxRisk = o.max_risk || 0;
+        if ((!maxProfit || !maxRisk) && o.width && premVal) {
+          if (isCredit2) {
+            maxProfit = premVal * 100 * (o.quantity || 1);
+            maxRisk = ((o.width - premVal) * 100) * (o.quantity || 1);
+          } else {
+            maxRisk = premVal * 100 * (o.quantity || 1);
+            maxProfit = ((o.width - premVal) * 100) * (o.quantity || 1);
+          }
+        }
         var premium = premVal ? '$' + fmtNum(premVal) : '—';
-        var premLabel = o.is_credit ? '<span class="pl-pos">' + premium + ' cr</span>' : '<span class="pl-neg">' + premium + ' dr</span>';
+        var premLabel = isCredit2 ? '<span class="pl-pos">' + premium + ' cr</span>' : '<span class="pl-neg">' + premium + ' dr</span>';
         var rawStatus = o.status || '';
         var displayStatus = rawStatus;
         if (rawStatus === 'PreSubmitted') displayStatus = 'Submitted';
+        if (rawStatus === 'Inactive') displayStatus = 'Rejected';
         var statusColor = '';
         if (displayStatus === 'Submitted' || rawStatus === 'filled') statusColor = 'pl-pos';
-        else if (rawStatus === 'Cancelled' || rawStatus === 'failed') statusColor = 'pl-neg';
+        else if (rawStatus === 'Cancelled' || rawStatus === 'failed' || rawStatus === 'Inactive') statusColor = 'pl-neg';
         else if (rawStatus === 'queued' || rawStatus === 'placing') statusColor = '';
         var exp = formatExp(o.expiration || '');
         var rr = o.risk_reward ? o.risk_reward.toFixed(1) : '—';
@@ -616,9 +643,9 @@ function loadIBTrades() {
           '<td>' + exp + '</td>' +
           '<td>' + o.quantity + '</td>' +
           '<td>' + premLabel + '</td>' +
-          '<td class="pl-pos">$' + fmtNum(o.max_profit || 0) + '</td>' +
-          '<td class="pl-neg">$' + fmtNum(o.max_risk || 0) + '</td>' +
-          '<td>' + rr + '</td>' +
+          '<td class="pl-pos">$' + fmtNum(maxProfit) + '</td>' +
+          '<td class="pl-neg">$' + fmtNum(maxRisk) + '</td>' +
+          '<td>' + (maxRisk > 0 ? (maxProfit / maxRisk).toFixed(1) : (o.risk_reward ? o.risk_reward.toFixed(1) : '—')) + '</td>' +
           '<td>' + mdl + '</td>' +
           '<td><span class="badge ' + statusColor + '">' + displayStatus + '</span></td>' +
           '<td style="font-size:0.72rem">' + fmtTime(o.queued_at || o.time || '') + '</td>' +
