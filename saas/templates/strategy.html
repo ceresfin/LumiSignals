@@ -140,6 +140,17 @@ body { font-family: 'Inter', sans-serif; background: var(--cream); color: var(--
     <div class="highlight">
       <strong>Options Model (SWING_OPTIONS):</strong> A 4th model runs specifically for stock options trading. It uses weekly/monthly zones with a {{ user.options_trigger_tf or '4h' }} trigger candle and automatically places credit/debit spreads on IB.
     </div>
+
+    <h3>Zone Overlap: 4H Zones</h3>
+    <p>The 4H timeframe appears in both Scalp (1h + <strong>4h</strong>) and Intraday (<strong>4h</strong> + Daily). A stock at a 4h zone can trigger both models, but each produces a different trade:</p>
+    <table class="flow-table">
+      <tr><th></th><th>Scalp at 4h Zone</th><th>Intraday at 4h Zone</th></tr>
+      <tr><td><strong>Trigger</strong></td><td>15m candle (fires first, faster)</td><td>1h candle (fires later, stronger)</td></tr>
+      <tr><td><strong>Risk</strong></td><td>{{ user.scalp_risk_value if user.scalp_risk_value is not none else 0.25 }}%</td><td>{{ user.intraday_risk_value if user.intraday_risk_value is not none else 0.5 }}%</td></tr>
+      <tr><td><strong>Options DTE</strong></td><td>3-7 days</td><td>7-14 days</td></tr>
+      <tr><td><strong>Hold Time</strong></td><td>Minutes</td><td>30 min to hours</td></tr>
+    </table>
+    <p style="margin-top:8px;font-size:0.82rem;color:var(--text-light);">Deduplication prevents both models from placing orders on the same ticker + zone on the same day. Whichever model triggers first gets the trade.</p>
   </div>
 
   <!-- Bias Scoring -->
