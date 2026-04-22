@@ -260,6 +260,11 @@ def create_app():
     def trades():
         return render_template("trades.html", user=current_user)
 
+    @app.route("/strategy")
+    @login_required
+    def strategy():
+        return render_template("strategy.html", user=current_user)
+
     # -----------------------------------------------------------------------
     # API endpoints
     # -----------------------------------------------------------------------

@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LumiSignals — Strategy Guide</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+:root { --olive: #7F8464; --cream: #F5F3EE; --dark: #2E2E2C; --text-light: #8a847e; --text-medium: #56665F; --white: #fff; --green: #27ae60; --red: #c0392b; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Inter', sans-serif; background: var(--cream); color: var(--dark); }
+.header { background: linear-gradient(165deg, #C4B99A 0%, #B8A88C 40%, #A89878 100%); padding: 16px 0; }
+.header-inner { max-width: 900px; margin: 0 auto; padding: 0 24px; display: flex; justify-content: space-between; align-items: center; }
+.header h1 { font-family: 'Playfair Display', serif; font-size: 1.4rem; font-weight: 400; }
+.header-nav { display: flex; gap: 12px; }
+.header-nav a { font-size: 0.85rem; color: var(--dark); padding: 8px 16px; border-radius: 50px; text-decoration: none; }
+.header-nav a:hover { background: rgba(0,0,0,0.05); }
+.header-nav a.active { background: var(--olive); color: #FFF5E1; }
+.container { max-width: 900px; margin: 0 auto; padding: 24px; }
+.card { background: var(--white); border-radius: 12px; padding: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); margin-bottom: 20px; }
+.card h2 { font-family: 'Playfair Display', serif; font-size: 1.15rem; font-weight: 500; margin-bottom: 14px; padding-bottom: 10px; border-bottom: 1px solid #eee; }
+.card h3 { font-size: 0.9rem; font-weight: 600; margin: 16px 0 8px; color: var(--text-medium); }
+.card p, .card li { font-size: 0.85rem; line-height: 1.7; color: #444; }
+.card ul { padding-left: 20px; margin-bottom: 12px; }
+.card li { margin-bottom: 4px; }
+.flow-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; margin: 12px 0; }
+.flow-table th { text-align: left; font-weight: 500; color: var(--text-light); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.5px; padding: 8px 10px; border-bottom: 2px solid #eee; }
+.flow-table td { padding: 10px; border-bottom: 1px solid #f5f5f5; }
+.badge { display: inline-block; padding: 3px 10px; border-radius: 50px; font-size: 0.7rem; font-weight: 600; }
+.step-flow { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 12px 0; }
+.step { background: var(--cream); padding: 8px 14px; border-radius: 8px; font-size: 0.8rem; font-weight: 500; }
+.step-arrow { color: var(--text-light); font-size: 0.9rem; }
+.highlight { background: #f0f7f0; border-left: 4px solid var(--green); padding: 12px 16px; border-radius: 0 8px 8px 0; margin: 12px 0; font-size: 0.82rem; }
+.warning { background: #fff8e1; border-left: 4px solid #e67e22; padding: 12px 16px; border-radius: 0 8px 8px 0; margin: 12px 0; font-size: 0.82rem; }
+.section-num { display: inline-block; width: 28px; height: 28px; line-height: 28px; text-align: center; background: var(--olive); color: #FFF5E1; border-radius: 50%; font-size: 0.75rem; font-weight: 600; margin-right: 8px; }
+.disclaimer { text-align: center; font-size: 0.72rem; color: var(--text-light); margin-top: 24px; }
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="header-inner">
+    <h1>LumiSignals</h1>
+    <nav class="header-nav">
+      <a href="/dashboard">Dashboard</a>
+      <a href="/watchlist">Watchlist</a>
+      <a href="/trades">Trades</a>
+      <a href="/strategy" class="active">Strategy</a>
+      <a href="/setup">Settings</a>
+      <a href="/logout">Log out</a>
+    </nav>
+  </div>
+</div>
+
+<div class="container">
+  <div style="margin-bottom:24px;">
+    <h1 style="font-family:'Playfair Display',serif;font-size:1.6rem;font-weight:500;">Strategy Guide</h1>
+    <p style="color:var(--text-light);font-size:0.85rem;margin-top:4px;">Front-Side Higher Timeframe Untouched Levels</p>
+  </div>
+
+  <!-- Overview -->
+  <div class="card">
+    <h2><span class="section-num">1</span> Strategy Overview</h2>
+    <p>The bot identifies <strong>untouched support and resistance levels</strong> on higher timeframes, waits for price to approach these levels for the first time (front-side), then uses a lower timeframe candle pattern to confirm entry.</p>
+
+    <div class="step-flow">
+      <div class="step">Find HTF Zone</div>
+      <span class="step-arrow">&#8594;</span>
+      <div class="step">Price Approaches</div>
+      <span class="step-arrow">&#8594;</span>
+      <div class="step">Zone Activates</div>
+      <span class="step-arrow">&#8594;</span>
+      <div class="step">Trigger Candle</div>
+      <span class="step-arrow">&#8594;</span>
+      <div class="step">Bias Check</div>
+      <span class="step-arrow">&#8594;</span>
+      <div class="step" style="background:#e8f5e9;color:var(--green);">Signal</div>
+    </div>
+
+    <div class="highlight">
+      <strong>Why "front-side"?</strong> The first time price visits a level, institutional orders are most likely to be sitting there. After the first touch, the level weakens because those orders have been absorbed.
+    </div>
+  </div>
+
+  <!-- Zone Discovery -->
+  <div class="card">
+    <h2><span class="section-num">2</span> Zone Discovery</h2>
+    <p>Zones are identified using the <strong>SNR Frequency Analysis</strong> from the LumiTrade API. The system scans for support and resistance levels that have been historically significant but haven't been revisited recently.</p>
+
+    <h3>What makes a valid zone:</h3>
+    <ul>
+      <li><strong>Historical significance</strong> — price has reacted at this level multiple times</li>
+      <li><strong>Untouched (front-side)</strong> — price hasn't visited this level recently</li>
+      <li><strong>Higher timeframe</strong> — weekly/monthly zones are stronger than hourly</li>
+      <li><strong>Within ATR tolerance</strong> — price must be close enough to the level to matter</li>
+    </ul>
+
+    <h3>ATR Zone Tolerance</h3>
+    <p>Each model uses a different ATR period to determine how close price needs to be to "activate" a zone:</p>
+    <table class="flow-table">
+      <tr><th>Model</th><th>ATR Period</th><th>Multiplier</th><th>Meaning</th></tr>
+      <tr><td><span class="badge" style="background:#fce7f3;color:#be185d">SCALP</span></td><td>1H ATR</td><td>{{ user.scalp_atr_multiplier if user.scalp_atr_multiplier is not none else 0.5 }}x</td><td>Zone activates within {{ user.scalp_atr_multiplier if user.scalp_atr_multiplier is not none else 0.5 }}x the 1-hour ATR</td></tr>
+      <tr><td><span class="badge" style="background:#dbeafe;color:#1d4ed8">INTRADAY</span></td><td>4H ATR</td><td>{{ user.intraday_atr_multiplier if user.intraday_atr_multiplier is not none else 0.5 }}x</td><td>Zone activates within {{ user.intraday_atr_multiplier if user.intraday_atr_multiplier is not none else 0.5 }}x the 4-hour ATR</td></tr>
+      <tr><td><span class="badge" style="background:#e8f5e9;color:var(--green)">SWING</span></td><td>Daily ATR</td><td>{{ user.swing_atr_multiplier if user.swing_atr_multiplier is not none else 0.5 }}x</td><td>Zone activates within {{ user.swing_atr_multiplier if user.swing_atr_multiplier is not none else 0.5 }}x the daily ATR</td></tr>
+    </table>
+  </div>
+
+  <!-- Multi-Timeframe Framework -->
+  <div class="card">
+    <h2><span class="section-num">3</span> Multi-Timeframe Framework</h2>
+    <p>Three models run simultaneously, each looking at different timeframes. All share the same logic — just at different scales.</p>
+
+    <table class="flow-table">
+      <tr><th>Model</th><th>Zone TFs</th><th>Trigger TF</th><th>Bias TF</th><th>Risk %</th><th>Instruments</th></tr>
+      <tr>
+        <td><span class="badge" style="background:#fce7f3;color:#be185d">SCALP</span></td>
+        <td>1H + 4H</td>
+        <td>15-minute candle</td>
+        <td>4H trend</td>
+        <td>{{ user.scalp_risk_value if user.scalp_risk_value is not none else 0.25 }}%</td>
+        <td>27 Forex + Stocks</td>
+      </tr>
+      <tr>
+        <td><span class="badge" style="background:#dbeafe;color:#1d4ed8">INTRADAY</span></td>
+        <td>4H + Daily</td>
+        <td>1-hour candle</td>
+        <td>Daily trend</td>
+        <td>{{ user.intraday_risk_value if user.intraday_risk_value is not none else 0.5 }}%</td>
+        <td>27 Forex + Stocks</td>
+      </tr>
+      <tr>
+        <td><span class="badge" style="background:#e8f5e9;color:var(--green)">SWING</span></td>
+        <td>Weekly + Monthly</td>
+        <td>Daily candle</td>
+        <td>Monthly trend</td>
+        <td>{{ user.swing_risk_value if user.swing_risk_value is not none else 1.0 }}%</td>
+        <td>27 Forex + 120 Stocks</td>
+      </tr>
+    </table>
+
+    <div class="highlight">
+      <strong>Options Model (SWING_OPTIONS):</strong> A 4th model runs specifically for stock options trading. It uses weekly/monthly zones with a {{ user.options_trigger_tf or '4h' }} trigger candle and automatically places credit/debit spreads on IB.
+    </div>
+  </div>
+
+  <!-- Bias Scoring -->
+  <div class="card">
+    <h2><span class="section-num">4</span> Bias Scoring (60/40)</h2>
+    <p>Every zone gets a <strong>bias score out of 100</strong> that determines whether the setup is strong enough to trade.</p>
+
+    <table class="flow-table">
+      <tr><th>Component</th><th>Weight</th><th>What it measures</th></tr>
+      <tr><td><strong>Trend Score</strong></td><td>60%</td><td>How many higher timeframes agree on direction (bullish/bearish). e.g. if Monthly, Weekly, and Daily are all bearish → 3/3 = full trend score.</td></tr>
+      <tr><td><strong>Candle Score</strong></td><td>40%</td><td>Actionable candlestick formations on the zone timeframes. Only meaningful patterns count (Hammer, Engulfing, Harami, etc.) — generic candle colors are ignored.</td></tr>
+    </table>
+
+    <p style="margin-top:12px;"><strong>Minimum score to trade:</strong></p>
+    <table class="flow-table">
+      <tr><td><span class="badge" style="background:#fce7f3;color:#be185d">SCALP</span></td><td>{{ user.scalp_min_score if user.scalp_min_score is not none else 50 }}/100</td></tr>
+      <tr><td><span class="badge" style="background:#dbeafe;color:#1d4ed8">INTRADAY</span></td><td>{{ user.intraday_min_score if user.intraday_min_score is not none else 50 }}/100</td></tr>
+      <tr><td><span class="badge" style="background:#e8f5e9;color:var(--green)">SWING</span></td><td>{{ user.swing_min_score if user.swing_min_score is not none else 50 }}/100</td></tr>
+    </table>
+
+    <h3>Recognized Candle Patterns (TA-Lib, 61 patterns)</h3>
+    <p>Only <strong>actionable formations</strong> count toward the candle score: Hammer, Inverted Hammer, Engulfing, Harami, Harami Cross, Morning Star, Evening Star, Shooting Star, Hanging Man, Piercing, Dark Cloud Cover, Belt Hold, Three White Soldiers, Three Black Crows, and more.</p>
+  </div>
+
+  <!-- Entry Triggers -->
+  <div class="card">
+    <h2><span class="section-num">5</span> Entry Triggers</h2>
+    <p>A signal fires when ALL of the following conditions are met:</p>
+
+    <ol style="padding-left:20px;margin:12px 0;">
+      <li style="margin-bottom:8px;font-size:0.85rem;"><strong>Zone identified</strong> — HTF S/R level found via SNR Frequency analysis</li>
+      <li style="margin-bottom:8px;font-size:0.85rem;"><strong>Price approaches zone</strong> — within ATR tolerance (zone activates)</li>
+      <li style="margin-bottom:8px;font-size:0.85rem;"><strong>Trigger candle confirms</strong> — actionable pattern on the trigger timeframe</li>
+      <li style="margin-bottom:8px;font-size:0.85rem;"><strong>Bias score passes minimum</strong> — trend + candle score >= threshold</li>
+      <li style="margin-bottom:8px;font-size:0.85rem;"><strong>Risk:Reward passes minimum</strong> — entry to target vs entry to stop</li>
+    </ol>
+
+    <p><strong>Minimum R:R to trade:</strong></p>
+    <table class="flow-table">
+      <tr><td><span class="badge" style="background:#fce7f3;color:#be185d">SCALP</span></td><td>{{ user.scalp_min_rr if user.scalp_min_rr is not none else 1.5 }}:1</td></tr>
+      <tr><td><span class="badge" style="background:#dbeafe;color:#1d4ed8">INTRADAY</span></td><td>{{ user.intraday_min_rr if user.intraday_min_rr is not none else 1.5 }}:1</td></tr>
+      <tr><td><span class="badge" style="background:#e8f5e9;color:var(--green)">SWING</span></td><td>{{ user.swing_min_rr if user.swing_min_rr is not none else 1.5 }}:1</td></tr>
+    </table>
+
+    <h3>Stop Loss & Take Profit (Forex)</h3>
+    <ul>
+      <li><strong>Stop Loss:</strong> Placed beyond the zone boundary (ATR-adjusted)</li>
+      <li><strong>Take Profit:</strong> Placed at the next significant S/R level</li>
+      <li>Orders placed as LIMIT with GTC (Good Till Cancelled)</li>
+    </ul>
+  </div>
+
+  <!-- Forex Position Sizing -->
+  <div class="card">
+    <h2><span class="section-num">6</span> Forex Position Sizing</h2>
+
+    <table class="flow-table">
+      <tr><th>Model</th><th>Mode</th><th>Risk</th><th>Daily Budget</th></tr>
+      <tr>
+        <td><span class="badge" style="background:#fce7f3;color:#be185d">SCALP</span></td>
+        <td>{{ user.scalp_risk_mode or 'percent' }}</td>
+        <td>{{ user.scalp_risk_value if user.scalp_risk_value is not none else 0.25 }}{{ '%' if (user.scalp_risk_mode or 'percent') == 'percent' else ' USD' }}</td>
+        <td>{{ ('$' ~ user.scalp_daily_budget|int) if user.scalp_daily_budget else 'Unlimited' }}</td>
+      </tr>
+      <tr>
+        <td><span class="badge" style="background:#dbeafe;color:#1d4ed8">INTRADAY</span></td>
+        <td>{{ user.intraday_risk_mode or 'percent' }}</td>
+        <td>{{ user.intraday_risk_value if user.intraday_risk_value is not none else 0.5 }}{{ '%' if (user.intraday_risk_mode or 'percent') == 'percent' else ' USD' }}</td>
+        <td>{{ ('$' ~ user.intraday_daily_budget|int) if user.intraday_daily_budget else 'Unlimited' }}</td>
+      </tr>
+      <tr>
+        <td><span class="badge" style="background:#e8f5e9;color:var(--green)">SWING</span></td>
+        <td>{{ user.swing_risk_mode or 'percent' }}</td>
+        <td>{{ user.swing_risk_value if user.swing_risk_value is not none else 1.0 }}{{ '%' if (user.swing_risk_mode or 'percent') == 'percent' else ' USD' }}</td>
+        <td>{{ ('$' ~ user.swing_daily_budget|int) if user.swing_daily_budget else 'Unlimited' }}</td>
+      </tr>
+    </table>
+
+    <h3>How units are calculated:</h3>
+    <ol style="padding-left:20px;margin:12px 0;">
+      <li style="margin-bottom:6px;font-size:0.85rem;">Risk amount = account balance x risk % (or fixed dollar amount)</li>
+      <li style="margin-bottom:6px;font-size:0.85rem;">Stop distance converted to pips (JPY pairs normalized: pip = 0.01)</li>
+      <li style="margin-bottom:6px;font-size:0.85rem;">Pip cost per unit calculated based on pair type (XXX/USD, USD/XXX, cross)</li>
+      <li style="margin-bottom:6px;font-size:0.85rem;">Units = risk amount / (stop pips x pip cost per unit)</li>
+    </ol>
+  </div>
+
+  <!-- Options Spread Logic -->
+  <div class="card">
+    <h2><span class="section-num">7</span> Options Spread Logic</h2>
+    <p>When a stock signal fires, the bot automatically analyzes and places options spreads.</p>
+
+    <h3>Zone Type &rarr; Spread Direction</h3>
+    <table class="flow-table">
+      <tr><th>Zone Type</th><th>Expectation</th><th>Credit Spread</th><th>Debit Spread</th></tr>
+      <tr>
+        <td><strong>Supply</strong> (resistance)</td>
+        <td>Price reverses down</td>
+        <td><span class="badge" style="background:#e8f5e9;color:var(--green)">Bear Call Credit</span></td>
+        <td><span class="badge" style="background:#fef3c7;color:#d97706">Bear Put Debit</span></td>
+      </tr>
+      <tr>
+        <td><strong>Demand</strong> (support)</td>
+        <td>Price bounces up</td>
+        <td><span class="badge" style="background:#e8f5e9;color:var(--green)">Bull Put Credit</span></td>
+        <td><span class="badge" style="background:#fef3c7;color:#d97706">Bull Call Debit</span></td>
+      </tr>
+    </table>
+
+    <h3>Model-Specific DTE</h3>
+    <table class="flow-table">
+      <tr><th>Model</th><th>DTE Range</th><th>Rationale</th></tr>
+      <tr><td><span class="badge" style="background:#fce7f3;color:#be185d">SCALP</span></td><td>7-14 days</td><td>Quick directional play, minimal theta decay cost</td></tr>
+      <tr><td><span class="badge" style="background:#dbeafe;color:#1d4ed8">INTRADAY</span></td><td>14-30 days</td><td>Medium-term, balanced theta/gamma</td></tr>
+      <tr><td><span class="badge" style="background:#e8f5e9;color:var(--green)">SWING</span></td><td>25-40 days</td><td>Standard theta play, time to be right</td></tr>
+    </table>
+
+    <h3>Spread Width Auto-Adjust</h3>
+    <p>The bot tries your preferred width first, then narrows if risk per contract exceeds your max:</p>
+    <div class="step-flow">
+      <div class="step">Try ${{ user.options_spread_width if user.options_spread_width is not none else 5.0 }} width</div>
+      <span class="step-arrow">&#8594;</span>
+      <div class="step">If risk > ${{ user.options_max_risk_per_spread if user.options_max_risk_per_spread is not none else 500 }}, try $2.50</div>
+      <span class="step-arrow">&#8594;</span>
+      <div class="step">If still too high, try $1.00</div>
+    </div>
+
+    <h3>Position Sizing</h3>
+    <table class="flow-table">
+      <tr><td>Max risk per spread</td><td>${{ user.options_max_risk_per_spread if user.options_max_risk_per_spread is not none else 500 }}</td></tr>
+      <tr><td>Max contracts per spread</td><td>{{ user.options_max_contracts if user.options_max_contracts is not none else 5 }}</td></tr>
+      <tr><td>Max total options risk</td><td>${{ user.options_max_total_risk if user.options_max_total_risk is not none else 2000 }}</td></tr>
+      <tr><td>Max simultaneous spreads</td><td>{{ user.options_max_spreads if user.options_max_spreads is not none else 10 }}</td></tr>
+      <tr><td>Min credit (% of width)</td><td>{{ user.options_min_credit_pct if user.options_min_credit_pct is not none else 25 }}%</td></tr>
+      <tr><td>Min verdict to trade</td><td>{{ (user.options_min_verdict or 'good')|upper }}</td></tr>
+      <tr><td>Spread type preference</td><td>{{ (user.options_auto_spread_type or 'credit')|title }}</td></tr>
+    </table>
+
+    <h3>Verdict Scoring</h3>
+    <table class="flow-table">
+      <tr><th>Verdict</th><th>Credit Spreads</th><th>Debit Spreads</th></tr>
+      <tr><td><span style="color:var(--green);font-weight:600;">GOOD</span></td><td>Credit >= 33% of width + R:R >= 0.3</td><td>R:R >= 1.5</td></tr>
+      <tr><td><span style="font-weight:600;">FAIR</span></td><td>Credit >= 25% of width</td><td>R:R >= 1.0</td></tr>
+      <tr><td><span style="color:var(--red);font-weight:600;">SKIP</span></td><td>Credit < 25%</td><td>R:R < 1.0</td></tr>
+    </table>
+  </div>
+
+  <!-- Exit Rules -->
+  <div class="card">
+    <h2><span class="section-num">8</span> Exit Rules</h2>
+
+    <h3>Forex Exits</h3>
+    <ul>
+      <li><strong>Stop Loss:</strong> Fixed at zone boundary (ATR-adjusted). Placed as part of the order.</li>
+      <li><strong>Take Profit:</strong> Next significant S/R level. Placed as part of the order.</li>
+      <li>Both SL and TP are set at order placement — no monitoring needed.</li>
+    </ul>
+
+    <h3>Options Exits (Auto-Monitored)</h3>
+    <p>The sync script checks all open spreads every <strong>30 seconds</strong> and auto-closes when thresholds are hit.</p>
+
+    <table class="flow-table">
+      <tr><th></th><th>Credit Spreads</th><th>Debit Spreads</th></tr>
+      <tr>
+        <td><strong>Take Profit</strong></td>
+        <td>Close when {{ user.credit_tp_pct if user.credit_tp_pct is not none else 50 }}% of credit captured<br><span style="color:var(--text-light);font-size:0.78rem;">e.g. $0.50 credit &rarr; buy back at ${{ "%.2f"|format(0.50 * (1 - (user.credit_tp_pct if user.credit_tp_pct is not none else 50) / 100)) }}</span></td>
+        <td>Close when spread gains {{ user.debit_tp_pct if user.debit_tp_pct is not none else 75 }}%<br><span style="color:var(--text-light);font-size:0.78rem;">e.g. $0.40 paid &rarr; sell at ${{ "%.2f"|format(0.40 * (1 + (user.debit_tp_pct if user.debit_tp_pct is not none else 75) / 100)) }}</span></td>
+      </tr>
+      <tr>
+        <td><strong>Stop Loss</strong></td>
+        <td>Close when loss = {{ user.credit_sl_pct if user.credit_sl_pct is not none else 100 }}% of credit<br><span style="color:var(--text-light);font-size:0.78rem;">e.g. $0.50 credit &rarr; buy back at ${{ "%.2f"|format(0.50 * (1 + (user.credit_sl_pct if user.credit_sl_pct is not none else 100) / 100)) }}</span></td>
+        <td>Close when spread loses {{ user.debit_sl_pct if user.debit_sl_pct is not none else 50 }}%<br><span style="color:var(--text-light);font-size:0.78rem;">e.g. $0.40 paid &rarr; sell at ${{ "%.2f"|format(0.40 * (1 - (user.debit_sl_pct if user.debit_sl_pct is not none else 50) / 100)) }}</span></td>
+      </tr>
+      <tr>
+        <td><strong>Time Stop</strong></td>
+        <td colspan="2">Close all spreads at {{ user.options_time_stop_dte if user.options_time_stop_dte is not none else 7 }} DTE — gamma risk spikes near expiration</td>
+      </tr>
+    </table>
+
+    <div class="warning">
+      <strong>Why time stops matter:</strong> As expiration approaches, small price moves cause large swings in spread value (gamma risk). Closing at {{ user.options_time_stop_dte if user.options_time_stop_dte is not none else 7 }} DTE avoids this.
+    </div>
+  </div>
+
+  <!-- Risk Management -->
+  <div class="card">
+    <h2><span class="section-num">9</span> Risk Management</h2>
+
+    <h3>Forex Risk Controls</h3>
+    <ul>
+      <li>Per-model risk percentage or fixed dollar amount</li>
+      <li>Daily loss budget — model stops trading for the day when hit</li>
+      <li>Max position size capped at 100,000 units</li>
+      <li>Only major and major-cross forex pairs (27 pairs, no exotics)</li>
+    </ul>
+
+    <h3>Options Risk Controls</h3>
+    <ul>
+      <li>Max risk per spread: ${{ user.options_max_risk_per_spread if user.options_max_risk_per_spread is not none else 500 }}</li>
+      <li>Max contracts per spread: {{ user.options_max_contracts if user.options_max_contracts is not none else 5 }}</li>
+      <li>Max total portfolio risk: ${{ user.options_max_total_risk if user.options_max_total_risk is not none else 2000 }}</li>
+      <li>Max simultaneous spreads: {{ user.options_max_spreads if user.options_max_spreads is not none else 10 }}</li>
+      <li>Minimum credit threshold: {{ user.options_min_credit_pct if user.options_min_credit_pct is not none else 25 }}% of width</li>
+      <li>Auto-close via TP/SL/time stop (monitored every 30 seconds)</li>
+    </ul>
+
+    <h3>Alerts</h3>
+    <ul>
+      <li>Email on every signal fire (all models)</li>
+      <li>Email on every trade placed</li>
+      <li>Email when daily budget is hit</li>
+      <li>Email when options spread is auto-closed</li>
+      <li>Dashboard warning when Schwab token is expiring</li>
+    </ul>
+  </div>
+
+  <!-- Data Sources -->
+  <div class="card">
+    <h2><span class="section-num">10</span> Data Sources</h2>
+    <table class="flow-table">
+      <tr><th>Source</th><th>Data</th><th>Used For</th></tr>
+      <tr><td><strong>Oanda</strong></td><td>Forex prices, candles, execution</td><td>Forex scanning, trade placement, account balance</td></tr>
+      <tr><td><strong>Polygon / Massive</strong></td><td>Stock/crypto candles, options chains with greeks</td><td>Stock scanning, options analysis, spread pricing</td></tr>
+      <tr><td><strong>Schwab</strong></td><td>Options chains</td><td>Options analysis comparison (side-by-side with Polygon)</td></tr>
+      <tr><td><strong>Interactive Brokers</strong></td><td>Options execution, portfolio</td><td>Spread placement, position monitoring, P&L tracking</td></tr>
+      <tr><td><strong>LumiTrade SNR API</strong></td><td>Support/resistance frequency data</td><td>Zone discovery (untouched levels)</td></tr>
+    </table>
+  </div>
+
+  <div class="disclaimer">
+    LumiTrade is a financial publishing company. All signals are for educational and informational purposes only. Not investment advice.
+  </div>
+</div>
+</body>
+</html>
