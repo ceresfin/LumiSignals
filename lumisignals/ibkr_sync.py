@@ -176,29 +176,76 @@ def collect_ib_data(ib: IB) -> dict:
                 legs.append(leg_info)
             # If leg resolution failed, look up stored order details from server
             if not right:
-                try:
-                    resp = requests.get(
-                        f"{SERVER_URL}/api/ibkr/order/details/{o.orderId}",
-                        headers={"X-Sync-Key": SYNC_KEY},
-                        timeout=5,
-                    )
-                    if resp.status_code == 200:
-                        details = resp.json()
-                        if details.get("right"):
-                            right = details["right"]
-                            sell_strike = float(details.get("sell_strike", sell_strike))
-                            buy_strike = float(details.get("buy_strike", buy_strike))
-                            expiration = details.get("expiration", expiration)
-                            order_entry["spread_type"] = details.get("spread_type", "")
-                            order_entry["is_credit"] = details.get("is_credit", False)
-                            order_entry["model"] = details.get("model", "")
-                            order_entry["trigger_pattern"] = details.get("trigger_pattern", "")
-                            order_entry["bias_score"] = details.get("bias_score", 0)
-                            order_entry["zone_type"] = details.get("zone_type", "")
-                            order_entry["zone_timeframe"] = details.get("zone_timeframe", "")
-                            order_entry["verdict"] = details.get("verdict", "")
-                except Exception:
-                    pass
+                for lookup_id in [o.orderId, o.permId]:
+                    if not lookup_id:
+                        continue
+                    try:
+                        resp = requests.get(
+                            f"{SERVER_URL}/api/ibkr/order/details/{lookup_id}",
+                            headers={"X-Sync-Key": SYNC_KEY},
+                            timeout=5,
+                        )
+                        if resp.status_code == 200:
+                            details = resp.json()
+                            if details.get("right"):
+                                right = details["right"]
+                                sell_strike = float(details.get("sell_strike", sell_strike))
+                                buy_strike = float(details.get("buy_strike", buy_strike))
+                                expiration = details.get("expiration", expiration)
+                                order_entry["spread_type"] = details.get("spread_type", "")
+                                order_entry["is_credit"] = details.get("is_credit", False)
+                                order_entry["model"] = details.get("model", "")
+                                order_entry["trigger_pattern"] = details.get("trigger_pattern", "")
+                                order_entry["bias_score"] = details.get("bias_score", 0)
+                                order_entry["zone_type"] = details.get("zone_type", "")
+                                order_entry["zone_timeframe"] = details.get("zone_timeframe", "")
+                                order_entry["verdict"] = details.get("verdict", "")
+                                order_entry["limit_price"] = float(details.get("limit_price", 0))
+                                order_entry["max_profit"] = float(details.get("max_profit", 0))
+                                order_entry["max_risk"] = float(details.get("max_risk", 0))
+                                order_entry["risk_reward"] = float(details.get("risk_reward", 0))
+                                order_entry["signal_action"] = details.get("signal_action", "")
+                                order_entry["queued_at"] = details.get("queued_at", "")
+                                break
+                    except Exception:
+                        pass
+                # Also try searching by symbol + strikes
+                if not right and c.symbol:
+                    try:
+                        resp = requests.get(
+                            f"{SERVER_URL}/api/ibkr/order/search",
+                            params={"ticker": c.symbol, "sell_strike": sell_strike or 0, "buy_strike": buy_strike or 0},
+                            headers={"X-Sync-Key": SYNC_KEY},
+                            timeout=5,
+                        )
+                        if resp.status_code == 200:
+                            details = resp.json()
+                            if details.get("model"):
+                                order_entry.update({
+                                    "model": details.get("model", ""),
+                                    "trigger_pattern": details.get("trigger_pattern", ""),
+                                    "bias_score": details.get("bias_score", 0),
+                                    "zone_type": details.get("zone_type", ""),
+                                    "zone_timeframe": details.get("zone_timeframe", ""),
+                                    "is_credit": details.get("is_credit", False),
+                                    "limit_price": float(details.get("limit_price", 0)),
+                                    "max_profit": float(details.get("max_profit", 0)),
+                                    "max_risk": float(details.get("max_risk", 0)),
+                                    "risk_reward": float(details.get("risk_reward", 0)),
+                                    "signal_action": details.get("signal_action", ""),
+                                    "queued_at": details.get("queued_at", ""),
+                                    "right": details.get("right", ""),
+                                    "sell_strike": float(details.get("sell_strike", 0)),
+                                    "buy_strike": float(details.get("buy_strike", 0)),
+                                    "expiration": details.get("expiration", ""),
+                                    "spread_type": details.get("spread_type", ""),
+                                })
+                                right = details.get("right", "")
+                                sell_strike = float(details.get("sell_strike", 0))
+                                buy_strike = float(details.get("buy_strike", 0))
+                                expiration = details.get("expiration", "")
+                    except Exception:
+                        pass
             order_entry["legs"] = legs
             order_entry["sec_type"] = "SPREAD"
             order_entry["sell_strike"] = sell_strike

@@ -538,13 +538,48 @@ function loadIBTrades() {
       );
 
       // Orders table — use stored orders, filter out ones that became positions
+      // Merge stored orders (have metadata) with IB sync orders (have live status)
       var spreadSymbols = (data.spreads || []).map(function(s) { return s.symbol; });
-      var orders = storedOrders.length ? storedOrders.filter(function(o) {
-        // Hide orders that have become open positions (avoid duplicates)
+      var storedMap = {};
+      storedOrders.forEach(function(o) {
+        var key = (o.ticker || o.symbol || '') + '_' + (o.sell_strike || '') + '_' + (o.buy_strike || '');
+        storedMap[key] = o;
+      });
+
+      // Start with IB sync orders, enrich with stored data
+      var ibOrders = data.open_orders || [];
+      var mergedOrders = ibOrders.map(function(o) {
+        var key = (o.symbol || '') + '_' + (o.sell_strike || '') + '_' + (o.buy_strike || '');
+        var stored = storedMap[key];
+        if (stored) {
+          // Merge stored metadata into IB order
+          if (!o.model) o.model = stored.model;
+          if (!o.trigger_pattern) o.trigger_pattern = stored.trigger_pattern;
+          if (!o.bias_score) o.bias_score = stored.bias_score;
+          if (!o.zone_type) o.zone_type = stored.zone_type;
+          if (!o.zone_timeframe) o.zone_timeframe = stored.zone_timeframe;
+          if (!o.limit_price && stored.limit_price) o.limit_price = stored.limit_price;
+          if (!o.max_profit && stored.max_profit) o.max_profit = stored.max_profit;
+          if (!o.max_risk && stored.max_risk) o.max_risk = stored.max_risk;
+          if (!o.risk_reward && stored.risk_reward) o.risk_reward = stored.risk_reward;
+          if (!o.is_credit && stored.is_credit !== undefined) o.is_credit = stored.is_credit;
+          if (!o.signal_action) o.signal_action = stored.signal_action;
+          if (!o.queued_at) o.queued_at = stored.queued_at;
+          if (!o.ticker) o.ticker = stored.ticker;
+          delete storedMap[key]; // consumed
+        }
+        return o;
+      });
+
+      // Add any stored orders not matched to IB orders (queued but not yet on IB)
+      Object.values(storedMap).forEach(function(o) { mergedOrders.push(o); });
+
+      // Filter out orders that are already positions
+      var orders = mergedOrders.filter(function(o) {
         var ticker = o.ticker || o.symbol || '';
         var isPosition = spreadSymbols.indexOf(ticker) >= 0 && (o.status === 'PreSubmitted' || o.status === 'Submitted' || o.status === 'filled');
         return !isPosition;
-      }) : (data.open_orders || []);
+      });
       document.getElementById('ibOrderCount').textContent = orders.length;
       var orderRows = orders.map(function(o) {
         var strikes = '';
