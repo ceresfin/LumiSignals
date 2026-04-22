@@ -119,8 +119,13 @@ def collect_ib_data(ib: IB) -> dict:
                     spread["zone_timeframe"] = details.get("zone_timeframe", "")
                     spread["verdict"] = details.get("verdict", "")
                     spread["opened_at"] = details.get("queued_at", "")
-                    spread["max_profit_planned"] = details.get("max_profit", 0)
-                    spread["max_risk_planned"] = details.get("max_risk", 0)
+                    # Override max_profit/risk with planned values from order
+                    planned_profit = details.get("max_profit", 0)
+                    planned_risk = details.get("max_risk", 0)
+                    if planned_profit:
+                        spread["max_profit"] = planned_profit
+                    if planned_risk:
+                        spread["max_risk"] = planned_risk
                     spread["risk_reward"] = details.get("risk_reward", 0)
         except Exception:
             pass

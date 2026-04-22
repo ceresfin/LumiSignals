@@ -511,7 +511,7 @@ function loadIBTrades() {
         }
         var isCredit = s.spread_type && s.spread_type.indexOf('Credit') >= 0;
         var costLabel = isCredit ? '<span class="pl-pos">$' + fmtNum(Math.abs(s.net_cost)) + ' cr</span>' : '<span class="pl-neg">$' + fmtNum(Math.abs(s.net_cost)) + ' dr</span>';
-        var rr = (s.max_profit && s.max_risk) ? (s.max_profit / s.max_risk).toFixed(1) : '—';
+        var rr = s.risk_reward ? s.risk_reward.toFixed(1) : ((s.max_profit && s.max_risk) ? (s.max_profit / s.max_risk).toFixed(1) : '—');
         var mdl = s.model ? modelBadge(s.model) : '—';
         var signalInfo = '';
         if (s.trigger_pattern) signalInfo += '<strong>' + s.trigger_pattern + '</strong><br>';
@@ -557,7 +557,8 @@ function loadIBTrades() {
           var isCredit = o.spread_type.indexOf('Credit') >= 0;
           spreadBadge = '<span class="badge" style="background:' + (isCredit ? '#e8f5e9;color:#27ae60' : '#fef3c7;color:#d97706') + '">' + o.spread_type.toUpperCase() + '</span>';
         }
-        var premium = o.net_premium ? '$' + fmtNum(o.net_premium) : '—';
+        var premVal = o.net_premium || o.limit_price || 0;
+        var premium = premVal ? '$' + fmtNum(premVal) : '—';
         var premLabel = o.is_credit ? '<span class="pl-pos">' + premium + ' cr</span>' : '<span class="pl-neg">' + premium + ' dr</span>';
         var rawStatus = o.status || '';
         var displayStatus = rawStatus;
@@ -574,7 +575,7 @@ function loadIBTrades() {
         if (o.bias_score) signalInfo += '<span style="font-weight:600;' + (o.bias_score >= 70 ? 'color:var(--green)' : '') + '">' + Math.round(o.bias_score) + '/100</span>';
         var mdl = o.model ? modelBadge(o.model) : '—';
         return '<td><strong>' + (o.ticker || o.symbol || '') + '</strong></td>' +
-          '<td>' + (o.direction === 'BUY' ? '<span class="dir-buy">BUY</span>' : '<span class="dir-sell">SELL</span>') + '</td>' +
+          '<td>' + ((o.direction || o.signal_action || '') === 'BUY' ? '<span class="dir-buy">BUY</span>' : '<span class="dir-sell">SELL</span>') + '</td>' +
           '<td>' + spreadBadge + '</td>' +
           '<td>' + strikes + ' ' + optType + '</td>' +
           '<td>' + exp + '</td>' +
