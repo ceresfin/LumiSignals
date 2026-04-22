@@ -84,6 +84,7 @@ def publish_log(user_id, entries):
 
 def _auto_trade_options(user_data, signal, extra_meta, model_name, log, alert_pass, email):
     """Analyze and queue options spread when a stock signal fires."""
+    from datetime import datetime as _dt, timezone, timedelta
     from lumisignals.polygon_options import analyze_spreads_polygon
     from lumisignals.options_sizing import OptionsRiskConfig, calculate_spread_contracts
 
@@ -101,7 +102,6 @@ def _auto_trade_options(user_data, signal, extra_meta, model_name, log, alert_pa
         return
 
     # Deduplication — check if we already have an order/position for this ticker + zone
-    from datetime import datetime as _dt
     today = _dt.now(timezone.utc).strftime("%Y-%m-%d")
     zone_tf = (extra_meta or {}).get("zone_timeframe", "")
     dedup_key = f"traded:{user_id}:{symbol}:{zone_tf}_{zone_type}:{today}"
