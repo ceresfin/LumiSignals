@@ -100,6 +100,25 @@ def _auto_trade_options(user_data, signal, extra_meta, model_name, log, alert_pa
         log(f"[{model_name.upper()}] OPTIONS: No Polygon API key — skipping")
         return
 
+    # Deduplication — check if we already have an order/position for this ticker + zone
+    from datetime import datetime as _dt
+    today = _dt.now(timezone.utc).strftime("%Y-%m-%d")
+    zone_tf = (extra_meta or {}).get("zone_timeframe", "")
+    dedup_key = f"traded:{user_id}:{symbol}:{zone_tf}_{zone_type}:{today}"
+    existing = rdb.get(dedup_key)
+    if existing:
+        log(f"[{model_name.upper()}] OPTIONS: {symbol} already traded at {zone_tf} {zone_type} today — skipping")
+        return
+
+    # Also check if there's already an open position or pending order for this ticker
+    for key in rdb.scan_iter(f"ibkr:order:pending:*"):
+        raw = rdb.get(key)
+        if raw:
+            order = json.loads(raw)
+            if order.get("ticker") == symbol and order.get("status") in ("queued", "placing", "PreSubmitted", "Submitted"):
+                log(f"[{model_name.upper()}] OPTIONS: {symbol} already has a pending order — skipping")
+                return
+
     # Build risk config from user settings
     risk_config = OptionsRiskConfig(
         max_risk_per_spread=float(user_data.get("options_max_risk_per_spread") or 200),
@@ -268,6 +287,16 @@ def _auto_trade_options(user_data, signal, extra_meta, model_name, log, alert_pa
             },
             to_email=email, smtp_pass=alert_pass,
         )
+
+    # Mark this ticker+zone as traded today (expires at midnight UTC + 24h buffer)
+    if orders_queued:
+        rdb.setex(dedup_key, 86400, json.dumps({
+            "symbol": symbol,
+            "zone": f"{zone_tf} {zone_type}",
+            "model": model_name,
+            "orders": orders_queued,
+            "traded_at": _dt.now(timezone.utc).isoformat(),
+        }))
 
 
 def run_bot_for_user(user_data, stop_check):
