@@ -855,6 +855,222 @@ def create_app():
     def health():
         return jsonify({"status": "ok", "service": "lumisignals-bot"})
 
+    # -----------------------------------------------------------------------
+    # TradingView Webhook — receives alerts, places 0DTE options trades
+    # -----------------------------------------------------------------------
+
+    @app.route("/api/webhook/tradingview", methods=["POST"])
+    def api_tradingview_webhook():
+        """Receive a TradingView alert and queue a 0DTE options trade.
+
+        Expected JSON payload:
+        {
+            "ticker": "SPY",           # required
+            "direction": "BUY",        # BUY or SELL
+            "strategy": "vwap_bounce", # strategy name for logging
+            "key": "lumisignals2026",  # simple auth key
+            "spread_type": "credit",   # credit, debit, or both (default: credit)
+            "contracts": 2,            # override contract count (optional)
+            "dte": 0                   # 0 for 0DTE, or specific days (optional)
+        }
+        """
+        import redis as _redis
+        import uuid
+
+        data = request.get_json(silent=True) or {}
+
+        # Simple auth
+        webhook_key = data.get("key", "")
+        if webhook_key != os.environ.get("TV_WEBHOOK_KEY", "lumisignals2026"):
+            return jsonify({"error": "Invalid key"}), 403
+
+        ticker = data.get("ticker", "").upper().strip()
+        direction = data.get("direction", "").upper().strip()
+        strategy = data.get("strategy", "tradingview")
+        spread_pref = data.get("spread_type", "credit")
+        override_contracts = data.get("contracts")
+        dte = data.get("dte", 0)
+
+        if not ticker:
+            return jsonify({"error": "Missing ticker"}), 400
+        if direction not in ("BUY", "SELL"):
+            return jsonify({"error": "Direction must be BUY or SELL"}), 400
+
+        rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+
+        # Deduplication — don't place same ticker + strategy + direction twice today
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        dedup_key = f"tv:traded:{ticker}:{strategy}:{direction}:{today}"
+        if rdb.get(dedup_key):
+            return jsonify({"status": "skipped", "reason": f"{ticker} {strategy} already traded today"})
+
+        # Determine zone type from direction
+        zone_type = "demand" if direction == "BUY" else "supply"
+
+        # Get current price from Polygon
+        try:
+            import requests as req
+            massive_key = os.environ.get("MASSIVE_API_KEY", "")
+            if massive_key:
+                resp = req.get(f"https://api.polygon.io/v2/aggs/ticker/{ticker}/prev",
+                              params={"apiKey": massive_key}, timeout=10)
+                if resp.ok:
+                    results = resp.json().get("results", [])
+                    current_price = results[0]["c"] if results else 0
+                else:
+                    current_price = 0
+            else:
+                current_price = 0
+        except Exception:
+            current_price = 0
+
+        if not current_price:
+            return jsonify({"error": f"Could not get price for {ticker}"}), 400
+
+        # Analyze options spread
+        try:
+            from lumisignals.polygon_options import analyze_spreads_polygon
+
+            # 0DTE: min_dte=0, max_dte=1 for same-day expiration
+            # If dte > 0, use that as target
+            if dte == 0:
+                min_dte_val, max_dte_val = 0, 1
+            else:
+                min_dte_val, max_dte_val = max(0, dte - 1), dte + 2
+
+            result = analyze_spreads_polygon(
+                massive_key, ticker, zone_type, current_price, current_price,
+                max_risk_per_spread=500, preferred_width=5.0,
+                min_dte=min_dte_val, max_dte=max_dte_val,
+            )
+        except Exception as e:
+            return jsonify({"error": f"Analysis failed: {e}"}), 500
+
+        # Pick the spread based on preference
+        credit = result.get("credit_spread")
+        debit = result.get("debit_spread")
+        spreads_to_queue = []
+
+        if spread_pref in ("credit", "both") and credit and credit.get("verdict") in ("GOOD", "FAIR"):
+            spreads_to_queue.append(("credit", credit))
+        if spread_pref in ("debit", "both") and debit and debit.get("verdict") in ("GOOD", "FAIR"):
+            spreads_to_queue.append(("debit", debit))
+
+        if not spreads_to_queue:
+            return jsonify({
+                "status": "no_trade",
+                "reason": "No spread met GOOD/FAIR threshold",
+                "credit_verdict": credit.get("verdict") if credit else "none",
+                "debit_verdict": debit.get("verdict") if debit else "none",
+            })
+
+        # Size and queue orders
+        from lumisignals.options_sizing import OptionsRiskConfig, calculate_spread_contracts
+
+        # Get user settings (use first active user for now)
+        try:
+            from sqlalchemy import text
+            row = db.session.execute(text(
+                "SELECT options_max_risk_per_spread, options_max_contracts, options_max_total_risk, "
+                "options_spread_width, options_min_credit_pct, options_max_spreads FROM users WHERE bot_active = true LIMIT 1"
+            )).fetchone()
+            if row:
+                risk_config = OptionsRiskConfig(
+                    max_risk_per_spread=float(row[0] or 500),
+                    max_contracts=int(row[1] or 5),
+                    max_total_risk=float(row[2] or 2000),
+                    spread_width=float(row[3] or 5),
+                    min_credit_pct=float(row[4] or 25),
+                    max_spreads=int(row[5] or 10),
+                )
+            else:
+                risk_config = OptionsRiskConfig()
+        except Exception:
+            risk_config = OptionsRiskConfig()
+
+        queued = []
+        for spread_kind, spread in spreads_to_queue:
+            is_credit = spread["net_credit"] > 0
+            premium = spread["net_credit"] if is_credit else spread["net_debit"]
+            width = spread["width"]
+
+            sizing = calculate_spread_contracts(
+                spread_width=width, credit_or_debit=premium,
+                is_credit=is_credit, risk_config=risk_config,
+            )
+
+            contracts = override_contracts or sizing.get("contracts", 0)
+            if contracts <= 0:
+                continue
+
+            order_id = str(uuid.uuid4())[:8]
+            order = {
+                "order_id": order_id,
+                "queued_at": datetime.now(timezone.utc).isoformat(),
+                "user_id": 1,  # single user for now
+                "ticker": ticker,
+                "spread_type": spread["type"],
+                "buy_strike": spread["long_strike"],
+                "sell_strike": spread["short_strike"],
+                "right": "C" if "Call" in spread["option_type"] else "P",
+                "expiration": spread["expiration"],
+                "quantity": contracts,
+                "limit_price": premium,
+                "is_credit": is_credit,
+                "width": width,
+                "max_risk": sizing.get("total_risk", 0),
+                "max_profit": sizing.get("max_profit", 0),
+                "risk_reward": spread["risk_reward"],
+                "verdict": spread["verdict"],
+                "status": "queued",
+                "auto": True,
+                "model": "0dte",
+                "strategy": strategy,
+                "zone_type": zone_type,
+                "zone_price": current_price,
+                "trigger_pattern": f"TV: {strategy}",
+                "bias_score": 0,
+                "zone_timeframe": f"0DTE ({dte}d)",
+                "signal_action": direction,
+                "signal_entry": current_price,
+            }
+            rdb.setex(f"ibkr:order:pending:{order_id}", 86400, json.dumps(order))
+            queued.append(f"{spread['type']} {contracts}x @ ${premium:.2f}")
+
+        # Mark as traded today
+        if queued:
+            rdb.setex(dedup_key, 86400, "1")
+
+            # Send email alert
+            try:
+                from lumisignals.alerts import send_alert, AlertType
+                alert_pass = os.environ.get("ALERT_EMAIL_PASSWORD", "")
+                if alert_pass:
+                    send_alert(
+                        AlertType.TRADE_OPENED,
+                        f"TV Signal: {direction} {ticker} — {strategy}",
+                        f"TradingView webhook triggered 0DTE options trade",
+                        details={
+                            "Ticker": ticker,
+                            "Direction": direction,
+                            "Strategy": strategy,
+                            "Orders": ", ".join(queued),
+                            "Price": f"${current_price:.2f}",
+                        },
+                        smtp_pass=alert_pass,
+                    )
+            except Exception:
+                pass
+
+        return jsonify({
+            "status": "queued" if queued else "no_trade",
+            "ticker": ticker,
+            "direction": direction,
+            "strategy": strategy,
+            "orders": queued,
+            "price": current_price,
+        })
+
     return app
 
 
