@@ -550,10 +550,13 @@ function loadIBTrades() {
         }
         var premium = o.net_premium ? '$' + fmtNum(o.net_premium) : '—';
         var premLabel = o.is_credit ? '<span class="pl-pos">' + premium + ' cr</span>' : '<span class="pl-neg">' + premium + ' dr</span>';
+        var rawStatus = o.status || '';
+        var displayStatus = rawStatus;
+        if (rawStatus === 'PreSubmitted') displayStatus = 'Submitted';
         var statusColor = '';
-        if (o.status === 'Submitted' || o.status === 'PreSubmitted' || o.status === 'filled') statusColor = 'pl-pos';
-        else if (o.status === 'Cancelled' || o.status === 'failed') statusColor = 'pl-neg';
-        else if (o.status === 'queued' || o.status === 'placing') statusColor = '';
+        if (displayStatus === 'Submitted' || rawStatus === 'filled') statusColor = 'pl-pos';
+        else if (rawStatus === 'Cancelled' || rawStatus === 'failed') statusColor = 'pl-neg';
+        else if (rawStatus === 'queued' || rawStatus === 'placing') statusColor = '';
         var exp = formatExp(o.expiration || '');
         var rr = o.risk_reward ? o.risk_reward.toFixed(1) : '—';
         var signalInfo = '';
@@ -572,8 +575,8 @@ function loadIBTrades() {
           '<td class="pl-neg">$' + fmtNum(o.max_risk || 0) + '</td>' +
           '<td>' + rr + '</td>' +
           '<td>' + mdl + '</td>' +
-          '<td><span class="badge ' + statusColor + '">' + o.status + '</span></td>' +
-          '<td style="font-size:0.72rem">' + fmtTime(o.time || '') + '</td>' +
+          '<td><span class="badge ' + statusColor + '">' + displayStatus + '</span></td>' +
+          '<td style="font-size:0.72rem">' + fmtTime(o.queued_at || o.time || '') + '</td>' +
           '<td style="font-size:0.75rem">' + signalInfo + '</td>';
       });
       document.getElementById('ibOrdersTable').innerHTML = buildTable(
