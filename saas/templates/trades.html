@@ -129,6 +129,13 @@ tr:hover { background: rgba(0,0,0,0.015); }
       <div id="ibSpreadsTable"><div class="loading">Loading...</div></div>
     </div>
 
+    <div id="ibRejectedSection" style="display:none;">
+      <div class="card">
+        <h2 style="color:var(--red);">Rejected Orders <span class="count" id="ibRejectedCount">0</span></h2>
+        <div id="ibRejectedTable"></div>
+      </div>
+    </div>
+
     <div class="card">
       <h2>Closed Options Trades <span class="count" id="ibClosedCount">0</span></h2>
       <div id="ibClosedTable"><div class="loading">Loading...</div></div>
@@ -587,12 +594,21 @@ function loadIBTrades() {
       // Add any stored orders not matched to IB orders (queued but not yet on IB)
       Object.values(storedMap).forEach(function(o) { mergedOrders.push(o); });
 
-      // Filter out orders that are already positions
-      var orders = mergedOrders.filter(function(o) {
+      // Split orders into active vs rejected
+      var activeOrders = [];
+      var rejectedOrders = [];
+      mergedOrders.forEach(function(o) {
         var ticker = o.ticker || o.symbol || '';
         var isPosition = spreadSymbols.indexOf(ticker) >= 0 && (o.status === 'PreSubmitted' || o.status === 'Submitted' || o.status === 'filled');
-        return !isPosition;
+        if (isPosition) return; // skip positions
+        var st = o.status || '';
+        if (st === 'Cancelled' || st === 'failed' || st === 'Inactive' || st === 'FAILED') {
+          rejectedOrders.push(o);
+        } else {
+          activeOrders.push(o);
+        }
       });
+      var orders = activeOrders;
       document.getElementById('ibOrderCount').textContent = orders.length;
       var orderRows = orders.map(function(o) {
         var strikes = '';
@@ -654,6 +670,44 @@ function loadIBTrades() {
       document.getElementById('ibOrdersTable').innerHTML = buildTable(
         ['Ticker', 'Dir', 'Type', 'Strikes', 'Exp', 'Qty', 'Premium', 'Max Profit', 'Max Risk', 'R:R', 'Model', 'Status', 'Time', 'Signal'], orderRows
       );
+
+      // Rejected orders
+      document.getElementById('ibRejectedCount').textContent = rejectedOrders.length;
+      if (rejectedOrders.length > 0) {
+        document.getElementById('ibRejectedSection').style.display = 'block';
+        var rejectedRows = rejectedOrders.map(function(o) {
+          var strikes = '';
+          if (o.sell_strike && o.buy_strike) strikes = 'SELL ' + o.sell_strike + ' / BUY ' + o.buy_strike;
+          var optType = o.right === 'C' ? 'Call' : (o.right === 'P' ? 'Put' : '');
+          var spreadBadge = '';
+          if (o.spread_type) {
+            var isCr = o.spread_type.indexOf('Credit') >= 0;
+            spreadBadge = '<span class="badge" style="background:' + (isCr ? '#e8f5e9;color:#27ae60' : '#fef3c7;color:#d97706') + '">' + o.spread_type.toUpperCase() + '</span>';
+          }
+          var premVal = o.net_premium || o.limit_price || 0;
+          var premium = premVal ? '$' + fmtNum(premVal) : '—';
+          var mdl = o.model ? modelBadge(o.model) : '—';
+          var signalInfo = '';
+          if (o.trigger_pattern) signalInfo += '<strong>' + o.trigger_pattern + '</strong><br>';
+          if (o.zone_timeframe) signalInfo += o.zone_timeframe + ' ' + (o.zone_type || '') + '<br>';
+          if (o.bias_score) signalInfo += '<span style="font-weight:600">' + Math.round(o.bias_score) + '/100</span>';
+          var reason = (o.error || o.message || o.status || '').replace(/<br>/g, ' ').substring(0, 60);
+          return '<td><strong>' + (o.ticker || o.symbol || '') + '</strong></td>' +
+            '<td>' + spreadBadge + '</td>' +
+            '<td>' + strikes + ' ' + optType + '</td>' +
+            '<td>' + premium + '</td>' +
+            '<td class="pl-neg" style="font-size:0.75rem">' + reason + '</td>' +
+            '<td>' + mdl + '</td>' +
+            '<td style="font-size:0.72rem">' + fmtTime(o.queued_at || o.time || '') + '</td>' +
+            '<td style="font-size:0.75rem">' + signalInfo + '</td>';
+        });
+        document.getElementById('ibRejectedTable').innerHTML = buildTable(
+          ['Ticker', 'Type', 'Strikes', 'Premium', 'Reason', 'Model', 'Time', 'Signal'], rejectedRows
+        );
+      } else {
+        document.getElementById('ibRejectedSection').style.display = 'none';
+      }
+
       // Closed options trades
       document.getElementById('ibClosedCount').textContent = closedTrades.length;
       var closedRows = closedTrades.map(function(t) {
