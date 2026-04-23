@@ -944,7 +944,7 @@ def create_app():
                 "signal_action": direction,
             }
             rdb.setex(f"ibkr:order:pending:{order_id}", 86400, json.dumps(order))
-            rdb.setex(dedup_key, 300, "1")  # 5-min dedup for futures (not daily)
+            rdb.setex(dedup_key, 1800, "1")  # 30-min dedup for futures
 
             # Alert
             try:
