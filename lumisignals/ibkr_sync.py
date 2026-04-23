@@ -691,14 +691,18 @@ def check_order_requests(ib: IB):
                             entry_dir = "BUY" if direction == "CLOSE_LONG" else "SELL"
                             opened_at = ""
                             try:
-                                entry_resp = requests.get(
-                                    f"{SERVER_URL}/api/ibkr/order/details/entry_{ticker}_{entry_dir}",
+                                # Search for the most recent futures entry for this ticker
+                                search_resp = requests.get(
+                                    f"{SERVER_URL}/api/ibkr/order/search",
+                                    params={"ticker": ticker, "sell_strike": 0, "buy_strike": 0},
                                     headers={"X-Sync-Key": SYNC_KEY},
                                     timeout=5,
                                 )
-                                if entry_resp.status_code == 200:
-                                    entry_data = entry_resp.json()
-                                    opened_at = entry_data.get("opened_at", "")
+                                if search_resp.status_code == 200:
+                                    entry_data = search_resp.json()
+                                    if entry_data.get("opened_at"):
+                                        opened_at = entry_data["opened_at"]
+                                        entry_strategy = entry_data.get("strategy", entry_strategy)
                             except Exception:
                                 pass
                             if not opened_at:
@@ -727,15 +731,6 @@ def check_order_requests(ib: IB):
                         buy_ord = MktOrder("BUY", contracts)
                         buy_ord.tif = "GTC"
                         trade = ib.placeOrder(contract, buy_ord)
-                        # Store entry time for closed trade tracking
-                        try:
-                            from datetime import datetime as _dt2, timezone as _tz2
-                            requests.post(f"{SERVER_URL}/api/ibkr/order/update",
-                                json={"order_id": f"entry_{ticker}_BUY", "ticker": ticker, "direction": "BUY",
-                                      "opened_at": _dt2.now(_tz2.utc).isoformat(), "strategy": strategy_name, "status": "entry"},
-                                headers={"X-Sync-Key": SYNC_KEY}, timeout=5)
-                        except Exception:
-                            pass
                         ib.sleep(2)
                         if trade.orderStatus.status in ("Filled", "PreSubmitted", "Submitted"):
                             try:
@@ -753,15 +748,6 @@ def check_order_requests(ib: IB):
                         sell_ord = MktOrder("SELL", contracts)
                         sell_ord.tif = "GTC"
                         trade = ib.placeOrder(contract, sell_ord)
-                        # Store entry time for closed trade tracking
-                        try:
-                            from datetime import datetime as _dt2, timezone as _tz2
-                            requests.post(f"{SERVER_URL}/api/ibkr/order/update",
-                                json={"order_id": f"entry_{ticker}_SELL", "ticker": ticker, "direction": "SELL",
-                                      "opened_at": _dt2.now(_tz2.utc).isoformat(), "strategy": strategy_name, "status": "entry"},
-                                headers={"X-Sync-Key": SYNC_KEY}, timeout=5)
-                        except Exception:
-                            pass
                         ib.sleep(2)
                         if trade.orderStatus.status in ("Filled", "PreSubmitted", "Submitted"):
                             try:
@@ -780,16 +766,39 @@ def check_order_requests(ib: IB):
                         continue
 
                     ib.sleep(2)
+                    from datetime import datetime as _dt2, timezone as _tz2
+                    perm_id = trade.order.permId
+                    now_iso = _dt2.now(_tz2.utc).isoformat()
+
                     result = {
                         "order_id": order_id,
                         "ib_order_id": trade.order.orderId,
-                        "perm_id": trade.order.permId,
+                        "perm_id": perm_id,
                         "status": trade.orderStatus.status,
                         "ticker": ticker,
                         "direction": direction,
                         "type": "futures",
                     }
-                    logger.info("Futures order placed: %s %s — %s", direction, ticker, trade.orderStatus.status)
+                    logger.info("Futures order placed: %s %s — %s (permId=%s)", direction, ticker, trade.orderStatus.status, perm_id)
+
+                    # Store entry details for BUY/SELL (not CLOSE) using permId as unique key
+                    if direction in ("BUY", "SELL"):
+                        try:
+                            requests.post(f"{SERVER_URL}/api/ibkr/order/update",
+                                json={
+                                    "order_id": f"futures_entry_{perm_id}",
+                                    "ticker": ticker,
+                                    "direction": direction,
+                                    "perm_id": perm_id,
+                                    "opened_at": now_iso,
+                                    "strategy": strategy_name,
+                                    "status": "entry",
+                                    "type": "futures",
+                                    "entry_price": trade.orderStatus.avgFillPrice or 0,
+                                },
+                                headers={"X-Sync-Key": SYNC_KEY}, timeout=5)
+                        except Exception:
+                            pass
 
                 except Exception as e:
                     result = {
