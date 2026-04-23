@@ -706,6 +706,33 @@ def create_app():
             logger.debug("Signal lookup error: %s", e)
         return jsonify({})
 
+    @app.route("/api/ibkr/futures-entry/<ticker>/<direction>")
+    def api_ibkr_futures_entry(ticker, direction):
+        """Find the most recent futures entry for a ticker + direction."""
+        sync_key = request.headers.get("X-Sync-Key", "")
+        if sync_key != os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026"):
+            return jsonify({"error": "Invalid sync key"}), 403
+        import redis as _redis
+        rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+        best = None
+        best_time = ""
+        for key in rdb.scan_iter("ibkr:order:*"):
+            key_str = key.decode() if isinstance(key, bytes) else key
+            if "futures_entry" not in key_str:
+                continue
+            raw = rdb.get(key)
+            if not raw:
+                continue
+            entry = json.loads(raw)
+            if entry.get("ticker") == ticker and entry.get("direction") == direction and entry.get("status") == "entry":
+                opened = entry.get("opened_at", "")
+                if opened > best_time:
+                    best = entry
+                    best_time = opened
+        if best:
+            return jsonify(best)
+        return jsonify({})
+
     @app.route("/api/ibkr/order/search")
     def api_ibkr_order_search():
         """Search stored order details by ticker + strikes."""

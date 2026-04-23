@@ -687,22 +687,24 @@ def check_order_requests(ib: IB):
                             # Use entry strategy name (strip _exit suffix)
                             entry_strategy = strategy_name.replace("_exit", "")
 
-                            # Find opened_at from stored entry order
+                            # Find opened_at from stored entry order (most recent for this ticker + direction)
                             entry_dir = "BUY" if direction == "CLOSE_LONG" else "SELL"
                             opened_at = ""
                             try:
-                                # Search for the most recent futures entry for this ticker
-                                search_resp = requests.get(
-                                    f"{SERVER_URL}/api/ibkr/order/search",
-                                    params={"ticker": ticker, "sell_strike": 0, "buy_strike": 0},
+                                entry_resp = requests.get(
+                                    f"{SERVER_URL}/api/ibkr/futures-entry/{ticker}/{entry_dir}",
                                     headers={"X-Sync-Key": SYNC_KEY},
                                     timeout=5,
                                 )
-                                if search_resp.status_code == 200:
-                                    entry_data = search_resp.json()
-                                    if entry_data.get("opened_at"):
-                                        opened_at = entry_data["opened_at"]
-                                        entry_strategy = entry_data.get("strategy", entry_strategy)
+                                if entry_resp.status_code == 200:
+                                    entry_data = entry_resp.json()
+                                    opened_at = entry_data.get("opened_at", "")
+                                    entry_strategy = entry_data.get("strategy", entry_strategy)
+                                    # Mark this entry as closed so it's not reused
+                                    if entry_data.get("order_id"):
+                                        requests.post(f"{SERVER_URL}/api/ibkr/order/update",
+                                            json={"order_id": entry_data["order_id"], "status": "closed"},
+                                            headers={"X-Sync-Key": SYNC_KEY}, timeout=5)
                             except Exception:
                                 pass
                             if not opened_at:
