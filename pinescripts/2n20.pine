@@ -7,7 +7,16 @@ showBias = input.bool(true, "Show Bias Background", group="Display")
 minBodyPct = input.float(30.0, "Min Body Size (% of range)", step=5.0, group="Entry")
 
 // ─── DAILY ANCHORED VWAP ───
-vwapVal = ta.vwap
+// Manual calculation for futures compatibility
+isNewDay = ta.change(time("D")) != 0
+var dayVwapNum = 0.0
+var dayVwapDen = 0.0
+if isNewDay
+    dayVwapNum := 0.0
+    dayVwapDen := 0.0
+dayVwapNum += hlc3 * volume
+dayVwapDen += volume
+vwapVal = dayVwapDen > 0 ? dayVwapNum / dayVwapDen : hlc3
 
 // ─── MARKET HOURS ───
 etHour = hour(time, "America/New_York")

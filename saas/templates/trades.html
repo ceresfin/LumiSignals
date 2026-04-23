@@ -842,10 +842,10 @@ function loadFutures() {
     });
     document.getElementById('futOrderCount').textContent = pendingFut.length;
     var ordRows = pendingFut.map(function(o) {
-      var dir = o.direction === 'BUY' ? '<span class="dir-buy">BUY</span>' :
-               o.direction === 'SELL' ? '<span class="dir-sell">SELL</span>' :
-               o.direction === 'CLOSE_LONG' ? '<span style="color:var(--text-light)">CLOSE LONG</span>' :
-               '<span style="color:var(--text-light)">CLOSE SHORT</span>';
+      var dir = o.direction === 'BUY' ? '<span class="dir-buy">Buy Long</span>' :
+               o.direction === 'SELL' ? '<span class="dir-sell">Sell Short</span>' :
+               o.direction === 'CLOSE_LONG' ? '<span style="color:#e67e22">Sell to Cover</span>' :
+               '<span style="color:#e67e22">Buy to Cover</span>';
       var st = o.status === 'PreSubmitted' ? 'Submitted' : o.status;
       return '<td><strong>' + (o.ticker || '') + '</strong></td>' +
         '<td>' + dir + '</td>' +

@@ -670,6 +670,15 @@ def check_order_requests(ib: IB):
                             else:
                                 pnl = (entry_price - exit_price) * contracts * multiplier
                             from datetime import datetime as _dt, timezone as _tz
+                            # Determine reason based on direction
+                            if direction == "CLOSE_LONG":
+                                close_reason = "Sell to Cover"
+                            else:
+                                close_reason = "Buy to Cover"
+
+                            # Use entry strategy name (strip _exit suffix)
+                            entry_strategy = strategy_name.replace("_exit", "")
+
                             closed_trade = {
                                 "symbol": ticker,
                                 "type": "futures",
@@ -678,8 +687,8 @@ def check_order_requests(ib: IB):
                                 "entry_price": round(entry_price, 2),
                                 "exit_price": round(exit_price, 2),
                                 "realized_pnl": round(pnl, 2),
-                                "strategy": strategy_name,
-                                "close_reason": "Signal exit",
+                                "strategy": entry_strategy,
+                                "close_reason": close_reason,
                                 "closed_at": _dt.now(_tz.utc).isoformat(),
                             }
                             try:
