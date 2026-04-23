@@ -893,17 +893,23 @@ function loadFutures() {
       var pnl = t.realized_pnl || 0;
       var won = pnl > 0;
       var badge = won ? '<span class="badge" style="background:#e8f5e9;color:#27ae60">WIN</span>' : '<span class="badge" style="background:#fdecea;color:#c0392b">LOSS</span>';
+      var entryP = t.entry_price ? '$' + fmtNum(t.entry_price) : '—';
+      var exitP = t.exit_price ? '$' + fmtNum(t.exit_price) : '—';
       return '<td><strong>' + (t.ticker || t.symbol || '') + '</strong></td>' +
         '<td>' + (t.direction || '') + '</td>' +
         '<td>' + (t.contracts || 1) + '</td>' +
+        '<td>' + entryP + '</td>' +
+        '<td>' + exitP + '</td>' +
         '<td class="' + plClass(pnl) + '">$' + fmt(pnl) + '</td>' +
         '<td>' + (t.strategy || '') + '</td>' +
         '<td>' + (t.close_reason || '') + '</td>' +
         '<td>' + badge + '</td>' +
-        '<td style="font-size:0.72rem">' + fmtTime(t.closed_at || '') + '</td>';
+        '<td style="font-size:0.72rem">' + fmtTime(t.opened_at || '') + '</td>' +
+        '<td style="font-size:0.72rem">' + fmtTime(t.closed_at || '') + '</td>' +
+        '<td style="font-size:0.72rem">' + duration(t.opened_at, t.closed_at) + '</td>';
     });
     document.getElementById('futClosedTable').innerHTML = buildTable(
-      ['Ticker', 'Dir', 'Qty', 'P&L', 'Strategy', 'Reason', 'Result', 'Closed'], closedRows
+      ['Ticker', 'Dir', 'Qty', 'Entry', 'Exit', 'P&L', 'Strategy', 'Reason', 'Result', 'Opened', 'Closed', 'Duration'], closedRows
     );
   });
 }

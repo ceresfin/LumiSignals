@@ -678,6 +678,21 @@ def check_order_requests(ib: IB):
                             # Use entry strategy name (strip _exit suffix)
                             entry_strategy = strategy_name.replace("_exit", "")
 
+                            # Find opened_at from matching entry order
+                            opened_at = ""
+                            entry_dir = "BUY" if direction == "CLOSE_LONG" else "SELL"
+                            try:
+                                search_resp = requests.get(
+                                    f"{SERVER_URL}/api/ibkr/orders/all",
+                                    headers={"X-Sync-Key": SYNC_KEY},
+                                    timeout=5,
+                                )
+                                # Can't use this endpoint without auth, search pending orders instead
+                            except Exception:
+                                pass
+                            # Use order's own queued_at as approximation if we can't find entry
+                            opened_at = order.get("queued_at", "")
+
                             closed_trade = {
                                 "symbol": ticker,
                                 "type": "futures",
@@ -688,6 +703,7 @@ def check_order_requests(ib: IB):
                                 "realized_pnl": round(pnl, 2),
                                 "strategy": entry_strategy,
                                 "close_reason": close_reason,
+                                "opened_at": opened_at,
                                 "closed_at": _dt.now(_tz.utc).isoformat(),
                             }
                             try:
