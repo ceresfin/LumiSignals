@@ -576,12 +576,79 @@ def check_order_requests(ib: IB):
         for order in orders:
             order_id = order["order_id"]
             ticker = order["ticker"]
-            spread_type = order["spread_type"]
-            buy_strike = float(order["buy_strike"])
-            sell_strike = float(order["sell_strike"])
-            right = order["right"]
-            expiration = order["expiration"]
-            quantity = int(order["quantity"])
+
+            # ─── FUTURES ORDERS ───
+            if order.get("type") == "futures":
+                direction = order.get("direction", "")
+                contracts = int(order.get("contracts", 1))
+                strategy_name = order.get("strategy", "")
+
+                logger.info("Futures order: %s %s %dx — %s", direction, ticker, contracts, strategy_name)
+
+                try:
+                    from ib_insync import Future, MarketOrder as MktOrder
+
+                    # MES = Micro E-mini S&P 500, ES = E-mini S&P 500
+                    if ticker == "MES":
+                        contract = Future("MES", exchange="CME")
+                    elif ticker == "ES":
+                        contract = Future("ES", exchange="CME")
+                    elif ticker == "MNQ" or ticker == "NQ":
+                        contract = Future(ticker, exchange="CME")
+                    else:
+                        contract = Future(ticker, exchange="CME")
+
+                    ib.qualifyContracts(contract)
+
+                    if direction == "CLOSE_LONG":
+                        # Close long = sell
+                        trade = ib.placeOrder(contract, MktOrder("SELL", contracts))
+                    elif direction == "CLOSE_SHORT":
+                        # Close short = buy
+                        trade = ib.placeOrder(contract, MktOrder("BUY", contracts))
+                    elif direction == "BUY":
+                        trade = ib.placeOrder(contract, MktOrder("BUY", contracts))
+                    elif direction == "SELL":
+                        trade = ib.placeOrder(contract, MktOrder("SELL", contracts))
+                    else:
+                        logger.error("Unknown futures direction: %s", direction)
+                        continue
+
+                    ib.sleep(2)
+                    result = {
+                        "order_id": order_id,
+                        "ib_order_id": trade.order.orderId,
+                        "perm_id": trade.order.permId,
+                        "status": trade.orderStatus.status,
+                        "ticker": ticker,
+                        "direction": direction,
+                        "type": "futures",
+                    }
+                    logger.info("Futures order placed: %s %s — %s", direction, ticker, trade.orderStatus.status)
+
+                except Exception as e:
+                    result = {
+                        "order_id": order_id,
+                        "status": "failed",
+                        "ticker": ticker,
+                        "error": str(e),
+                    }
+                    logger.error("Futures order failed: %s — %s", ticker, e)
+
+                try:
+                    requests.post(f"{SERVER_URL}/api/ibkr/order/update", json=result,
+                                  headers={"X-Sync-Key": SYNC_KEY}, timeout=10)
+                except Exception:
+                    pass
+                continue
+
+            # ─── OPTIONS ORDERS ───
+            spread_type = order.get("spread_type", "")
+            buy_strike = float(order.get("buy_strike", 0))
+            sell_strike = float(order.get("sell_strike", 0))
+            right = order.get("right", "")
+            expiration = order.get("expiration", "")
+            quantity = int(order.get("quantity", 1))
             limit_price = float(order["limit_price"])
 
             is_credit = "Credit" in spread_type

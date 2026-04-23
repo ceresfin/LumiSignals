@@ -37,21 +37,25 @@ strongVolume = volume > avgVol * 1.2
 priceChange3 = math.abs(close - close[3]) / close[3] * 100
 slowApproach = priceChange3 < 0.4
 
-// BUY: price touches or dips below VWAP, bullish candle
-nearVwapBelow = low <= vwapVal * (1 + touchThreshold) and low[1] > vwapVal
+// Was price at or beyond the SD band recently? (came FROM the band TO vwap)
+wasAtLowerBand = ta.lowest(low, 8) <= lowerBand1[1]
+wasAtUpperBand = ta.highest(high, 8) >= upperBand1[1]
+
+// BUY: price came down from below (was at lower SD band), now bouncing at VWAP
+nearVwapBelow = low <= vwapVal * (1 + touchThreshold)
 bullCandle = close > open
 bullWick = lowerWickPct >= wickRatioPct
-buyBase = nearVwapBelow and (bullCandle or bullWick) and hasVolume
+buyBase = nearVwapBelow and wasAtLowerBand and (bullCandle or bullWick) and hasVolume
 
-// SELL: price touches or pops above VWAP, bearish candle
-nearVwapAbove = high >= vwapVal * (1 - touchThreshold) and high[1] < vwapVal
+// SELL: price came up from above (was at upper SD band), now fading at VWAP
+nearVwapAbove = high >= vwapVal * (1 - touchThreshold)
 bearCandle = close < open
 bearWick = upperWickPct >= wickRatioPct
-sellBase = nearVwapAbove and (bearCandle or bearWick) and hasVolume
+sellBase = nearVwapAbove and wasAtUpperBand and (bearCandle or bearWick) and hasVolume
 
-// Also trigger on SD band bounces
-atLowerBand = low <= lowerBand1 and close > open
-atUpperBand = high >= upperBand1 and close < open
+// SD band bounce: price hits the band and reverses (no VWAP touch needed)
+atLowerBand = low <= lowerBand1 and close > open and close > lowerBand1
+atUpperBand = high >= upperBand1 and close < open and close < upperBand1
 buyBand = atLowerBand and hasVolume
 sellBand = atUpperBand and hasVolume
 

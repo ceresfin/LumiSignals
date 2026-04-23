@@ -1,0 +1,120 @@
+//@version=6
+indicator("2n20", overlay=true)
+
+// ─── SETTINGS ───
+showExits = input.bool(true, "Show Exit Signals", group="Display")
+showBias = input.bool(true, "Show Bias Background", group="Display")
+
+// ─── DAILY ANCHORED VWAP ───
+vwapVal = ta.vwap
+
+// ─── MARKET HOURS ───
+etHour = hour(time, "America/New_York")
+etMinute = minute(time, "America/New_York")
+etTime = etHour * 100 + etMinute
+inSession = etTime >= 930 and etTime <= 1555
+
+// ─── BIAS: Above or Below VWAP ───
+aboveVwap = close > vwapVal
+belowVwap = close < vwapVal
+
+// ─── CANDLE DEFINITIONS ───
+isGreen = close > open
+isRed = close < open
+greenBody = isGreen ? close - open : 0
+redBody = isRed ? open - close : 0
+prevGreenBody = isGreen[1] ? close[1] - open[1] : 0
+prevRedBody = isRed[1] ? open[1] - close[1] : 0
+
+// ─── FIND MOST RECENT OPPOSITE CANDLE ───
+// Look back up to 3 bars for the last red candle (for buy signals)
+lastRedBody = isRed[1] ? prevRedBody : isRed[2] ? math.abs(open[2] - close[2]) : isRed[3] ? math.abs(open[3] - close[3]) : 0.0
+lastRedHigh = isRed[1] ? open[1] : isRed[2] ? open[2] : isRed[3] ? open[3] : 0.0
+
+// Look back up to 3 bars for the last green candle (for sell signals)
+lastGreenBody = isGreen[1] ? prevGreenBody : isGreen[2] ? math.abs(close[2] - open[2]) : isGreen[3] ? math.abs(close[3] - open[3]) : 0.0
+lastGreenLow = isGreen[1] ? open[1] : isGreen[2] ? open[2] : isGreen[3] ? open[3] : 0.0
+
+// ─── OVERWHELM DETECTION ───
+// Green overwhelms: current green body > most recent red body within 3 bars
+greenOverwhelmsRed = isGreen and lastRedBody > 0 and greenBody > lastRedBody and close > lastRedHigh
+
+// Red overwhelms: current red body > most recent green body within 3 bars
+redOverwhelmsGreen = isRed and lastGreenBody > 0 and redBody > lastGreenBody and close < lastGreenLow
+
+// ─── TRADE SIGNALS ───
+// BUY: above VWAP + green overwhelms red
+buySignal = inSession and aboveVwap and greenOverwhelmsRed
+
+// SELL: below VWAP + red overwhelms green
+sellSignal = inSession and belowVwap and redOverwhelmsGreen
+
+// ─── EXIT SIGNALS ───
+// Exit long: red overwhelms green (while in a long)
+exitLong = redOverwhelmsGreen
+
+// Exit short: green overwhelms red (while in a short)
+exitShort = greenOverwhelmsRed
+
+// ─── VWAP CROSS EXIT ───
+crossedBelowVwap = close < vwapVal and close[1] >= vwapVal
+crossedAboveVwap = close > vwapVal and close[1] <= vwapVal
+
+// ─── TRADE STATE TRACKING ───
+var inLong = false
+var inShort = false
+
+if buySignal and not inLong
+    inLong := true
+    inShort := false
+
+if sellSignal and not inShort
+    inShort := true
+    inLong := false
+
+if inLong and exitLong
+    inLong := false
+
+if inShort and exitShort
+    inShort := false
+
+// VWAP cross exits
+if inLong and crossedBelowVwap
+    inLong := false
+
+if inShort and crossedAboveVwap
+    inShort := false
+
+// ─── PLOT VWAP ───
+plot(vwapVal, "Daily VWAP", color=color.orange, linewidth=2)
+
+// ─── BIAS BACKGROUND ───
+biasColor = aboveVwap ? color.new(color.green, 93) : belowVwap ? color.new(color.red, 93) : na
+bgcolor(showBias ? biasColor : na, title="VWAP Bias")
+
+// ─── SIGNAL MARKERS ───
+// Entry signals
+plotshape(buySignal and not inLong[1], "BUY", shape.triangleup, location.belowbar, color.lime, size=size.normal, text="BUY")
+plotshape(sellSignal and not inShort[1], "SELL", shape.triangledown, location.abovebar, color.red, size=size.normal, text="SELL")
+
+// Exit signals — overwhelm
+plotshape(showExits and inLong[1] and exitLong and not crossedBelowVwap, "Exit Long", shape.xcross, location.abovebar, color.orange, size=size.small, text="X")
+plotshape(showExits and inShort[1] and exitShort and not crossedAboveVwap, "Exit Short", shape.xcross, location.belowbar, color.orange, size=size.small, text="X")
+
+// Exit signals — VWAP cross
+plotshape(showExits and inLong[1] and crossedBelowVwap, "VWAP Exit Long", shape.xcross, location.abovebar, color.yellow, size=size.small, text="VWAP X")
+plotshape(showExits and inShort[1] and crossedAboveVwap, "VWAP Exit Short", shape.xcross, location.belowbar, color.yellow, size=size.small, text="VWAP X")
+
+// In-trade background
+tradeColor = inLong ? color.new(color.green, 88) : inShort ? color.new(color.red, 88) : na
+bgcolor(tradeColor, title="In Trade")
+
+// ─── ALERTS ───
+if buySignal and not inLong[1]
+    alert('{"ticker":"MES","direction":"BUY","strategy":"2n20","key":"lumisignals2026","type":"futures","contracts":1}', alert.freq_once_per_bar)
+if sellSignal and not inShort[1]
+    alert('{"ticker":"MES","direction":"SELL","strategy":"2n20","key":"lumisignals2026","type":"futures","contracts":1}', alert.freq_once_per_bar)
+if inLong[1] and (exitLong or crossedBelowVwap)
+    alert('{"ticker":"MES","direction":"CLOSE_LONG","strategy":"2n20_exit","key":"lumisignals2026","type":"futures"}', alert.freq_once_per_bar)
+if inShort[1] and (exitShort or crossedAboveVwap)
+    alert('{"ticker":"MES","direction":"CLOSE_SHORT","strategy":"2n20_exit","key":"lumisignals2026","type":"futures"}', alert.freq_once_per_bar)

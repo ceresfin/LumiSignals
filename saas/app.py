@@ -890,10 +890,70 @@ def create_app():
         ticker = data.get("ticker", "").upper().strip()
         direction = data.get("direction", "").upper().strip()
         strategy = data.get("strategy", "tradingview")
+        trade_type = data.get("type", "options")  # "options" or "futures"
         spread_pref = data.get("spread_type", "credit")
-        override_contracts = data.get("contracts")
+        override_contracts = data.get("contracts", 1)
         dte = data.get("dte", 0)
 
+        # ─── FUTURES PATH ───
+        if trade_type == "futures":
+            rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+            # Handle close signals
+            if direction in ("CLOSE_LONG", "CLOSE_SHORT"):
+                order_id = str(uuid.uuid4())[:8]
+                order = {
+                    "order_id": order_id,
+                    "queued_at": datetime.now(timezone.utc).isoformat(),
+                    "user_id": 1,
+                    "ticker": ticker,
+                    "type": "futures",
+                    "direction": direction,
+                    "strategy": strategy,
+                    "contracts": int(override_contracts or 1),
+                    "status": "queued",
+                }
+                rdb.setex(f"ibkr:order:pending:{order_id}", 86400, json.dumps(order))
+                return jsonify({"status": "queued", "action": direction, "ticker": ticker})
+
+            # Deduplication for entry signals
+            dedup_key = f"tv:futures:{ticker}:{strategy}:{direction}:{today}"
+            if rdb.get(dedup_key):
+                return jsonify({"status": "skipped", "reason": f"{ticker} {strategy} already traded"})
+
+            order_id = str(uuid.uuid4())[:8]
+            order = {
+                "order_id": order_id,
+                "queued_at": datetime.now(timezone.utc).isoformat(),
+                "user_id": 1,
+                "ticker": ticker,
+                "type": "futures",
+                "direction": direction,
+                "strategy": strategy,
+                "contracts": int(override_contracts or 1),
+                "status": "queued",
+                "auto": True,
+                "model": "0dte",
+                "signal_action": direction,
+            }
+            rdb.setex(f"ibkr:order:pending:{order_id}", 86400, json.dumps(order))
+            rdb.setex(dedup_key, 300, "1")  # 5-min dedup for futures (not daily)
+
+            # Alert
+            try:
+                from lumisignals.alerts import send_alert, AlertType
+                alert_pass = os.environ.get("ALERT_EMAIL_PASSWORD", "")
+                if alert_pass:
+                    send_alert(AlertType.TRADE_OPENED, f"Futures: {direction} {ticker} — {strategy}",
+                               f"TradingView 2n20 signal", details={"Ticker": ticker, "Direction": direction, "Strategy": strategy, "Contracts": str(override_contracts or 1)},
+                               smtp_pass=alert_pass)
+            except Exception:
+                pass
+
+            return jsonify({"status": "queued", "ticker": ticker, "direction": direction, "strategy": strategy, "contracts": override_contracts or 1})
+
+        # ─── OPTIONS PATH ───
         # 0DTE exit rules: tighter than swing
         if dte == 0:
             default_tp = 35
