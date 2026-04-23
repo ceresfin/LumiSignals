@@ -271,6 +271,11 @@ def create_app():
     def strategy():
         return render_template("strategy.html", user=current_user)
 
+    @app.route("/compare")
+    @login_required
+    def compare():
+        return render_template("compare.html", user=current_user)
+
     # -----------------------------------------------------------------------
     # API endpoints
     # -----------------------------------------------------------------------
@@ -899,6 +904,120 @@ def create_app():
         return jsonify({"status": "ok", "service": "lumisignals-bot"})
 
     # -----------------------------------------------------------------------
+    # SNR / Trend Comparison API
+    # -----------------------------------------------------------------------
+
+    @app.route("/api/tv/levels", methods=["POST"])
+    def api_tv_levels():
+        """Store TradingView untouched levels + ADX trend from Pine Script webhook.
+
+        Expected JSON:
+        {
+            "ticker": "SPY",
+            "key": "lumisignals2026",
+            "levels": {
+                "M": {"supply": 600.5, "demand": 510.2},
+                "W": {"supply": 575.0, "demand": 530.8},
+                "D": {"supply": 560.0, "demand": 540.3},
+                "4H": {"supply": 555.0, "demand": 542.1}
+            },
+            "trends": {
+                "M": {"dir": "UP", "adx": 28.5},
+                "W": {"dir": "DOWN", "adx": 22.1},
+                "D": {"dir": "DOWN", "adx": 31.0},
+                "4H": {"dir": "UP", "adx": 18.4},
+                "1H": {"dir": "DOWN", "adx": 27.3}
+            }
+        }
+        """
+        import redis as _redis
+        data = request.get_json(silent=True) or {}
+        if data.get("key") != os.environ.get("TV_WEBHOOK_KEY", "lumisignals2026"):
+            return jsonify({"error": "Invalid key"}), 403
+        ticker = data.get("ticker", "").upper().strip()
+        if not ticker:
+            return jsonify({"error": "Missing ticker"}), 400
+        rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+        from datetime import datetime as _dt, timezone as _tz
+        store = {
+            "ticker": ticker,
+            "levels": data.get("levels", {}),
+            "trends": data.get("trends", {}),
+            "updated_at": _dt.now(_tz.utc).isoformat(),
+        }
+        rdb.setex(f"tv:levels:{ticker}", 3600, json.dumps(store))
+        return jsonify({"status": "ok", "ticker": ticker})
+
+    @app.route("/api/compare/levels")
+    @login_required
+    def api_compare_levels():
+        """Fetch LumiTrade SNR levels + TradingView levels side by side for comparison."""
+        import redis as _redis
+        rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+
+        tickers = request.args.get("tickers", "SPY,TSLA,NVDA").upper().split(",")
+        tickers = [t.strip() for t in tickers if t.strip()]
+
+        snr_base_url = "https://app.lumitrade.ai/api/v1"
+        snr_api_key = current_user.lumitrade_api_key or os.environ.get("LUMITRADE_API_KEY", "")
+
+        # LumiTrade frequency names → TradingView labels
+        freq_map = {"monthly": "M", "weekly": "W", "daily": "D", "fourhour": "4H", "hourly": "1H"}
+        frequencies = ["monthly", "weekly", "daily", "fourhour", "hourly"]
+
+        results = []
+        for ticker in tickers:
+            item = {"ticker": ticker, "lumitrade": {}, "tradingview": {}, "tv_trends": {}, "lt_trends": {}, "tv_updated": ""}
+
+            # --- LumiTrade trade-builder-setup (returns SNR + ADX trend) ---
+            if snr_api_key:
+                try:
+                    import requests as _requests
+                    session = _requests.Session()
+                    session.headers["Authorization"] = f"Bearer {snr_api_key}"
+                    resp = session.get(
+                        f"{snr_base_url}/partners/technical-analysis/trade-builder-setup",
+                        params={"ticker": ticker, "period": 14, "market": "stock",
+                                "frequency": ",".join(frequencies)},
+                        timeout=15,
+                    )
+                    if resp.status_code == 200:
+                        lt_data = resp.json().get("data", resp.json())
+                        for freq, tv_tf in freq_map.items():
+                            tf_data = lt_data.get(freq, {})
+                            if isinstance(tf_data, dict):
+                                snr = tf_data.get("snr", {})
+                                if snr:
+                                    item["lumitrade"][tv_tf] = {
+                                        "supply": snr.get("resistance_price"),
+                                        "demand": snr.get("support_price"),
+                                    }
+                                # ADX trend from LumiTrade
+                                adx_data = tf_data.get("adx", {}).get("trend", {})
+                                for adx_tf, adx_dir in adx_data.items():
+                                    lt_label = freq_map.get(adx_tf, adx_tf)
+                                    dir_str = "UP" if adx_dir == "bullish" else "DOWN" if adx_dir == "bearish" else "SIDE"
+                                    item["lt_trends"][lt_label] = dir_str
+                    elif resp.status_code == 403:
+                        item["lumitrade"]["error"] = "API key invalid or expired"
+                except Exception as e:
+                    item["lumitrade"]["error"] = str(e)
+            else:
+                item["lumitrade"]["error"] = "No LumiTrade API key configured"
+
+            # --- TradingView levels from Redis ---
+            tv_raw = rdb.get(f"tv:levels:{ticker}")
+            if tv_raw:
+                tv_data = json.loads(tv_raw)
+                item["tradingview"] = tv_data.get("levels", {})
+                item["tv_trends"] = tv_data.get("trends", {})
+                item["tv_updated"] = tv_data.get("updated_at", "")
+
+            results.append(item)
+
+        return jsonify({"tickers": results})
+
+    # -----------------------------------------------------------------------
     # TradingView Webhook — receives alerts, places 0DTE options trades
     # -----------------------------------------------------------------------
 
@@ -933,6 +1052,20 @@ def create_app():
         ticker = data.get("ticker", "").upper().strip()
         direction = data.get("direction", "").upper().strip()
         strategy = data.get("strategy", "tradingview")
+
+        # ─── LEVELS SYNC PATH — store TV levels for comparison dashboard ───
+        if strategy == "tv_levels_sync":
+            rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+            from datetime import datetime as _dt, timezone as _tz
+            store = {
+                "ticker": ticker,
+                "levels": data.get("levels", {}),
+                "trends": data.get("trends", {}),
+                "updated_at": _dt.now(_tz.utc).isoformat(),
+            }
+            rdb.setex(f"tv:levels:{ticker}", 3600, json.dumps(store))
+            return jsonify({"status": "ok", "action": "levels_sync", "ticker": ticker})
+
         trade_type = data.get("type", "options")  # "options" or "futures"
         spread_pref = data.get("spread_type", "credit")
         override_contracts = data.get("contracts", 1)

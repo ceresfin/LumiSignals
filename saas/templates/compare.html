@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LumiSignals — SNR Compare</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+:root { --olive: #7F8464; --cream: #F5F3EE; --dark: #2E2E2C; --text-light: #8a847e; --text-medium: #56665F; --white: #fff; --green: #27ae60; --red: #c0392b; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Inter', sans-serif; background: var(--cream); color: var(--dark); }
+.header { background: linear-gradient(165deg, #C4B99A 0%, #B8A88C 40%, #A89878 100%); padding: 16px 0; }
+.header-inner { max-width: 1400px; margin: 0 auto; padding: 0 24px; display: flex; justify-content: space-between; align-items: center; }
+.header h1 { font-family: 'Playfair Display', serif; font-size: 1.4rem; font-weight: 400; }
+.header-nav { display: flex; gap: 12px; }
+.header-nav a { font-size: 0.85rem; color: var(--dark); padding: 8px 16px; border-radius: 50px; text-decoration: none; }
+.header-nav a:hover { background: rgba(0,0,0,0.05); }
+.header-nav a.active { background: var(--olive); color: #FFF5E1; }
+.container { max-width: 1400px; margin: 0 auto; padding: 24px; }
+.card { background: var(--white); border-radius: 12px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); margin-bottom: 20px; }
+.card h2 { font-family: 'Playfair Display', serif; font-size: 1.1rem; font-weight: 400; margin-bottom: 16px; padding-bottom: 10px; border-bottom: 1px solid #eee; }
+table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+th { text-align: left; font-weight: 500; color: var(--text-light); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.5px; padding: 8px 10px; border-bottom: 2px solid #eee; }
+td { padding: 10px; border-bottom: 1px solid #f5f5f5; vertical-align: middle; }
+tr:hover { background: rgba(0,0,0,0.015); }
+.loading { text-align: center; padding: 40px; color: var(--text-light); }
+.match { color: var(--green); font-weight: 500; }
+.mismatch { color: var(--red); font-weight: 500; }
+.no-data { color: var(--text-light); font-style: italic; }
+.source-tag { display: inline-block; font-size: 0.65rem; font-weight: 600; padding: 2px 8px; border-radius: 50px; letter-spacing: 0.3px; }
+.tag-lt { background: #e8f5e9; color: var(--green); }
+.tag-tv { background: #e3f2fd; color: #1565c0; }
+.trend-up { color: var(--green); font-weight: 600; }
+.trend-down { color: var(--red); font-weight: 600; }
+.trend-side { color: #f39c12; font-weight: 600; }
+.diff-ok { background: #f1f8e9; }
+.diff-warn { background: #fff8e1; }
+.diff-bad { background: #fbe9e7; }
+.ticker-header { font-family: 'Playfair Display', serif; font-size: 1.3rem; font-weight: 500; margin-bottom: 6px; }
+.updated-at { font-size: 0.7rem; color: var(--text-light); margin-bottom: 12px; }
+.section-label { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-medium); margin: 18px 0 8px; }
+.compare-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+@media (max-width: 900px) { .compare-grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="header-inner">
+    <h1>LumiSignals</h1>
+    <nav class="header-nav">
+      <a href="/dashboard">Dashboard</a>
+      <a href="/watchlist">Watchlist</a>
+      <a href="/trades">Trades</a>
+      <a href="/compare" class="active">Compare</a>
+      <a href="/strategy">Strategy</a>
+      <a href="/setup">Settings</a>
+      <a href="/logout">Log out</a>
+    </nav>
+  </div>
+</div>
+<div class="container">
+  <div id="compareContent"><div class="loading">Loading comparison data...</div></div>
+</div>
+
+<script>
+var TF_ORDER = ['M', 'W', 'D', '4H', '1H'];
+var TF_LABELS = {M: 'Monthly', W: 'Weekly', D: 'Daily', '4H': '4-Hour', '1H': 'Hourly'};
+
+function fmt(v) {
+  if (v === null || v === undefined) return '<span class="no-data">--</span>';
+  return parseFloat(v).toFixed(2);
+}
+
+function trendClass(d) {
+  if (!d) return 'no-data';
+  return d === 'UP' ? 'trend-up' : d === 'DOWN' ? 'trend-down' : 'trend-side';
+}
+
+function trendLabel(d) {
+  if (!d) return '<span class="no-data">--</span>';
+  return '<span class="' + trendClass(d) + '">' + d + '</span>';
+}
+
+function diffClass(lt, tv, pct) {
+  if (lt === null || lt === undefined || tv === null || tv === undefined) return '';
+  var diff = Math.abs(lt - tv) / Math.max(lt, 0.0001) * 100;
+  if (diff <= pct * 0.5) return 'diff-ok';
+  if (diff <= pct) return 'diff-warn';
+  return 'diff-bad';
+}
+
+function diffPct(lt, tv) {
+  if (lt === null || lt === undefined || tv === null || tv === undefined) return '';
+  var diff = Math.abs(lt - tv) / Math.max(lt, 0.0001) * 100;
+  var sign = diff < 0.01 ? '' : (tv > lt ? '+' : '-');
+  return sign + diff.toFixed(2) + '%';
+}
+
+function fmtTime(iso) {
+  if (!iso) return '';
+  var d = new Date(iso);
+  return d.toLocaleString('en-US', {month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true});
+}
+
+function renderTicker(item) {
+  var html = '<div class="card">';
+  html += '<div class="ticker-header">' + item.ticker + '</div>';
+  if (item.tv_updated) {
+    html += '<div class="updated-at">TV data updated: ' + fmtTime(item.tv_updated) + '</div>';
+  } else {
+    html += '<div class="updated-at" style="color:var(--red)">No TradingView data — add HTF Strategy Scanner to this ticker in TV and set up alert</div>';
+  }
+
+  // ─── LEVELS COMPARISON ───
+  html += '<div class="section-label">Supply / Demand Levels</div>';
+  html += '<table><tr>';
+  html += '<th>Timeframe</th>';
+  html += '<th><span class="source-tag tag-lt">LumiTrade</span> Supply</th>';
+  html += '<th><span class="source-tag tag-tv">TradingView</span> Supply</th>';
+  html += '<th>Diff</th>';
+  html += '<th><span class="source-tag tag-lt">LumiTrade</span> Demand</th>';
+  html += '<th><span class="source-tag tag-tv">TradingView</span> Demand</th>';
+  html += '<th>Diff</th>';
+  html += '</tr>';
+
+  var ltLevels = item.lumitrade || {};
+  var tvLevels = item.tradingview || {};
+
+  TF_ORDER.forEach(function(tf) {
+    if (tf === '1H') return; // No hourly levels in comparison
+    var lt = ltLevels[tf] || {};
+    var tv = tvLevels[tf] || {};
+    var ltSup = lt.supply;
+    var tvSup = tv.supply;
+    var ltDem = lt.demand;
+    var tvDem = tv.demand;
+
+    var supDiffCls = diffClass(ltSup, tvSup, 0.5);
+    var demDiffCls = diffClass(ltDem, tvDem, 0.5);
+
+    html += '<tr>';
+    html += '<td><strong>' + (TF_LABELS[tf] || tf) + '</strong></td>';
+    html += '<td>' + fmt(ltSup) + '</td>';
+    html += '<td>' + fmt(tvSup) + '</td>';
+    html += '<td class="' + supDiffCls + '">' + diffPct(ltSup, tvSup) + '</td>';
+    html += '<td>' + fmt(ltDem) + '</td>';
+    html += '<td>' + fmt(tvDem) + '</td>';
+    html += '<td class="' + demDiffCls + '">' + diffPct(ltDem, tvDem) + '</td>';
+    html += '</tr>';
+  });
+  html += '</table>';
+
+  // ─── TREND COMPARISON ───
+  html += '<div class="section-label">Trend Direction (ADX)</div>';
+  html += '<table><tr>';
+  html += '<th>Timeframe</th>';
+  html += '<th><span class="source-tag tag-lt">LumiTrade</span></th>';
+  html += '<th><span class="source-tag tag-tv">TradingView</span></th>';
+  html += '<th>Match</th>';
+  html += '</tr>';
+
+  var ltTrends = item.lt_trends || {};
+  var tvTrends = item.tv_trends || {};
+
+  TF_ORDER.forEach(function(tf) {
+    var ltDir = ltTrends[tf];
+    var tvDir = tvTrends[tf] ? tvTrends[tf].dir : undefined;
+    var tvAdx = tvTrends[tf] ? tvTrends[tf].adx : undefined;
+
+    var matchStr = '';
+    if (ltDir && tvDir) {
+      if (ltDir === tvDir) {
+        matchStr = '<span class="match">MATCH</span>';
+      } else {
+        matchStr = '<span class="mismatch">MISMATCH</span>';
+      }
+    }
+
+    var tvLabel = tvDir ? trendLabel(tvDir) : '<span class="no-data">--</span>';
+    if (tvAdx !== undefined && tvAdx !== null) {
+      tvLabel += ' <span style="font-size:0.7rem;color:var(--text-light)">(ADX ' + parseFloat(tvAdx).toFixed(0) + ')</span>';
+    }
+
+    html += '<tr>';
+    html += '<td><strong>' + (TF_LABELS[tf] || tf) + '</strong></td>';
+    html += '<td>' + trendLabel(ltDir) + '</td>';
+    html += '<td>' + tvLabel + '</td>';
+    html += '<td>' + matchStr + '</td>';
+    html += '</tr>';
+  });
+  html += '</table>';
+
+  html += '</div>';
+  return html;
+}
+
+function loadComparison() {
+  fetch('/api/compare/levels?tickers=SPY,TSLA,NVDA')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      var tickers = data.tickers || [];
+      if (tickers.length === 0) {
+        document.getElementById('compareContent').innerHTML = '<div class="card"><div class="loading">No data available</div></div>';
+        return;
+      }
+      var html = '';
+      tickers.forEach(function(item) {
+        html += renderTicker(item);
+      });
+      document.getElementById('compareContent').innerHTML = html;
+    })
+    .catch(function(e) {
+      document.getElementById('compareContent').innerHTML = '<div class="card"><div class="loading">Error loading data: ' + e.message + '</div></div>';
+    });
+}
+
+loadComparison();
+setInterval(loadComparison, 30000);
+</script>
+</body>
+</html>

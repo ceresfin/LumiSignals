@@ -17,6 +17,7 @@ adxPeriod  = input.int(14, "ADX Period", minval=1, group="Indicators")
 zoneMult   = input.float(1.0, "Zone Width (x ATR)", step=0.1, minval=0.1, maxval=5.0, group="Proximity", tooltip="How close price must be to a level to trigger. Uses the level's timeframe ATR. 1.0 = within 1 ATR of the level.")
 minScore   = input.int(2, "Min Score to Alert (1-4)", minval=1, maxval=4, group="Alerts", tooltip="1 = any aligned trend, 2 = two factors, 3 = strong confluence, 4 = max (5-min only)")
 webhookKey = input.string("lumisignals2026", "Webhook Key", group="Alerts")
+syncLevels = input.bool(true, "Sync Levels to Server", group="Alerts", tooltip="Send current levels and trends to the server every bar for the Compare dashboard.")
 showLevels = input.bool(true, "Show Level Lines", group="Display")
 showDash   = input.bool(true, "Show Dashboard", group="Display")
 
@@ -144,6 +145,30 @@ if fSell
 
 if fBuy
     alert('{"ticker":"' + tk + '","direction":"BUY","strategy":"htf_supply_demand","key":"' + webhookKey + '","type":"stock","trade_duration":"5min","score":' + str.tostring(fBuyScore) + ',"level_price":' + str.tostring(h4Demand) + ',"level_tf":"4H","htf_trends":"4H:' + dirStr(h4Dir) + ' D:' + dirStr(dDir) + ' 1H:' + dirStr(h1Dir) + '","msg":"HTF BUY ' + tk + ' — 4H demand ' + str.tostring(h4Demand, format.mintick) + ' | 4H:' + dirStr(h4Dir) + ' D:' + dirStr(dDir) + ' 1H:' + dirStr(h1Dir) + ' | Score ' + str.tostring(fBuyScore) + '/4"}', alert.freq_once_per_bar_close)
+
+// --- Levels sync (pushes current levels + trends to server for comparison dashboard) ---
+if syncLevels
+    string mSupStr = not na(mSupply) ? str.tostring(mSupply, format.mintick) : "null"
+    string mDemStr = not na(mDemand) ? str.tostring(mDemand, format.mintick) : "null"
+    string wSupStr = not na(wSupply) ? str.tostring(wSupply, format.mintick) : "null"
+    string wDemStr = not na(wDemand) ? str.tostring(wDemand, format.mintick) : "null"
+    string dSupStr = not na(dSupply) ? str.tostring(dSupply, format.mintick) : "null"
+    string dDemStr = not na(dDemand) ? str.tostring(dDemand, format.mintick) : "null"
+    string h4SupStr = not na(h4Supply) ? str.tostring(h4Supply, format.mintick) : "null"
+    string h4DemStr = not na(h4Demand) ? str.tostring(h4Demand, format.mintick) : "null"
+
+    string syncJson = '{"ticker":"' + tk + '","key":"' + webhookKey + '","strategy":"tv_levels_sync",'
+    syncJson += '"levels":{"M":{"supply":' + mSupStr + ',"demand":' + mDemStr + '},'
+    syncJson += '"W":{"supply":' + wSupStr + ',"demand":' + wDemStr + '},'
+    syncJson += '"D":{"supply":' + dSupStr + ',"demand":' + dDemStr + '},'
+    syncJson += '"4H":{"supply":' + h4SupStr + ',"demand":' + h4DemStr + '}},'
+    syncJson += '"trends":{"M":{"dir":"' + dirStr(mDir) + '","adx":' + str.tostring(mAdx, "#.#") + '},'
+    syncJson += '"W":{"dir":"' + dirStr(wDir) + '","adx":' + str.tostring(wAdx, "#.#") + '},'
+    syncJson += '"D":{"dir":"' + dirStr(dDir) + '","adx":' + str.tostring(dAdx, "#.#") + '},'
+    syncJson += '"4H":{"dir":"' + dirStr(h4Dir) + '","adx":' + str.tostring(h4Adx, "#.#") + '},'
+    syncJson += '"1H":{"dir":"' + dirStr(h1Dir) + '","adx":' + str.tostring(h1Adx, "#.#") + '}}}'
+
+    alert(syncJson, alert.freq_once_per_bar_close)
 
 // ==================== SIGNAL MARKERS ON CHART ====================
 plotshape(dSell, "Daily Sell",  shape.triangledown, location.abovebar, color.red,     size=size.normal, text="D SELL")
