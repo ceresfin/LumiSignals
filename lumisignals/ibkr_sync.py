@@ -585,6 +585,36 @@ def check_order_requests(ib: IB):
 
                 logger.info("Futures order: %s %s %dx — %s", direction, ticker, contracts, strategy_name)
 
+                # Position awareness — check current position before acting
+                current_pos = 0
+                for item in ib.portfolio():
+                    if item.contract.symbol == ticker and item.contract.secType == 'FUT':
+                        current_pos = int(item.position)
+                        break
+
+                skip = False
+                if direction == "BUY" and current_pos > 0:
+                    logger.info("SKIP %s BUY — already long %d", ticker, current_pos)
+                    skip = True
+                elif direction == "SELL" and current_pos < 0:
+                    logger.info("SKIP %s SELL — already short %d", ticker, current_pos)
+                    skip = True
+                elif direction == "CLOSE_LONG" and current_pos <= 0:
+                    logger.info("SKIP %s CLOSE_LONG — not long (pos=%d)", ticker, current_pos)
+                    skip = True
+                elif direction == "CLOSE_SHORT" and current_pos >= 0:
+                    logger.info("SKIP %s CLOSE_SHORT — not short (pos=%d)", ticker, current_pos)
+                    skip = True
+
+                if skip:
+                    try:
+                        requests.post(f"{SERVER_URL}/api/ibkr/order/update",
+                                      json={"order_id": order_id, "status": "skipped", "ticker": ticker, "direction": direction},
+                                      headers={"X-Sync-Key": SYNC_KEY}, timeout=10)
+                    except Exception:
+                        pass
+                    continue
+
                 try:
                     from ib_insync import Future, MarketOrder as MktOrder
 
