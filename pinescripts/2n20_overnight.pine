@@ -100,6 +100,13 @@ if inLong and crossedBelowVwap
 if inShort and crossedAboveVwap
     inShort := false
 
+// Session close: flatten at 8:00 AM ET
+sessionEnd = etTime == 800
+if inLong and sessionEnd
+    inLong := false
+if inShort and sessionEnd
+    inShort := false
+
 // ─── PLOT VWAP ───
 plot(vwapVal, "Daily VWAP", color=color.orange, linewidth=2)
 
@@ -118,7 +125,11 @@ plotshape(showExits and inShort[1] and exitShort and not crossedAboveVwap, "Exit
 
 // Exit signals — VWAP cross
 plotshape(showExits and inLong[1] and crossedBelowVwap, "VWAP Exit Long", shape.xcross, location.abovebar, color.yellow, size=size.small, text="VWAP X")
-plotshape(showExits and inShort[1] and crossedAboveVwap, "VWAP Exit Short", shape.xcross, location.belowbar, color.yellow, size=size.small, text="VWAP X")
+plotshape(showExits and inShort[1] and crossedAboveVwap and not sessionEnd, "VWAP Exit Short", shape.xcross, location.belowbar, color.yellow, size=size.small, text="VWAP X")
+
+// Exit signals — session close
+plotshape(showExits and inLong[1] and sessionEnd, "Session Close Long", shape.xcross, location.abovebar, color.white, size=size.small, text="8AM")
+plotshape(showExits and inShort[1] and sessionEnd, "Session Close Short", shape.xcross, location.belowbar, color.white, size=size.small, text="8AM")
 
 // In-trade background
 tradeColor = inLong ? color.new(color.green, 88) : inShort ? color.new(color.red, 88) : na
@@ -137,3 +148,7 @@ if inShort[1] and exitShort and not crossedAboveVwap
     alert('{"ticker":"MES","direction":"CLOSE_SHORT","strategy":"2n20_overnight","key":"lumisignals2026","type":"futures","reason":"Green Takeout Red"}', alert.freq_once_per_bar)
 if inShort[1] and crossedAboveVwap
     alert('{"ticker":"MES","direction":"CLOSE_SHORT","strategy":"2n20_overnight","key":"lumisignals2026","type":"futures","reason":"VWAP Cross"}', alert.freq_once_per_bar)
+if inLong[1] and sessionEnd
+    alert('{"ticker":"MES","direction":"CLOSE_LONG","strategy":"2n20_overnight","key":"lumisignals2026","type":"futures","reason":"Session Close 8am"}', alert.freq_once_per_bar)
+if inShort[1] and sessionEnd
+    alert('{"ticker":"MES","direction":"CLOSE_SHORT","strategy":"2n20_overnight","key":"lumisignals2026","type":"futures","reason":"Session Close 8am"}', alert.freq_once_per_bar)
