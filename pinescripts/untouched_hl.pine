@@ -1,0 +1,392 @@
+// Untouched Highs & Lows v5 — Confluence-aware labels
+// When levels from different timeframes overlap, shows only the highest TF line
+// with confluent TFs listed on the label. Hover label for full details.
+//@version=6
+indicator("Untouched H/L v5", overlay=true, max_lines_count=100, max_labels_count=100)
+
+// ==================== INPUTS ====================
+showMonthly = input.bool(true, "Show Monthly", group="Timeframes")
+showWeekly  = input.bool(true, "Show Weekly", group="Timeframes")
+showDaily   = input.bool(true, "Show Daily", group="Timeframes")
+show4Hour   = input.bool(true, "Show 4-Hour", group="Timeframes")
+showHourly  = input.bool(true, "Show Hourly", group="Timeframes")
+show30min   = input.bool(true, "Show 30 Minute", group="Timeframes")
+showLabels  = input.bool(true, "Show Labels", group="Display")
+overlapPct  = input.float(0.05, "Overlap Threshold (%)", step=0.01, minval=0.0, group="Confluence", tooltip="Levels within this % of price are merged. Highest TF line shown; lower TFs added to label. Hover for details.")
+
+// Colors
+colorM  = color.orange
+colorW  = color.yellow
+colorD  = color.blue
+color4H = #CF9FFF
+colorH  = color.green
+color30 = color.red
+
+// Line widths
+widthM  = 5
+widthW  = 4
+widthD  = 3
+width4H = 2
+widthH  = 2
+width30 = 1
+
+// ==================== LEVEL UDT ====================
+type Level
+    float price
+    int   rank        // 6=M, 5=W, 4=D, 3=4H, 2=1H, 1=30m
+    string tf         // "M", "W", "D", "4H", "1H", "30m"
+    string hl         // "H" or "L"
+    int   idx         // 0=current, 1/2=historical untouched
+    color col
+    int   wid
+    int   startTime
+
+// ==================== HELPER: TF full name ====================
+tfFull(string tf) =>
+    tf == "M" ? "Monthly" : tf == "W" ? "Weekly" : tf == "D" ? "Daily" : tf == "4H" ? "4-Hour" : tf == "1H" ? "Hourly" : "30-Min"
+
+// ==================== HELPER: Add historical untouched levels ====================
+addHist(array<Level> levels, array<float> highs, array<float> lows, array<int> highTimes, array<int> lowTimes, float currHigh, float currLow, int rank, string tf, color col, int wid) =>
+    int sz = array.size(highs)
+    float highest = currHigh
+    float lowest = currLow
+    int hFound = 0
+    int lFound = 0
+    if sz > 0
+        for i = 0 to math.min(sz - 1, 23)
+            float h = array.get(highs, i)
+            int ht = array.get(highTimes, i)
+            if h > highest and hFound < 2
+                hFound += 1
+                array.push(levels, Level.new(h, rank, tf, "H", hFound, col, wid, ht))
+            highest := math.max(highest, h)
+            float l = array.get(lows, i)
+            int lt = array.get(lowTimes, i)
+            if l < lowest and lFound < 2
+                lFound += 1
+                array.push(levels, Level.new(l, rank, tf, "L", lFound, col, wid, lt))
+            lowest := math.min(lowest, l)
+    true
+
+// ==================== DETECT NEW PERIODS ====================
+newMonth = ta.change(time("M")) != 0
+newWeek  = ta.change(time("W")) != 0
+newDay   = ta.change(time("D")) != 0
+new4Hour = ta.change(time("240")) != 0
+newHour  = ta.change(time("60")) != 0
+new30min = ta.change(time("30")) != 0
+
+futureTime = time + (time - time[1]) * 20
+
+// ==================== MONTHLY DATA ====================
+var array<float> mHighs = array.new_float()
+var array<float> mLows = array.new_float()
+var array<int> mHighTimes = array.new_int()
+var array<int> mLowTimes = array.new_int()
+var float mCurrHigh = na
+var float mCurrLow = na
+var int mCurrHighTime = na
+var int mCurrLowTime = na
+
+if na(mCurrHigh)
+    mCurrHigh := high
+    mCurrLow := low
+    mCurrHighTime := time
+    mCurrLowTime := time
+
+if newMonth
+    array.unshift(mHighs, mCurrHigh)
+    array.unshift(mLows, mCurrLow)
+    array.unshift(mHighTimes, mCurrHighTime)
+    array.unshift(mLowTimes, mCurrLowTime)
+    mCurrHigh := high
+    mCurrLow := low
+    mCurrHighTime := time
+    mCurrLowTime := time
+else
+    if high > mCurrHigh
+        mCurrHigh := high
+        mCurrHighTime := time
+    if low < mCurrLow
+        mCurrLow := low
+        mCurrLowTime := time
+
+// ==================== WEEKLY DATA ====================
+var array<float> wHighs = array.new_float()
+var array<float> wLows = array.new_float()
+var array<int> wHighTimes = array.new_int()
+var array<int> wLowTimes = array.new_int()
+var float wCurrHigh = na
+var float wCurrLow = na
+var int wCurrHighTime = na
+var int wCurrLowTime = na
+
+if na(wCurrHigh)
+    wCurrHigh := high
+    wCurrLow := low
+    wCurrHighTime := time
+    wCurrLowTime := time
+
+if newWeek
+    array.unshift(wHighs, wCurrHigh)
+    array.unshift(wLows, wCurrLow)
+    array.unshift(wHighTimes, wCurrHighTime)
+    array.unshift(wLowTimes, wCurrLowTime)
+    wCurrHigh := high
+    wCurrLow := low
+    wCurrHighTime := time
+    wCurrLowTime := time
+else
+    if high > wCurrHigh
+        wCurrHigh := high
+        wCurrHighTime := time
+    if low < wCurrLow
+        wCurrLow := low
+        wCurrLowTime := time
+
+// ==================== DAILY DATA ====================
+var array<float> dHighs = array.new_float()
+var array<float> dLows = array.new_float()
+var array<int> dHighTimes = array.new_int()
+var array<int> dLowTimes = array.new_int()
+var float dCurrHigh = na
+var float dCurrLow = na
+var int dCurrHighTime = na
+var int dCurrLowTime = na
+
+if na(dCurrHigh)
+    dCurrHigh := high
+    dCurrLow := low
+    dCurrHighTime := time
+    dCurrLowTime := time
+
+if newDay
+    array.unshift(dHighs, dCurrHigh)
+    array.unshift(dLows, dCurrLow)
+    array.unshift(dHighTimes, dCurrHighTime)
+    array.unshift(dLowTimes, dCurrLowTime)
+    dCurrHigh := high
+    dCurrLow := low
+    dCurrHighTime := time
+    dCurrLowTime := time
+else
+    if high > dCurrHigh
+        dCurrHigh := high
+        dCurrHighTime := time
+    if low < dCurrLow
+        dCurrLow := low
+        dCurrLowTime := time
+
+// ==================== 4-HOUR DATA ====================
+var array<float> h4Highs = array.new_float()
+var array<float> h4Lows = array.new_float()
+var array<int> h4HighTimes = array.new_int()
+var array<int> h4LowTimes = array.new_int()
+var float h4CurrHigh = na
+var float h4CurrLow = na
+var int h4CurrHighTime = na
+var int h4CurrLowTime = na
+
+if na(h4CurrHigh)
+    h4CurrHigh := high
+    h4CurrLow := low
+    h4CurrHighTime := time
+    h4CurrLowTime := time
+
+if new4Hour
+    array.unshift(h4Highs, h4CurrHigh)
+    array.unshift(h4Lows, h4CurrLow)
+    array.unshift(h4HighTimes, h4CurrHighTime)
+    array.unshift(h4LowTimes, h4CurrLowTime)
+    h4CurrHigh := high
+    h4CurrLow := low
+    h4CurrHighTime := time
+    h4CurrLowTime := time
+else
+    if high > h4CurrHigh
+        h4CurrHigh := high
+        h4CurrHighTime := time
+    if low < h4CurrLow
+        h4CurrLow := low
+        h4CurrLowTime := time
+
+// ==================== HOURLY DATA ====================
+var array<float> hHighs = array.new_float()
+var array<float> hLows = array.new_float()
+var array<int> hHighTimes = array.new_int()
+var array<int> hLowTimes = array.new_int()
+var float hCurrHigh = na
+var float hCurrLow = na
+var int hCurrHighTime = na
+var int hCurrLowTime = na
+
+if na(hCurrHigh)
+    hCurrHigh := high
+    hCurrLow := low
+    hCurrHighTime := time
+    hCurrLowTime := time
+
+if newHour
+    array.unshift(hHighs, hCurrHigh)
+    array.unshift(hLows, hCurrLow)
+    array.unshift(hHighTimes, hCurrHighTime)
+    array.unshift(hLowTimes, hCurrLowTime)
+    hCurrHigh := high
+    hCurrLow := low
+    hCurrHighTime := time
+    hCurrLowTime := time
+else
+    if high > hCurrHigh
+        hCurrHigh := high
+        hCurrHighTime := time
+    if low < hCurrLow
+        hCurrLow := low
+        hCurrLowTime := time
+
+// ==================== 30-MINUTE DATA ====================
+var array<float> m30Highs = array.new_float()
+var array<float> m30Lows = array.new_float()
+var array<int> m30HighTimes = array.new_int()
+var array<int> m30LowTimes = array.new_int()
+var float m30CurrHigh = na
+var float m30CurrLow = na
+var int m30CurrHighTime = na
+var int m30CurrLowTime = na
+
+if na(m30CurrHigh)
+    m30CurrHigh := high
+    m30CurrLow := low
+    m30CurrHighTime := time
+    m30CurrLowTime := time
+
+if new30min
+    array.unshift(m30Highs, m30CurrHigh)
+    array.unshift(m30Lows, m30CurrLow)
+    array.unshift(m30HighTimes, m30CurrHighTime)
+    array.unshift(m30LowTimes, m30CurrLowTime)
+    m30CurrHigh := high
+    m30CurrLow := low
+    m30CurrHighTime := time
+    m30CurrLowTime := time
+else
+    if high > m30CurrHigh
+        m30CurrHigh := high
+        m30CurrHighTime := time
+    if low < m30CurrLow
+        m30CurrLow := low
+        m30CurrLowTime := time
+
+// ==================== COLLECT ALL LEVELS ====================
+// Levels are added highest-rank first (Monthly → 30m) so overlap
+// detection naturally keeps the highest timeframe visible.
+levels = array.new<Level>()
+
+if showMonthly and not na(mCurrHigh)
+    array.push(levels, Level.new(mCurrHigh, 6, "M", "H", 0, colorM, widthM, mCurrHighTime))
+    array.push(levels, Level.new(mCurrLow,  6, "M", "L", 0, colorM, widthM, mCurrLowTime))
+    addHist(levels, mHighs, mLows, mHighTimes, mLowTimes, mCurrHigh, mCurrLow, 6, "M", colorM, widthM)
+
+if showWeekly and not na(wCurrHigh)
+    array.push(levels, Level.new(wCurrHigh, 5, "W", "H", 0, colorW, widthW, wCurrHighTime))
+    array.push(levels, Level.new(wCurrLow,  5, "W", "L", 0, colorW, widthW, wCurrLowTime))
+    addHist(levels, wHighs, wLows, wHighTimes, wLowTimes, wCurrHigh, wCurrLow, 5, "W", colorW, widthW)
+
+if showDaily and not na(dCurrHigh)
+    array.push(levels, Level.new(dCurrHigh, 4, "D", "H", 0, colorD, widthD, dCurrHighTime))
+    array.push(levels, Level.new(dCurrLow,  4, "D", "L", 0, colorD, widthD, dCurrLowTime))
+    addHist(levels, dHighs, dLows, dHighTimes, dLowTimes, dCurrHigh, dCurrLow, 4, "D", colorD, widthD)
+
+if show4Hour and not na(h4CurrHigh)
+    array.push(levels, Level.new(h4CurrHigh, 3, "4H", "H", 0, color4H, width4H, h4CurrHighTime))
+    array.push(levels, Level.new(h4CurrLow,  3, "4H", "L", 0, color4H, width4H, h4CurrLowTime))
+    addHist(levels, h4Highs, h4Lows, h4HighTimes, h4LowTimes, h4CurrHigh, h4CurrLow, 3, "4H", color4H, width4H)
+
+if showHourly and not na(hCurrHigh)
+    array.push(levels, Level.new(hCurrHigh, 2, "1H", "H", 0, colorH, widthH, hCurrHighTime))
+    array.push(levels, Level.new(hCurrLow,  2, "1H", "L", 0, colorH, widthH, hCurrLowTime))
+    addHist(levels, hHighs, hLows, hHighTimes, hLowTimes, hCurrHigh, hCurrLow, 2, "1H", colorH, widthH)
+
+if show30min and not na(m30CurrHigh)
+    array.push(levels, Level.new(m30CurrHigh, 1, "30m", "H", 0, color30, width30, m30CurrHighTime))
+    array.push(levels, Level.new(m30CurrLow,  1, "30m", "L", 0, color30, width30, m30CurrLowTime))
+    addHist(levels, m30Highs, m30Lows, m30HighTimes, m30LowTimes, m30CurrHigh, m30CurrLow, 1, "30m", color30, width30)
+
+// ==================== OVERLAP DETECTION ====================
+int numLvls = array.size(levels)
+var array<bool> vis = array.new_bool()
+var array<string> extraLbl = array.new_string()
+var array<string> tipText = array.new_string()
+
+array.clear(vis)
+array.clear(extraLbl)
+array.clear(tipText)
+
+// Initialize visibility and tooltips
+if numLvls > 0
+    for i = 0 to numLvls - 1
+        array.push(vis, true)
+        array.push(extraLbl, "")
+        Level lv = array.get(levels, i)
+        string hlName = lv.hl == "H" ? "High" : "Low"
+        string idxStr = lv.idx == 0 ? " (current)" : " (" + str.tostring(lv.idx) + " back)"
+        array.push(tipText, tfFull(lv.tf) + " " + hlName + idxStr + ": " + str.tostring(lv.price, format.mintick))
+
+// Merge overlapping levels — higher TF (lower index) wins
+float threshold = close * overlapPct / 100.0
+
+if numLvls > 1
+    for i = 0 to numLvls - 2
+        if not array.get(vis, i)
+            continue
+        Level lvI = array.get(levels, i)
+        for j = i + 1 to numLvls - 1
+            if not array.get(vis, j)
+                continue
+            Level lvJ = array.get(levels, j)
+            if math.abs(lvI.price - lvJ.price) <= threshold
+                // Hide the lower-rank level
+                array.set(vis, j, false)
+                // Append TF tag to winner's label
+                string cur = array.get(extraLbl, i)
+                string tag = lvJ.tf + (lvJ.idx > 0 ? str.tostring(lvJ.idx) : "")
+                if lvJ.hl != lvI.hl
+                    tag += "(" + lvJ.hl + ")"
+                array.set(extraLbl, i, cur + " +" + tag)
+                // Append details to winner's tooltip
+                string curTip = array.get(tipText, i)
+                string jTip = array.get(tipText, j)
+                array.set(tipText, i, curTip + "\n" + jTip)
+
+// ==================== DRAW LINES & LABELS ====================
+var array<line> drawnLines = array.new_line()
+var array<label> drawnLabels = array.new_label()
+
+// Clean previous frame
+if array.size(drawnLines) > 0
+    for i = 0 to array.size(drawnLines) - 1
+        line.delete(array.get(drawnLines, i))
+    array.clear(drawnLines)
+if array.size(drawnLabels) > 0
+    for i = 0 to array.size(drawnLabels) - 1
+        label.delete(array.get(drawnLabels, i))
+    array.clear(drawnLabels)
+
+if numLvls > 0
+    for i = 0 to numLvls - 1
+        if not array.get(vis, i)
+            continue
+        Level lv = array.get(levels, i)
+
+        // Draw the level line
+        array.push(drawnLines, line.new(lv.startTime, lv.price, futureTime, lv.price, xloc.bar_time, extend.none, lv.col, line.style_solid, lv.wid))
+
+        if showLabels
+            // Build label text: "M High" or "D1 Low +4H +1H"
+            string hlName = lv.hl == "H" ? "High" : "Low"
+            string idxStr = lv.idx > 0 ? str.tostring(lv.idx) + " " : ""
+            string baseLbl = lv.tf + " " + idxStr + hlName
+            string confluence = array.get(extraLbl, i)
+            string fullLbl = str.length(confluence) > 0 ? baseLbl + confluence : baseLbl
+            string tip = array.get(tipText, i)
+
+            array.push(drawnLabels, label.new(futureTime, lv.price, fullLbl, xloc.bar_time, yloc.price, color.new(lv.col, 80), label.style_label_left, lv.col, size.small, tooltip=tip))

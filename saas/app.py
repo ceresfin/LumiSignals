@@ -610,7 +610,13 @@ def create_app():
                     if perm_id:
                         rdb.setex(f"ibkr:order:perm:{perm_id}", 604800, json.dumps(order))
                     return jsonify({"status": "ok"})
-        return jsonify({"status": "not_found"})
+        # Not found — create new entry (e.g. futures_entry_{permId} tracking)
+        new_key = f"ibkr:order:{order_id}"
+        rdb.setex(new_key, 604800, json.dumps(data))  # 7-day TTL
+        perm_id = data.get("perm_id")
+        if perm_id:
+            rdb.setex(f"ibkr:order:perm:{perm_id}", 604800, json.dumps(data))
+        return jsonify({"status": "created"})
 
     @app.route("/api/ibkr/exit-rules")
     def api_ibkr_exit_rules():
@@ -717,13 +723,14 @@ def create_app():
         best = None
         best_time = ""
         for key in rdb.scan_iter("ibkr:order:*"):
-            key_str = key.decode() if isinstance(key, bytes) else key
-            if "futures_entry" not in key_str:
-                continue
             raw = rdb.get(key)
             if not raw:
                 continue
             entry = json.loads(raw)
+            # Match by order_id containing "futures_entry" OR by type+status
+            oid = entry.get("order_id", "")
+            if "futures_entry" not in oid:
+                continue
             if entry.get("ticker") == ticker and entry.get("direction") == direction and entry.get("status") == "entry":
                 opened = entry.get("opened_at", "")
                 if opened > best_time:
@@ -854,8 +861,11 @@ def create_app():
         import redis as _redis
         rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
         data = request.get_json()
-        # Store with 5-minute TTL (sync script pushes every 30s)
-        rdb.setex("ibkr:data:1", 300, json.dumps(data))
+        # Add sync timestamp so the UI can show data freshness
+        from datetime import datetime as _dt, timezone as _tz
+        data["last_synced"] = _dt.now(_tz.utc).isoformat()
+        # Store with 60-second TTL (sync script pushes every 10s)
+        rdb.setex("ibkr:data:1", 60, json.dumps(data))
         return jsonify({"status": "ok"})
 
     @app.route("/api/ibkr/trades")

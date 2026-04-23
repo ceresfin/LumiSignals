@@ -1,0 +1,271 @@
+// HTF Supply/Demand Strategy Scanner
+// Combines multi-timeframe ADX trend with untouched supply/demand levels.
+// Fires webhook alerts when price approaches an HTF level with aligned trend.
+//
+// Trade durations:
+//   Daily  — trades off Weekly + Monthly supply/demand, scored by W+M trend
+//   Hourly — trades off Daily supply/demand, scored by D+W trend
+//   5-Min  — trades off 4H supply/demand, scored by 4H+D trend
+//
+// Recommended chart: 15-min or 1-hour (enough history for all HTFs)
+// One alert per ticker covers all 3 durations.
+//@version=6
+indicator("HTF Strategy Scanner", overlay=true, max_lines_count=20, max_labels_count=20)
+
+// ==================== INPUTS ====================
+adxPeriod  = input.int(14, "ADX Period", minval=1, group="Indicators")
+zoneMult   = input.float(1.0, "Zone Width (x ATR)", step=0.1, minval=0.1, maxval=5.0, group="Proximity", tooltip="How close price must be to a level to trigger. Uses the level's timeframe ATR. 1.0 = within 1 ATR of the level.")
+minScore   = input.int(2, "Min Score to Alert (1-4)", minval=1, maxval=4, group="Alerts", tooltip="1 = any aligned trend, 2 = two factors, 3 = strong confluence, 4 = max (5-min only)")
+webhookKey = input.string("lumisignals2026", "Webhook Key", group="Alerts")
+showLevels = input.bool(true, "Show Level Lines", group="Display")
+showDash   = input.bool(true, "Show Dashboard", group="Display")
+
+// Colors (matching untouched_hl v5)
+colorM  = color.orange
+colorW  = color.yellow
+colorD  = color.blue
+color4H = #CF9FFF
+
+// ==================== HTF LEVEL + TREND FUNCTION ====================
+// Runs inside request.security for each timeframe.
+// Returns: trend direction, ADX value, nearest untouched supply, nearest untouched demand, ATR
+findLevels(int adxLen) =>
+    [dp, dm, adx] = ta.dmi(adxLen, adxLen)
+    dir = dp > (dm + 2) ? 1 : dp < (dm - 2) ? -1 : 0
+    atrVal = ta.atr(14)
+
+    // Nearest untouched supply (previous high not exceeded by any subsequent bar)
+    float maxH = high
+    float supply = na
+    for i = 1 to 20
+        if high[i] > maxH and na(supply)
+            supply := high[i]
+        maxH := math.max(maxH, high[i])
+
+    // Nearest untouched demand (previous low not breached by any subsequent bar)
+    float minL = low
+    float demand = na
+    for i = 1 to 20
+        if low[i] < minL and na(demand)
+            demand := low[i]
+        minL := math.min(minL, low[i])
+
+    [dir, adx, supply, demand, atrVal]
+
+// ==================== HTF DATA VIA request.security ====================
+[mDir,  mAdx,  mSupply,  mDemand,  mAtr]  = request.security(syminfo.tickerid, "M",   findLevels(adxPeriod))
+[wDir,  wAdx,  wSupply,  wDemand,  wAtr]  = request.security(syminfo.tickerid, "W",   findLevels(adxPeriod))
+[dDir,  dAdx,  dSupply,  dDemand,  dAtr]  = request.security(syminfo.tickerid, "D",   findLevels(adxPeriod))
+[h4Dir, h4Adx, h4Supply, h4Demand, h4Atr] = request.security(syminfo.tickerid, "240", findLevels(adxPeriod))
+[h1Dir, h1Adx, h1Supply, h1Demand, h1Atr] = request.security(syminfo.tickerid, "60",  findLevels(adxPeriod))
+
+// ==================== HELPERS ====================
+dirStr(int d) =>
+    d == 1 ? "UP" : d == -1 ? "DOWN" : "SIDE"
+
+dirColor(int d) =>
+    d == 1 ? color.green : d == -1 ? color.red : color.yellow
+
+// Proximity: is price within the approach zone of a level?
+nearSupply(float lvl, float atr) =>
+    not na(lvl) and not na(atr) and close >= (lvl - atr * zoneMult) and close <= lvl
+
+nearDemand(float lvl, float atr) =>
+    not na(lvl) and not na(atr) and close <= (lvl + atr * zoneMult) and close >= lvl
+
+// ==================== DAILY DURATION (Weekly + Monthly levels) ====================
+// Scoring: +1 primary HTF trend aligned, +1 secondary HTF aligned, +1 strong ADX (>=25)
+
+// SELL at weekly supply
+dSellW      = nearSupply(wSupply, wAtr) and wDir == -1
+dSellWScore = (wDir == -1 ? 1 : 0) + (mDir == -1 ? 1 : 0) + ((wAdx >= 25 or mAdx >= 25) ? 1 : 0)
+
+// SELL at monthly supply
+dSellM      = nearSupply(mSupply, mAtr) and mDir == -1
+dSellMScore = (mDir == -1 ? 1 : 0) + (wDir == -1 ? 1 : 0) + (mAdx >= 25 ? 1 : 0)
+
+// BUY at weekly demand
+dBuyW      = nearDemand(wDemand, wAtr) and wDir == 1
+dBuyWScore = (wDir == 1 ? 1 : 0) + (mDir == 1 ? 1 : 0) + ((wAdx >= 25 or mAdx >= 25) ? 1 : 0)
+
+// BUY at monthly demand
+dBuyM      = nearDemand(mDemand, mAtr) and mDir == 1
+dBuyMScore = (mDir == 1 ? 1 : 0) + (wDir == 1 ? 1 : 0) + (mAdx >= 25 ? 1 : 0)
+
+// Best daily signal (prefer higher score, then monthly over weekly)
+dSell      = (dSellW and dSellWScore >= minScore) or (dSellM and dSellMScore >= minScore)
+dBuy       = (dBuyW and dBuyWScore >= minScore) or (dBuyM and dBuyMScore >= minScore)
+dSellScore = math.max(dSellW ? dSellWScore : 0, dSellM ? dSellMScore : 0)
+dBuyScore  = math.max(dBuyW ? dBuyWScore : 0, dBuyM ? dBuyMScore : 0)
+dSellLvl   = dSellM and dSellMScore >= dSellWScore ? mSupply : wSupply
+dSellTf    = dSellM and dSellMScore >= dSellWScore ? "M" : "W"
+dBuyLvl    = dBuyM and dBuyMScore >= dBuyWScore ? mDemand : wDemand
+dBuyTf     = dBuyM and dBuyMScore >= dBuyWScore ? "M" : "W"
+
+// ==================== HOURLY DURATION (Daily levels) ====================
+hSellRaw   = nearSupply(dSupply, dAtr) and dDir == -1
+hSellScore = (dDir == -1 ? 1 : 0) + (wDir == -1 ? 1 : 0) + ((dAdx >= 25 or wAdx >= 25) ? 1 : 0)
+hSell      = hSellRaw and hSellScore >= minScore
+
+hBuyRaw    = nearDemand(dDemand, dAtr) and dDir == 1
+hBuyScore  = (dDir == 1 ? 1 : 0) + (wDir == 1 ? 1 : 0) + ((dAdx >= 25 or wAdx >= 25) ? 1 : 0)
+hBuy       = hBuyRaw and hBuyScore >= minScore
+
+// ==================== 5-MIN DURATION (4H levels, scored by 4H + D + 1H trend) ====================
+// +1 4H trend aligned, +1 daily trend aligned, +1 hourly trend aligned, +1 strong ADX
+fSellRaw   = nearSupply(h4Supply, h4Atr) and h4Dir == -1
+fSellScore = (h4Dir == -1 ? 1 : 0) + (dDir == -1 ? 1 : 0) + (h1Dir == -1 ? 1 : 0) + ((h4Adx >= 25 or dAdx >= 25) ? 1 : 0)
+fSell      = fSellRaw and fSellScore >= minScore
+
+fBuyRaw    = nearDemand(h4Demand, h4Atr) and h4Dir == 1
+fBuyScore  = (h4Dir == 1 ? 1 : 0) + (dDir == 1 ? 1 : 0) + (h1Dir == 1 ? 1 : 0) + ((h4Adx >= 25 or dAdx >= 25) ? 1 : 0)
+fBuy       = fBuyRaw and fBuyScore >= minScore
+
+// ==================== WEBHOOK ALERTS ====================
+tk = syminfo.ticker
+
+// --- Daily duration ---
+if dSell
+    alert('{"ticker":"' + tk + '","direction":"SELL","strategy":"htf_supply_demand","key":"' + webhookKey + '","type":"stock","trade_duration":"daily","score":' + str.tostring(dSellScore) + ',"level_price":' + str.tostring(dSellLvl) + ',"level_tf":"' + dSellTf + '","htf_trends":"W:' + dirStr(wDir) + ' M:' + dirStr(mDir) + '","msg":"HTF SELL ' + tk + ' — ' + dSellTf + ' supply ' + str.tostring(dSellLvl, format.mintick) + ' | W:' + dirStr(wDir) + ' M:' + dirStr(mDir) + ' | Score ' + str.tostring(dSellScore) + '/3"}', alert.freq_once_per_bar_close)
+
+if dBuy
+    alert('{"ticker":"' + tk + '","direction":"BUY","strategy":"htf_supply_demand","key":"' + webhookKey + '","type":"stock","trade_duration":"daily","score":' + str.tostring(dBuyScore) + ',"level_price":' + str.tostring(dBuyLvl) + ',"level_tf":"' + dBuyTf + '","htf_trends":"W:' + dirStr(wDir) + ' M:' + dirStr(mDir) + '","msg":"HTF BUY ' + tk + ' — ' + dBuyTf + ' demand ' + str.tostring(dBuyLvl, format.mintick) + ' | W:' + dirStr(wDir) + ' M:' + dirStr(mDir) + ' | Score ' + str.tostring(dBuyScore) + '/3"}', alert.freq_once_per_bar_close)
+
+// --- Hourly duration ---
+if hSell
+    alert('{"ticker":"' + tk + '","direction":"SELL","strategy":"htf_supply_demand","key":"' + webhookKey + '","type":"stock","trade_duration":"hourly","score":' + str.tostring(hSellScore) + ',"level_price":' + str.tostring(dSupply) + ',"level_tf":"D","htf_trends":"D:' + dirStr(dDir) + ' W:' + dirStr(wDir) + '","msg":"HTF SELL ' + tk + ' — D supply ' + str.tostring(dSupply, format.mintick) + ' | D:' + dirStr(dDir) + ' W:' + dirStr(wDir) + ' | Score ' + str.tostring(hSellScore) + '/3"}', alert.freq_once_per_bar_close)
+
+if hBuy
+    alert('{"ticker":"' + tk + '","direction":"BUY","strategy":"htf_supply_demand","key":"' + webhookKey + '","type":"stock","trade_duration":"hourly","score":' + str.tostring(hBuyScore) + ',"level_price":' + str.tostring(dDemand) + ',"level_tf":"D","htf_trends":"D:' + dirStr(dDir) + ' W:' + dirStr(wDir) + '","msg":"HTF BUY ' + tk + ' — D demand ' + str.tostring(dDemand, format.mintick) + ' | D:' + dirStr(dDir) + ' W:' + dirStr(wDir) + ' | Score ' + str.tostring(hBuyScore) + '/3"}', alert.freq_once_per_bar_close)
+
+// --- 5-min duration ---
+if fSell
+    alert('{"ticker":"' + tk + '","direction":"SELL","strategy":"htf_supply_demand","key":"' + webhookKey + '","type":"stock","trade_duration":"5min","score":' + str.tostring(fSellScore) + ',"level_price":' + str.tostring(h4Supply) + ',"level_tf":"4H","htf_trends":"4H:' + dirStr(h4Dir) + ' D:' + dirStr(dDir) + ' 1H:' + dirStr(h1Dir) + '","msg":"HTF SELL ' + tk + ' — 4H supply ' + str.tostring(h4Supply, format.mintick) + ' | 4H:' + dirStr(h4Dir) + ' D:' + dirStr(dDir) + ' 1H:' + dirStr(h1Dir) + ' | Score ' + str.tostring(fSellScore) + '/4"}', alert.freq_once_per_bar_close)
+
+if fBuy
+    alert('{"ticker":"' + tk + '","direction":"BUY","strategy":"htf_supply_demand","key":"' + webhookKey + '","type":"stock","trade_duration":"5min","score":' + str.tostring(fBuyScore) + ',"level_price":' + str.tostring(h4Demand) + ',"level_tf":"4H","htf_trends":"4H:' + dirStr(h4Dir) + ' D:' + dirStr(dDir) + ' 1H:' + dirStr(h1Dir) + '","msg":"HTF BUY ' + tk + ' — 4H demand ' + str.tostring(h4Demand, format.mintick) + ' | 4H:' + dirStr(h4Dir) + ' D:' + dirStr(dDir) + ' 1H:' + dirStr(h1Dir) + ' | Score ' + str.tostring(fBuyScore) + '/4"}', alert.freq_once_per_bar_close)
+
+// ==================== SIGNAL MARKERS ON CHART ====================
+plotshape(dSell, "Daily Sell",  shape.triangledown, location.abovebar, color.red,     size=size.normal, text="D SELL")
+plotshape(dBuy,  "Daily Buy",   shape.triangleup,   location.belowbar, color.green,   size=size.normal, text="D BUY")
+plotshape(hSell, "Hourly Sell",  shape.triangledown, location.abovebar, color.orange,  size=size.small,  text="H SELL")
+plotshape(hBuy,  "Hourly Buy",   shape.triangleup,   location.belowbar, color.teal,    size=size.small,  text="H BUY")
+plotshape(fSell, "5m Sell",     shape.triangledown, location.abovebar, color.fuchsia, size=size.tiny,   text="5m S")
+plotshape(fBuy,  "5m Buy",      shape.triangleup,   location.belowbar, color.aqua,    size=size.tiny,   text="5m B")
+
+// ==================== LEVEL LINES ====================
+var line mSupLine = na, var line mDemLine = na
+var line wSupLine = na, var line wDemLine = na
+var line dSupLine = na, var line dDemLine = na
+var line h4SupLine = na, var line h4DemLine = na
+var label mSupLbl = na, var label mDemLbl = na
+var label wSupLbl = na, var label wDemLbl = na
+var label dSupLbl = na, var label dDemLbl = na
+var label h4SupLbl = na, var label h4DemLbl = na
+
+line.delete(mSupLine),  line.delete(mDemLine)
+line.delete(wSupLine),  line.delete(wDemLine)
+line.delete(dSupLine),  line.delete(dDemLine)
+line.delete(h4SupLine), line.delete(h4DemLine)
+label.delete(mSupLbl),  label.delete(mDemLbl)
+label.delete(wSupLbl),  label.delete(wDemLbl)
+label.delete(dSupLbl),  label.delete(dDemLbl)
+label.delete(h4SupLbl), label.delete(h4DemLbl)
+
+futureTime = time + (time - time[1]) * 20
+
+if showLevels
+    // Monthly
+    if not na(mSupply)
+        mSupLine := line.new(time, mSupply, futureTime, mSupply, xloc.bar_time, extend.none, colorM, line.style_dashed, 3)
+        mSupLbl  := label.new(futureTime, mSupply, "M Supply", xloc.bar_time, yloc.price, color.new(colorM, 80), label.style_label_left, colorM, size.small, tooltip="Monthly Supply: " + str.tostring(mSupply, format.mintick) + "\nTrend: " + dirStr(mDir) + " | ADX: " + str.tostring(mAdx, "#.#"))
+    if not na(mDemand)
+        mDemLine := line.new(time, mDemand, futureTime, mDemand, xloc.bar_time, extend.none, colorM, line.style_dashed, 3)
+        mDemLbl  := label.new(futureTime, mDemand, "M Demand", xloc.bar_time, yloc.price, color.new(colorM, 80), label.style_label_left, colorM, size.small, tooltip="Monthly Demand: " + str.tostring(mDemand, format.mintick) + "\nTrend: " + dirStr(mDir) + " | ADX: " + str.tostring(mAdx, "#.#"))
+    // Weekly
+    if not na(wSupply)
+        wSupLine := line.new(time, wSupply, futureTime, wSupply, xloc.bar_time, extend.none, colorW, line.style_dashed, 2)
+        wSupLbl  := label.new(futureTime, wSupply, "W Supply", xloc.bar_time, yloc.price, color.new(colorW, 80), label.style_label_left, colorW, size.small, tooltip="Weekly Supply: " + str.tostring(wSupply, format.mintick) + "\nTrend: " + dirStr(wDir) + " | ADX: " + str.tostring(wAdx, "#.#"))
+    if not na(wDemand)
+        wDemLine := line.new(time, wDemand, futureTime, wDemand, xloc.bar_time, extend.none, colorW, line.style_dashed, 2)
+        wDemLbl  := label.new(futureTime, wDemand, "W Demand", xloc.bar_time, yloc.price, color.new(colorW, 80), label.style_label_left, colorW, size.small, tooltip="Weekly Demand: " + str.tostring(wDemand, format.mintick) + "\nTrend: " + dirStr(wDir) + " | ADX: " + str.tostring(wAdx, "#.#"))
+    // Daily
+    if not na(dSupply)
+        dSupLine := line.new(time, dSupply, futureTime, dSupply, xloc.bar_time, extend.none, colorD, line.style_dashed, 1)
+        dSupLbl  := label.new(futureTime, dSupply, "D Supply", xloc.bar_time, yloc.price, color.new(colorD, 80), label.style_label_left, colorD, size.small, tooltip="Daily Supply: " + str.tostring(dSupply, format.mintick) + "\nTrend: " + dirStr(dDir) + " | ADX: " + str.tostring(dAdx, "#.#"))
+    if not na(dDemand)
+        dDemLine := line.new(time, dDemand, futureTime, dDemand, xloc.bar_time, extend.none, colorD, line.style_dashed, 1)
+        dDemLbl  := label.new(futureTime, dDemand, "D Demand", xloc.bar_time, yloc.price, color.new(colorD, 80), label.style_label_left, colorD, size.small, tooltip="Daily Demand: " + str.tostring(dDemand, format.mintick) + "\nTrend: " + dirStr(dDir) + " | ADX: " + str.tostring(dAdx, "#.#"))
+    // 4-Hour
+    if not na(h4Supply)
+        h4SupLine := line.new(time, h4Supply, futureTime, h4Supply, xloc.bar_time, extend.none, color4H, line.style_dashed, 1)
+        h4SupLbl  := label.new(futureTime, h4Supply, "4H Supply", xloc.bar_time, yloc.price, color.new(color4H, 80), label.style_label_left, color4H, size.small, tooltip="4H Supply: " + str.tostring(h4Supply, format.mintick) + "\nTrend: " + dirStr(h4Dir) + " | ADX: " + str.tostring(h4Adx, "#.#"))
+    if not na(h4Demand)
+        h4DemLine := line.new(time, h4Demand, futureTime, h4Demand, xloc.bar_time, extend.none, color4H, line.style_dashed, 1)
+        h4DemLbl  := label.new(futureTime, h4Demand, "4H Demand", xloc.bar_time, yloc.price, color.new(color4H, 80), label.style_label_left, color4H, size.small, tooltip="4H Demand: " + str.tostring(h4Demand, format.mintick) + "\nTrend: " + dirStr(h4Dir) + " | ADX: " + str.tostring(h4Adx, "#.#"))
+
+// ==================== DASHBOARD TABLE ====================
+var table dash = table.new(position.top_right, 4, 7, bgcolor=color.rgb(20, 20, 30), border_width=1, border_color=color.gray)
+
+if barstate.islast and showDash
+    // Header
+    table.cell(dash, 0, 0, "TF",     text_color=color.white, text_size=size.small, text_halign=text.align_left)
+    table.cell(dash, 1, 0, "Trend",  text_color=color.white, text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 2, 0, "Supply", text_color=color.white, text_size=size.small, text_halign=text.align_right)
+    table.cell(dash, 3, 0, "Demand", text_color=color.white, text_size=size.small, text_halign=text.align_right)
+
+    // Monthly
+    table.cell(dash, 0, 1, "Monthly", text_color=colorM, text_size=size.small, text_halign=text.align_left)
+    table.cell(dash, 1, 1, dirStr(mDir) + " (" + str.tostring(mAdx, "#") + ")", text_color=dirColor(mDir), text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 2, 1, not na(mSupply) ? str.tostring(mSupply, format.mintick) : "—", text_color=colorM, text_size=size.small, text_halign=text.align_right)
+    table.cell(dash, 3, 1, not na(mDemand) ? str.tostring(mDemand, format.mintick) : "—", text_color=colorM, text_size=size.small, text_halign=text.align_right)
+
+    // Weekly
+    table.cell(dash, 0, 2, "Weekly", text_color=colorW, text_size=size.small, text_halign=text.align_left)
+    table.cell(dash, 1, 2, dirStr(wDir) + " (" + str.tostring(wAdx, "#") + ")", text_color=dirColor(wDir), text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 2, 2, not na(wSupply) ? str.tostring(wSupply, format.mintick) : "—", text_color=colorW, text_size=size.small, text_halign=text.align_right)
+    table.cell(dash, 3, 2, not na(wDemand) ? str.tostring(wDemand, format.mintick) : "—", text_color=colorW, text_size=size.small, text_halign=text.align_right)
+
+    // Daily
+    table.cell(dash, 0, 3, "Daily", text_color=colorD, text_size=size.small, text_halign=text.align_left)
+    table.cell(dash, 1, 3, dirStr(dDir) + " (" + str.tostring(dAdx, "#") + ")", text_color=dirColor(dDir), text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 2, 3, not na(dSupply) ? str.tostring(dSupply, format.mintick) : "—", text_color=colorD, text_size=size.small, text_halign=text.align_right)
+    table.cell(dash, 3, 3, not na(dDemand) ? str.tostring(dDemand, format.mintick) : "—", text_color=colorD, text_size=size.small, text_halign=text.align_right)
+
+    // 4-Hour
+    table.cell(dash, 0, 4, "4-Hour", text_color=color4H, text_size=size.small, text_halign=text.align_left)
+    table.cell(dash, 1, 4, dirStr(h4Dir) + " (" + str.tostring(h4Adx, "#") + ")", text_color=dirColor(h4Dir), text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 2, 4, not na(h4Supply) ? str.tostring(h4Supply, format.mintick) : "—", text_color=color4H, text_size=size.small, text_halign=text.align_right)
+    table.cell(dash, 3, 4, not na(h4Demand) ? str.tostring(h4Demand, format.mintick) : "—", text_color=color4H, text_size=size.small, text_halign=text.align_right)
+
+    // Hourly
+    table.cell(dash, 0, 5, "Hourly", text_color=color.green, text_size=size.small, text_halign=text.align_left)
+    table.cell(dash, 1, 5, dirStr(h1Dir) + " (" + str.tostring(h1Adx, "#") + ")", text_color=dirColor(h1Dir), text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 2, 5, not na(h1Supply) ? str.tostring(h1Supply, format.mintick) : "—", text_color=color.green, text_size=size.small, text_halign=text.align_right)
+    table.cell(dash, 3, 5, not na(h1Demand) ? str.tostring(h1Demand, format.mintick) : "—", text_color=color.green, text_size=size.small, text_halign=text.align_right)
+
+    // Active signal summary
+    string sigText = "No signal"
+    color sigColor = color.gray
+    if dSell
+        sigText := "DAILY SELL @ " + dSellTf + " supply | Score " + str.tostring(dSellScore) + "/3"
+        sigColor := color.red
+    else if dBuy
+        sigText := "DAILY BUY @ " + dBuyTf + " demand | Score " + str.tostring(dBuyScore) + "/3"
+        sigColor := color.green
+    else if hSell
+        sigText := "HOURLY SELL @ D supply | Score " + str.tostring(hSellScore) + "/3"
+        sigColor := color.red
+    else if hBuy
+        sigText := "HOURLY BUY @ D demand | Score " + str.tostring(hBuyScore) + "/3"
+        sigColor := color.green
+    else if fSell
+        sigText := "5MIN SELL @ 4H supply | Score " + str.tostring(fSellScore) + "/4"
+        sigColor := color.red
+    else if fBuy
+        sigText := "5MIN BUY @ 4H demand | Score " + str.tostring(fBuyScore) + "/4"
+        sigColor := color.green
+
+    table.cell(dash, 0, 6, "Signal", text_color=color.white, text_size=size.small, text_halign=text.align_left)
+    table.cell(dash, 1, 6, sigText, text_color=sigColor, text_size=size.small, text_halign=text.align_left)
+    table.merge_cells(dash, 1, 6, 3, 6)

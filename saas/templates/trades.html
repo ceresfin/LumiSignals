@@ -158,6 +158,7 @@ tr:hover { background: rgba(0,0,0,0.015); }
       <div class="stat-card"><div class="stat-value" id="futRealPL">—</div><div class="stat-label">Realized P&L</div></div>
       <div class="stat-card"><div class="stat-value" id="futTrades">—</div><div class="stat-label">Trades Today</div></div>
     </div>
+    <div id="futSyncStatus" style="text-align:right; font-size:0.7rem; color:var(--text-light); margin-top:-8px; margin-bottom:8px;"></div>
 
     <div class="card">
       <h2>Open Futures Positions <span class="count" id="futPositionCount">0</span></h2>
@@ -804,6 +805,20 @@ function loadFutures() {
 
     // Futures positions from IB sync
     var futPositions = (data.positions || []).filter(function(p) { return p.sec_type === 'FUT'; });
+
+    // Sync freshness indicator
+    var syncEl = document.getElementById('futSyncStatus');
+    var lastSynced = data.last_synced || '';
+    if (lastSynced) {
+      var syncAge = Math.round((Date.now() - new Date(lastSynced).getTime()) / 1000);
+      if (syncAge > 30) {
+        syncEl.innerHTML = '<span style="color:#e74c3c">&#9679;</span> Sync stale (' + syncAge + 's ago)';
+      } else {
+        syncEl.innerHTML = '<span style="color:#2ecc71">&#9679;</span> Live (' + syncAge + 's ago)';
+      }
+    } else if (!data.connected) {
+      syncEl.innerHTML = '<span style="color:#e74c3c">&#9679;</span> Sync offline';
+    }
 
     // Stats
     var unrealPnl = futPositions.reduce(function(s, p) { return s + (p.unrealized_pnl || 0); }, 0);

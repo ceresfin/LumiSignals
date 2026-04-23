@@ -1,0 +1,174 @@
+//@version=6
+indicator("ADX Dashboard", overlay=true)
+
+// === INPUTS ===
+adxPeriod = input.int(14, "ADX Period", minval=1)
+smaPeriod = input.int(50, "SMA Period", minval=1)
+rsiPeriod = input.int(14, "RSI Period", minval=1)
+
+// === ADX CALCULATION ===
+[diPlus, diMinus, adxValue] = ta.dmi(adxPeriod, adxPeriod)
+
+// === SMA & RSI CALCULATION ===
+sma50 = ta.sma(close, smaPeriod)
+rsiValue = ta.rsi(close, rsiPeriod)
+
+// === DIRECTION LOGIC ===
+// UP: +DMI > -DMI + 2
+// DOWN: +DMI < -DMI - 2
+// SIDEWAYS: +DMI within ±2 of -DMI
+directionUp = diPlus > (diMinus + 2)
+directionDown = diPlus < (diMinus - 2)
+
+direction = directionUp ? "UP" : directionDown ? "DOWN" : "SIDEWAYS"
+
+// === TREND CALCULATION ===
+// Trend = (+DMI) - (-DMI + 2)
+trendValue = diPlus - (diMinus + 2)
+
+// === MOMENTUM LEVEL ===
+getMomentumLabel(adx) =>
+    if adx >= 50
+        "Unusually Very Strong"
+    else if adx >= 30
+        "Very Strong"
+    else if adx >= 25
+        "Strong"
+    else if adx >= 20
+        "Moderate"
+    else if adx >= 15
+        "Weak"
+    else if adx >= 10
+        "Very Weak"
+    else
+        "No to Very Weak"
+
+momentumLabel = getMomentumLabel(adxValue)
+
+// === COLORS ===
+// Direction colors
+directionColor = directionUp ? color.green : directionDown ? color.red : color.yellow
+
+// Trend color (green if positive, red if negative)
+trendColor = trendValue >= 0 ? color.green : color.red
+
+// Momentum/ADX colors: White → Light Taupe → Gold → Burnt Orange
+getMomentumColor(adx) =>
+    if adx >= 50
+        color.rgb(204, 85, 0)      // Burnt Orange
+    else if adx >= 30
+        color.rgb(255, 193, 37)    // Gold
+    else if adx >= 25
+        color.rgb(238, 201, 0)     // Light Gold
+    else if adx >= 20
+        color.rgb(210, 180, 140)   // Tan/Sand
+    else if adx >= 15
+        color.rgb(188, 170, 150)   // Taupe
+    else if adx >= 10
+        color.rgb(210, 200, 190)   // Light Taupe
+    else
+        color.white                 // White
+
+momentumColor = getMomentumColor(adxValue)
+
+// === QUADRANT BOX LOGIC ===
+// Quadrant Box uses RSI >= 50 / < 50 (always shows Q1-Q4)
+// Signal uses RSI > 70 / < 30 (shows action or Neutral)
+
+aboveSMA = close > sma50
+belowSMA = close <= sma50
+
+// For Quadrant Box: RSI >= 50 / < 50
+quadrantOverbought = rsiValue >= 50
+quadrantOversold = rsiValue < 50
+
+// For Signal: RSI > 70 / < 30
+signalOverbought = rsiValue > 70
+signalOversold = rsiValue < 30
+
+// Quadrant label - uses 50 threshold
+// Format: "Q1 Purple Above SMA / RSI = 63.86"
+getQuadrantLabel(aboveSMA, isOverbought, rsi) =>
+    smaText = aboveSMA ? "Above SMA" : "Below SMA"
+    rsiText = "RSI = " + str.tostring(rsi, "#.##")
+    if aboveSMA and isOverbought
+        "Q1 Purple " + smaText + " / " + rsiText
+    else if aboveSMA and not isOverbought
+        "Q2 Green " + smaText + " / " + rsiText
+    else if not aboveSMA and isOverbought
+        "Q3 Red " + smaText + " / " + rsiText
+    else
+        "Q4 Yellow " + smaText + " / " + rsiText
+
+quadrantLabel = getQuadrantLabel(aboveSMA, quadrantOverbought, rsiValue)
+
+// Quadrant colors - uses 50 threshold
+getQuadrantColor(aboveSMA, isOverbought) =>
+    if aboveSMA and isOverbought
+        color.purple           // Q1
+    else if aboveSMA and not isOverbought
+        color.green            // Q2
+    else if not aboveSMA and isOverbought
+        color.red              // Q3
+    else
+        color.yellow           // Q4
+
+quadrantColor = getQuadrantColor(aboveSMA, quadrantOverbought)
+
+// Signal (trading action) - uses 70/30 threshold
+getSignal(aboveSMA, sigOverbought, sigOversold) =>
+    if aboveSMA and sigOverbought
+        "Take Profit on Longs"
+    else if aboveSMA and sigOversold
+        "Buy to Enter Long"
+    else if not aboveSMA and sigOverbought
+        "Sell to Enter"
+    else if not aboveSMA and sigOversold
+        "Take Profit on Shorts"
+    else
+        "Neutral"
+
+signalText = getSignal(aboveSMA, signalOverbought, signalOversold)
+
+// Signal color - uses 70/30 threshold
+getSignalColor(aboveSMA, sigOverbought, sigOversold) =>
+    if aboveSMA and sigOverbought
+        color.purple           // Q1 - Take Profit on Longs
+    else if aboveSMA and sigOversold
+        color.green            // Q2 - Buy to Enter Long
+    else if not aboveSMA and sigOverbought
+        color.red              // Q3 - Sell to Enter
+    else if not aboveSMA and sigOversold
+        color.yellow           // Q4 - Take Profit on Shorts
+    else
+        color.gray             // Neutral
+
+signalColor = getSignalColor(aboveSMA, signalOverbought, signalOversold)
+
+// === TABLE ===
+var table dashboard = table.new(position.top_right, 2, 6, bgcolor=color.rgb(30, 30, 30), border_width=1, border_color=color.gray)
+
+if barstate.islast
+    // Row 0: Direction
+    table.cell(dashboard, 0, 0, "Direction", text_color=color.white, text_size=size.normal, text_halign=text.align_left)
+    table.cell(dashboard, 1, 0, direction, text_color=directionColor, text_size=size.normal, text_halign=text.align_right)
+
+    // Row 1: Trend
+    table.cell(dashboard, 0, 1, "Trend", text_color=color.white, text_size=size.normal, text_halign=text.align_left)
+    table.cell(dashboard, 1, 1, str.tostring(trendValue, "#.##"), text_color=trendColor, text_size=size.normal, text_halign=text.align_right)
+
+    // Row 2: Momentum
+    table.cell(dashboard, 0, 2, "Momentum", text_color=color.white, text_size=size.normal, text_halign=text.align_left)
+    table.cell(dashboard, 1, 2, momentumLabel, text_color=momentumColor, text_size=size.normal, text_halign=text.align_right)
+
+    // Row 3: ADX
+    table.cell(dashboard, 0, 3, "ADX", text_color=color.white, text_size=size.normal, text_halign=text.align_left)
+    table.cell(dashboard, 1, 3, str.tostring(adxValue, "#.##"), text_color=momentumColor, text_size=size.normal, text_halign=text.align_right)
+
+    // Row 4: Quadrant Box
+    table.cell(dashboard, 0, 4, "Quadrant Box", text_color=color.white, text_size=size.normal, text_halign=text.align_left)
+    table.cell(dashboard, 1, 4, quadrantLabel, text_color=color.rgb(188, 170, 150), text_size=size.normal, text_halign=text.align_right)  // Taupe
+
+    // Row 5: Signal
+    table.cell(dashboard, 0, 5, "Signal", text_color=color.white, text_size=size.normal, text_halign=text.align_left)
+    table.cell(dashboard, 1, 5, signalText, text_color=color.rgb(188, 170, 150), text_size=size.normal, text_halign=text.align_right)  // Taupe
