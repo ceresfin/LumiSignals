@@ -818,19 +818,48 @@ function loadFutures() {
 
     // Open positions table
     document.getElementById('futPositionCount').textContent = futPositions.length;
+    // Find opened_at from matching entry orders
+    var futEntryOrders = futOrders.filter(function(o) {
+      return (o.direction === 'BUY' || o.direction === 'SELL') && o.status === 'Filled';
+    });
+
     var posRows = futPositions.map(function(p) {
       var dir = p.quantity > 0 ? '<span class="dir-buy">LONG</span>' : '<span class="dir-sell">SHORT</span>';
       var pnl = p.unrealized_pnl || 0;
+      // Find the most recent entry order for this ticker + direction
+      var entryDir = p.quantity > 0 ? 'BUY' : 'SELL';
+      var openedAt = '';
+      var strategy = '';
+      for (var i = futEntryOrders.length - 1; i >= 0; i--) {
+        var o = futEntryOrders[i];
+        if ((o.ticker === p.symbol || o.symbol === p.symbol) && o.direction === entryDir) {
+          openedAt = o.queued_at || '';
+          strategy = (o.strategy || '').replace('_exit', '');
+          break;
+        }
+      }
+      // Also check all orders (not just filled)
+      if (!openedAt) {
+        for (var j = allOrders.length - 1; j >= 0; j--) {
+          var ao = allOrders[j];
+          if (ao.type === 'futures' && (ao.ticker === p.symbol) && ao.direction === entryDir && ao.queued_at) {
+            openedAt = ao.queued_at;
+            strategy = (ao.strategy || '').replace('_exit', '');
+            break;
+          }
+        }
+      }
       return '<td><strong>' + p.symbol + '</strong></td>' +
         '<td>' + dir + '</td>' +
         '<td>' + Math.abs(p.quantity) + '</td>' +
         '<td>$' + fmtNum(p.avg_cost / 5) + '</td>' +
         '<td>$' + fmtNum(p.market_price || 0) + '</td>' +
         '<td class="' + plClass(pnl) + '">$' + fmt(pnl) + '</td>' +
-        '<td>$' + fmtNum(p.market_value || 0) + '</td>';
+        '<td>' + (strategy || '—') + '</td>' +
+        '<td style="font-size:0.72rem">' + fmtTime(openedAt) + '<br><span style="color:var(--text-light)">' + duration(openedAt) + '</span></td>';
     });
     document.getElementById('futPositionsTable').innerHTML = buildTable(
-      ['Ticker', 'Dir', 'Qty', 'Entry', 'Current', 'P&L', 'Value'], posRows
+      ['Ticker', 'Dir', 'Qty', 'Entry', 'Current', 'P&L', 'Strategy', 'Opened'], posRows
     );
 
     // Pending orders
