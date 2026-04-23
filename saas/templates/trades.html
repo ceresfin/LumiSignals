@@ -785,6 +785,7 @@ function loadIBTrades() {
 }
 
 loadIBTrades();
+setInterval(loadIBTrades, 10000);
 
 // ─── FUTURES ───
 function loadFutures() {
@@ -914,6 +915,8 @@ function loadFutures() {
   });
 }
 loadFutures();
+// Auto-refresh futures every 10 seconds
+setInterval(loadFutures, 10000);
 </script>
 </body>
 </html>
