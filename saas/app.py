@@ -577,9 +577,8 @@ def create_app():
                         pass
             if not order.get("ticker") and not order.get("symbol"):
                 continue
-                order = json.loads(raw)
-                if order.get("user_id") == current_user.id and order.get("ticker"):
-                    orders.append(order)
+            if order.get("user_id") == current_user.id:
+                orders.append(order)
         # Sort: queued/placing first, then by time
         status_order = {"queued": 0, "placing": 1, "submitted": 2, "filled": 3, "failed": 4, "cancelled": 5}
         orders.sort(key=lambda o: (status_order.get(o.get("status", ""), 9), o.get("order_id", "")))
