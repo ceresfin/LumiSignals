@@ -26,7 +26,7 @@ SERVER_URL = os.environ.get("LUMISIGNALS_URL", "https://bot.lumitrade.ai")
 SYNC_KEY = os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026")
 IB_HOST = os.environ.get("IB_HOST", "127.0.0.1")
 IB_PORT = int(os.environ.get("IB_PORT", "4002"))
-SYNC_INTERVAL = 30
+SYNC_INTERVAL = 10
 
 
 def collect_ib_data(ib: IB) -> dict:
