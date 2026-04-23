@@ -600,15 +600,41 @@ def check_order_requests(ib: IB):
                         raise ValueError(f"No futures contract found for {ticker}")
 
                     if direction == "CLOSE_LONG":
-                        # Close long = sell
                         trade = ib.placeOrder(contract, MktOrder("SELL", contracts))
                     elif direction == "CLOSE_SHORT":
-                        # Close short = buy
                         trade = ib.placeOrder(contract, MktOrder("BUY", contracts))
                     elif direction == "BUY":
                         trade = ib.placeOrder(contract, MktOrder("BUY", contracts))
+                        ib.sleep(2)
+                        # Place stop loss 10 points below entry
+                        if trade.orderStatus.status in ("Filled", "PreSubmitted", "Submitted"):
+                            try:
+                                from ib_insync import StopOrder
+                                fill_price = trade.orderStatus.avgFillPrice or 0
+                                if fill_price > 0:
+                                    sl_price = fill_price - 10
+                                    sl_order = StopOrder("SELL", contracts, sl_price)
+                                    sl_order.tif = "GTC"
+                                    ib.placeOrder(contract, sl_order)
+                                    logger.info("Stop loss placed: SELL %s @ %.2f (entry %.2f)", ticker, sl_price, fill_price)
+                            except Exception as e:
+                                logger.error("Failed to place stop loss: %s", e)
                     elif direction == "SELL":
                         trade = ib.placeOrder(contract, MktOrder("SELL", contracts))
+                        ib.sleep(2)
+                        # Place stop loss 10 points above entry
+                        if trade.orderStatus.status in ("Filled", "PreSubmitted", "Submitted"):
+                            try:
+                                from ib_insync import StopOrder
+                                fill_price = trade.orderStatus.avgFillPrice or 0
+                                if fill_price > 0:
+                                    sl_price = fill_price + 10
+                                    sl_order = StopOrder("BUY", contracts, sl_price)
+                                    sl_order.tif = "GTC"
+                                    ib.placeOrder(contract, sl_order)
+                                    logger.info("Stop loss placed: BUY %s @ %.2f (entry %.2f)", ticker, sl_price, fill_price)
+                            except Exception as e:
+                                logger.error("Failed to place stop loss: %s", e)
                     else:
                         logger.error("Unknown futures direction: %s", direction)
                         continue

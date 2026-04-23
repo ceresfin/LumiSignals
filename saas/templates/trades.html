@@ -79,6 +79,7 @@ tr:hover { background: rgba(0,0,0,0.015); }
   <div style="display:flex;gap:0;margin-bottom:20px;border-bottom:2px solid #eee;">
     <button id="tabFX" onclick="showTab('fx')" style="padding:12px 28px;font-size:0.9rem;font-weight:600;border:none;cursor:pointer;background:var(--olive);color:#FFF5E1;border-radius:8px 8px 0 0;">Forex (Oanda)</button>
     <button id="tabOptions" onclick="showTab('options')" style="padding:12px 28px;font-size:0.9rem;font-weight:600;border:none;cursor:pointer;background:var(--cream);color:var(--text-light);border-radius:8px 8px 0 0;margin-left:4px;">Options (IB)</button>
+    <button id="tabFutures" onclick="showTab('futures')" style="padding:12px 28px;font-size:0.9rem;font-weight:600;border:none;cursor:pointer;background:var(--cream);color:var(--text-light);border-radius:8px 8px 0 0;margin-left:4px;">Futures (IB)</button>
   </div>
 
   <!-- ============ FX SECTION ============ -->
@@ -149,6 +150,31 @@ tr:hover { background: rgba(0,0,0,0.015); }
   </div>
   </div><!-- end sectionOptions -->
 
+  <!-- ============ FUTURES SECTION ============ -->
+  <div id="sectionFutures" style="display:none;">
+    <div class="stats-grid" style="grid-template-columns: repeat(4, 1fr);">
+      <div class="stat-card"><div class="stat-value" id="futOpenCount">—</div><div class="stat-label">Open Positions</div></div>
+      <div class="stat-card"><div class="stat-value" id="futUnrealPL">—</div><div class="stat-label">Unrealized P&L</div></div>
+      <div class="stat-card"><div class="stat-value" id="futRealPL">—</div><div class="stat-label">Realized P&L</div></div>
+      <div class="stat-card"><div class="stat-value" id="futTrades">—</div><div class="stat-label">Trades Today</div></div>
+    </div>
+
+    <div class="card">
+      <h2>Open Futures Positions <span class="count" id="futPositionCount">0</span></h2>
+      <div id="futPositionsTable"><div class="loading">Loading...</div></div>
+    </div>
+
+    <div class="card">
+      <h2>Pending Futures Orders <span class="count" id="futOrderCount">0</span></h2>
+      <div id="futOrdersTable"><div class="loading">Loading...</div></div>
+    </div>
+
+    <div class="card">
+      <h2>Closed Futures Trades <span class="count" id="futClosedCount">0</span></h2>
+      <div id="futClosedTable"><div class="loading">Loading...</div></div>
+    </div>
+  </div><!-- end sectionFutures -->
+
   <div class="disclaimer">
     LumiTrade is a financial publishing company. All signals are for educational and informational purposes only.
   </div>
@@ -156,24 +182,17 @@ tr:hover { background: rgba(0,0,0,0.015); }
 
 <script>
 function showTab(tab) {
-  var fxSection = document.getElementById('sectionFX');
-  var optSection = document.getElementById('sectionOptions');
-  var tabFX = document.getElementById('tabFX');
-  var tabOpt = document.getElementById('tabOptions');
-  if (tab === 'fx') {
-    fxSection.style.display = 'block';
-    optSection.style.display = 'none';
-    tabFX.style.background = 'var(--olive)';
-    tabFX.style.color = '#FFF5E1';
-    tabOpt.style.background = 'var(--cream)';
-    tabOpt.style.color = 'var(--text-light)';
-  } else {
-    fxSection.style.display = 'none';
-    optSection.style.display = 'block';
-    tabOpt.style.background = '#7c3aed';
-    tabOpt.style.color = '#FFF5E1';
-    tabFX.style.background = 'var(--cream)';
-    tabFX.style.color = 'var(--text-light)';
+  var sections = {fx: 'sectionFX', options: 'sectionOptions', futures: 'sectionFutures'};
+  var tabs = {fx: 'tabFX', options: 'tabOptions', futures: 'tabFutures'};
+  var colors = {fx: 'var(--olive)', options: '#7c3aed', futures: '#0284c7'};
+  for (var key in sections) {
+    var sec = document.getElementById(sections[key]);
+    var btn = document.getElementById(tabs[key]);
+    if (sec) sec.style.display = key === tab ? 'block' : 'none';
+    if (btn) {
+      btn.style.background = key === tab ? colors[key] : 'var(--cream)';
+      btn.style.color = key === tab ? '#FFF5E1' : 'var(--text-light)';
+    }
   }
 }
 
@@ -766,6 +785,97 @@ function loadIBTrades() {
 }
 
 loadIBTrades();
+
+// ─── FUTURES ───
+function loadFutures() {
+  Promise.all([
+    fetch('/api/ibkr/trades').then(function(r) { return r.json(); }).catch(function() { return {}; }),
+    fetch('/api/ibkr/orders/all').then(function(r) { return r.json(); }).catch(function() { return {orders: []}; }),
+    fetch('/api/ibkr/closed-trades').then(function(r) { return r.json(); }).catch(function() { return {trades: []}; }),
+  ]).then(function(results) {
+    var data = results[0];
+    var allOrders = results[1].orders || [];
+    var allClosed = results[2].trades || [];
+
+    // Filter to futures only
+    var futOrders = allOrders.filter(function(o) { return o.type === 'futures'; });
+    var futClosed = allClosed.filter(function(t) { return t.type === 'futures'; });
+
+    // Futures positions from IB sync
+    var futPositions = (data.positions || []).filter(function(p) { return p.sec_type === 'FUT'; });
+
+    // Stats
+    var unrealPnl = futPositions.reduce(function(s, p) { return s + (p.unrealized_pnl || 0); }, 0);
+    var realPnl = futPositions.reduce(function(s, p) { return s + (p.realized_pnl || 0); }, 0);
+    document.getElementById('futOpenCount').textContent = futPositions.length;
+    var uplEl = document.getElementById('futUnrealPL');
+    uplEl.textContent = '$' + fmt(unrealPnl);
+    uplEl.className = 'stat-value ' + plClass(unrealPnl);
+    var rplEl = document.getElementById('futRealPL');
+    rplEl.textContent = '$' + fmt(realPnl);
+    rplEl.className = 'stat-value ' + plClass(realPnl);
+    document.getElementById('futTrades').textContent = futOrders.length + futClosed.length;
+
+    // Open positions table
+    document.getElementById('futPositionCount').textContent = futPositions.length;
+    var posRows = futPositions.map(function(p) {
+      var dir = p.quantity > 0 ? '<span class="dir-buy">LONG</span>' : '<span class="dir-sell">SHORT</span>';
+      var pnl = p.unrealized_pnl || 0;
+      return '<td><strong>' + p.symbol + '</strong></td>' +
+        '<td>' + dir + '</td>' +
+        '<td>' + Math.abs(p.quantity) + '</td>' +
+        '<td>$' + fmtNum(p.avg_cost / 5) + '</td>' +
+        '<td>$' + fmtNum(p.market_price || 0) + '</td>' +
+        '<td class="' + plClass(pnl) + '">$' + fmt(pnl) + '</td>' +
+        '<td>$' + fmtNum(p.market_value || 0) + '</td>';
+    });
+    document.getElementById('futPositionsTable').innerHTML = buildTable(
+      ['Ticker', 'Dir', 'Qty', 'Entry', 'Current', 'P&L', 'Value'], posRows
+    );
+
+    // Pending orders
+    var pendingFut = futOrders.filter(function(o) {
+      return o.status === 'queued' || o.status === 'placing' || o.status === 'Submitted' || o.status === 'PreSubmitted';
+    });
+    document.getElementById('futOrderCount').textContent = pendingFut.length;
+    var ordRows = pendingFut.map(function(o) {
+      var dir = o.direction === 'BUY' ? '<span class="dir-buy">BUY</span>' :
+               o.direction === 'SELL' ? '<span class="dir-sell">SELL</span>' :
+               o.direction === 'CLOSE_LONG' ? '<span style="color:var(--text-light)">CLOSE LONG</span>' :
+               '<span style="color:var(--text-light)">CLOSE SHORT</span>';
+      var st = o.status === 'PreSubmitted' ? 'Submitted' : o.status;
+      return '<td><strong>' + (o.ticker || '') + '</strong></td>' +
+        '<td>' + dir + '</td>' +
+        '<td>' + (o.contracts || 1) + '</td>' +
+        '<td>' + (o.strategy || '') + '</td>' +
+        '<td><span class="badge">' + st + '</span></td>' +
+        '<td style="font-size:0.72rem">' + fmtTime(o.queued_at || '') + '</td>';
+    });
+    document.getElementById('futOrdersTable').innerHTML = buildTable(
+      ['Ticker', 'Dir', 'Qty', 'Strategy', 'Status', 'Time'], ordRows
+    );
+
+    // Closed futures trades
+    document.getElementById('futClosedCount').textContent = futClosed.length;
+    var closedRows = futClosed.map(function(t) {
+      var pnl = t.realized_pnl || 0;
+      var won = pnl > 0;
+      var badge = won ? '<span class="badge" style="background:#e8f5e9;color:#27ae60">WIN</span>' : '<span class="badge" style="background:#fdecea;color:#c0392b">LOSS</span>';
+      return '<td><strong>' + (t.ticker || t.symbol || '') + '</strong></td>' +
+        '<td>' + (t.direction || '') + '</td>' +
+        '<td>' + (t.contracts || 1) + '</td>' +
+        '<td class="' + plClass(pnl) + '">$' + fmt(pnl) + '</td>' +
+        '<td>' + (t.strategy || '') + '</td>' +
+        '<td>' + (t.close_reason || '') + '</td>' +
+        '<td>' + badge + '</td>' +
+        '<td style="font-size:0.72rem">' + fmtTime(t.closed_at || '') + '</td>';
+    });
+    document.getElementById('futClosedTable').innerHTML = buildTable(
+      ['Ticker', 'Dir', 'Qty', 'P&L', 'Strategy', 'Reason', 'Result', 'Closed'], closedRows
+    );
+  });
+}
+loadFutures();
 </script>
 </body>
 </html>
