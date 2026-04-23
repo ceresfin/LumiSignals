@@ -586,11 +586,20 @@ def check_order_requests(ib: IB):
                 logger.info("Futures order: %s %s %dx — %s", direction, ticker, contracts, strategy_name)
 
                 # Position awareness — check current position before acting
+                # Force portfolio refresh
+                ib.sleep(1)
                 current_pos = 0
                 for item in ib.portfolio():
                     if item.contract.symbol == ticker and item.contract.secType == 'FUT':
                         current_pos = int(item.position)
                         break
+                # Fallback to positions() if portfolio is empty
+                if current_pos == 0:
+                    for pos in ib.positions():
+                        if pos.contract.symbol == ticker and pos.contract.secType == 'FUT':
+                            current_pos = int(pos.position)
+                            break
+                logger.info("Position check: %s pos=%d (direction=%s)", ticker, current_pos, direction)
 
                 skip = False
                 if direction == "BUY" and current_pos > 0:
