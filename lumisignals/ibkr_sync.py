@@ -646,14 +646,48 @@ def check_order_requests(ib: IB):
                     multiplier = float(contract.multiplier or 5)
                     sl_points = sl_dollars / multiplier
 
-                    if direction == "CLOSE_LONG":
-                        close_ord = MktOrder("SELL", contracts)
+                    if direction in ("CLOSE_LONG", "CLOSE_SHORT"):
+                        # Record entry price before closing
+                        entry_price = 0
+                        entry_qty = 0
+                        for item in ib.portfolio():
+                            if item.contract.symbol == ticker and item.contract.secType == 'FUT':
+                                entry_price = item.averageCost / multiplier
+                                entry_qty = abs(int(item.position))
+                                break
+
+                        close_action = "SELL" if direction == "CLOSE_LONG" else "BUY"
+                        close_ord = MktOrder(close_action, contracts)
                         close_ord.tif = "GTC"
                         trade = ib.placeOrder(contract, close_ord)
-                    elif direction == "CLOSE_SHORT":
-                        close_ord = MktOrder("BUY", contracts)
-                        close_ord.tif = "GTC"
-                        trade = ib.placeOrder(contract, close_ord)
+                        ib.sleep(3)
+
+                        # Record closed trade
+                        exit_price = trade.orderStatus.avgFillPrice or 0
+                        if entry_price and exit_price:
+                            if direction == "CLOSE_LONG":
+                                pnl = (exit_price - entry_price) * contracts * multiplier
+                            else:
+                                pnl = (entry_price - exit_price) * contracts * multiplier
+                            from datetime import datetime as _dt, timezone as _tz
+                            closed_trade = {
+                                "symbol": ticker,
+                                "type": "futures",
+                                "direction": "LONG" if direction == "CLOSE_LONG" else "SHORT",
+                                "contracts": contracts,
+                                "entry_price": round(entry_price, 2),
+                                "exit_price": round(exit_price, 2),
+                                "realized_pnl": round(pnl, 2),
+                                "strategy": strategy_name,
+                                "close_reason": "Signal exit",
+                                "closed_at": _dt.now(_tz.utc).isoformat(),
+                            }
+                            try:
+                                requests.post(f"{SERVER_URL}/api/ibkr/closed-trade",
+                                              json=closed_trade, headers={"X-Sync-Key": SYNC_KEY}, timeout=10)
+                            except Exception:
+                                pass
+                            logger.info("Closed %s %s: entry=%.2f exit=%.2f P&L=$%.2f", ticker, direction, entry_price, exit_price, pnl)
                     elif direction == "BUY":
                         buy_ord = MktOrder("BUY", contracts)
                         buy_ord.tif = "GTC"
