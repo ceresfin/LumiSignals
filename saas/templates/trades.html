@@ -819,9 +819,14 @@ function loadFutures() {
 
     // Open positions table
     document.getElementById('futPositionCount').textContent = futPositions.length;
-    // Find opened_at from matching entry orders
-    var futEntryOrders = futOrders.filter(function(o) {
-      return (o.direction === 'BUY' || o.direction === 'SELL') && o.status === 'Filled';
+    // Find opened_at from matching entry orders — include all entry types
+    var futEntryOrders = allOrders.filter(function(o) {
+      return o.type === 'futures' && (o.direction === 'BUY' || o.direction === 'SELL') &&
+             (o.status === 'Filled' || o.status === 'entry');
+    });
+    // Sort by time descending so most recent is first
+    futEntryOrders.sort(function(a, b) {
+      return (b.queued_at || b.opened_at || '').localeCompare(a.queued_at || a.opened_at || '');
     });
 
     var posRows = futPositions.map(function(p) {
@@ -831,10 +836,10 @@ function loadFutures() {
       var entryDir = p.quantity > 0 ? 'BUY' : 'SELL';
       var openedAt = '';
       var strategy = '';
-      for (var i = futEntryOrders.length - 1; i >= 0; i--) {
+      for (var i = 0; i < futEntryOrders.length; i++) {
         var o = futEntryOrders[i];
         if ((o.ticker === p.symbol || o.symbol === p.symbol) && o.direction === entryDir) {
-          openedAt = o.queued_at || '';
+          openedAt = o.opened_at || o.queued_at || '';
           strategy = (o.strategy || '').replace('_exit', '');
           break;
         }
