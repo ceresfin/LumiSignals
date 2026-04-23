@@ -807,7 +807,10 @@ function loadFutures() {
 
     // Stats
     var unrealPnl = futPositions.reduce(function(s, p) { return s + (p.unrealized_pnl || 0); }, 0);
-    var realPnl = futPositions.reduce(function(s, p) { return s + (p.realized_pnl || 0); }, 0);
+    // Realized P&L: sum from closed trades (persists even with no open positions)
+    var realPnl = futClosed.reduce(function(s, t) { return s + (t.realized_pnl || 0); }, 0);
+    // Also add realized from open positions if any
+    realPnl += futPositions.reduce(function(s, p) { return s + (p.realized_pnl || 0); }, 0);
     document.getElementById('futOpenCount').textContent = futPositions.length;
     var uplEl = document.getElementById('futUnrealPL');
     uplEl.textContent = '$' + fmt(unrealPnl);
@@ -815,7 +818,7 @@ function loadFutures() {
     var rplEl = document.getElementById('futRealPL');
     rplEl.textContent = '$' + fmt(realPnl);
     rplEl.className = 'stat-value ' + plClass(realPnl);
-    document.getElementById('futTrades').textContent = futOrders.length + futClosed.length;
+    document.getElementById('futTrades').textContent = futClosed.length;
 
     // Open positions table
     document.getElementById('futPositionCount').textContent = futPositions.length;
