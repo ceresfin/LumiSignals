@@ -116,6 +116,9 @@ def create_app():
         debit_sl_pct = db.Column(db.Float, default=50.0)      # Stop loss at X% loss
         options_time_stop_dte = db.Column(db.Integer, default=7)  # Close at X DTE
 
+        # Futures settings
+        futures_stop_loss = db.Column(db.Float, default=25.0)  # Stop loss in dollars per contract
+
     @login_manager.user_loader
     def load_user(user_id):
         return User.query.get(int(user_id))
@@ -234,6 +237,9 @@ def create_app():
             current_user.debit_tp_pct = float(request.form.get("debit_tp_pct", 75) or 75)
             current_user.debit_sl_pct = float(request.form.get("debit_sl_pct", 50) or 50)
             current_user.options_time_stop_dte = int(request.form.get("options_time_stop_dte", 7) or 7)
+
+            # Futures settings
+            current_user.futures_stop_loss = float(request.form.get("futures_stop_loss", 25) or 25)
 
             db.session.commit()
             flash("Settings saved", "success")
@@ -616,7 +622,7 @@ def create_app():
         # Get first active user's exit rules (single-user for now)
         from sqlalchemy import text
         result = db.session.execute(text(
-            "SELECT credit_tp_pct, credit_sl_pct, debit_tp_pct, debit_sl_pct, options_time_stop_dte "
+            "SELECT credit_tp_pct, credit_sl_pct, debit_tp_pct, debit_sl_pct, options_time_stop_dte, futures_stop_loss "
             "FROM users WHERE bot_active = true LIMIT 1"
         ))
         row = result.fetchone()
@@ -627,6 +633,7 @@ def create_app():
                 "debit_tp_pct": row[2] or 75,
                 "debit_sl_pct": row[3] or 50,
                 "time_stop_dte": row[4] or 7,
+                "futures_stop_loss": row[5] or 25,
             })
         return jsonify({})
 

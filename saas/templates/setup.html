@@ -343,6 +343,26 @@ button:hover { opacity: 0.9; }
       </div>
     </div>
 
+    <div class="card">
+      <h2>7. Futures Settings</h2>
+      <p style="font-size:0.8rem;color:var(--text-light);margin-bottom:16px;">Risk management for MES/ES futures trades via TradingView webhooks (2n20 strategy).</p>
+      <div class="field-row" style="grid-template-columns: 1fr 2fr;">
+        <div>
+          <label>Stop Loss ($ per contract)</label>
+          <input type="number" name="futures_stop_loss" value="{{ user.futures_stop_loss if user.futures_stop_loss is not none else 25 }}" min="5" max="500" step="5">
+          <small>MES: $5/point. $25 = 5 points. $50 = 10 points.</small>
+        </div>
+        <div>
+          <p style="font-size:0.78rem;color:var(--text-light);margin-top:20px;">
+            A hard stop loss is placed on IB immediately after every futures entry.<br>
+            <strong>BUY:</strong> stop placed below entry by this amount<br>
+            <strong>SELL:</strong> stop placed above entry by this amount<br>
+            The 2n20 overwhelm exit will usually close before the stop is hit.
+          </p>
+        </div>
+      </div>
+    </div>
+
     <button type="submit">Save Settings</button>
   </form>
 </div>

@@ -599,6 +599,23 @@ def check_order_requests(ib: IB):
                     else:
                         raise ValueError(f"No futures contract found for {ticker}")
 
+                    # Get futures stop loss setting from server
+                    sl_dollars = 25.0  # default
+                    try:
+                        sl_resp = requests.get(
+                            f"{SERVER_URL}/api/ibkr/exit-rules",
+                            headers={"X-Sync-Key": SYNC_KEY},
+                            timeout=5,
+                        )
+                        if sl_resp.status_code == 200:
+                            sl_dollars = float(sl_resp.json().get("futures_stop_loss", 25))
+                    except Exception:
+                        pass
+
+                    # MES = $5/point, ES = $50/point
+                    multiplier = float(contract.multiplier or 5)
+                    sl_points = sl_dollars / multiplier
+
                     if direction == "CLOSE_LONG":
                         trade = ib.placeOrder(contract, MktOrder("SELL", contracts))
                     elif direction == "CLOSE_SHORT":
@@ -606,33 +623,31 @@ def check_order_requests(ib: IB):
                     elif direction == "BUY":
                         trade = ib.placeOrder(contract, MktOrder("BUY", contracts))
                         ib.sleep(2)
-                        # Place stop loss 10 points below entry
                         if trade.orderStatus.status in ("Filled", "PreSubmitted", "Submitted"):
                             try:
                                 from ib_insync import StopOrder
                                 fill_price = trade.orderStatus.avgFillPrice or 0
                                 if fill_price > 0:
-                                    sl_price = fill_price - 10
+                                    sl_price = fill_price - sl_points
                                     sl_order = StopOrder("SELL", contracts, sl_price)
                                     sl_order.tif = "GTC"
                                     ib.placeOrder(contract, sl_order)
-                                    logger.info("Stop loss placed: SELL %s @ %.2f (entry %.2f)", ticker, sl_price, fill_price)
+                                    logger.info("Stop loss: SELL %s @ %.2f (entry %.2f, risk $%.0f)", ticker, sl_price, fill_price, sl_dollars)
                             except Exception as e:
                                 logger.error("Failed to place stop loss: %s", e)
                     elif direction == "SELL":
                         trade = ib.placeOrder(contract, MktOrder("SELL", contracts))
                         ib.sleep(2)
-                        # Place stop loss 10 points above entry
                         if trade.orderStatus.status in ("Filled", "PreSubmitted", "Submitted"):
                             try:
                                 from ib_insync import StopOrder
                                 fill_price = trade.orderStatus.avgFillPrice or 0
                                 if fill_price > 0:
-                                    sl_price = fill_price + 10
+                                    sl_price = fill_price + sl_points
                                     sl_order = StopOrder("BUY", contracts, sl_price)
                                     sl_order.tif = "GTC"
                                     ib.placeOrder(contract, sl_order)
-                                    logger.info("Stop loss placed: BUY %s @ %.2f (entry %.2f)", ticker, sl_price, fill_price)
+                                    logger.info("Stop loss: BUY %s @ %.2f (entry %.2f, risk $%.0f)", ticker, sl_price, fill_price, sl_dollars)
                             except Exception as e:
                                 logger.error("Failed to place stop loss: %s", e)
                     else:
