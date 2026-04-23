@@ -588,17 +588,16 @@ def check_order_requests(ib: IB):
                 try:
                     from ib_insync import Future, MarketOrder as MktOrder
 
-                    # MES = Micro E-mini S&P 500, ES = E-mini S&P 500
-                    if ticker == "MES":
-                        contract = Future("MES", exchange="CME")
-                    elif ticker == "ES":
-                        contract = Future("ES", exchange="CME")
-                    elif ticker == "MNQ" or ticker == "NQ":
-                        contract = Future(ticker, exchange="CME")
+                    # Resolve front-month futures contract
+                    contract = Future(ticker, exchange="CME")
+                    candidates = ib.reqContractDetails(contract)
+                    if candidates:
+                        # Pick the nearest expiration (front month)
+                        candidates.sort(key=lambda c: c.contract.lastTradeDateOrContractMonth)
+                        contract = candidates[0].contract
+                        logger.info("Resolved %s to %s exp %s", ticker, contract.localSymbol, contract.lastTradeDateOrContractMonth)
                     else:
-                        contract = Future(ticker, exchange="CME")
-
-                    ib.qualifyContracts(contract)
+                        raise ValueError(f"No futures contract found for {ticker}")
 
                     if direction == "CLOSE_LONG":
                         # Close long = sell

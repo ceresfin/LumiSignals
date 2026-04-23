@@ -4,6 +4,7 @@ indicator("2n20", overlay=true)
 // ─── SETTINGS ───
 showExits = input.bool(true, "Show Exit Signals", group="Display")
 showBias = input.bool(true, "Show Bias Background", group="Display")
+minBodyPct = input.float(30.0, "Min Body Size (% of range)", step=5.0, group="Entry")
 
 // ─── DAILY ANCHORED VWAP ───
 vwapVal = ta.vwap
@@ -35,12 +36,25 @@ lastRedHigh = isRed[1] ? open[1] : isRed[2] ? open[2] : isRed[3] ? open[3] : 0.0
 lastGreenBody = isGreen[1] ? prevGreenBody : isGreen[2] ? math.abs(close[2] - open[2]) : isGreen[3] ? math.abs(close[3] - open[3]) : 0.0
 lastGreenLow = isGreen[1] ? open[1] : isGreen[2] ? open[2] : isGreen[3] ? open[3] : 0.0
 
+// ─── BODY SIZE FILTER ───
+// The overwhelming candle must have a real body (not a doji)
+candleRange = high - low
+bodySize = math.abs(close - open)
+bodyPct = candleRange > 0 ? (bodySize / candleRange) * 100 : 0
+hasRealBody = bodyPct >= minBodyPct
+
+// Average body size of last 10 candles — overwhelm must be meaningful
+avgBody = ta.sma(math.abs(close - open), 10)
+isSignificantBody = bodySize >= avgBody * 0.8
+
 // ─── OVERWHELM DETECTION ───
 // Green overwhelms: current green body > most recent red body within 3 bars
-greenOverwhelmsRed = isGreen and lastRedBody > 0 and greenBody > lastRedBody and close > lastRedHigh
+// AND the green candle has a real body (not a doji overwhelming a doji)
+greenOverwhelmsRed = isGreen and hasRealBody and isSignificantBody and lastRedBody > 0 and greenBody > lastRedBody and close > lastRedHigh
 
 // Red overwhelms: current red body > most recent green body within 3 bars
-redOverwhelmsGreen = isRed and lastGreenBody > 0 and redBody > lastGreenBody and close < lastGreenLow
+// AND the red candle has a real body AND is significant vs recent average
+redOverwhelmsGreen = isRed and hasRealBody and isSignificantBody and lastGreenBody > 0 and redBody > lastGreenBody and close < lastGreenLow
 
 // ─── TRADE SIGNALS ───
 // BUY: above VWAP + green overwhelms red
