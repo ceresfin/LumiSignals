@@ -837,6 +837,9 @@ function loadFutures() {
     var pendingFut = futOrders.filter(function(o) {
       return o.status === 'queued' || o.status === 'placing' || o.status === 'Submitted' || o.status === 'PreSubmitted';
     });
+    pendingFut.sort(function(a, b) {
+      return (a.queued_at || '').localeCompare(b.queued_at || '');
+    });
     document.getElementById('futOrderCount').textContent = pendingFut.length;
     var ordRows = pendingFut.map(function(o) {
       var dir = o.direction === 'BUY' ? '<span class="dir-buy">BUY</span>' :
