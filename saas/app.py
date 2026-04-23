@@ -907,6 +907,8 @@ def create_app():
             today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
             # Handle close signals
+            close_reason = data.get("reason", "")
+
             if direction in ("CLOSE_LONG", "CLOSE_SHORT"):
                 order_id = str(uuid.uuid4())[:8]
                 order = {
@@ -917,6 +919,7 @@ def create_app():
                     "type": "futures",
                     "direction": direction,
                     "strategy": strategy,
+                    "reason": close_reason,
                     "contracts": int(override_contracts or 1),
                     "status": "queued",
                 }

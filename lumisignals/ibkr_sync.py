@@ -670,11 +670,10 @@ def check_order_requests(ib: IB):
                             else:
                                 pnl = (entry_price - exit_price) * contracts * multiplier
                             from datetime import datetime as _dt, timezone as _tz
-                            # Determine reason based on direction
-                            if direction == "CLOSE_LONG":
-                                close_reason = "Sell to Cover"
-                            else:
-                                close_reason = "Buy to Cover"
+                            # Use reason from webhook, or default
+                            close_reason = order.get("reason", "")
+                            if not close_reason:
+                                close_reason = "Sell to Cover" if direction == "CLOSE_LONG" else "Buy to Cover"
 
                             # Use entry strategy name (strip _exit suffix)
                             entry_strategy = strategy_name.replace("_exit", "")
