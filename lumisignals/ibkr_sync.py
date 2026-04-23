@@ -687,20 +687,22 @@ def check_order_requests(ib: IB):
                             # Use entry strategy name (strip _exit suffix)
                             entry_strategy = strategy_name.replace("_exit", "")
 
-                            # Find opened_at from matching entry order
-                            opened_at = ""
+                            # Find opened_at from stored entry order
                             entry_dir = "BUY" if direction == "CLOSE_LONG" else "SELL"
+                            opened_at = ""
                             try:
-                                search_resp = requests.get(
-                                    f"{SERVER_URL}/api/ibkr/orders/all",
+                                entry_resp = requests.get(
+                                    f"{SERVER_URL}/api/ibkr/order/details/entry_{ticker}_{entry_dir}",
                                     headers={"X-Sync-Key": SYNC_KEY},
                                     timeout=5,
                                 )
-                                # Can't use this endpoint without auth, search pending orders instead
+                                if entry_resp.status_code == 200:
+                                    entry_data = entry_resp.json()
+                                    opened_at = entry_data.get("opened_at", "")
                             except Exception:
                                 pass
-                            # Use order's own queued_at as approximation if we can't find entry
-                            opened_at = order.get("queued_at", "")
+                            if not opened_at:
+                                opened_at = order.get("queued_at", "")
 
                             closed_trade = {
                                 "symbol": ticker,
@@ -725,6 +727,15 @@ def check_order_requests(ib: IB):
                         buy_ord = MktOrder("BUY", contracts)
                         buy_ord.tif = "GTC"
                         trade = ib.placeOrder(contract, buy_ord)
+                        # Store entry time for closed trade tracking
+                        try:
+                            from datetime import datetime as _dt2, timezone as _tz2
+                            requests.post(f"{SERVER_URL}/api/ibkr/order/update",
+                                json={"order_id": f"entry_{ticker}_BUY", "ticker": ticker, "direction": "BUY",
+                                      "opened_at": _dt2.now(_tz2.utc).isoformat(), "strategy": strategy_name, "status": "entry"},
+                                headers={"X-Sync-Key": SYNC_KEY}, timeout=5)
+                        except Exception:
+                            pass
                         ib.sleep(2)
                         if trade.orderStatus.status in ("Filled", "PreSubmitted", "Submitted"):
                             try:
@@ -742,6 +753,15 @@ def check_order_requests(ib: IB):
                         sell_ord = MktOrder("SELL", contracts)
                         sell_ord.tif = "GTC"
                         trade = ib.placeOrder(contract, sell_ord)
+                        # Store entry time for closed trade tracking
+                        try:
+                            from datetime import datetime as _dt2, timezone as _tz2
+                            requests.post(f"{SERVER_URL}/api/ibkr/order/update",
+                                json={"order_id": f"entry_{ticker}_SELL", "ticker": ticker, "direction": "SELL",
+                                      "opened_at": _dt2.now(_tz2.utc).isoformat(), "strategy": strategy_name, "status": "entry"},
+                                headers={"X-Sync-Key": SYNC_KEY}, timeout=5)
+                        except Exception:
+                            pass
                         ib.sleep(2)
                         if trade.orderStatus.status in ("Filled", "PreSubmitted", "Submitted"):
                             try:
