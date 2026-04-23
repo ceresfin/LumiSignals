@@ -617,11 +617,17 @@ def check_order_requests(ib: IB):
                     sl_points = sl_dollars / multiplier
 
                     if direction == "CLOSE_LONG":
-                        trade = ib.placeOrder(contract, MktOrder("SELL", contracts))
+                        close_ord = MktOrder("SELL", contracts)
+                        close_ord.tif = "GTC"
+                        trade = ib.placeOrder(contract, close_ord)
                     elif direction == "CLOSE_SHORT":
-                        trade = ib.placeOrder(contract, MktOrder("BUY", contracts))
+                        close_ord = MktOrder("BUY", contracts)
+                        close_ord.tif = "GTC"
+                        trade = ib.placeOrder(contract, close_ord)
                     elif direction == "BUY":
-                        trade = ib.placeOrder(contract, MktOrder("BUY", contracts))
+                        buy_ord = MktOrder("BUY", contracts)
+                        buy_ord.tif = "GTC"
+                        trade = ib.placeOrder(contract, buy_ord)
                         ib.sleep(2)
                         if trade.orderStatus.status in ("Filled", "PreSubmitted", "Submitted"):
                             try:
@@ -636,7 +642,9 @@ def check_order_requests(ib: IB):
                             except Exception as e:
                                 logger.error("Failed to place stop loss: %s", e)
                     elif direction == "SELL":
-                        trade = ib.placeOrder(contract, MktOrder("SELL", contracts))
+                        sell_ord = MktOrder("SELL", contracts)
+                        sell_ord.tif = "GTC"
+                        trade = ib.placeOrder(contract, sell_ord)
                         ib.sleep(2)
                         if trade.orderStatus.status in ("Filled", "PreSubmitted", "Submitted"):
                             try:
