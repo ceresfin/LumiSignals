@@ -573,6 +573,40 @@ def check_order_requests(ib: IB):
             return
 
         orders = resp.json().get("orders", [])
+
+        # ─── FUTURES DEDUP: only keep the most recent order per ticker ───
+        # For scalping, we only care about the latest signal. Older ones are stale.
+        futures_orders = [o for o in orders if o.get("type") == "futures"]
+        other_orders = [o for o in orders if o.get("type") != "futures"]
+        if len(futures_orders) > 1:
+            # Group by ticker, keep only the most recent
+            by_ticker = {}
+            for o in futures_orders:
+                tk = o.get("ticker", "")
+                existing = by_ticker.get(tk)
+                if not existing or o.get("queued_at", "") > existing.get("queued_at", ""):
+                    # Mark the older one as superseded
+                    if existing:
+                        try:
+                            requests.post(f"{SERVER_URL}/api/ibkr/order/update",
+                                json={"order_id": existing["order_id"], "status": "superseded"},
+                                headers={"X-Sync-Key": SYNC_KEY}, timeout=5)
+                        except Exception:
+                            pass
+                        logger.info("SKIP superseded %s %s — newer order exists", existing.get("direction"), tk)
+                    by_ticker[tk] = o
+                else:
+                    try:
+                        requests.post(f"{SERVER_URL}/api/ibkr/order/update",
+                            json={"order_id": o["order_id"], "status": "superseded"},
+                            headers={"X-Sync-Key": SYNC_KEY}, timeout=5)
+                    except Exception:
+                        pass
+                    logger.info("SKIP superseded %s %s — newer order exists", o.get("direction"), tk)
+            futures_orders = list(by_ticker.values())
+
+        orders = other_orders + futures_orders
+
         for order in orders:
             order_id = order["order_id"]
             ticker = order["ticker"]
