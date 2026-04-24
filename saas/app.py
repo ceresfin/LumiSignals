@@ -992,12 +992,11 @@ def create_app():
                                         "supply": snr.get("resistance_price"),
                                         "demand": snr.get("support_price"),
                                     }
-                                # ADX trend from LumiTrade
-                                adx_data = tf_data.get("adx", {}).get("trend", {})
-                                for adx_tf, adx_dir in adx_data.items():
-                                    lt_label = freq_map.get(adx_tf, adx_tf)
-                                    dir_str = "UP" if adx_dir == "bullish" else "DOWN" if adx_dir == "bearish" else "SIDE"
-                                    item["lt_trends"][lt_label] = dir_str
+                                # Trend from position field: "positive" = UP, "negative" = DOWN
+                                pos = tf_data.get("position", "")
+                                if pos:
+                                    dir_str = "UP" if pos in ("positive", "long") else "DOWN" if pos in ("negative", "short") else "SIDE"
+                                    item["lt_trends"][tv_tf] = dir_str
                     elif resp.status_code == 403:
                         item["lumitrade"]["error"] = "API key invalid or expired"
                 except Exception as e:
