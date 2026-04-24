@@ -583,6 +583,25 @@ def check_order_requests(ib: IB):
                 contracts = int(order.get("contracts", 1))
                 strategy_name = order.get("strategy", "")
 
+                # Skip stale orders (queued more than 5 minutes ago)
+                queued_at = order.get("queued_at", "")
+                if queued_at:
+                    try:
+                        from datetime import datetime as _dt, timezone as _tz
+                        queued_time = _dt.fromisoformat(queued_at.replace("Z", "+00:00"))
+                        age_seconds = (_dt.now(_tz.utc) - queued_time).total_seconds()
+                        if age_seconds > 300:
+                            logger.info("SKIP stale %s %s — queued %.0fs ago", direction, ticker, age_seconds)
+                            try:
+                                requests.post(f"{SERVER_URL}/api/ibkr/order/update",
+                                    json={"order_id": order_id, "status": "expired"},
+                                    headers={"X-Sync-Key": SYNC_KEY}, timeout=5)
+                            except Exception:
+                                pass
+                            continue
+                    except Exception:
+                        pass
+
                 logger.info("Futures order: %s %s %dx — %s", direction, ticker, contracts, strategy_name)
 
                 # Position awareness — check current position before acting
@@ -682,7 +701,7 @@ def check_order_requests(ib: IB):
                             # Use reason from webhook, or default
                             close_reason = order.get("reason", "")
                             if not close_reason:
-                                close_reason = "Sell to Cover" if direction == "CLOSE_LONG" else "Buy to Cover"
+                                close_reason = "Exit Long" if direction == "CLOSE_LONG" else "Exit Short"
 
                             # Use entry strategy name (strip _exit suffix)
                             entry_strategy = strategy_name.replace("_exit", "")
