@@ -64,12 +64,15 @@ findAll(int adxLen) =>
     [dir, adx, atrVal, sup1, sup2, dem1, dem2]
 
 // ==================== HTF DATA VIA request.security ====================
-[mDir,  mAdx,  mAtr,  mSupply,  mSupply2,  mDemand,  mDemand2]  = request.security(syminfo.tickerid, "M",   findAll(adxPeriod))
+// Monthly + Quarterly use lookahead_on to get current period's actual high/low
+// (without this, lower chart TFs see last completed month/quarter = stale baseline)
+[mDir,  mAdx,  mAtr,  mSupply,  mSupply2,  mDemand,  mDemand2]  = request.security(syminfo.tickerid, "M",   findAll(adxPeriod), lookahead=barmerge.lookahead_on)
+[qDir,  qAdx,  qAtr,  qSupply,  qSupply2,  qDemand,  qDemand2]  = request.security(syminfo.tickerid, "3M",  findAll(adxPeriod), lookahead=barmerge.lookahead_on)
+// Weekly and below: default (lookahead_off) is fine — completed bars are recent enough
 [wDir,  wAdx,  wAtr,  wSupply,  wSupply2,  wDemand,  wDemand2]  = request.security(syminfo.tickerid, "W",   findAll(adxPeriod))
 [dDir,  dAdx,  dAtr,  dSupply,  dSupply2,  dDemand,  dDemand2]  = request.security(syminfo.tickerid, "D",   findAll(adxPeriod))
 [h4Dir, h4Adx, h4Atr, h4Supply, h4Supply2, h4Demand, h4Demand2] = request.security(syminfo.tickerid, "240", findAll(adxPeriod))
 [h1Dir, h1Adx, h1Atr, h1Supply, h1Supply2, h1Demand, h1Demand2] = request.security(syminfo.tickerid, "60",  findAll(adxPeriod))
-[qDir,  qAdx,  qAtr,  qSupply,  qSupply2,  qDemand,  qDemand2]  = request.security(syminfo.tickerid, "3M",  findAll(adxPeriod))
 
 // Fix stale levels from request.security — supply must be above price, demand below
 mSupply  := not na(mSupply) and mSupply < close ? close : mSupply
