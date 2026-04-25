@@ -1176,6 +1176,12 @@ def create_app():
         # Determine zone type from direction
         zone_type = "demand" if direction == "BUY" else "supply"
 
+        # TV level price (S1/D1) — used as zone reference for strike selection
+        level_price = data.get("level_price", 0)
+        level_tf = data.get("level_tf", "")
+        trade_duration = data.get("trade_duration", "")
+        score = data.get("score", 0)
+
         # Get current price from Polygon
         try:
             import requests as req
@@ -1196,19 +1202,30 @@ def create_app():
         if not current_price:
             return jsonify({"error": f"Could not get price for {ticker}"}), 400
 
-        # Analyze options spread
+        # Use TV level price as the zone reference if provided, otherwise current price
+        zone_price = float(level_price) if level_price else current_price
+
+        # DTE based on trade duration
+        if trade_duration == "5min":
+            dte = 0
+        elif trade_duration == "hourly":
+            dte = data.get("dte", 1)
+        elif trade_duration == "daily":
+            dte = data.get("dte", 7)
+        else:
+            dte = data.get("dte", 0)
+
+        # Analyze options spread — use zone_price (S1/D1 level) as reference
         try:
             from lumisignals.polygon_options import analyze_spreads_polygon
 
-            # 0DTE: min_dte=0, max_dte=1 for same-day expiration
-            # If dte > 0, use that as target
             if dte == 0:
                 min_dte_val, max_dte_val = 0, 1
             else:
                 min_dte_val, max_dte_val = max(0, dte - 1), dte + 2
 
             result = analyze_spreads_polygon(
-                massive_key, ticker, zone_type, current_price, current_price,
+                massive_key, ticker, zone_type, current_price, zone_price,
                 max_risk_per_spread=500, preferred_width=5.0,
                 min_dte=min_dte_val, max_dte=max_dte_val,
             )
@@ -1296,12 +1313,15 @@ def create_app():
                 "model": "0dte",
                 "strategy": strategy,
                 "zone_type": zone_type,
-                "zone_price": current_price,
-                "trigger_pattern": f"TV: {strategy}",
-                "bias_score": 0,
-                "zone_timeframe": f"0DTE ({dte}d)",
+                "zone_price": zone_price,
+                "trigger_pattern": f"TV: {strategy} @ {level_tf} {'D1' if zone_type == 'demand' else 'S1'}",
+                "bias_score": score,
+                "zone_timeframe": level_tf or f"0DTE ({dte}d)",
                 "signal_action": direction,
                 "signal_entry": current_price,
+                "level_price": zone_price,
+                "level_tf": level_tf,
+                "trade_duration": trade_duration,
                 "tp_pct": tp_pct,
                 "sl_pct": sl_pct,
                 "time_stop_min": time_stop_min,

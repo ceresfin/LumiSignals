@@ -28,7 +28,7 @@ colorD  = color.blue
 color4H = #CF9FFF
 
 // ==================== HTF LEVEL + TREND FUNCTION ====================
-// Combined: finds ADX trend + 2 untouched supply + 2 untouched demand
+// Combined: finds ADX trend + 2 untouched supply (S1/S2) + 2 untouched demand (D1/D2)
 // Uses a loop with 10-bar lookback for deeper level detection
 findAll(int adxLen) =>
     [dp, dm, adx] = ta.dmi(adxLen, adxLen)
@@ -155,24 +155,24 @@ tk = syminfo.ticker
 
 // --- Daily duration ---
 if dSell
-    alert('{"ticker":"' + tk + '","direction":"SELL","strategy":"htf_supply_demand","key":"' + webhookKey + '","type":"stock","trade_duration":"daily","score":' + str.tostring(dSellScore) + ',"level_price":' + str.tostring(dSellLvl) + ',"level_tf":"' + dSellTf + '","htf_trends":"W:' + dirStr(wDir) + ' M:' + dirStr(mDir) + '","msg":"HTF SELL ' + tk + ' — ' + dSellTf + ' supply ' + str.tostring(dSellLvl, format.mintick) + ' | W:' + dirStr(wDir) + ' M:' + dirStr(mDir) + ' | Score ' + str.tostring(dSellScore) + '/3"}', alert.freq_once_per_bar_close)
+    alert('{"ticker":"' + tk + '","direction":"SELL","strategy":"htf_supply_demand","key":"' + webhookKey + '","type":"stock","spread_type":"both","trade_duration":"daily","score":' + str.tostring(dSellScore) + ',"level_price":' + str.tostring(dSellLvl) + ',"level_tf":"' + dSellTf + '","htf_trends":"W:' + dirStr(wDir) + ' M:' + dirStr(mDir) + '","msg":"HTF SELL ' + tk + ' — ' + dSellTf + ' S1' + str.tostring(dSellLvl, format.mintick) + ' | W:' + dirStr(wDir) + ' M:' + dirStr(mDir) + ' | Score ' + str.tostring(dSellScore) + '/3"}', alert.freq_once_per_bar_close)
 
 if dBuy
-    alert('{"ticker":"' + tk + '","direction":"BUY","strategy":"htf_supply_demand","key":"' + webhookKey + '","type":"stock","trade_duration":"daily","score":' + str.tostring(dBuyScore) + ',"level_price":' + str.tostring(dBuyLvl) + ',"level_tf":"' + dBuyTf + '","htf_trends":"W:' + dirStr(wDir) + ' M:' + dirStr(mDir) + '","msg":"HTF BUY ' + tk + ' — ' + dBuyTf + ' demand ' + str.tostring(dBuyLvl, format.mintick) + ' | W:' + dirStr(wDir) + ' M:' + dirStr(mDir) + ' | Score ' + str.tostring(dBuyScore) + '/3"}', alert.freq_once_per_bar_close)
+    alert('{"ticker":"' + tk + '","direction":"BUY","strategy":"htf_supply_demand","key":"' + webhookKey + '","type":"stock","spread_type":"both","trade_duration":"daily","score":' + str.tostring(dBuyScore) + ',"level_price":' + str.tostring(dBuyLvl) + ',"level_tf":"' + dBuyTf + '","htf_trends":"W:' + dirStr(wDir) + ' M:' + dirStr(mDir) + '","msg":"HTF BUY ' + tk + ' — ' + dBuyTf + ' D1' + str.tostring(dBuyLvl, format.mintick) + ' | W:' + dirStr(wDir) + ' M:' + dirStr(mDir) + ' | Score ' + str.tostring(dBuyScore) + '/3"}', alert.freq_once_per_bar_close)
 
 // --- Hourly duration ---
 if hSell
-    alert('{"ticker":"' + tk + '","direction":"SELL","strategy":"htf_supply_demand","key":"' + webhookKey + '","type":"stock","trade_duration":"hourly","score":' + str.tostring(hSellScore) + ',"level_price":' + str.tostring(dSupply) + ',"level_tf":"D","htf_trends":"D:' + dirStr(dDir) + ' W:' + dirStr(wDir) + '","msg":"HTF SELL ' + tk + ' — D supply ' + str.tostring(dSupply, format.mintick) + ' | D:' + dirStr(dDir) + ' W:' + dirStr(wDir) + ' | Score ' + str.tostring(hSellScore) + '/3"}', alert.freq_once_per_bar_close)
+    alert('{"ticker":"' + tk + '","direction":"SELL","strategy":"htf_supply_demand","key":"' + webhookKey + '","type":"stock","spread_type":"both","trade_duration":"hourly","score":' + str.tostring(hSellScore) + ',"level_price":' + str.tostring(dSupply) + ',"level_tf":"D","htf_trends":"D:' + dirStr(dDir) + ' W:' + dirStr(wDir) + '","msg":"HTF SELL ' + tk + ' — D S1' + str.tostring(dSupply, format.mintick) + ' | D:' + dirStr(dDir) + ' W:' + dirStr(wDir) + ' | Score ' + str.tostring(hSellScore) + '/3"}', alert.freq_once_per_bar_close)
 
 if hBuy
-    alert('{"ticker":"' + tk + '","direction":"BUY","strategy":"htf_supply_demand","key":"' + webhookKey + '","type":"stock","trade_duration":"hourly","score":' + str.tostring(hBuyScore) + ',"level_price":' + str.tostring(dDemand) + ',"level_tf":"D","htf_trends":"D:' + dirStr(dDir) + ' W:' + dirStr(wDir) + '","msg":"HTF BUY ' + tk + ' — D demand ' + str.tostring(dDemand, format.mintick) + ' | D:' + dirStr(dDir) + ' W:' + dirStr(wDir) + ' | Score ' + str.tostring(hBuyScore) + '/3"}', alert.freq_once_per_bar_close)
+    alert('{"ticker":"' + tk + '","direction":"BUY","strategy":"htf_supply_demand","key":"' + webhookKey + '","type":"stock","spread_type":"both","trade_duration":"hourly","score":' + str.tostring(hBuyScore) + ',"level_price":' + str.tostring(dDemand) + ',"level_tf":"D","htf_trends":"D:' + dirStr(dDir) + ' W:' + dirStr(wDir) + '","msg":"HTF BUY ' + tk + ' — D D1' + str.tostring(dDemand, format.mintick) + ' | D:' + dirStr(dDir) + ' W:' + dirStr(wDir) + ' | Score ' + str.tostring(hBuyScore) + '/3"}', alert.freq_once_per_bar_close)
 
 // --- 5-min duration ---
 if fSell
-    alert('{"ticker":"' + tk + '","direction":"SELL","strategy":"htf_supply_demand","key":"' + webhookKey + '","type":"stock","trade_duration":"5min","score":' + str.tostring(fSellScore) + ',"level_price":' + str.tostring(h4Supply) + ',"level_tf":"4H","htf_trends":"4H:' + dirStr(h4Dir) + ' D:' + dirStr(dDir) + ' 1H:' + dirStr(h1Dir) + '","msg":"HTF SELL ' + tk + ' — 4H supply ' + str.tostring(h4Supply, format.mintick) + ' | 4H:' + dirStr(h4Dir) + ' D:' + dirStr(dDir) + ' 1H:' + dirStr(h1Dir) + ' | Score ' + str.tostring(fSellScore) + '/4"}', alert.freq_once_per_bar_close)
+    alert('{"ticker":"' + tk + '","direction":"SELL","strategy":"htf_supply_demand","key":"' + webhookKey + '","type":"stock","spread_type":"both","trade_duration":"5min","score":' + str.tostring(fSellScore) + ',"level_price":' + str.tostring(h4Supply) + ',"level_tf":"4H","htf_trends":"4H:' + dirStr(h4Dir) + ' D:' + dirStr(dDir) + ' 1H:' + dirStr(h1Dir) + '","msg":"HTF SELL ' + tk + ' — 4H S1' + str.tostring(h4Supply, format.mintick) + ' | 4H:' + dirStr(h4Dir) + ' D:' + dirStr(dDir) + ' 1H:' + dirStr(h1Dir) + ' | Score ' + str.tostring(fSellScore) + '/4"}', alert.freq_once_per_bar_close)
 
 if fBuy
-    alert('{"ticker":"' + tk + '","direction":"BUY","strategy":"htf_supply_demand","key":"' + webhookKey + '","type":"stock","trade_duration":"5min","score":' + str.tostring(fBuyScore) + ',"level_price":' + str.tostring(h4Demand) + ',"level_tf":"4H","htf_trends":"4H:' + dirStr(h4Dir) + ' D:' + dirStr(dDir) + ' 1H:' + dirStr(h1Dir) + '","msg":"HTF BUY ' + tk + ' — 4H demand ' + str.tostring(h4Demand, format.mintick) + ' | 4H:' + dirStr(h4Dir) + ' D:' + dirStr(dDir) + ' 1H:' + dirStr(h1Dir) + ' | Score ' + str.tostring(fBuyScore) + '/4"}', alert.freq_once_per_bar_close)
+    alert('{"ticker":"' + tk + '","direction":"BUY","strategy":"htf_supply_demand","key":"' + webhookKey + '","type":"stock","spread_type":"both","trade_duration":"5min","score":' + str.tostring(fBuyScore) + ',"level_price":' + str.tostring(h4Demand) + ',"level_tf":"4H","htf_trends":"4H:' + dirStr(h4Dir) + ' D:' + dirStr(dDir) + ' 1H:' + dirStr(h1Dir) + '","msg":"HTF BUY ' + tk + ' — 4H D1' + str.tostring(h4Demand, format.mintick) + ' | 4H:' + dirStr(h4Dir) + ' D:' + dirStr(dDir) + ' 1H:' + dirStr(h1Dir) + ' | Score ' + str.tostring(fBuyScore) + '/4"}', alert.freq_once_per_bar_close)
 
 // --- Levels sync (pushes current levels + trends to server for comparison dashboard) ---
 if syncLevels
@@ -289,10 +289,10 @@ if barstate.islast and showDash
     // Header
     table.cell(dash, 0, 0, "TF",      text_color=color.white, text_size=size.small, text_halign=text.align_left)
     table.cell(dash, 1, 0, "Trend",   text_color=color.white, text_size=size.small, text_halign=text.align_center)
-    table.cell(dash, 2, 0, "Supply",  text_color=color.red, text_size=size.small, text_halign=text.align_right)
-    table.cell(dash, 3, 0, "Supply2", text_color=color.rgb(180,80,80), text_size=size.small, text_halign=text.align_right)
-    table.cell(dash, 4, 0, "Demand",  text_color=color.green, text_size=size.small, text_halign=text.align_right)
-    table.cell(dash, 5, 0, "Demand2", text_color=color.rgb(80,160,80), text_size=size.small, text_halign=text.align_right)
+    table.cell(dash, 2, 0, "S1",  text_color=color.red, text_size=size.small, text_halign=text.align_right)
+    table.cell(dash, 3, 0, "S2", text_color=color.rgb(180,80,80), text_size=size.small, text_halign=text.align_right)
+    table.cell(dash, 4, 0, "D1",  text_color=color.green, text_size=size.small, text_halign=text.align_right)
+    table.cell(dash, 5, 0, "D2", text_color=color.rgb(80,160,80), text_size=size.small, text_halign=text.align_right)
 
     // Quarterly
     table.cell(dash, 0, 1, "Quarterly", text_color=color.white, text_size=size.small, text_halign=text.align_left)
@@ -346,22 +346,22 @@ if barstate.islast and showDash
     string sigText = "No signal"
     color sigColor = color.gray
     if dSell
-        sigText := "DAILY SELL @ " + dSellTf + " supply | Score " + str.tostring(dSellScore) + "/3"
+        sigText := "DAILY SELL @ " + dSellTf + " S1| Score " + str.tostring(dSellScore) + "/3"
         sigColor := color.red
     else if dBuy
-        sigText := "DAILY BUY @ " + dBuyTf + " demand | Score " + str.tostring(dBuyScore) + "/3"
+        sigText := "DAILY BUY @ " + dBuyTf + " D1| Score " + str.tostring(dBuyScore) + "/3"
         sigColor := color.green
     else if hSell
-        sigText := "HOURLY SELL @ D supply | Score " + str.tostring(hSellScore) + "/3"
+        sigText := "HOURLY SELL @ D S1| Score " + str.tostring(hSellScore) + "/3"
         sigColor := color.red
     else if hBuy
-        sigText := "HOURLY BUY @ D demand | Score " + str.tostring(hBuyScore) + "/3"
+        sigText := "HOURLY BUY @ D D1| Score " + str.tostring(hBuyScore) + "/3"
         sigColor := color.green
     else if fSell
-        sigText := "5MIN SELL @ 4H supply | Score " + str.tostring(fSellScore) + "/4"
+        sigText := "5MIN SELL @ 4H S1| Score " + str.tostring(fSellScore) + "/4"
         sigColor := color.red
     else if fBuy
-        sigText := "5MIN BUY @ 4H demand | Score " + str.tostring(fBuyScore) + "/4"
+        sigText := "5MIN BUY @ 4H D1| Score " + str.tostring(fBuyScore) + "/4"
         sigColor := color.green
 
     table.cell(dash, 0, 7, "Signal", text_color=color.white, text_size=size.small, text_halign=text.align_left)
