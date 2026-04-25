@@ -82,6 +82,8 @@ tr:hover { background: rgba(0,0,0,0.015); }
         <option value="3">3+</option>
       </select>
       <button class="scan-btn" id="scanBtn" onclick="runScan()">Scan Now</button>
+      <button class="scan-btn" style="background:#27ae60" onclick="runSwingAuto(false)">Auto-Scan Swing (Dry Run)</button>
+      <button class="scan-btn" style="background:#c0392b" onclick="runSwingAuto(true)">Auto-Scan Swing (LIVE)</button>
       <span id="scanStatus" style="font-size:0.72rem; color:var(--text-light)"></span>
     </div>
     <div id="scanResults"><div class="loading">Click "Scan Now" to scan for setups near untouched levels</div></div>
@@ -177,6 +179,34 @@ function runScan() {
       btn.disabled = false;
       btn.textContent = 'Scan Now';
       document.getElementById('scanResults').innerHTML = '<div class="loading" style="color:var(--red)">Error: ' + e.message + '</div>';
+    });
+}
+
+function runSwingAuto(live) {
+  var dryRun = live ? 'false' : 'true';
+  var status = document.getElementById('scanStatus');
+  status.textContent = 'Running swing auto-scan' + (live ? ' (LIVE)' : ' (dry run)') + '...';
+  fetch('/api/scanner/swing-auto?dry_run=' + dryRun)
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.error) {
+        status.innerHTML = '<span style="color:var(--red)">' + d.error + '</span>';
+        return;
+      }
+      var msg = d.triggered + ' setups triggered';
+      if (d.dry_run) msg += ' (dry run — no trades placed)';
+      if (d.setups && d.setups.length > 0) {
+        msg += ':<br>';
+        d.setups.forEach(function(s) {
+          msg += '<span class="' + (s.direction === 'BUY' ? 'dir-buy' : 'dir-sell') + '">' +
+            s.direction + ' ' + s.ticker + '</span> at ' + s.tf + ' ' + s.level_type +
+            ' $' + s.level + ' — ' + s.pattern + ' on ' + s.confirm_tf + '<br>';
+        });
+      }
+      status.innerHTML = msg;
+    })
+    .catch(function(e) {
+      status.innerHTML = '<span style="color:var(--red)">Error: ' + e.message + '</span>';
     });
 }
 

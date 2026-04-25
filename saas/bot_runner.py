@@ -615,6 +615,24 @@ def run_bot_for_user(user_data, stop_check):
             zones = get_watchlist_snapshot(model_name)
             publish_watchlist_model(user_id, model_name, zones)
 
+        # Swing auto-scanner: run every ~480 ticks (4 hours at 30s interval)
+        if tick > 0 and tick % 480 == 0:
+            try:
+                from lumisignals.swing_scanner import run_swing_scan, should_scan_now
+                if should_scan_now():
+                    import redis as _rdb_mod
+                    swing_rdb = _rdb_mod.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+                    swing_massive_key = os.environ.get("MASSIVE_API_KEY", "")
+                    if swing_massive_key and massive:
+                        log("Running swing auto-scan...")
+                        triggered = run_swing_scan(massive, swing_rdb, swing_massive_key)
+                        if triggered:
+                            log(f"Swing scan: {len(triggered)} trades triggered")
+                        else:
+                            log("Swing scan: no confirmed setups")
+            except Exception as e:
+                logger.debug("Swing scan error: %s", e)
+
         tick += 1
         time.sleep(30)
 

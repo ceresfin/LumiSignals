@@ -1197,6 +1197,31 @@ def create_app():
         }
         return jsonify(data)
 
+    @app.route("/api/scanner/swing-auto")
+    @login_required
+    def api_scanner_swing_auto():
+        """Trigger a swing auto-scan with candle confirmation."""
+        import redis as _redis
+        rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+        massive_key = os.environ.get("MASSIVE_API_KEY", "")
+        if not massive_key:
+            return jsonify({"error": "No Massive API key"}), 400
+
+        dry_run = request.args.get("dry_run", "false").lower() == "true"
+
+        from lumisignals.massive_client import MassiveClient
+        from lumisignals.swing_scanner import run_swing_scan
+
+        client = MassiveClient(massive_key)
+        triggered = run_swing_scan(client, rdb, massive_key, dry_run=dry_run)
+
+        return jsonify({
+            "status": "ok",
+            "triggered": len(triggered),
+            "setups": triggered,
+            "dry_run": dry_run,
+        })
+
     # -----------------------------------------------------------------------
     # TradingView Webhook — receives alerts, places 0DTE options trades
     # -----------------------------------------------------------------------
