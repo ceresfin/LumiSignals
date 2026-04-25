@@ -21,9 +21,10 @@ body { font-family: 'Inter', sans-serif; background: var(--cream); color: var(--
 .card h2 { font-family: 'Playfair Display', serif; font-size: 1.1rem; font-weight: 400; margin-bottom: 16px; padding-bottom: 10px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; }
 .card h2 .count { font-family: 'Inter'; font-size: 0.8rem; color: var(--text-light); background: var(--cream); padding: 2px 10px; border-radius: 50px; }
 .card h3 { font-family: 'Playfair Display', serif; font-size: 0.95rem; font-weight: 400; margin: 16px 0 10px; color: var(--text-medium); }
-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
-th { text-align: left; font-weight: 500; color: var(--text-light); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.5px; padding: 8px 10px; border-bottom: 2px solid #eee; }
-td { padding: 10px; border-bottom: 1px solid #f5f5f5; vertical-align: top; }
+table { width: 100%; border-collapse: collapse; font-size: 0.82rem; table-layout: auto; }
+th { text-align: left; font-weight: 500; color: var(--text-light); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.5px; padding: 8px 6px; border-bottom: 2px solid #eee; white-space: nowrap; }
+td { padding: 8px 6px; border-bottom: 1px solid #f5f5f5; vertical-align: top; font-size: 0.78rem; word-break: break-word; max-width: 120px; }
+.card { overflow-x: auto; }
 tr:hover { background: rgba(0,0,0,0.015); }
 .dir-buy { color: var(--green); font-weight: 600; }
 .dir-sell { color: var(--red); font-weight: 600; }
@@ -273,12 +274,15 @@ function fmtTime(t) {
 function duration(opened, closed) {
   if (!opened) return '—';
   try {
-    var start = new Date(opened + ' UTC');
-    var end = closed ? new Date(closed + ' UTC') : new Date();
-    if (isNaN(start)) return '—';
+    var start = new Date(opened);
+    if (isNaN(start)) start = new Date(opened + ' UTC');
+    var end = closed ? new Date(closed) : new Date();
+    if (isNaN(end)) end = new Date(closed + ' UTC');
+    if (isNaN(start) || isNaN(end)) return '—';
     var diff = Math.abs(end - start) / 1000;
+    if (diff < 60) return Math.round(diff) + 's';
     if (diff < 3600) return Math.round(diff / 60) + 'm';
-    if (diff < 86400) return Math.round(diff / 3600) + 'h';
+    if (diff < 86400) return Math.round(diff / 3600) + 'h ' + Math.round((diff % 3600) / 60) + 'm';
     return Math.round(diff / 86400) + 'd ' + Math.round((diff % 86400) / 3600) + 'h';
   } catch(e) { return '—'; }
 }

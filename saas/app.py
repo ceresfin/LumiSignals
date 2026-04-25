@@ -945,7 +945,7 @@ def create_app():
             "trends": data.get("trends", {}),
             "updated_at": _dt.now(_tz.utc).isoformat(),
         }
-        rdb.setex(f"tv:levels:{ticker}", 3600, json.dumps(store))
+        rdb.setex(f"tv:levels:{ticker}", 86400, json.dumps(store))
         return jsonify({"status": "ok", "ticker": ticker})
 
     @app.route("/api/compare/levels")
@@ -961,46 +961,61 @@ def create_app():
         snr_base_url = "https://app.lumitrade.ai/api/v1"
         snr_api_key = current_user.lumitrade_api_key or os.environ.get("LUMITRADE_API_KEY", "")
 
-        # LumiTrade frequency names → TradingView labels
-        freq_map = {"monthly": "M", "weekly": "W", "daily": "D", "fourhour": "4H", "hourly": "1H"}
-        frequencies = ["monthly", "weekly", "daily", "fourhour", "hourly"]
+        # SNR Frequency API interval names → display labels
+        interval_to_tf = {"3mo": "Q", "1mo": "M", "1w": "W", "1d": "D", "4h": "4H", "1h": "1H"}
+        snr_intervals = ["3mo", "1mo", "1w", "1d", "4h", "1h"]
+        # Trade-builder for trend data
+        freq_to_tf = {"quarterly": "Q", "monthly": "M", "weekly": "W", "daily": "D", "fourhour": "4H", "hourly": "1H"}
+        frequencies = ["quarterly", "monthly", "weekly", "daily", "fourhour", "hourly"]
 
         results = []
         for ticker in tickers:
             item = {"ticker": ticker, "lumitrade": {}, "tradingview": {}, "tv_trends": {}, "lt_trends": {}, "tv_updated": ""}
 
-            # --- LumiTrade trade-builder-setup (returns SNR + ADX trend) ---
             if snr_api_key:
+                import requests as _requests
+                session = _requests.Session()
+                session.headers["Authorization"] = f"Bearer {snr_api_key}"
+
+                # --- SNR Frequency API (matches LumiTrade chart exactly) ---
                 try:
-                    import requests as _requests
-                    session = _requests.Session()
-                    session.headers["Authorization"] = f"Bearer {snr_api_key}"
                     resp = session.get(
+                        f"{snr_base_url}/partners/technical-analysis/snr/frequency/",
+                        params={"ticker": ticker, "intervals": ",".join(snr_intervals),
+                                "type": "stock", "days": 256},
+                        timeout=15,
+                    )
+                    if resp.status_code == 200:
+                        snr_data = resp.json().get("data", resp.json())
+                        for interval, tf_label in interval_to_tf.items():
+                            tf_data = snr_data.get(interval, {})
+                            if isinstance(tf_data, dict):
+                                item["lumitrade"][tf_label] = {
+                                    "supply": tf_data.get("resistance_price"),
+                                    "demand": tf_data.get("support_price"),
+                                }
+                except Exception as e:
+                    item["lumitrade"]["error"] = str(e)
+
+                # --- Trade-builder for trend/direction data ---
+                try:
+                    resp2 = session.get(
                         f"{snr_base_url}/partners/technical-analysis/trade-builder-setup",
                         params={"ticker": ticker, "period": 14, "market": "stock",
                                 "frequency": ",".join(frequencies)},
                         timeout=15,
                     )
-                    if resp.status_code == 200:
-                        lt_data = resp.json().get("data", resp.json())
-                        for freq, tv_tf in freq_map.items():
-                            tf_data = lt_data.get(freq, {})
+                    if resp2.status_code == 200:
+                        tb_data = resp2.json().get("data", resp2.json())
+                        for freq, tv_tf in freq_to_tf.items():
+                            tf_data = tb_data.get(freq, {})
                             if isinstance(tf_data, dict):
-                                snr = tf_data.get("snr", {})
-                                if snr:
-                                    item["lumitrade"][tv_tf] = {
-                                        "supply": snr.get("resistance_price"),
-                                        "demand": snr.get("support_price"),
-                                    }
-                                # Trend from position field: "positive" = UP, "negative" = DOWN
                                 pos = tf_data.get("position", "")
                                 if pos:
                                     dir_str = "UP" if pos in ("positive", "long") else "DOWN" if pos in ("negative", "short") else "SIDE"
                                     item["lt_trends"][tv_tf] = dir_str
-                    elif resp.status_code == 403:
-                        item["lumitrade"]["error"] = "API key invalid or expired"
-                except Exception as e:
-                    item["lumitrade"]["error"] = str(e)
+                except Exception:
+                    pass
             else:
                 item["lumitrade"]["error"] = "No LumiTrade API key configured"
 
@@ -1062,7 +1077,7 @@ def create_app():
                 "trends": data.get("trends", {}),
                 "updated_at": _dt.now(_tz.utc).isoformat(),
             }
-            rdb.setex(f"tv:levels:{ticker}", 3600, json.dumps(store))
+            rdb.setex(f"tv:levels:{ticker}", 86400, json.dumps(store))
             return jsonify({"status": "ok", "action": "levels_sync", "ticker": ticker})
 
         trade_type = data.get("type", "options")  # "options" or "futures"
@@ -1116,7 +1131,7 @@ def create_app():
                 "signal_action": direction,
             }
             rdb.setex(f"ibkr:order:pending:{order_id}", 86400, json.dumps(order))
-            rdb.setex(dedup_key, 1800, "1")  # 30-min dedup for futures
+            rdb.setex(dedup_key, 180, "1")  # 3-min dedup for futures (covers one 2-min candle)
 
             # Alert
             try:

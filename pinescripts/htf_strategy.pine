@@ -27,38 +27,107 @@ colorW  = color.yellow
 colorD  = color.blue
 color4H = #CF9FFF
 
-// ==================== HTF LEVEL + TREND FUNCTION ====================
-// Runs inside request.security for each timeframe.
-// Returns: trend direction, ADX value, nearest untouched supply, nearest untouched demand, ATR
-findLevels(int adxLen) =>
+// ==================== HTF TREND FUNCTION (ADX only) ====================
+findTrend(int adxLen) =>
     [dp, dm, adx] = ta.dmi(adxLen, adxLen)
     dir = dp > (dm + 2) ? 1 : dp < (dm - 2) ? -1 : 0
     atrVal = ta.atr(14)
+    [dir, adx, atrVal]
 
-    // Nearest untouched supply (previous high not exceeded by any subsequent bar)
-    float maxH = high
-    float supply = na
-    for i = 1 to 20
-        if high[i] > maxH and na(supply)
-            supply := high[i]
-        maxH := math.max(maxH, high[i])
+// ==================== HTF BAR DATA ====================
+// Pull historical highs/lows from each TF, then calculate untouched levels
+// in the main context where we have access to actual current price.
+findBars() =>
+    [high, high[1], high[2], high[3], high[4], low, low[1], low[2], low[3], low[4]]
 
-    // Nearest untouched demand (previous low not breached by any subsequent bar)
-    float minL = low
-    float demand = na
-    for i = 1 to 20
-        if low[i] < minL and na(demand)
-            demand := low[i]
-        minL := math.min(minL, low[i])
+// ==================== UNTOUCHED LEVEL DETECTION ====================
+// Finds 2 nearest untouched supply levels (above price) and 2 demand levels (below price)
+// sup1/dem1 = closest to price, sup2/dem2 = next level further out
+findUntouched(float h0, float h1, float h2, float h3, float h4, float l0, float l1, float l2, float l3, float l4) =>
+    float curHigh = math.max(h0, close)
+    float curLow = math.min(l0, close)
 
-    [dir, adx, supply, demand, atrVal]
+    // Supply: 2 nearest untouched highs above current price
+    float maxH = curHigh
+    float sup1 = na
+    float sup2 = na
+    if h1 > maxH
+        sup1 := h1
+    maxH := math.max(maxH, h1)
+    if h2 > maxH
+        if na(sup1)
+            sup1 := h2
+        else if na(sup2)
+            sup2 := h2
+    maxH := math.max(maxH, h2)
+    if h3 > maxH
+        if na(sup1)
+            sup1 := h3
+        else if na(sup2)
+            sup2 := h3
+    maxH := math.max(maxH, h3)
+    if h4 > maxH
+        if na(sup1)
+            sup1 := h4
+        else if na(sup2)
+            sup2 := h4
+    if na(sup1)
+        sup1 := curHigh
+
+    // Demand: 2 nearest untouched lows below current price
+    float minL = curLow
+    float dem1 = na
+    float dem2 = na
+    if l1 < minL
+        dem1 := l1
+    minL := math.min(minL, l1)
+    if l2 < minL
+        if na(dem1)
+            dem1 := l2
+        else if na(dem2)
+            dem2 := l2
+    minL := math.min(minL, l2)
+    if l3 < minL
+        if na(dem1)
+            dem1 := l3
+        else if na(dem2)
+            dem2 := l3
+    minL := math.min(minL, l3)
+    if l4 < minL
+        if na(dem1)
+            dem1 := l4
+        else if na(dem2)
+            dem2 := l4
+    if na(dem1)
+        dem1 := curLow
+
+    [sup1, sup2, dem1, dem2]
 
 // ==================== HTF DATA VIA request.security ====================
-[mDir,  mAdx,  mSupply,  mDemand,  mAtr]  = request.security(syminfo.tickerid, "M",   findLevels(adxPeriod))
-[wDir,  wAdx,  wSupply,  wDemand,  wAtr]  = request.security(syminfo.tickerid, "W",   findLevels(adxPeriod))
-[dDir,  dAdx,  dSupply,  dDemand,  dAtr]  = request.security(syminfo.tickerid, "D",   findLevels(adxPeriod))
-[h4Dir, h4Adx, h4Supply, h4Demand, h4Atr] = request.security(syminfo.tickerid, "240", findLevels(adxPeriod))
-[h1Dir, h1Adx, h1Supply, h1Demand, h1Atr] = request.security(syminfo.tickerid, "60",  findLevels(adxPeriod))
+// Trend/ADX
+[mDir,  mAdx,  mAtr]  = request.security(syminfo.tickerid, "M",   findTrend(adxPeriod))
+[wDir,  wAdx,  wAtr]  = request.security(syminfo.tickerid, "W",   findTrend(adxPeriod))
+[dDir,  dAdx,  dAtr]  = request.security(syminfo.tickerid, "D",   findTrend(adxPeriod))
+[h4Dir, h4Adx, h4Atr] = request.security(syminfo.tickerid, "240", findTrend(adxPeriod))
+[h1Dir, h1Adx, h1Atr] = request.security(syminfo.tickerid, "60",  findTrend(adxPeriod))
+[qDir,  qAdx,  qAtr]  = request.security(syminfo.tickerid, "3M",  findTrend(adxPeriod))
+
+// HTF bar data (highs/lows for untouched level detection)
+[mH0,mH1,mH2,mH3,mH4, mL0,mL1,mL2,mL3,mL4]    = request.security(syminfo.tickerid, "M",   findBars())
+[wH0,wH1,wH2,wH3,wH4, wL0,wL1,wL2,wL3,wL4]    = request.security(syminfo.tickerid, "W",   findBars())
+[dH0,dH1,dH2,dH3,dH4, dL0,dL1,dL2,dL3,dL4]    = request.security(syminfo.tickerid, "D",   findBars())
+[h4H0,h4H1,h4H2,h4H3,h4H4, h4L0,h4L1,h4L2,h4L3,h4L4] = request.security(syminfo.tickerid, "240", findBars())
+[h1H0,h1H1,h1H2,h1H3,h1H4, h1L0,h1L1,h1L2,h1L3,h1L4] = request.security(syminfo.tickerid, "60",  findBars())
+[qH0,qH1,qH2,qH3,qH4, qL0,qL1,qL2,qL3,qL4]  = request.security(syminfo.tickerid, "3M",  findBars())
+
+// Calculate untouched levels using current price as baseline
+// Each returns: supply1 (nearest), supply2 (next), demand1 (nearest), demand2 (next)
+[mSupply, mSupply2, mDemand, mDemand2]     = findUntouched(mH0,mH1,mH2,mH3,mH4, mL0,mL1,mL2,mL3,mL4)
+[wSupply, wSupply2, wDemand, wDemand2]     = findUntouched(wH0,wH1,wH2,wH3,wH4, wL0,wL1,wL2,wL3,wL4)
+[dSupply, dSupply2, dDemand, dDemand2]     = findUntouched(dH0,dH1,dH2,dH3,dH4, dL0,dL1,dL2,dL3,dL4)
+[h4Supply, h4Supply2, h4Demand, h4Demand2] = findUntouched(h4H0,h4H1,h4H2,h4H3,h4H4, h4L0,h4L1,h4L2,h4L3,h4L4)
+[h1Supply, h1Supply2, h1Demand, h1Demand2] = findUntouched(h1H0,h1H1,h1H2,h1H3,h1H4, h1L0,h1L1,h1L2,h1L3,h1L4)
+[qSupply, qSupply2, qDemand, qDemand2]     = findUntouched(qH0,qH1,qH2,qH3,qH4, qL0,qL1,qL2,qL3,qL4)
 
 // ==================== HELPERS ====================
 dirStr(int d) =>
@@ -156,17 +225,42 @@ if syncLevels
     string dDemStr = not na(dDemand) ? str.tostring(dDemand, format.mintick) : "null"
     string h4SupStr = not na(h4Supply) ? str.tostring(h4Supply, format.mintick) : "null"
     string h4DemStr = not na(h4Demand) ? str.tostring(h4Demand, format.mintick) : "null"
+    string h1SupStr = not na(h1Supply) ? str.tostring(h1Supply, format.mintick) : "null"
+    string h1DemStr = not na(h1Demand) ? str.tostring(h1Demand, format.mintick) : "null"
+    string qSupStr = not na(qSupply) ? str.tostring(qSupply, format.mintick) : "null"
+    string qDemStr = not na(qDemand) ? str.tostring(qDemand, format.mintick) : "null"
+    string mSup2Str = not na(mSupply2) ? str.tostring(mSupply2, format.mintick) : "null"
+    string mDem2Str = not na(mDemand2) ? str.tostring(mDemand2, format.mintick) : "null"
+    string wSup2Str = not na(wSupply2) ? str.tostring(wSupply2, format.mintick) : "null"
+    string wDem2Str = not na(wDemand2) ? str.tostring(wDemand2, format.mintick) : "null"
+    string dSup2Str = not na(dSupply2) ? str.tostring(dSupply2, format.mintick) : "null"
+    string dDem2Str = not na(dDemand2) ? str.tostring(dDemand2, format.mintick) : "null"
+    string h4Sup2Str = not na(h4Supply2) ? str.tostring(h4Supply2, format.mintick) : "null"
+    string h4Dem2Str = not na(h4Demand2) ? str.tostring(h4Demand2, format.mintick) : "null"
+    string h1Sup2Str = not na(h1Supply2) ? str.tostring(h1Supply2, format.mintick) : "null"
+    string h1Dem2Str = not na(h1Demand2) ? str.tostring(h1Demand2, format.mintick) : "null"
+    string qSup2Str = not na(qSupply2) ? str.tostring(qSupply2, format.mintick) : "null"
+    string qDem2Str = not na(qDemand2) ? str.tostring(qDemand2, format.mintick) : "null"
 
     string syncJson = '{"ticker":"' + tk + '","key":"' + webhookKey + '","strategy":"tv_levels_sync",'
-    syncJson += '"levels":{"M":{"supply":' + mSupStr + ',"demand":' + mDemStr + '},'
-    syncJson += '"W":{"supply":' + wSupStr + ',"demand":' + wDemStr + '},'
-    syncJson += '"D":{"supply":' + dSupStr + ',"demand":' + dDemStr + '},'
-    syncJson += '"4H":{"supply":' + h4SupStr + ',"demand":' + h4DemStr + '}},'
-    syncJson += '"trends":{"M":{"dir":"' + dirStr(mDir) + '","adx":' + str.tostring(mAdx, "#.#") + '},'
-    syncJson += '"W":{"dir":"' + dirStr(wDir) + '","adx":' + str.tostring(wAdx, "#.#") + '},'
-    syncJson += '"D":{"dir":"' + dirStr(dDir) + '","adx":' + str.tostring(dAdx, "#.#") + '},'
-    syncJson += '"4H":{"dir":"' + dirStr(h4Dir) + '","adx":' + str.tostring(h4Adx, "#.#") + '},'
-    syncJson += '"1H":{"dir":"' + dirStr(h1Dir) + '","adx":' + str.tostring(h1Adx, "#.#") + '}}}'
+    syncJson += '"levels":{"Q":{"supply":' + qSupStr + ',"supply2":' + qSup2Str + ',"demand":' + qDemStr + ',"demand2":' + qDem2Str + '},'
+    syncJson += '"M":{"supply":' + mSupStr + ',"supply2":' + mSup2Str + ',"demand":' + mDemStr + ',"demand2":' + mDem2Str + '},'
+    syncJson += '"W":{"supply":' + wSupStr + ',"supply2":' + wSup2Str + ',"demand":' + wDemStr + ',"demand2":' + wDem2Str + '},'
+    syncJson += '"D":{"supply":' + dSupStr + ',"supply2":' + dSup2Str + ',"demand":' + dDemStr + ',"demand2":' + dDem2Str + '},'
+    syncJson += '"4H":{"supply":' + h4SupStr + ',"supply2":' + h4Sup2Str + ',"demand":' + h4DemStr + ',"demand2":' + h4Dem2Str + '},'
+    syncJson += '"1H":{"supply":' + h1SupStr + ',"supply2":' + h1Sup2Str + ',"demand":' + h1DemStr + ',"demand2":' + h1Dem2Str + '}},'
+    string qAdxStr = not na(qAdx) ? str.tostring(qAdx, "#.#") : "0"
+    string mAdxStr = not na(mAdx) ? str.tostring(mAdx, "#.#") : "0"
+    string wAdxStr = not na(wAdx) ? str.tostring(wAdx, "#.#") : "0"
+    string dAdxStr = not na(dAdx) ? str.tostring(dAdx, "#.#") : "0"
+    string h4AdxStr = not na(h4Adx) ? str.tostring(h4Adx, "#.#") : "0"
+    string h1AdxStr = not na(h1Adx) ? str.tostring(h1Adx, "#.#") : "0"
+    syncJson += '"trends":{"Q":{"dir":"' + dirStr(qDir) + '","adx":' + qAdxStr + '},'
+    syncJson += '"M":{"dir":"' + dirStr(mDir) + '","adx":' + mAdxStr + '},'
+    syncJson += '"W":{"dir":"' + dirStr(wDir) + '","adx":' + wAdxStr + '},'
+    syncJson += '"D":{"dir":"' + dirStr(dDir) + '","adx":' + dAdxStr + '},'
+    syncJson += '"4H":{"dir":"' + dirStr(h4Dir) + '","adx":' + h4AdxStr + '},'
+    syncJson += '"1H":{"dir":"' + dirStr(h1Dir) + '","adx":' + h1AdxStr + '}}}'
 
     alert(syncJson, alert.freq_once_per_bar_close)
 
@@ -230,44 +324,64 @@ if showLevels
         h4DemLbl  := label.new(futureTime, h4Demand, "4H Demand", xloc.bar_time, yloc.price, color.new(color4H, 80), label.style_label_left, color4H, size.small, tooltip="4H Demand: " + str.tostring(h4Demand, format.mintick) + "\nTrend: " + dirStr(h4Dir) + " | ADX: " + str.tostring(h4Adx, "#.#"))
 
 // ==================== DASHBOARD TABLE ====================
-var table dash = table.new(position.top_right, 4, 7, bgcolor=color.rgb(20, 20, 30), border_width=1, border_color=color.gray)
+var table dash = table.new(position.top_right, 6, 9, bgcolor=color.rgb(20, 20, 30), border_width=1, border_color=color.gray)
 
 if barstate.islast and showDash
     // Header
-    table.cell(dash, 0, 0, "TF",     text_color=color.white, text_size=size.small, text_halign=text.align_left)
-    table.cell(dash, 1, 0, "Trend",  text_color=color.white, text_size=size.small, text_halign=text.align_center)
-    table.cell(dash, 2, 0, "Supply", text_color=color.white, text_size=size.small, text_halign=text.align_right)
-    table.cell(dash, 3, 0, "Demand", text_color=color.white, text_size=size.small, text_halign=text.align_right)
+    table.cell(dash, 0, 0, "TF",      text_color=color.white, text_size=size.small, text_halign=text.align_left)
+    table.cell(dash, 1, 0, "Trend",   text_color=color.white, text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 2, 0, "Supply",  text_color=color.red, text_size=size.small, text_halign=text.align_right)
+    table.cell(dash, 3, 0, "Supply2", text_color=color.rgb(180,80,80), text_size=size.small, text_halign=text.align_right)
+    table.cell(dash, 4, 0, "Demand",  text_color=color.green, text_size=size.small, text_halign=text.align_right)
+    table.cell(dash, 5, 0, "Demand2", text_color=color.rgb(80,160,80), text_size=size.small, text_halign=text.align_right)
+
+    // Quarterly
+    table.cell(dash, 0, 1, "Quarterly", text_color=color.white, text_size=size.small, text_halign=text.align_left)
+    table.cell(dash, 1, 1, dirStr(qDir) + " (" + str.tostring(qAdx, "#") + ")", text_color=dirColor(qDir), text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 2, 1, not na(qSupply) ? str.tostring(qSupply, format.mintick) : "—", text_color=color.white, text_size=size.small, text_halign=text.align_right)
+    table.cell(dash, 3, 1, not na(qSupply2) ? str.tostring(qSupply2, format.mintick) : "—", text_color=color.rgb(180,180,180), text_size=size.small, text_halign=text.align_right)
+    table.cell(dash, 4, 1, not na(qDemand) ? str.tostring(qDemand, format.mintick) : "—", text_color=color.white, text_size=size.small, text_halign=text.align_right)
+    table.cell(dash, 5, 1, not na(qDemand2) ? str.tostring(qDemand2, format.mintick) : "—", text_color=color.rgb(180,180,180), text_size=size.small, text_halign=text.align_right)
 
     // Monthly
-    table.cell(dash, 0, 1, "Monthly", text_color=colorM, text_size=size.small, text_halign=text.align_left)
-    table.cell(dash, 1, 1, dirStr(mDir) + " (" + str.tostring(mAdx, "#") + ")", text_color=dirColor(mDir), text_size=size.small, text_halign=text.align_center)
-    table.cell(dash, 2, 1, not na(mSupply) ? str.tostring(mSupply, format.mintick) : "—", text_color=colorM, text_size=size.small, text_halign=text.align_right)
-    table.cell(dash, 3, 1, not na(mDemand) ? str.tostring(mDemand, format.mintick) : "—", text_color=colorM, text_size=size.small, text_halign=text.align_right)
+    table.cell(dash, 0, 2, "Monthly", text_color=colorM, text_size=size.small, text_halign=text.align_left)
+    table.cell(dash, 1, 2, dirStr(mDir) + " (" + str.tostring(mAdx, "#") + ")", text_color=dirColor(mDir), text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 2, 2, not na(mSupply) ? str.tostring(mSupply, format.mintick) : "—", text_color=colorM, text_size=size.small, text_halign=text.align_right)
+    table.cell(dash, 3, 2, not na(mSupply2) ? str.tostring(mSupply2, format.mintick) : "—", text_color=color.rgb(200,140,60), text_size=size.small, text_halign=text.align_right)
+    table.cell(dash, 4, 2, not na(mDemand) ? str.tostring(mDemand, format.mintick) : "—", text_color=colorM, text_size=size.small, text_halign=text.align_right)
+    table.cell(dash, 5, 2, not na(mDemand2) ? str.tostring(mDemand2, format.mintick) : "—", text_color=color.rgb(200,140,60), text_size=size.small, text_halign=text.align_right)
 
     // Weekly
-    table.cell(dash, 0, 2, "Weekly", text_color=colorW, text_size=size.small, text_halign=text.align_left)
-    table.cell(dash, 1, 2, dirStr(wDir) + " (" + str.tostring(wAdx, "#") + ")", text_color=dirColor(wDir), text_size=size.small, text_halign=text.align_center)
-    table.cell(dash, 2, 2, not na(wSupply) ? str.tostring(wSupply, format.mintick) : "—", text_color=colorW, text_size=size.small, text_halign=text.align_right)
-    table.cell(dash, 3, 2, not na(wDemand) ? str.tostring(wDemand, format.mintick) : "—", text_color=colorW, text_size=size.small, text_halign=text.align_right)
+    table.cell(dash, 0, 3, "Weekly", text_color=colorW, text_size=size.small, text_halign=text.align_left)
+    table.cell(dash, 1, 3, dirStr(wDir) + " (" + str.tostring(wAdx, "#") + ")", text_color=dirColor(wDir), text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 2, 3, not na(wSupply) ? str.tostring(wSupply, format.mintick) : "—", text_color=colorW, text_size=size.small, text_halign=text.align_right)
+    table.cell(dash, 3, 3, not na(wSupply2) ? str.tostring(wSupply2, format.mintick) : "—", text_color=color.rgb(200,200,100), text_size=size.small, text_halign=text.align_right)
+    table.cell(dash, 4, 3, not na(wDemand) ? str.tostring(wDemand, format.mintick) : "—", text_color=colorW, text_size=size.small, text_halign=text.align_right)
+    table.cell(dash, 5, 3, not na(wDemand2) ? str.tostring(wDemand2, format.mintick) : "—", text_color=color.rgb(200,200,100), text_size=size.small, text_halign=text.align_right)
 
     // Daily
-    table.cell(dash, 0, 3, "Daily", text_color=colorD, text_size=size.small, text_halign=text.align_left)
-    table.cell(dash, 1, 3, dirStr(dDir) + " (" + str.tostring(dAdx, "#") + ")", text_color=dirColor(dDir), text_size=size.small, text_halign=text.align_center)
-    table.cell(dash, 2, 3, not na(dSupply) ? str.tostring(dSupply, format.mintick) : "—", text_color=colorD, text_size=size.small, text_halign=text.align_right)
-    table.cell(dash, 3, 3, not na(dDemand) ? str.tostring(dDemand, format.mintick) : "—", text_color=colorD, text_size=size.small, text_halign=text.align_right)
+    table.cell(dash, 0, 4, "Daily", text_color=colorD, text_size=size.small, text_halign=text.align_left)
+    table.cell(dash, 1, 4, dirStr(dDir) + " (" + str.tostring(dAdx, "#") + ")", text_color=dirColor(dDir), text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 2, 4, not na(dSupply) ? str.tostring(dSupply, format.mintick) : "—", text_color=colorD, text_size=size.small, text_halign=text.align_right)
+    table.cell(dash, 3, 4, not na(dSupply2) ? str.tostring(dSupply2, format.mintick) : "—", text_color=color.rgb(100,100,200), text_size=size.small, text_halign=text.align_right)
+    table.cell(dash, 4, 4, not na(dDemand) ? str.tostring(dDemand, format.mintick) : "—", text_color=colorD, text_size=size.small, text_halign=text.align_right)
+    table.cell(dash, 5, 4, not na(dDemand2) ? str.tostring(dDemand2, format.mintick) : "—", text_color=color.rgb(100,100,200), text_size=size.small, text_halign=text.align_right)
 
     // 4-Hour
-    table.cell(dash, 0, 4, "4-Hour", text_color=color4H, text_size=size.small, text_halign=text.align_left)
-    table.cell(dash, 1, 4, dirStr(h4Dir) + " (" + str.tostring(h4Adx, "#") + ")", text_color=dirColor(h4Dir), text_size=size.small, text_halign=text.align_center)
-    table.cell(dash, 2, 4, not na(h4Supply) ? str.tostring(h4Supply, format.mintick) : "—", text_color=color4H, text_size=size.small, text_halign=text.align_right)
-    table.cell(dash, 3, 4, not na(h4Demand) ? str.tostring(h4Demand, format.mintick) : "—", text_color=color4H, text_size=size.small, text_halign=text.align_right)
+    table.cell(dash, 0, 5, "4-Hour", text_color=color4H, text_size=size.small, text_halign=text.align_left)
+    table.cell(dash, 1, 5, dirStr(h4Dir) + " (" + str.tostring(h4Adx, "#") + ")", text_color=dirColor(h4Dir), text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 2, 5, not na(h4Supply) ? str.tostring(h4Supply, format.mintick) : "—", text_color=color4H, text_size=size.small, text_halign=text.align_right)
+    table.cell(dash, 3, 5, not na(h4Supply2) ? str.tostring(h4Supply2, format.mintick) : "—", text_color=color.rgb(180,140,220), text_size=size.small, text_halign=text.align_right)
+    table.cell(dash, 4, 5, not na(h4Demand) ? str.tostring(h4Demand, format.mintick) : "—", text_color=color4H, text_size=size.small, text_halign=text.align_right)
+    table.cell(dash, 5, 5, not na(h4Demand2) ? str.tostring(h4Demand2, format.mintick) : "—", text_color=color.rgb(180,140,220), text_size=size.small, text_halign=text.align_right)
 
     // Hourly
-    table.cell(dash, 0, 5, "Hourly", text_color=color.green, text_size=size.small, text_halign=text.align_left)
-    table.cell(dash, 1, 5, dirStr(h1Dir) + " (" + str.tostring(h1Adx, "#") + ")", text_color=dirColor(h1Dir), text_size=size.small, text_halign=text.align_center)
-    table.cell(dash, 2, 5, not na(h1Supply) ? str.tostring(h1Supply, format.mintick) : "—", text_color=color.green, text_size=size.small, text_halign=text.align_right)
-    table.cell(dash, 3, 5, not na(h1Demand) ? str.tostring(h1Demand, format.mintick) : "—", text_color=color.green, text_size=size.small, text_halign=text.align_right)
+    table.cell(dash, 0, 6, "Hourly", text_color=color.green, text_size=size.small, text_halign=text.align_left)
+    table.cell(dash, 1, 6, dirStr(h1Dir) + " (" + str.tostring(h1Adx, "#") + ")", text_color=dirColor(h1Dir), text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 2, 6, not na(h1Supply) ? str.tostring(h1Supply, format.mintick) : "—", text_color=color.green, text_size=size.small, text_halign=text.align_right)
+    table.cell(dash, 3, 6, not na(h1Supply2) ? str.tostring(h1Supply2, format.mintick) : "—", text_color=color.rgb(80,160,80), text_size=size.small, text_halign=text.align_right)
+    table.cell(dash, 4, 6, not na(h1Demand) ? str.tostring(h1Demand, format.mintick) : "—", text_color=color.green, text_size=size.small, text_halign=text.align_right)
+    table.cell(dash, 5, 6, not na(h1Demand2) ? str.tostring(h1Demand2, format.mintick) : "—", text_color=color.rgb(80,160,80), text_size=size.small, text_halign=text.align_right)
 
     // Active signal summary
     string sigText = "No signal"
@@ -291,6 +405,6 @@ if barstate.islast and showDash
         sigText := "5MIN BUY @ 4H demand | Score " + str.tostring(fBuyScore) + "/4"
         sigColor := color.green
 
-    table.cell(dash, 0, 6, "Signal", text_color=color.white, text_size=size.small, text_halign=text.align_left)
-    table.cell(dash, 1, 6, sigText, text_color=sigColor, text_size=size.small, text_halign=text.align_left)
-    table.merge_cells(dash, 1, 6, 3, 6)
+    table.cell(dash, 0, 7, "Signal", text_color=color.white, text_size=size.small, text_halign=text.align_left)
+    table.cell(dash, 1, 7, sigText, text_color=sigColor, text_size=size.small, text_halign=text.align_left)
+    table.merge_cells(dash, 1, 7, 3, 8)

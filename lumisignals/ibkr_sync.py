@@ -655,11 +655,11 @@ def check_order_requests(ib: IB):
                 logger.info("Position check: %s pos=%d (direction=%s)", ticker, current_pos, direction)
 
                 skip = False
-                if direction == "BUY" and current_pos > 0:
-                    logger.info("SKIP %s BUY — already long %d", ticker, current_pos)
+                if direction == "BUY" and current_pos != 0:
+                    logger.info("SKIP %s BUY — not flat (pos=%d)", ticker, current_pos)
                     skip = True
-                elif direction == "SELL" and current_pos < 0:
-                    logger.info("SKIP %s SELL — already short %d", ticker, current_pos)
+                elif direction == "SELL" and current_pos != 0:
+                    logger.info("SKIP %s SELL — not flat (pos=%d)", ticker, current_pos)
                     skip = True
                 elif direction == "CLOSE_LONG" and current_pos <= 0:
                     logger.info("SKIP %s CLOSE_LONG — not long (pos=%d)", ticker, current_pos)

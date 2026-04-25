@@ -63,8 +63,8 @@ tr:hover { background: rgba(0,0,0,0.015); }
 </div>
 
 <script>
-var TF_ORDER = ['M', 'W', 'D', '4H', '1H'];
-var TF_LABELS = {M: 'Monthly', W: 'Weekly', D: 'Daily', '4H': '4-Hour', '1H': 'Hourly'};
+var TF_ORDER = ['Q', 'M', 'W', 'D', '4H', '1H'];
+var TF_LABELS = {Q: 'Quarterly', M: 'Monthly', W: 'Weekly', D: 'Daily', '4H': '4-Hour', '1H': 'Hourly'};
 
 function fmt(v) {
   if (v === null || v === undefined) return '<span class="no-data">--</span>';
@@ -115,11 +115,17 @@ function renderTicker(item) {
   html += '<div class="section-label">Supply / Demand Levels</div>';
   html += '<table><tr>';
   html += '<th>Timeframe</th>';
-  html += '<th><span class="source-tag tag-lt">LumiTrade</span> Supply</th>';
-  html += '<th><span class="source-tag tag-tv">TradingView</span> Supply</th>';
+  html += '<th><span class="source-tag tag-lt">LT</span> Supply</th>';
+  html += '<th><span class="source-tag tag-tv">TV</span> Supply</th>';
   html += '<th>Diff</th>';
-  html += '<th><span class="source-tag tag-lt">LumiTrade</span> Demand</th>';
-  html += '<th><span class="source-tag tag-tv">TradingView</span> Demand</th>';
+  html += '<th><span class="source-tag tag-lt">LT</span> Supply2</th>';
+  html += '<th><span class="source-tag tag-tv">TV</span> Supply2</th>';
+  html += '<th>Diff</th>';
+  html += '<th><span class="source-tag tag-lt">LT</span> Demand</th>';
+  html += '<th><span class="source-tag tag-tv">TV</span> Demand</th>';
+  html += '<th>Diff</th>';
+  html += '<th><span class="source-tag tag-lt">LT</span> Demand2</th>';
+  html += '<th><span class="source-tag tag-tv">TV</span> Demand2</th>';
   html += '<th>Diff</th>';
   html += '</tr>';
 
@@ -127,25 +133,28 @@ function renderTicker(item) {
   var tvLevels = item.tradingview || {};
 
   TF_ORDER.forEach(function(tf) {
-    if (tf === '1H') return; // No hourly levels in comparison
     var lt = ltLevels[tf] || {};
     var tv = tvLevels[tf] || {};
-    var ltSup = lt.supply;
-    var tvSup = tv.supply;
-    var ltDem = lt.demand;
-    var tvDem = tv.demand;
 
-    var supDiffCls = diffClass(ltSup, tvSup, 0.5);
-    var demDiffCls = diffClass(ltDem, tvDem, 0.5);
+    var supDiffCls = diffClass(lt.supply, tv.supply, 0.5);
+    var sup2DiffCls = diffClass(lt.supply2, tv.supply2, 0.5);
+    var demDiffCls = diffClass(lt.demand, tv.demand, 0.5);
+    var dem2DiffCls = diffClass(lt.demand2, tv.demand2, 0.5);
 
     html += '<tr>';
     html += '<td><strong>' + (TF_LABELS[tf] || tf) + '</strong></td>';
-    html += '<td>' + fmt(ltSup) + '</td>';
-    html += '<td>' + fmt(tvSup) + '</td>';
-    html += '<td class="' + supDiffCls + '">' + diffPct(ltSup, tvSup) + '</td>';
-    html += '<td>' + fmt(ltDem) + '</td>';
-    html += '<td>' + fmt(tvDem) + '</td>';
-    html += '<td class="' + demDiffCls + '">' + diffPct(ltDem, tvDem) + '</td>';
+    html += '<td>' + fmt(lt.supply) + '</td>';
+    html += '<td>' + fmt(tv.supply) + '</td>';
+    html += '<td class="' + supDiffCls + '">' + diffPct(lt.supply, tv.supply) + '</td>';
+    html += '<td>' + fmt(lt.supply2) + '</td>';
+    html += '<td>' + fmt(tv.supply2) + '</td>';
+    html += '<td class="' + sup2DiffCls + '">' + diffPct(lt.supply2, tv.supply2) + '</td>';
+    html += '<td>' + fmt(lt.demand) + '</td>';
+    html += '<td>' + fmt(tv.demand) + '</td>';
+    html += '<td class="' + demDiffCls + '">' + diffPct(lt.demand, tv.demand) + '</td>';
+    html += '<td>' + fmt(lt.demand2) + '</td>';
+    html += '<td>' + fmt(tv.demand2) + '</td>';
+    html += '<td class="' + dem2DiffCls + '">' + diffPct(lt.demand2, tv.demand2) + '</td>';
     html += '</tr>';
   });
   html += '</table>';
