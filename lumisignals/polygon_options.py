@@ -84,7 +84,8 @@ class PolygonOptionsClient:
 def analyze_spreads_polygon(api_key: str, ticker: str, zone_type: str,
                             zone_price: float, current_price: float,
                             max_risk_per_spread: float = 0, preferred_width: float = 5.0,
-                            min_dte: int = 14, max_dte: int = 60) -> dict:
+                            min_dte: int = 14, max_dte: int = 60,
+                            atr: float = 0, score: int = 0) -> dict:
     """Analyze best credit and debit spreads using Polygon data.
 
     Same output format as analyze_spreads_ib for side-by-side comparison.
@@ -212,13 +213,15 @@ def analyze_spreads_polygon(api_key: str, ticker: str, zone_type: str,
         if zone_type == "supply":
             credit = _find_best_spread_width(credit_options, target_exp, zone_price, current_price,
                                              _find_bear_call_credit_poly, widths_to_try, max_risk_per_spread, is_credit=True)
-            debit = _find_best_spread_width(debit_options, target_exp, zone_price, current_price,
-                                            _find_bear_put_debit_poly, widths_to_try, max_risk_per_spread, is_credit=False)
+            debit = _find_optimal_debit(debit_options, target_exp, zone_price, current_price,
+                                        "Bear Put Debit", "P", "below", widths_to_try,
+                                        atr=atr, score=score)
         else:
             credit = _find_best_spread_width(credit_options, target_exp, zone_price, current_price,
                                              _find_bull_put_credit_poly, widths_to_try, max_risk_per_spread, is_credit=True)
-            debit = _find_best_spread_width(debit_options, target_exp, zone_price, current_price,
-                                            _find_bull_call_debit_poly, widths_to_try, max_risk_per_spread, is_credit=False)
+            debit = _find_optimal_debit(debit_options, target_exp, zone_price, current_price,
+                                        "Bull Call Debit", "C", "above", widths_to_try,
+                                        atr=atr, score=score)
 
         result["credit_spread"] = format_spread_for_display(credit) if credit else None
         result["debit_spread"] = format_spread_for_display(debit) if debit else None
@@ -298,10 +301,12 @@ def _build_spread_poly(spread_type, short_opt, long_opt, is_credit):
         else:
             verdict, reason = "SKIP", f"Only {credit_pct:.0f}% credit — too thin"
     else:
-        if rr >= 1.5:
-            verdict, reason = "GOOD", f"{rr:.1f}:1 reward-to-risk"
-        elif rr >= 1.0:
-            verdict, reason = "FAIR", f"{rr:.1f}:1 reward-to-risk"
+        if rr >= 3.0:
+            verdict, reason = "GOOD", f"{rr:.1f}:1 R:R — excellent setup"
+        elif rr >= 2.0:
+            verdict, reason = "GOOD", f"{rr:.1f}:1 R:R — solid setup"
+        elif rr >= 1.5:
+            verdict, reason = "FAIR", f"{rr:.1f}:1 R:R — acceptable"
         else:
             verdict, reason = "SKIP", f"Only {rr:.1f}:1 — risk outweighs reward"
 
@@ -368,6 +373,115 @@ def _find_bull_put_credit_poly(options, exp_info, zone_price, current_price, tar
                 if result:
                     return result
     return None
+
+
+def _find_optimal_debit(options, exp_info, zone_price, current_price,
+                        spread_type, right, direction, widths_to_try,
+                        atr=0, score=0, min_rr=2.0, min_delta=0.15):
+    """Find optimal debit spread placement using ATR + IV for strike selection.
+
+    Strategy:
+    1. Calculate expected move from ATR (how far price can bounce from the level)
+    2. Use IV expected move as a cap
+    3. Place long strike at 40-60% of expected move from the level
+    4. Score adjusts how far OTM we go (higher score = more conviction = further OTM ok)
+    5. Filter by R:R >= 2:1 and delta >= 0.15
+
+    For BUY at demand: bull call debit — long call OTM, short call further OTM
+    For SELL at supply: bear put debit — long put OTM, short put further OTM
+    """
+    exp, dte = exp_info
+    is_bullish = direction == "above"  # bull call debit vs bear put debit
+
+    # Calculate expected bounce from the level
+    if atr > 0:
+        # ATR-based: stronger score = expect bigger bounce
+        atr_multiplier = 1.0 + (score * 0.25)  # score 0=1x, 1=1.25x, 2=1.5x, 3=1.75x
+        expected_bounce = atr * atr_multiplier
+    else:
+        # Fallback: use 2% of price
+        expected_bounce = current_price * 0.02
+
+    # IV expected move over the DTE period (1 std dev)
+    # Get average IV from nearby options
+    nearby = [o for o in options if o["right"] == right and abs(o["strike"] - current_price) < current_price * 0.05]
+    if nearby:
+        avg_iv_pct = sum(o["iv"] for o in nearby) / len(nearby)
+    else:
+        avg_iv_pct = 25  # default 25% IV
+
+    iv_expected_move = current_price * (avg_iv_pct / 100) * (dte / 365) ** 0.5
+
+    # Cap the expected bounce at 70% of IV expected move (52% probability zone)
+    max_otm = min(expected_bounce, iv_expected_move * 0.7)
+
+    # Place long strike at 40-60% of expected move from zone price
+    # Higher score = place at 50-60% (more conviction), lower = 30-40% (closer to money)
+    placement_pct = 0.3 + (score * 0.1)  # score 0=30%, 1=40%, 2=50%, 3=60%
+    placement_pct = min(placement_pct, 0.6)
+
+    if is_bullish:
+        target_long_strike = zone_price + (max_otm * placement_pct)
+    else:
+        target_long_strike = zone_price - (max_otm * placement_pct)
+
+    logger.info("Debit optimization for %s: ATR=%.1f, IV=%.0f%%, expected_bounce=%.1f, "
+                "iv_move=%.1f, max_otm=%.1f, target_long=%.1f",
+                spread_type, atr, avg_iv_pct, expected_bounce, iv_expected_move,
+                max_otm, target_long_strike)
+
+    # Find the best spread: try multiple strikes near our target, pick best R:R >= 2:1
+    best_spread = None
+    best_rr = 0
+
+    # Get candidate long options near our target strike
+    all_opts = sorted([o for o in options if o["right"] == right], key=lambda o: o["strike"])
+
+    if is_bullish:
+        long_candidates = [o for o in all_opts if o["strike"] >= current_price]
+        # Sort by proximity to target strike
+        long_candidates.sort(key=lambda o: abs(o["strike"] - target_long_strike))
+    else:
+        long_candidates = [o for o in all_opts if o["strike"] <= current_price]
+        long_candidates.sort(key=lambda o: abs(o["strike"] - target_long_strike))
+
+    for long_opt in long_candidates[:8]:
+        # Skip if delta too low (too unlikely to hit)
+        if long_opt["delta"] < min_delta:
+            continue
+
+        # Try each width
+        for target_width in widths_to_try:
+            if is_bullish:
+                short_strike_target = long_opt["strike"] + target_width
+                short_candidates = [o for o in all_opts if o["right"] == right
+                                    and abs(o["strike"] - short_strike_target) <= target_width * 0.5 + 0.5
+                                    and o["strike"] > long_opt["strike"]]
+            else:
+                short_strike_target = long_opt["strike"] - target_width
+                short_candidates = [o for o in all_opts if o["right"] == right
+                                    and abs(o["strike"] - short_strike_target) <= target_width * 0.5 + 0.5
+                                    and o["strike"] < long_opt["strike"]]
+
+            short_candidates.sort(key=lambda o: abs(o["strike"] - short_strike_target))
+
+            for short_opt in short_candidates[:2]:
+                spread = _build_spread_poly(spread_type, short_opt, long_opt, False)
+                if spread and spread.risk_reward >= min_rr and spread.risk_reward > best_rr:
+                    best_spread = spread
+                    best_rr = spread.risk_reward
+
+    # Fallback: if no ATR-optimized spread found, try the original near-money approach
+    if not best_spread:
+        for target_width in widths_to_try:
+            if is_bullish:
+                best_spread = _find_bull_call_debit_poly(options, exp_info, zone_price, current_price, target_width)
+            else:
+                best_spread = _find_bear_put_debit_poly(options, exp_info, zone_price, current_price, target_width)
+            if best_spread:
+                break
+
+    return best_spread
 
 
 def _find_bear_put_debit_poly(options, exp_info, zone_price, current_price, target_width=1.0):

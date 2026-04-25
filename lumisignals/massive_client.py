@@ -89,6 +89,96 @@ CRYPTO_TICKERS = [
     "X:UNIUSD",
 ]
 
+# Ticker short names for scanner display
+TICKER_NAMES = {
+    # Indices
+    "I:SPX": "S&P 500", "I:NDX": "Nasdaq 100", "I:XSP": "Mini S&P", "I:XND": "Mini Nasdaq",
+    "I:DJI": "Dow Jones", "I:COMP": "Nasdaq Comp", "I:RUT": "Russell 2000", "I:RUI": "Russell 1000",
+    "I:DJT": "Dow Transport", "I:DJU": "Dow Utilities", "I:SOX": "Semiconductors", "I:BKX": "KBW Bank",
+    "I:KRX": "Regional Bank", "I:HGX": "Housing", "I:OSX": "Oil Service", "I:NBI": "Biotech",
+    "I:XAU": "Gold & Silver", "I:UTY": "Utilities", "I:DJUSRE": "Real Estate",
+    "I:DJCI": "Commodities", "I:DJCIEN": "Energy Cmdty", "I:DJCIPM": "Precious Metals",
+    "I:DJCIIM": "Industrial Metals", "I:DJCIGC": "Gold", "I:DJCISI": "Silver",
+    "I:DJCICL": "Crude Oil", "I:DJCING": "Natural Gas", "I:DJCIHO": "Heating Oil",
+    "I:DJCIRB": "RBOB Gas", "I:DJCIHG": "Copper", "I:DJCIWH": "Wheat",
+    "I:DJCICN": "Corn", "I:DJCISY": "Soybeans", "I:DJCISB": "Sugar",
+    "I:DJCIKC": "Coffee", "I:DJCICT": "Cotton", "I:DJCICC": "Cocoa",
+    "I:DJCILH": "Lean Hogs", "I:DJCILC": "Live Cattle", "I:DJCIFC": "Feeder Cattle",
+    "I:MXEF": "EM Markets", "I:MXEA": "EAFE", "I:MXWO": "World",
+    "I:GDOW": "Global Dow", "I:EDOW": "Europe Dow", "I:ADOW": "Asia Dow",
+    "I:DJDVY": "Dividend Sel", "I:QMI": "Nasdaq Mini", "I:TRAN": "Nasdaq Trans", "I:MSTAR": "Morningstar",
+    # ETFs
+    "SPY": "S&P 500 ETF", "QQQ": "Nasdaq ETF", "IWM": "Russell ETF", "DIA": "Dow ETF",
+    "XLK": "Tech Sector", "XLF": "Financial Sec", "XLV": "Health Sector", "XLE": "Energy Sector",
+    "XLI": "Industrial Sec", "XLY": "Cons Disc Sec", "XLP": "Cons Staple", "XLU": "Utility Sector",
+    "XLB": "Materials Sec", "XLRE": "Real Est Sec", "XLC": "Comms Sector",
+    "GLD": "Gold ETF", "USO": "Oil ETF", "AGG": "Bond AGG", "BITO": "Bitcoin ETF",
+    "IBIT": "iShares BTC", "FBTC": "Fidelity BTC",
+    # Mega-cap
+    "AAPL": "Apple", "MSFT": "Microsoft", "GOOG": "Google", "GOOGL": "Google A",
+    "AMZN": "Amazon", "META": "Meta", "NVDA": "Nvidia", "TSLA": "Tesla",
+    "AVGO": "Broadcom", "ORCL": "Oracle", "ADBE": "Adobe", "CRM": "Salesforce",
+    "AMD": "AMD", "INTC": "Intel", "QCOM": "Qualcomm", "AMAT": "Applied Mat",
+    "MU": "Micron", "NFLX": "Netflix", "CSCO": "Cisco", "IBM": "IBM",
+    "NOW": "ServiceNow", "INTU": "Intuit", "SNPS": "Synopsys", "CDNS": "Cadence",
+    # Financials
+    "JPM": "JPMorgan", "V": "Visa", "MA": "Mastercard", "BAC": "BofA",
+    "GS": "Goldman", "MS": "Morgan Stan", "WFC": "Wells Fargo", "C": "Citigroup",
+    "BLK": "BlackRock", "SCHW": "Schwab", "AXP": "AmEx", "BX": "Blackstone",
+    "KKR": "KKR", "COIN": "Coinbase",
+    # Health Care
+    "UNH": "UnitedHealth", "JNJ": "J&J", "LLY": "Eli Lilly", "ABBV": "AbbVie",
+    "MRK": "Merck", "PFE": "Pfizer", "TMO": "Thermo Fish", "ABT": "Abbott",
+    "DHR": "Danaher", "BMY": "Bristol-Myers",
+    # Consumer
+    "WMT": "Walmart", "COST": "Costco", "HD": "Home Depot", "NKE": "Nike",
+    "MCD": "McDonald's", "SBUX": "Starbucks", "TGT": "Target", "LOW": "Lowe's",
+    "PG": "Procter&Gamb", "KO": "Coca-Cola", "PEP": "PepsiCo",
+    # Energy
+    "XOM": "Exxon", "CVX": "Chevron", "COP": "ConocoPhil", "SLB": "Schlumberger", "EOG": "EOG Res",
+    # Industrials
+    "CAT": "Caterpillar", "DE": "Deere", "HON": "Honeywell", "UPS": "UPS",
+    "FDX": "FedEx", "BA": "Boeing", "GE": "GE Aero", "RTX": "RTX", "LMT": "Lockheed",
+    # Comms
+    "DIS": "Disney", "CMCSA": "Comcast", "T": "AT&T", "VZ": "Verizon", "TMUS": "T-Mobile",
+    # Hot / High-beta
+    "PLTR": "Palantir", "UBER": "Uber", "SQ": "Block", "SHOP": "Shopify",
+    "SNOW": "Snowflake", "DKNG": "DraftKings", "SOFI": "SoFi",
+    "RIVN": "Rivian", "LCID": "Lucid", "ARM": "ARM", "SMCI": "Super Micro",
+    "MSTR": "MicroStrat", "CRWD": "CrowdStrike", "PANW": "Palo Alto",
+    # Additional names for scanner
+    "DDOG": "Datadog", "WDAY": "Workday", "TTD": "Trade Desk", "SPOT": "Spotify",
+    "CVNA": "Carvana", "APP": "AppLovin", "AXON": "Axon", "DELL": "Dell",
+    "HPE": "HP Enterp", "HPQ": "HP Inc", "LULU": "Lululemon", "LYV": "Live Nation",
+    "PYPL": "PayPal", "VST": "Vistra", "GEV": "GE Vernova", "RKLB": "Rocket Lab",
+    "IREN": "IREN", "QBTS": "D-Wave", "RGTI": "Rigetti",
+    "EIX": "Edison Intl", "QYLD": "Nasdaq CovCall", "LIN": "Linde", "EA": "EA Games",
+    "PNC": "PNC Financial", "AES": "AES Corp", "PCG": "PG&E", "EXC": "Exelon",
+    "XEL": "Xcel Energy", "WEC": "WEC Energy", "CMS": "CMS Energy", "ED": "Con Edison",
+    "PEG": "PSEG", "EVRG": "Evergy", "CNP": "CenterPoint", "AEE": "Ameren",
+    "D": "Dominion", "NEE": "NextEra",
+    "BSX": "Boston Sci", "MDT": "Medtronic", "HCA": "HCA Health", "REGN": "Regeneron",
+    "BIIB": "Biogen", "ILMN": "Illumina", "IQV": "IQVIA", "DGX": "Quest Diag",
+    "CAH": "Cardinal Hlth", "COR": "Cencora",
+    "BK": "BNY Mellon", "USB": "US Bancorp", "STT": "State Street",
+    "HBAN": "Huntington", "RF": "Regions Fin", "CME": "CME Group",
+    "ICE": "Intercont Ex", "NDAQ": "Nasdaq Inc", "SPGI": "S&P Global", "MCO": "Moody's",
+    "KR": "Kroger", "DG": "Dollar Gen", "ORLY": "O'Reilly", "AZO": "AutoZone",
+    "ROST": "Ross Stores", "TJX": "TJX Cos", "ULTA": "Ulta Beauty",
+    "DPZ": "Domino's", "CCL": "Carnival", "MGM": "MGM Resorts", "CZR": "Caesars",
+    "GD": "General Dyn", "NOC": "Northrop", "EMR": "Emerson", "ETN": "Eaton",
+    "IR": "Ingersoll", "PH": "Parker Hann", "ROK": "Rockwell", "WAB": "Wabtec",
+    "FAST": "Fastenal", "ODFL": "Old Dominion",
+    "DVN": "Devon Energy", "HAL": "Halliburton", "MPC": "Marathon Pet", "OXY": "Occidental",
+    "FANG": "Diamondback", "EA": "EA Games", "TTWO": "Take-Two",
+    "AVB": "AvalonBay", "EQR": "Equity Res", "KIM": "Kimco Realty", "REG": "Regency Ctr",
+    "FRT": "Fed Realty", "HST": "Host Hotels", "ARE": "Alexandria",
+    "FCX": "Freeport-McM", "NUE": "Nucor", "MLM": "Martin Mar", "APD": "Air Products",
+    "IFF": "IFF", "AVY": "Avery Denn", "BALL": "Ball Corp", "FMC": "FMC Corp",
+    "IDV": "Intl Div ETF", "IEO": "Energy ETF", "JEPI": "JPM Equity Pr",
+    "SPYD": "S&P Div ETF", "DBMF": "Managed Fut",
+}
+
 # Expanded swing watchlist — indices + all LumiTrade stocks with options
 # Used only for swing scans (M/W/Q timeframes). Intraday/scalp uses CORE_TICKERS.
 SWING_TICKERS = [

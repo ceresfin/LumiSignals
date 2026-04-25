@@ -434,7 +434,29 @@ def create_app():
         if massive_key:
             try:
                 from lumisignals.polygon_options import analyze_spreads_polygon
-                poly_result = analyze_spreads_polygon(massive_key, ticker, zone_type, zone_price, current_price)
+                # Calculate ATR for optimal debit placement
+                poly_atr = 0
+                try:
+                    from datetime import timedelta as _td
+                    end_d = datetime.now().strftime("%Y-%m-%d")
+                    start_d = (datetime.now() - _td(days=25)).strftime("%Y-%m-%d")
+                    atr_r = requests.get(
+                        f"https://api.polygon.io/v2/aggs/ticker/{ticker}/range/1/day/{start_d}/{end_d}",
+                        params={"apiKey": massive_key, "adjusted": "true", "sort": "asc", "limit": 20},
+                        timeout=10,
+                    )
+                    if atr_r.ok:
+                        atr_bars = atr_r.json().get("results", [])
+                        if len(atr_bars) >= 2:
+                            atr_trs = []
+                            for ai in range(1, len(atr_bars)):
+                                ah, al, apc = atr_bars[ai]["h"], atr_bars[ai]["l"], atr_bars[ai-1]["c"]
+                                atr_trs.append(max(ah - al, abs(ah - apc), abs(al - apc)))
+                            poly_atr = sum(atr_trs[-14:]) / min(len(atr_trs), 14)
+                except Exception:
+                    pass
+                poly_result = analyze_spreads_polygon(massive_key, ticker, zone_type, zone_price, current_price,
+                                                     atr=poly_atr)
                 response["sources"].append({
                     "name": "Polygon",
                     "credit_spread": poly_result.get("credit_spread"),
@@ -1056,7 +1078,7 @@ def create_app():
         if not massive_key:
             return jsonify({"error": "No Massive API key configured"}), 400
 
-        from lumisignals.massive_client import MassiveClient, CORE_TICKERS, SWING_TICKERS
+        from lumisignals.massive_client import MassiveClient, CORE_TICKERS, SWING_TICKERS, TICKER_NAMES
         from lumisignals.untouched_levels import scan_universe, scan_ticker, TIMEFRAMES
 
         client = MassiveClient(massive_key)
@@ -1097,7 +1119,7 @@ def create_app():
                         if lvl.adx >= 25:
                             score += 1
                         all_setups.append({
-                            "ticker": ticker, "price": round(price, 2), "level": round(level_price, 2),
+                            "ticker": ticker, "name": TICKER_NAMES.get(ticker, ""), "price": round(price, 2), "level": round(level_price, 2),
                             "level_type": level_type, "tf": tf_label,
                             "tf_name": {"M": "Monthly", "W": "Weekly"}.get(tf_label, tf_label),
                             "distance_pct": round(dist_pct, 2), "direction": direction,
@@ -1129,7 +1151,7 @@ def create_app():
                         if lvl.adx >= 25:
                             score += 1
                         all_setups.append({
-                            "ticker": ticker, "price": round(price, 2), "level": round(level_price, 2),
+                            "ticker": ticker, "name": TICKER_NAMES.get(ticker, ""), "price": round(price, 2), "level": round(level_price, 2),
                             "level_type": level_type, "tf": tf_label,
                             "tf_name": {"D": "Daily", "4H": "4-Hour", "1H": "Hourly"}.get(tf_label, tf_label),
                             "distance_pct": round(dist_pct, 2), "direction": direction,
@@ -1368,10 +1390,35 @@ def create_app():
             else:
                 min_dte_val, max_dte_val = max(0, dte - 1), dte + 2
 
+            # Get ATR for optimal debit placement
+            atr_value = 0
+            try:
+                import requests as _req
+                # Get last 15 daily bars to calculate 14-period ATR
+                from datetime import datetime as _dt2, timedelta as _td2
+                end = _dt2.now().strftime("%Y-%m-%d")
+                start = (_dt2.now() - _td2(days=25)).strftime("%Y-%m-%d")
+                atr_resp = _req.get(
+                    f"https://api.polygon.io/v2/aggs/ticker/{ticker}/range/1/day/{start}/{end}",
+                    params={"apiKey": massive_key, "adjusted": "true", "sort": "asc", "limit": 20},
+                    timeout=10,
+                )
+                if atr_resp.ok:
+                    bars = atr_resp.json().get("results", [])
+                    if len(bars) >= 2:
+                        trs = []
+                        for i in range(1, len(bars)):
+                            h, l, pc = bars[i]["h"], bars[i]["l"], bars[i-1]["c"]
+                            trs.append(max(h - l, abs(h - pc), abs(l - pc)))
+                        atr_value = sum(trs[-14:]) / min(len(trs), 14)
+            except Exception:
+                pass
+
             result = analyze_spreads_polygon(
                 massive_key, ticker, zone_type, current_price, zone_price,
                 max_risk_per_spread=500, preferred_width=5.0,
                 min_dte=min_dte_val, max_dte=max_dte_val,
+                atr=atr_value, score=int(score),
             )
         except Exception as e:
             return jsonify({"error": f"Analysis failed: {e}"}), 500

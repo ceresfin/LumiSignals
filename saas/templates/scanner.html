@@ -137,8 +137,8 @@ function runScan() {
           return html;
         }
         html += '<table><tr>';
-        html += '<th>Ticker</th><th>Price</th><th>Level</th><th>Type</th><th>TF</th>';
-        html += '<th>Distance</th><th>Direction</th><th>Trend</th><th>ADX</th><th>Score</th>';
+        html += '<th>Ticker</th><th>Name</th><th>Price</th><th>Level</th><th>Type</th><th>TF</th>';
+        html += '<th>Distance</th><th>Direction</th><th>Trend</th><th>ADX</th><th>Score</th><th>Options</th>';
         html += '</tr>';
         items.forEach(function(s) {
           var dirClass = s.direction === 'BUY' ? 'dir-buy' : 'dir-sell';
@@ -147,6 +147,7 @@ function runScan() {
           var tfClass = 'tf-' + s.tf;
           html += '<tr>';
           html += '<td><strong>' + s.ticker + '</strong></td>';
+          html += '<td style="font-size:0.75rem;color:var(--text-medium)">' + (s.name || '') + '</td>';
           html += '<td>$' + s.price.toFixed(2) + '</td>';
           html += '<td>$' + s.level.toFixed(2) + '</td>';
           html += '<td>' + s.level_type + '</td>';
@@ -156,6 +157,11 @@ function runScan() {
           html += '<td><span class="' + trendCls + '">' + s.trend + '</span></td>';
           html += '<td>' + s.adx.toFixed(0) + '</td>';
           html += '<td><span class="score-badge ' + scoreClass + '">' + s.score + '</span></td>';
+          var cleanTicker = s.ticker.replace('I:', '');
+          var zoneType = s.direction === 'BUY' ? 'demand' : 'supply';
+          var btnId = 'opt_' + cleanTicker + '_' + s.tf + '_' + s.level_type;
+          html += '<td><button class="scan-btn" style="font-size:0.7rem;padding:4px 10px;" onclick="analyzeSetup(\'' + cleanTicker + '\',\'' + zoneType + '\',' + s.level + ',this)" id="' + btnId + '">Analyze</button>';
+          html += '<div id="' + btnId + '_result" style="font-size:0.68rem;margin-top:4px;max-width:220px;"></div></td>';
           html += '</tr>';
         });
         html += '</table></div>';
@@ -171,6 +177,102 @@ function runScan() {
       btn.disabled = false;
       btn.textContent = 'Scan Now';
       document.getElementById('scanResults').innerHTML = '<div class="loading" style="color:var(--red)">Error: ' + e.message + '</div>';
+    });
+}
+
+function renderSpread(spread) {
+  if (!spread) return '';
+  var v = spread.verdict === 'GOOD' ? 'dir-buy' : (spread.verdict === 'FAIR' ? '' : 'dir-sell');
+  var isCredit = spread.net_credit > 0;
+  var html = '<strong>' + spread.type + '</strong> <span class="' + v + '">' + spread.verdict + '</span><br>';
+  if (isCredit) {
+    html += 'S' + spread.short_strike + '/B' + spread.long_strike + ' ' + spread.option_type + '<br>';
+    html += '<span class="dir-buy">Cr $' + spread.net_credit.toFixed(2) + '</span> ';
+  } else {
+    html += 'B' + spread.long_strike + '/S' + spread.short_strike + ' ' + spread.option_type + '<br>';
+    html += '<span class="dir-sell">Dr $' + spread.net_debit.toFixed(2) + '</span> ';
+  }
+  html += 'R:R ' + spread.risk_reward + '<br>';
+  html += 'IV: <strong>' + spread.iv_rank + '</strong> | ' + spread.days_to_expiry + 'DTE';
+  return html;
+}
+
+function analyzeSetup(ticker, zoneType, zonePrice, btn) {
+  btn.textContent = 'Loading...';
+  btn.disabled = true;
+  var resultDiv = document.getElementById(btn.id + '_result');
+  fetch('/api/options/' + ticker + '?zone_type=' + zoneType + '&zone_price=' + zonePrice + '&current_price=' + zonePrice)
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      var html = '';
+      if (d.status === 'pending') {
+        html = '<span style="color:var(--text-light)">Sent to IB...</span>';
+        setTimeout(function() { pollResult(d.request_id, resultDiv, btn, 1); }, 3000);
+      } else if (d.credit_spread || d.debit_spread || (d.sources && d.sources.length > 0)) {
+        // Show IV recommendation
+        var cs = d.credit_spread;
+        var ds = d.debit_spread;
+        if (d.sources && d.sources.length > 0) {
+          var src = d.sources[0];
+          cs = src.credit_spread;
+          ds = src.debit_spread;
+        }
+        var ivRank = (cs && cs.iv_rank) || (ds && ds.iv_rank) || 'unknown';
+        var rec = ivRank === 'high' ? '<span class="dir-buy">Credit preferred</span>' :
+                  ivRank === 'low' ? '<span class="dir-sell">Debit preferred</span>' :
+                  '<span style="color:#f39c12">Either works</span>';
+        html += '<div style="margin-bottom:4px">IV: <strong>' + ivRank + '</strong> — ' + rec + '</div>';
+        if (cs) html += '<div style="margin-bottom:4px;padding:3px;background:#f9f9f6;border-radius:4px;">' + renderSpread(cs) + '</div>';
+        if (ds) html += '<div style="padding:3px;background:#f9f9f6;border-radius:4px;">' + renderSpread(ds) + '</div>';
+        btn.textContent = 'Refresh';
+      } else if (d.error) {
+        html = '<span class="dir-sell">' + d.error + '</span>';
+        btn.textContent = 'Retry';
+      } else {
+        html = '<span style="color:var(--text-light)">No spreads found</span>';
+        btn.textContent = 'Retry';
+      }
+      btn.disabled = false;
+      resultDiv.innerHTML = html;
+    })
+    .catch(function(e) {
+      resultDiv.innerHTML = '<span class="dir-sell">Error</span>';
+      btn.textContent = 'Retry'; btn.disabled = false;
+    });
+}
+
+function pollResult(requestId, resultDiv, btn, attempts) {
+  if (attempts > 20) {
+    resultDiv.innerHTML = '<span class="dir-sell">Timeout</span>';
+    btn.textContent = 'Retry'; btn.disabled = false;
+    return;
+  }
+  fetch('/api/ibkr/analyze/status/' + requestId)
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.status === 'pending') {
+        btn.textContent = 'Analyzing... (' + attempts + ')';
+        setTimeout(function() { pollResult(requestId, resultDiv, btn, attempts + 1); }, 2000);
+      } else {
+        // Reuse the same rendering
+        var html = '';
+        var cs = d.credit_spread;
+        var ds = d.debit_spread;
+        if (d.sources && d.sources.length > 0) { cs = d.sources[0].credit_spread; ds = d.sources[0].debit_spread; }
+        var ivRank = (cs && cs.iv_rank) || (ds && ds.iv_rank) || 'unknown';
+        var rec = ivRank === 'high' ? '<span class="dir-buy">Credit preferred</span>' :
+                  ivRank === 'low' ? '<span class="dir-sell">Debit preferred</span>' :
+                  '<span style="color:#f39c12">Either works</span>';
+        html += '<div style="margin-bottom:4px">IV: <strong>' + ivRank + '</strong> — ' + rec + '</div>';
+        if (cs) html += '<div style="margin-bottom:4px;padding:3px;background:#f9f9f6;border-radius:4px;">' + renderSpread(cs) + '</div>';
+        if (ds) html += '<div style="padding:3px;background:#f9f9f6;border-radius:4px;">' + renderSpread(ds) + '</div>';
+        resultDiv.innerHTML = html;
+        btn.textContent = 'Refresh'; btn.disabled = false;
+      }
+    })
+    .catch(function() {
+      resultDiv.innerHTML = '<span class="dir-sell">Error</span>';
+      btn.textContent = 'Retry'; btn.disabled = false;
     });
 }
 </script>
