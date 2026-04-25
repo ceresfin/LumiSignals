@@ -1056,19 +1056,95 @@ def create_app():
         if not massive_key:
             return jsonify({"error": "No Massive API key configured"}), 400
 
-        from lumisignals.massive_client import MassiveClient, CORE_TICKERS
-        from lumisignals.untouched_levels import scan_universe
+        from lumisignals.massive_client import MassiveClient, CORE_TICKERS, SWING_TICKERS
+        from lumisignals.untouched_levels import scan_universe, scan_ticker, TIMEFRAMES
 
         client = MassiveClient(massive_key)
         proximity = float(request.args.get("proximity", 2.0))
         tickers = request.args.get("tickers", "").upper().split(",")
         tickers = [t.strip() for t in tickers if t.strip()]
-        if not tickers:
-            tickers = CORE_TICKERS[:50]
 
-        setups = scan_universe(client, tickers, proximity_pct=proximity)
+        # Swing scan: full expanded list on M/W only
+        # Intraday/Scalp scan: core tickers on D/4H/1H
+        swing_list = SWING_TICKERS if not tickers else tickers
+        core_list = CORE_TICKERS[:30] if not tickers else tickers
+        if tickers:
+            swing_list = tickers
+            core_list = tickers
 
-        result = {"setups": setups, "tickers_scanned": len(tickers), "proximity_pct": proximity}
+        all_setups = []
+
+        # Scan swing tickers (M/W only — faster, broader)
+        for ticker in swing_list:
+            try:
+                candles_1d = client.get_candles(ticker, "1d", 2)
+                if not candles_1d:
+                    continue
+                price = candles_1d[-1].close
+                levels = scan_ticker(client, ticker, price, ["1mo", "1w"])
+                for tf_label, lvl in levels.items():
+                    for level_type, level_price in [("D1", lvl.demand1), ("D2", lvl.demand2), ("S1", lvl.supply1), ("S2", lvl.supply2)]:
+                        if level_price is None or level_price == 0:
+                            continue
+                        dist_pct = (price - level_price) / price * 100
+                        is_demand = level_type.startswith("D")
+                        if is_demand and not (0 < dist_pct <= proximity):
+                            continue
+                        if not is_demand and not (-proximity <= dist_pct < 0):
+                            continue
+                        direction = "BUY" if is_demand else "SELL"
+                        score = 1 if (direction == "BUY" and lvl.trend == "UP") or (direction == "SELL" and lvl.trend == "DOWN") else 0
+                        if lvl.adx >= 25:
+                            score += 1
+                        all_setups.append({
+                            "ticker": ticker, "price": round(price, 2), "level": round(level_price, 2),
+                            "level_type": level_type, "tf": tf_label,
+                            "tf_name": {"M": "Monthly", "W": "Weekly"}.get(tf_label, tf_label),
+                            "distance_pct": round(dist_pct, 2), "direction": direction,
+                            "trend": lvl.trend, "adx": lvl.adx, "score": score,
+                        })
+            except Exception:
+                continue
+
+        # Scan core tickers (D/4H/1H — intraday + scalp)
+        for ticker in core_list:
+            try:
+                candles_1d = client.get_candles(ticker, "1d", 2)
+                if not candles_1d:
+                    continue
+                price = candles_1d[-1].close
+                levels = scan_ticker(client, ticker, price, ["1d", "4h", "1h"])
+                for tf_label, lvl in levels.items():
+                    for level_type, level_price in [("D1", lvl.demand1), ("D2", lvl.demand2), ("S1", lvl.supply1), ("S2", lvl.supply2)]:
+                        if level_price is None or level_price == 0:
+                            continue
+                        dist_pct = (price - level_price) / price * 100
+                        is_demand = level_type.startswith("D")
+                        if is_demand and not (0 < dist_pct <= proximity):
+                            continue
+                        if not is_demand and not (-proximity <= dist_pct < 0):
+                            continue
+                        direction = "BUY" if is_demand else "SELL"
+                        score = 1 if (direction == "BUY" and lvl.trend == "UP") or (direction == "SELL" and lvl.trend == "DOWN") else 0
+                        if lvl.adx >= 25:
+                            score += 1
+                        all_setups.append({
+                            "ticker": ticker, "price": round(price, 2), "level": round(level_price, 2),
+                            "level_type": level_type, "tf": tf_label,
+                            "tf_name": {"D": "Daily", "4H": "4-Hour", "1H": "Hourly"}.get(tf_label, tf_label),
+                            "distance_pct": round(dist_pct, 2), "direction": direction,
+                            "trend": lvl.trend, "adx": lvl.adx, "score": score,
+                        })
+            except Exception:
+                continue
+
+        # Sort by score desc, TF desc, distance
+        tf_rank = {"M": 5, "W": 4, "D": 3, "4H": 2, "1H": 1}
+        all_setups.sort(key=lambda s: (-s["score"], -tf_rank.get(s["tf"], 0), abs(s["distance_pct"])))
+        setups = all_setups
+        tickers_scanned = len(set(swing_list) | set(core_list))
+
+        result = {"setups": setups, "tickers_scanned": tickers_scanned, "proximity_pct": proximity}
         rdb.setex("scanner:results", 300, json.dumps(result))
         return jsonify(result)
 

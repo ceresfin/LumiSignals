@@ -119,40 +119,52 @@ function runScan() {
         return;
       }
 
-      var html = '<table><tr>';
-      html += '<th>Ticker</th>';
-      html += '<th>Price</th>';
-      html += '<th>Level</th>';
-      html += '<th>Type</th>';
-      html += '<th>TF</th>';
-      html += '<th>Distance</th>';
-      html += '<th>Direction</th>';
-      html += '<th>Trend</th>';
-      html += '<th>ADX</th>';
-      html += '<th>Score</th>';
-      html += '</tr>';
+      // Group by trade type
+      var swing = setups.filter(function(s) { return s.tf === 'M' || s.tf === 'W' || s.tf === 'Q'; });
+      var intraday = setups.filter(function(s) { return s.tf === 'D'; });
+      var scalp = setups.filter(function(s) { return s.tf === '4H' || s.tf === '1H'; });
 
-      setups.forEach(function(s) {
-        var dirClass = s.direction === 'BUY' ? 'dir-buy' : 'dir-sell';
-        var trendClass = s.trend === 'UP' ? 'dir-buy' : s.trend === 'DOWN' ? 'dir-sell' : '';
-        var scoreClass = s.score >= 3 ? 'score-3' : s.score >= 2 ? 'score-2' : s.score >= 1 ? 'score-1' : 'score-0';
-        var tfClass = 'tf-' + s.tf;
-
-        html += '<tr>';
-        html += '<td><strong>' + s.ticker + '</strong></td>';
-        html += '<td>$' + s.price.toFixed(2) + '</td>';
-        html += '<td>$' + s.level.toFixed(2) + '</td>';
-        html += '<td>' + s.level_type + '</td>';
-        html += '<td><span class="tf-tag ' + tfClass + '">' + s.tf_name + '</span></td>';
-        html += '<td>' + s.distance_pct.toFixed(2) + '%</td>';
-        html += '<td><span class="' + dirClass + '">' + s.direction + '</span></td>';
-        html += '<td><span class="' + trendClass + '">' + s.trend + '</span></td>';
-        html += '<td>' + s.adx.toFixed(0) + '</td>';
-        html += '<td><span class="score-badge ' + scoreClass + '">' + s.score + '</span></td>';
+      function buildSection(title, subtitle, items, colorClass) {
+        var html = '<div style="margin-bottom:24px">';
+        html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">';
+        html += '<span style="font-family:Playfair Display,serif;font-size:1.05rem">' + title + '</span>';
+        html += '<span style="font-size:0.7rem;font-weight:600;padding:3px 10px;border-radius:50px;' + colorClass + '">' + subtitle + '</span>';
+        html += '<span style="font-size:0.72rem;color:var(--text-light)">' + items.length + ' setups</span>';
+        html += '</div>';
+        if (items.length === 0) {
+          html += '<div style="text-align:center;padding:16px;color:var(--text-light);font-size:0.82rem">No setups near ' + title.toLowerCase() + ' levels</div>';
+          html += '</div>';
+          return html;
+        }
+        html += '<table><tr>';
+        html += '<th>Ticker</th><th>Price</th><th>Level</th><th>Type</th><th>TF</th>';
+        html += '<th>Distance</th><th>Direction</th><th>Trend</th><th>ADX</th><th>Score</th>';
         html += '</tr>';
-      });
+        items.forEach(function(s) {
+          var dirClass = s.direction === 'BUY' ? 'dir-buy' : 'dir-sell';
+          var trendCls = s.trend === 'UP' ? 'dir-buy' : s.trend === 'DOWN' ? 'dir-sell' : '';
+          var scoreClass = s.score >= 3 ? 'score-3' : s.score >= 2 ? 'score-2' : s.score >= 1 ? 'score-1' : 'score-0';
+          var tfClass = 'tf-' + s.tf;
+          html += '<tr>';
+          html += '<td><strong>' + s.ticker + '</strong></td>';
+          html += '<td>$' + s.price.toFixed(2) + '</td>';
+          html += '<td>$' + s.level.toFixed(2) + '</td>';
+          html += '<td>' + s.level_type + '</td>';
+          html += '<td><span class="tf-tag ' + tfClass + '">' + s.tf_name + '</span></td>';
+          html += '<td>' + s.distance_pct.toFixed(2) + '%</td>';
+          html += '<td><span class="' + dirClass + '">' + s.direction + '</span></td>';
+          html += '<td><span class="' + trendCls + '">' + s.trend + '</span></td>';
+          html += '<td>' + s.adx.toFixed(0) + '</td>';
+          html += '<td><span class="score-badge ' + scoreClass + '">' + s.score + '</span></td>';
+          html += '</tr>';
+        });
+        html += '</table></div>';
+        return html;
+      }
 
-      html += '</table>';
+      var html = buildSection('Swing Trades', 'Weekly / Monthly / Quarterly', swing, 'background:#e8f5e9;color:#2e7d32');
+      html += buildSection('Intraday Trades', 'Daily Levels', intraday, 'background:#e3f2fd;color:#1565c0');
+      html += buildSection('Scalp Trades', '4-Hour / Hourly Levels', scalp, 'background:#f3e5f5;color:#7b1fa2');
       document.getElementById('scanResults').innerHTML = html;
     })
     .catch(function(e) {

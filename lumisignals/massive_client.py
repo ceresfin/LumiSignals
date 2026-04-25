@@ -19,7 +19,11 @@ BASE_URL = "https://api.polygon.io"
 
 # Core watchlist
 CORE_TICKERS = [
-    # Major ETFs / Indices
+    # Major Indices (Polygon uses I: prefix for index data)
+    "I:SPX", "I:NDX",           # S&P 500 Index, Nasdaq 100 Index
+    "I:XSP", "I:XND",           # Mini S&P 500 (1/10), Mini Nasdaq 100 (1/100)
+
+    # Major ETFs
     "SPY", "QQQ", "IWM",       # S&P 500, Nasdaq 100, Russell 2000
     "DIA",                       # Dow 30
 
@@ -85,6 +89,63 @@ CRYPTO_TICKERS = [
     "X:UNIUSD",
 ]
 
+# Expanded swing watchlist — indices + all LumiTrade stocks with options
+# Used only for swing scans (M/W/Q timeframes). Intraday/scalp uses CORE_TICKERS.
+SWING_TICKERS = [
+    # Major Indices
+    "I:SPX", "I:NDX", "I:XSP", "I:XND",
+    "I:DJI", "I:COMP", "I:RUT", "I:RUI",
+    "I:DJT", "I:DJU", "I:SOX", "I:BKX", "I:KRX",
+    "I:HGX", "I:OSX", "I:NBI", "I:XAU", "I:UTY", "I:DJUSRE",
+    # Commodity Indices
+    "I:DJCI", "I:DJCIEN", "I:DJCIPM", "I:DJCIIM", "I:DJCIGC", "I:DJCISI",
+    "I:DJCICL", "I:DJCING", "I:DJCIHO", "I:DJCIRB", "I:DJCIHG",
+    "I:DJCIWH", "I:DJCICN", "I:DJCISY", "I:DJCISB", "I:DJCIKC",
+    "I:DJCICT", "I:DJCICC", "I:DJCILH", "I:DJCILC", "I:DJCIFC",
+    # Global Indices
+    "I:MXEF", "I:MXEA", "I:MXWO", "I:GDOW", "I:EDOW", "I:ADOW",
+    "I:DJDVY", "I:QMI", "I:TRAN", "I:MSTAR",
+    # ETFs
+    "SPY", "QQQ", "IWM", "DIA",
+    "XLK", "XLF", "XLV", "XLE", "XLI", "XLY", "XLP", "XLU", "XLB", "XLRE", "XLC",
+    "GLD", "USO", "AGG", "BITO", "IBIT", "FBTC",
+    "IDV", "IEO", "JEPI", "SPYD", "QYLD", "DBMF",
+    # Mega-cap Tech
+    "AAPL", "MSFT", "GOOG", "GOOGL", "AMZN", "META", "NVDA", "TSLA",
+    "AVGO", "ORCL", "ADBE", "CRM", "AMD", "INTC", "QCOM", "AMAT",
+    "MU", "NFLX", "CSCO", "IBM", "NOW", "INTU", "SNPS", "CDNS",
+    # Financials
+    "JPM", "V", "MA", "BAC", "GS", "MS", "WFC", "C", "BLK", "SCHW",
+    "AXP", "BX", "KKR", "COIN", "BK", "PNC", "USB", "STT", "HBAN", "RF",
+    "CME", "ICE", "NDAQ", "SPGI", "MCO",
+    # Health Care
+    "UNH", "JNJ", "LLY", "ABBV", "MRK", "PFE", "TMO", "ABT", "DHR", "BMY",
+    "BSX", "MDT", "HCA", "REGN", "BIIB", "ILMN", "IQV", "DGX", "CAH", "COR",
+    # Consumer
+    "WMT", "COST", "HD", "NKE", "MCD", "SBUX", "TGT", "LOW",
+    "PG", "KO", "PEP", "KR", "DG", "ORLY", "AZO", "ROST", "TJX", "ULTA",
+    "DPZ", "CCL", "LVS", "MGM", "CZR",
+    # Industrials
+    "CAT", "DE", "HON", "UPS", "FDX", "BA", "GE", "RTX", "LMT", "GD", "NOC",
+    "EMR", "ETN", "IR", "PH", "ROK", "WAB", "FAST", "ODFL",
+    # Energy
+    "XOM", "CVX", "COP", "SLB", "EOG", "DVN", "HAL", "MPC", "OXY", "FANG",
+    # Communication / Media
+    "DIS", "CMCSA", "T", "VZ", "TMUS", "NFLX", "EA", "TTWO",
+    # Real Estate
+    "AVB", "EQR", "KIM", "REG", "FRT", "HST", "ARE",
+    # Utilities
+    "NEE", "D", "PCG", "EXC", "AES", "XEL", "WEC", "CMS", "EIX", "ED", "PEG", "EVRG", "CNP", "AEE",
+    # Materials
+    "FCX", "NUE", "MLM", "APD", "LIN", "IFF", "AVY", "BALL", "FMC",
+    # Hot / High-beta
+    "PLTR", "UBER", "SQ", "SHOP", "SNOW", "DKNG", "SOFI",
+    "RIVN", "LCID", "ARM", "SMCI", "MSTR", "CRWD", "PANW",
+    "DDOG", "WDAY", "TTD", "SPOT", "CVNA", "APP", "AXON",
+    "DELL", "HPE", "HPQ", "LULU", "LYV", "PYPL",
+    "VST", "GEV", "RKLB", "IREN", "QBTS", "RGTI",
+]
+
 # Combined default watchlist
 DEFAULT_TICKERS = CORE_TICKERS + CRYPTO_TICKERS
 
@@ -139,7 +200,7 @@ class MassiveClient:
         """
         # 1h and 4h for stocks: aggregate from 5m to align with market open (9:30 ET)
         # Weekly for stocks: aggregate from daily to start on Monday (not Sunday)
-        is_stock = not ticker.startswith("X:")
+        is_stock = not ticker.startswith("X:")  # X: = crypto, I: = index (treated like stock)
         if timespan in AGGREGATE_FROM_5M and is_stock:
             return self._get_market_aligned_candles(ticker, timespan, count)
         if timespan == "1w" and is_stock:

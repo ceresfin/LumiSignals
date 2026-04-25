@@ -233,6 +233,7 @@ def scan_ticker(massive_client, ticker: str, current_price: float = 0,
 
 
 def scan_universe(massive_client, tickers: List[str],
+                  swing_tickers: List[str] = None,
                   proximity_pct: float = 1.0) -> List[dict]:
     """Scan a list of tickers and find those near S/R levels.
 
@@ -321,6 +322,7 @@ def scan_universe(massive_client, tickers: List[str],
             logger.warning("Error scanning %s: %s", ticker, e)
             continue
 
-    # Sort by score descending, then by distance (closer = better)
-    setups.sort(key=lambda s: (-s["score"], abs(s["distance_pct"])))
+    # Sort by score descending, then by TF descending (M > W > D > 4H > 1H), then distance
+    tf_rank = {"M": 5, "W": 4, "D": 3, "4H": 2, "1H": 1}
+    setups.sort(key=lambda s: (-s["score"], -tf_rank.get(s["tf"], 0), abs(s["distance_pct"])))
     return setups
