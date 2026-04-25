@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LumiSignals — IB Authentication</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+:root { --olive: #7F8464; --cream: #F5F3EE; --dark: #2E2E2C; --text-light: #8a847e; --text-medium: #56665F; --white: #fff; --green: #27ae60; --red: #c0392b; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Inter', sans-serif; background: var(--cream); color: var(--dark); }
+.header { background: linear-gradient(165deg, #C4B99A 0%, #B8A88C 40%, #A89878 100%); padding: 16px 0; }
+.header-inner { max-width: 1400px; margin: 0 auto; padding: 0 24px; display: flex; justify-content: space-between; align-items: center; }
+.header h1 { font-family: 'Playfair Display', serif; font-size: 1.4rem; font-weight: 400; }
+.header-nav { display: flex; gap: 12px; }
+.header-nav a { font-size: 0.85rem; color: var(--dark); padding: 8px 16px; border-radius: 50px; text-decoration: none; }
+.header-nav a:hover { background: rgba(0,0,0,0.05); }
+.header-nav a.active { background: var(--olive); color: #FFF5E1; }
+.container { max-width: 1400px; margin: 0 auto; padding: 24px; }
+.card { background: var(--white); border-radius: 12px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); margin-bottom: 20px; }
+.card h2 { font-family: 'Playfair Display', serif; font-size: 1.1rem; font-weight: 400; margin-bottom: 16px; padding-bottom: 10px; border-bottom: 1px solid #eee; }
+.status-box { padding: 16px; border-radius: 8px; margin-bottom: 16px; font-size: 0.85rem; }
+.status-ok { background: #e8f5e9; color: var(--green); }
+.status-bad { background: #fdecea; color: var(--red); }
+.auth-btn { font-size: 0.85rem; background: var(--olive); border: none; border-radius: 50px; padding: 10px 24px; cursor: pointer; color: #FFF5E1; font-weight: 500; }
+.auth-btn:hover { opacity: 0.9; }
+.auth-btn.danger { background: var(--red); }
+iframe { width: 100%; height: 600px; border: 1px solid #ddd; border-radius: 8px; }
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="header-inner">
+    <h1>LumiSignals</h1>
+    <nav class="header-nav">
+      <a href="/dashboard">Dashboard</a>
+      <a href="/watchlist">Watchlist</a>
+      <a href="/trades">Trades</a>
+      <a href="/compare">Compare</a>
+      <a href="/scanner">Scanner</a>
+      <a href="/strategy">Strategy</a>
+      <a href="/setup">Settings</a>
+      <a href="/logout">Log out</a>
+    </nav>
+  </div>
+</div>
+<div class="container">
+  <div class="card">
+    <h2>Interactive Brokers Connection</h2>
+    <div id="authStatus" class="status-box">Checking connection...</div>
+    <div style="margin-bottom:16px">
+      <button class="auth-btn" onclick="checkStatus()">Check Status</button>
+      <button class="auth-btn danger" onclick="showLogin()" id="loginBtn" style="display:none">Re-authenticate</button>
+    </div>
+    <div id="loginFrame" style="display:none">
+      <p style="font-size:0.78rem; color:var(--text-light); margin-bottom:8px;">Log in with your IB credentials below. Once authenticated, click "Check Status" to verify.</p>
+      <iframe src="" id="ibFrame"></iframe>
+    </div>
+  </div>
+</div>
+<script>
+function checkStatus() {
+  document.getElementById('authStatus').className = 'status-box';
+  document.getElementById('authStatus').textContent = 'Checking...';
+  fetch('/ib-auth/status')
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      var el = document.getElementById('authStatus');
+      var loginBtn = document.getElementById('loginBtn');
+      if (d.authenticated) {
+        el.className = 'status-box status-ok';
+        el.innerHTML = '<strong>Connected</strong> — IB Gateway is authenticated and running.<br>' +
+          'Server: ' + (d.serverInfo ? d.serverInfo.serverName : 'unknown') +
+          ' | Version: ' + (d.serverInfo ? d.serverInfo.serverVersion : 'unknown');
+        loginBtn.style.display = 'none';
+        document.getElementById('loginFrame').style.display = 'none';
+      } else {
+        el.className = 'status-box status-bad';
+        el.innerHTML = '<strong>Not Connected</strong> — IB session expired or gateway not running.' +
+          (d.error ? '<br>Error: ' + d.error : '') +
+          '<br>Click "Re-authenticate" to log in.';
+        loginBtn.style.display = 'inline-block';
+      }
+    })
+    .catch(function(e) {
+      var el = document.getElementById('authStatus');
+      el.className = 'status-box status-bad';
+      el.innerHTML = '<strong>Error</strong> — Could not reach CPAPI gateway.<br>' + e.message;
+      document.getElementById('loginBtn').style.display = 'inline-block';
+    });
+}
+
+function showLogin() {
+  document.getElementById('loginFrame').style.display = 'block';
+  document.getElementById('ibFrame').src = '/ib-auth/proxy/sso/Login?forwardTo=22&RL=1&ip2loc=US';
+}
+
+checkStatus();
+setInterval(checkStatus, 30000);
+</script>
+</body>
+</html>

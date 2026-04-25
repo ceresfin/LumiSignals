@@ -282,6 +282,65 @@ def create_app():
         return render_template("scanner.html", user=current_user)
 
     # -----------------------------------------------------------------------
+    # IB CPAPI Auth Proxy — proxies the IB login page through the dashboard
+    # -----------------------------------------------------------------------
+
+    @app.route("/ib-auth")
+    @login_required
+    def ib_auth_page():
+        """Show IB re-authentication page."""
+        return render_template("ib_auth.html", user=current_user)
+
+    @app.route("/ib-auth/proxy/<path:path>", methods=["GET", "POST", "PUT"])
+    @login_required
+    def ib_auth_proxy(path):
+        """Proxy requests to the CPAPI gateway for authentication."""
+        import requests as _req
+        cpapi_url = os.environ.get("CPAPI_BASE_URL", "https://localhost:5000/v1/api").replace("/v1/api", "")
+        target = f"{cpapi_url}/{path}"
+        try:
+            if request.method == "POST":
+                resp = _req.post(target, json=request.get_json(silent=True),
+                                data=request.form if not request.is_json else None,
+                                headers={"Content-Type": request.content_type or "application/json"},
+                                verify=False, timeout=15, allow_redirects=False)
+            elif request.method == "PUT":
+                resp = _req.put(target, json=request.get_json(silent=True),
+                               verify=False, timeout=15, allow_redirects=False)
+            else:
+                resp = _req.get(target, params=request.args, verify=False, timeout=15,
+                               allow_redirects=False)
+
+            # Handle redirects — rewrite CPAPI URLs to our proxy
+            if resp.status_code in (301, 302, 303, 307):
+                location = resp.headers.get("Location", "")
+                if location.startswith("https://localhost:5000"):
+                    location = location.replace("https://localhost:5000", "/ib-auth/proxy")
+                return redirect(location)
+
+            # Rewrite response content — replace CPAPI URLs with proxy URLs
+            content_type = resp.headers.get("Content-Type", "")
+            if "text/html" in content_type or "javascript" in content_type:
+                body = resp.text.replace("https://localhost:5000", "/ib-auth/proxy")
+                return body, resp.status_code, {"Content-Type": content_type}
+
+            return resp.content, resp.status_code, {"Content-Type": content_type}
+        except Exception as e:
+            return jsonify({"error": f"CPAPI proxy error: {e}"}), 502
+
+    @app.route("/ib-auth/status")
+    @login_required
+    def ib_auth_status():
+        """Check IB CPAPI authentication status."""
+        import requests as _req
+        cpapi_url = os.environ.get("CPAPI_BASE_URL", "https://localhost:5000/v1/api")
+        try:
+            resp = _req.post(f"{cpapi_url}/iserver/auth/status", verify=False, timeout=5)
+            return jsonify(resp.json())
+        except Exception as e:
+            return jsonify({"authenticated": False, "error": str(e)})
+
+    # -----------------------------------------------------------------------
     # API endpoints
     # -----------------------------------------------------------------------
 

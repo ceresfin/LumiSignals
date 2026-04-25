@@ -367,6 +367,28 @@ button:hover { opacity: 0.9; }
 
     <button type="submit">Save Settings</button>
   </form>
+
+  <div class="card" style="margin-top:20px;">
+    <h2>IB Gateway Connection</h2>
+    <div id="ibStatus" style="padding:12px;border-radius:8px;margin-bottom:12px;font-size:0.85rem;">Checking...</div>
+    <a href="/ib-auth" style="display:inline-block;padding:10px 24px;background:#7F8464;color:#FFF5E1;border-radius:50px;text-decoration:none;font-size:0.85rem;font-weight:500;">Manage IB Connection</a>
+  </div>
+  <script>
+  fetch('/ib-auth/status').then(function(r){return r.json()}).then(function(d){
+    var el=document.getElementById('ibStatus');
+    if(d.authenticated){
+      el.style.background='#e8f5e9';el.style.color='#27ae60';
+      el.innerHTML='<strong>Connected</strong> — IB Gateway authenticated';
+    } else {
+      el.style.background='#fdecea';el.style.color='#c0392b';
+      el.innerHTML='<strong>Not Connected</strong> — <a href="/ib-auth">Click here to re-authenticate</a>';
+    }
+  }).catch(function(){
+    var el=document.getElementById('ibStatus');
+    el.style.background='#fdecea';el.style.color='#c0392b';
+    el.innerHTML='<strong>Error</strong> — Could not reach IB gateway';
+  });
+  </script>
 </div>
 <script>
 function toggleRiskLabel(model) {
