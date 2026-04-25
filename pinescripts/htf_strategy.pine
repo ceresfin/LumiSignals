@@ -27,107 +27,63 @@ colorW  = color.yellow
 colorD  = color.blue
 color4H = #CF9FFF
 
-// ==================== HTF TREND FUNCTION (ADX only) ====================
-findTrend(int adxLen) =>
+// ==================== HTF LEVEL + TREND FUNCTION ====================
+// Combined: finds ADX trend + 2 untouched supply + 2 untouched demand
+// Uses a loop with 10-bar lookback for deeper level detection
+findAll(int adxLen) =>
     [dp, dm, adx] = ta.dmi(adxLen, adxLen)
     dir = dp > (dm + 2) ? 1 : dp < (dm - 2) ? -1 : 0
     atrVal = ta.atr(14)
-    [dir, adx, atrVal]
 
-// ==================== HTF BAR DATA ====================
-// Pull historical highs/lows from each TF, then calculate untouched levels
-// in the main context where we have access to actual current price.
-findBars() =>
-    [high, high[1], high[2], high[3], high[4], low, low[1], low[2], low[3], low[4]]
-
-// ==================== UNTOUCHED LEVEL DETECTION ====================
-// Finds 2 nearest untouched supply levels (above price) and 2 demand levels (below price)
-// sup1/dem1 = closest to price, sup2/dem2 = next level further out
-findUntouched(float h0, float h1, float h2, float h3, float h4, float l0, float l1, float l2, float l3, float l4) =>
-    float curHigh = math.max(h0, close)
-    float curLow = math.min(l0, close)
-
-    // Supply: 2 nearest untouched highs above current price
-    float maxH = curHigh
+    float maxH = high
     float sup1 = na
     float sup2 = na
-    if h1 > maxH
-        sup1 := h1
-    maxH := math.max(maxH, h1)
-    if h2 > maxH
-        if na(sup1)
-            sup1 := h2
-        else if na(sup2)
-            sup2 := h2
-    maxH := math.max(maxH, h2)
-    if h3 > maxH
-        if na(sup1)
-            sup1 := h3
-        else if na(sup2)
-            sup2 := h3
-    maxH := math.max(maxH, h3)
-    if h4 > maxH
-        if na(sup1)
-            sup1 := h4
-        else if na(sup2)
-            sup2 := h4
-    if na(sup1)
-        sup1 := curHigh
-
-    // Demand: 2 nearest untouched lows below current price
-    float minL = curLow
+    float minL = low
     float dem1 = na
     float dem2 = na
-    if l1 < minL
-        dem1 := l1
-    minL := math.min(minL, l1)
-    if l2 < minL
-        if na(dem1)
-            dem1 := l2
-        else if na(dem2)
-            dem2 := l2
-    minL := math.min(minL, l2)
-    if l3 < minL
-        if na(dem1)
-            dem1 := l3
-        else if na(dem2)
-            dem2 := l3
-    minL := math.min(minL, l3)
-    if l4 < minL
-        if na(dem1)
-            dem1 := l4
-        else if na(dem2)
-            dem2 := l4
-    if na(dem1)
-        dem1 := curLow
 
-    [sup1, sup2, dem1, dem2]
+    for i = 1 to 10
+        if high[i] > maxH
+            if na(sup1)
+                sup1 := high[i]
+            else if na(sup2)
+                sup2 := high[i]
+        maxH := math.max(maxH, high[i])
+        if low[i] < minL
+            if na(dem1)
+                dem1 := low[i]
+            else if na(dem2)
+                dem2 := low[i]
+        minL := math.min(minL, low[i])
+
+    if na(sup1)
+        sup1 := high
+    if na(dem1)
+        dem1 := low
+
+    [dir, adx, atrVal, sup1, sup2, dem1, dem2]
 
 // ==================== HTF DATA VIA request.security ====================
-// Trend/ADX
-[mDir,  mAdx,  mAtr]  = request.security(syminfo.tickerid, "M",   findTrend(adxPeriod))
-[wDir,  wAdx,  wAtr]  = request.security(syminfo.tickerid, "W",   findTrend(adxPeriod))
-[dDir,  dAdx,  dAtr]  = request.security(syminfo.tickerid, "D",   findTrend(adxPeriod))
-[h4Dir, h4Adx, h4Atr] = request.security(syminfo.tickerid, "240", findTrend(adxPeriod))
-[h1Dir, h1Adx, h1Atr] = request.security(syminfo.tickerid, "60",  findTrend(adxPeriod))
-[qDir,  qAdx,  qAtr]  = request.security(syminfo.tickerid, "3M",  findTrend(adxPeriod))
+[mDir,  mAdx,  mAtr,  mSupply,  mSupply2,  mDemand,  mDemand2]  = request.security(syminfo.tickerid, "M",   findAll(adxPeriod))
+[wDir,  wAdx,  wAtr,  wSupply,  wSupply2,  wDemand,  wDemand2]  = request.security(syminfo.tickerid, "W",   findAll(adxPeriod))
+[dDir,  dAdx,  dAtr,  dSupply,  dSupply2,  dDemand,  dDemand2]  = request.security(syminfo.tickerid, "D",   findAll(adxPeriod))
+[h4Dir, h4Adx, h4Atr, h4Supply, h4Supply2, h4Demand, h4Demand2] = request.security(syminfo.tickerid, "240", findAll(adxPeriod))
+[h1Dir, h1Adx, h1Atr, h1Supply, h1Supply2, h1Demand, h1Demand2] = request.security(syminfo.tickerid, "60",  findAll(adxPeriod))
+[qDir,  qAdx,  qAtr,  qSupply,  qSupply2,  qDemand,  qDemand2]  = request.security(syminfo.tickerid, "3M",  findAll(adxPeriod))
 
-// HTF bar data (highs/lows for untouched level detection)
-[mH0,mH1,mH2,mH3,mH4, mL0,mL1,mL2,mL3,mL4]    = request.security(syminfo.tickerid, "M",   findBars())
-[wH0,wH1,wH2,wH3,wH4, wL0,wL1,wL2,wL3,wL4]    = request.security(syminfo.tickerid, "W",   findBars())
-[dH0,dH1,dH2,dH3,dH4, dL0,dL1,dL2,dL3,dL4]    = request.security(syminfo.tickerid, "D",   findBars())
-[h4H0,h4H1,h4H2,h4H3,h4H4, h4L0,h4L1,h4L2,h4L3,h4L4] = request.security(syminfo.tickerid, "240", findBars())
-[h1H0,h1H1,h1H2,h1H3,h1H4, h1L0,h1L1,h1L2,h1L3,h1L4] = request.security(syminfo.tickerid, "60",  findBars())
-[qH0,qH1,qH2,qH3,qH4, qL0,qL1,qL2,qL3,qL4]  = request.security(syminfo.tickerid, "3M",  findBars())
-
-// Calculate untouched levels using current price as baseline
-// Each returns: supply1 (nearest), supply2 (next), demand1 (nearest), demand2 (next)
-[mSupply, mSupply2, mDemand, mDemand2]     = findUntouched(mH0,mH1,mH2,mH3,mH4, mL0,mL1,mL2,mL3,mL4)
-[wSupply, wSupply2, wDemand, wDemand2]     = findUntouched(wH0,wH1,wH2,wH3,wH4, wL0,wL1,wL2,wL3,wL4)
-[dSupply, dSupply2, dDemand, dDemand2]     = findUntouched(dH0,dH1,dH2,dH3,dH4, dL0,dL1,dL2,dL3,dL4)
-[h4Supply, h4Supply2, h4Demand, h4Demand2] = findUntouched(h4H0,h4H1,h4H2,h4H3,h4H4, h4L0,h4L1,h4L2,h4L3,h4L4)
-[h1Supply, h1Supply2, h1Demand, h1Demand2] = findUntouched(h1H0,h1H1,h1H2,h1H3,h1H4, h1L0,h1L1,h1L2,h1L3,h1L4)
-[qSupply, qSupply2, qDemand, qDemand2]     = findUntouched(qH0,qH1,qH2,qH3,qH4, qL0,qL1,qL2,qL3,qL4)
+// Fix stale levels from request.security — supply must be above price, demand below
+mSupply  := not na(mSupply) and mSupply < close ? close : mSupply
+wSupply  := not na(wSupply) and wSupply < close ? close : wSupply
+dSupply  := not na(dSupply) and dSupply < close ? close : dSupply
+h4Supply := not na(h4Supply) and h4Supply < close ? close : h4Supply
+h1Supply := not na(h1Supply) and h1Supply < close ? close : h1Supply
+qSupply  := not na(qSupply) and qSupply < close ? close : qSupply
+mSupply2  := not na(mSupply2) and mSupply2 < close ? na : mSupply2
+wSupply2  := not na(wSupply2) and wSupply2 < close ? na : wSupply2
+dSupply2  := not na(dSupply2) and dSupply2 < close ? na : dSupply2
+h4Supply2 := not na(h4Supply2) and h4Supply2 < close ? na : h4Supply2
+h1Supply2 := not na(h1Supply2) and h1Supply2 < close ? na : h1Supply2
+qSupply2  := not na(qSupply2) and qSupply2 < close ? na : qSupply2
 
 // ==================== HELPERS ====================
 dirStr(int d) =>
