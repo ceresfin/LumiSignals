@@ -276,6 +276,11 @@ def create_app():
     def compare():
         return render_template("compare.html", user=current_user)
 
+    @app.route("/scanner")
+    @login_required
+    def scanner():
+        return render_template("scanner.html", user=current_user)
+
     # -----------------------------------------------------------------------
     # API endpoints
     # -----------------------------------------------------------------------
@@ -1030,6 +1035,69 @@ def create_app():
             results.append(item)
 
         return jsonify({"tickers": results})
+
+    # -----------------------------------------------------------------------
+    # Scanner — scan stocks for proximity to untouched S/R levels
+    # -----------------------------------------------------------------------
+
+    @app.route("/api/scanner/scan")
+    @login_required
+    def api_scanner_scan():
+        """Scan universe of stocks for setups near untouched levels."""
+        import redis as _redis
+        rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+
+        # Check cache (scan is expensive, cache for 5 min)
+        cached = rdb.get("scanner:results")
+        if cached and not request.args.get("refresh"):
+            return jsonify(json.loads(cached))
+
+        massive_key = os.environ.get("MASSIVE_API_KEY", "")
+        if not massive_key:
+            return jsonify({"error": "No Massive API key configured"}), 400
+
+        from lumisignals.massive_client import MassiveClient, CORE_TICKERS
+        from lumisignals.untouched_levels import scan_universe
+
+        client = MassiveClient(massive_key)
+        proximity = float(request.args.get("proximity", 2.0))
+        tickers = request.args.get("tickers", "").upper().split(",")
+        tickers = [t.strip() for t in tickers if t.strip()]
+        if not tickers:
+            tickers = CORE_TICKERS[:50]
+
+        setups = scan_universe(client, tickers, proximity_pct=proximity)
+
+        result = {"setups": setups, "tickers_scanned": len(tickers), "proximity_pct": proximity}
+        rdb.setex("scanner:results", 300, json.dumps(result))
+        return jsonify(result)
+
+    @app.route("/api/scanner/ticker/<ticker>")
+    @login_required
+    def api_scanner_ticker(ticker):
+        """Get detailed untouched levels for a single ticker."""
+        massive_key = os.environ.get("MASSIVE_API_KEY", "")
+        if not massive_key:
+            return jsonify({"error": "No Massive API key configured"}), 400
+
+        from lumisignals.massive_client import MassiveClient
+        from lumisignals.untouched_levels import scan_ticker
+
+        client = MassiveClient(massive_key)
+        candles = client.get_candles(ticker.upper(), "1d", 2)
+        price = candles[-1].close if candles else 0
+
+        levels = scan_ticker(client, ticker.upper(), price)
+        data = {
+            "ticker": ticker.upper(),
+            "price": round(price, 2),
+            "levels": {k: {
+                "supply1": v.supply1, "supply2": v.supply2,
+                "demand1": v.demand1, "demand2": v.demand2,
+                "trend": v.trend, "adx": v.adx,
+            } for k, v in levels.items()},
+        }
+        return jsonify(data)
 
     # -----------------------------------------------------------------------
     # TradingView Webhook — receives alerts, places 0DTE options trades
