@@ -581,6 +581,31 @@ def run_bot_for_user(user_data, stop_check):
     else:
         log("All 3 models running — SCALP (15m) + INTRADAY (1h) + SWING (daily)")
 
+    # --- 2n20 FX Scalp Strategy ---
+    fx_scalp = None
+    if not user_data.get("dry_run", True):
+        try:
+            from lumisignals.fx_scalp_2n20 import FXScalp2n20
+            fx_sl = float(user_data.get("futures_stop_loss", 25))
+
+            def fx_signal_cb(sig):
+                log(f"[2n20_FX] {sig.get('direction','')} {sig.get('instrument','')} — {sig.get('reason', sig.get('strategy',''))}")
+                # Publish to Redis for trades page
+                try:
+                    import redis as _rdb
+                    rdb = _rdb.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+                    import json as _json
+                    sig["timestamp"] = datetime.now(timezone.utc).isoformat()
+                    rdb.lpush("fx_scalp_2n20:signals", _json.dumps(sig))
+                    rdb.ltrim("fx_scalp_2n20:signals", 0, 99)
+                except Exception:
+                    pass
+
+            fx_scalp = FXScalp2n20(oanda, sl_dollars=fx_sl, signal_callback=fx_signal_cb)
+            log(f"[2n20_FX] Scalp strategy active — {len(fx_scalp.pairs)} pairs, SL ${fx_sl}")
+        except Exception as e:
+            log(f"[2n20_FX] Setup error: {e}")
+
     # Run all models in a unified loop
     tick = 0
     while True:
@@ -614,6 +639,13 @@ def run_bot_for_user(user_data, stop_check):
             # Publish current watchlist to Redis every cycle
             zones = get_watchlist_snapshot(model_name)
             publish_watchlist_model(user_id, model_name, zones)
+
+        # 2n20 FX Scalp: run every tick (30 seconds)
+        if fx_scalp:
+            try:
+                fx_scalp.scan_all()
+            except Exception as e:
+                logger.debug("[2n20_FX] Scan error: %s", e)
 
         # Swing auto-scanner: run every ~480 ticks (4 hours at 30s interval)
         if tick > 0 and tick % 480 == 0:
