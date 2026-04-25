@@ -13,8 +13,52 @@ from .candle_classifier import (
 from .models import Signal
 from .oanda_client import OandaClient, resolve_instrument
 from .order_manager import MAJOR_PAIRS
+from .untouched_levels import find_untouched_levels, calculate_adx_direction
 
 logger = logging.getLogger(__name__)
+
+
+def get_builtin_snr_levels(massive_client, ticker: str, intervals: list,
+                           market_type: str = "forex") -> dict:
+    """Get untouched S/R levels using built-in Polygon-based calculation.
+
+    Replaces LumiTrade SNR API calls. Returns same format:
+    {"1mo": {"support_price": x, "resistance_price": y}, ...}
+    """
+    # For forex, Polygon uses X: prefix
+    poly_ticker = ticker
+    if market_type == "forex" and not ticker.startswith("X:"):
+        poly_ticker = f"X:{ticker}"
+    elif market_type == "forex" and "_" in ticker:
+        poly_ticker = f"X:{ticker.replace('_', '')}"
+
+    result = {}
+    for tf in intervals:
+        try:
+            count = 30 if tf in ("1mo", "1w") else 50
+            candles = massive_client.get_candles(poly_ticker, tf, count)
+            if not candles or len(candles) < 3:
+                continue
+
+            price = candles[-1].close
+            highs = [c.high for c in reversed(candles)]
+            lows = [c.low for c in reversed(candles)]
+
+            s1, s2, d1, d2 = find_untouched_levels(highs, lows, price, lookback=10)
+
+            result[tf] = {
+                "support_price": d1,
+                "resistance_price": s1,
+                "support_price_2": d2,
+                "resistance_price_2": s2,
+                "ticker": ticker,
+                "interval": tf,
+            }
+        except Exception as e:
+            logger.debug("Built-in SNR error for %s %s: %s", ticker, tf, e)
+            continue
+
+    return result
 
 # ---------------------------------------------------------------------------
 # Model configurations — three concurrent institutional strategies
@@ -467,9 +511,9 @@ class LevelsStrategy:
         if price is None:
             return
 
-        # 2. Get SNR levels for this model's zone timeframes
-        snr_data = self.snr_client.get_snr_levels(
-            ticker=ticker, intervals=self.zone_tfs, market_type="forex",
+        # 2. Get SNR levels using built-in untouched level detection (Polygon data)
+        snr_data = get_builtin_snr_levels(
+            self.massive, ticker, self.zone_tfs, market_type="forex",
         )
         if not snr_data:
             return
@@ -691,8 +735,8 @@ class LevelsStrategy:
         # Add daily if not present (needed for ATR/price context)
         if "1d" not in stock_intervals:
             stock_intervals.append("1d")
-        snr_data = self.snr_client.get_snr_levels(
-            ticker=snr_ticker, intervals=stock_intervals, market_type=market_type,
+        snr_data = get_builtin_snr_levels(
+            self.massive, snr_ticker, stock_intervals, market_type=market_type,
         )
         if not snr_data:
             return
@@ -1033,8 +1077,8 @@ class LevelsStrategy:
         """Find the next S/R level in trade direction for the target."""
         ticker = zone.instrument.replace("_", "")
         try:
-            snr_data = self.snr_client.get_snr_levels(
-                ticker=ticker, intervals=["1mo", "1w", "1d"], market_type="forex",
+            snr_data = get_builtin_snr_levels(
+                self.massive, ticker, ["1mo", "1w", "1d"], market_type="forex",
             )
         except Exception:
             snr_data = {}
