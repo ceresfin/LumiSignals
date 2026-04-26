@@ -331,14 +331,27 @@ def create_app():
     @app.route("/ib-auth/status")
     @login_required
     def ib_auth_status():
-        """Check IB CPAPI authentication status."""
-        import requests as _req
-        cpapi_url = os.environ.get("CPAPI_BASE_URL", "https://localhost:5000/v1/api")
-        try:
-            resp = _req.post(f"{cpapi_url}/iserver/auth/status", verify=False, timeout=5)
-            return jsonify(resp.json())
-        except Exception as e:
-            return jsonify({"authenticated": False, "error": str(e)})
+        """Check IB Gateway connection status via sync data freshness."""
+        import redis as _redis
+        rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+        raw = rdb.get("ibkr:data:1")
+        if raw:
+            data = json.loads(raw)
+            last_synced = data.get("last_synced", "")
+            if last_synced:
+                from datetime import datetime as _dt, timezone as _tz
+                try:
+                    sync_time = _dt.fromisoformat(last_synced.replace("Z", "+00:00"))
+                    age = (_dt.now(_tz.utc) - sync_time).total_seconds()
+                    if age < 60:
+                        return jsonify({
+                            "authenticated": True,
+                            "connected": True,
+                            "serverInfo": {"serverName": "IB Gateway (Docker)", "serverVersion": f"Synced {int(age)}s ago"},
+                        })
+                except Exception:
+                    pass
+        return jsonify({"authenticated": False, "connected": False, "error": "Sync not running or stale"})
 
     # -----------------------------------------------------------------------
     # API endpoints
@@ -1162,8 +1175,11 @@ def create_app():
                 if not candles_1d:
                     continue
                 price = candles_1d[-1].close
-                levels = scan_ticker(client, ticker, price, ["1mo", "1w"])
+                levels = scan_ticker(client, ticker, price, ["1mo", "1w", "1d"])
                 for tf_label, lvl in levels.items():
+                    # Swing setups only trigger on M/W levels (D fetched for trend display only)
+                    if tf_label not in ("M", "W"):
+                        continue
                     for level_type, level_price in [("D1", lvl.demand1), ("D2", lvl.demand2), ("S1", lvl.supply1), ("S2", lvl.supply2)]:
                         if level_price is None or level_price == 0:
                             continue
@@ -1177,25 +1193,56 @@ def create_app():
                         score = 1 if (direction == "BUY" and lvl.trend == "UP") or (direction == "SELL" and lvl.trend == "DOWN") else 0
                         if lvl.adx >= 25:
                             score += 1
+                        # Collect M/W/D trends for display
+                        mtf_trends = {}
+                        for ttf in ["M", "W", "D"]:
+                            tlvl = levels.get(ttf)
+                            mtf_trends[ttf] = tlvl.trend if tlvl else "—"
                         all_setups.append({
                             "ticker": ticker, "name": TICKER_NAMES.get(ticker, ""), "price": round(price, 2), "level": round(level_price, 2),
                             "level_type": level_type, "tf": tf_label,
                             "tf_name": {"M": "Monthly", "W": "Weekly"}.get(tf_label, tf_label),
                             "distance_pct": round(dist_pct, 2), "direction": direction,
                             "trend": lvl.trend, "adx": lvl.adx, "score": score,
+                            "mtf_trends": mtf_trends, "trend_labels": ["M", "W", "D"],
                         })
             except Exception:
                 continue
 
-        # Scan core tickers (D/4H/1H — intraday + scalp)
+        # Scan core tickers — intraday (D levels) + scalp (4H levels)
         for ticker in core_list:
             try:
                 candles_1d = client.get_candles(ticker, "1d", 2)
                 if not candles_1d:
                     continue
                 price = candles_1d[-1].close
-                levels = scan_ticker(client, ticker, price, ["1d", "4h", "1h"])
+                # Fetch W/D/4H/1H for both intraday and scalp
+                levels = scan_ticker(client, ticker, price, ["1w", "1d", "4h", "1h"])
+
                 for tf_label, lvl in levels.items():
+                    # Intraday: only D levels
+                    # Scalp: only 4H levels
+                    if tf_label == "D":
+                        trade_type = "intraday"
+                        tf_display = "Daily"
+                        # W / D / 1H trends
+                        mtf_trends = {}
+                        for ttf, lbl in [("W", "W"), ("D", "D"), ("1H", "1H")]:
+                            tlvl = levels.get(ttf)
+                            mtf_trends[lbl] = tlvl.trend if tlvl else "—"
+                        trend_labels = ["W", "D", "1H"]
+                    elif tf_label == "4H":
+                        trade_type = "scalp"
+                        tf_display = "4-Hour"
+                        # 4H / 1H trends (5m not fetched server-side)
+                        mtf_trends = {}
+                        for ttf, lbl in [("4H", "4H"), ("1H", "1H")]:
+                            tlvl = levels.get(ttf)
+                            mtf_trends[lbl] = tlvl.trend if tlvl else "—"
+                        trend_labels = ["4H", "1H"]
+                    else:
+                        continue
+
                     for level_type, level_price in [("D1", lvl.demand1), ("D2", lvl.demand2), ("S1", lvl.supply1), ("S2", lvl.supply2)]:
                         if level_price is None or level_price == 0:
                             continue
@@ -1212,9 +1259,10 @@ def create_app():
                         all_setups.append({
                             "ticker": ticker, "name": TICKER_NAMES.get(ticker, ""), "price": round(price, 2), "level": round(level_price, 2),
                             "level_type": level_type, "tf": tf_label,
-                            "tf_name": {"D": "Daily", "4H": "4-Hour", "1H": "Hourly"}.get(tf_label, tf_label),
+                            "tf_name": tf_display,
                             "distance_pct": round(dist_pct, 2), "direction": direction,
                             "trend": lvl.trend, "adx": lvl.adx, "score": score,
+                            "mtf_trends": mtf_trends, "trend_labels": trend_labels,
                         })
             except Exception:
                 continue

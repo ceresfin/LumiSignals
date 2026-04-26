@@ -140,7 +140,7 @@ function runScan() {
         }
         html += '<table><tr>';
         html += '<th>Ticker</th><th>Name</th><th>Price</th><th>Level</th><th>Type</th><th>TF</th>';
-        html += '<th>Distance</th><th>Direction</th><th>Trend</th><th>ADX</th><th>Score</th><th>Options</th>';
+        html += '<th>Distance</th><th>Direction</th><th>HTF Trend</th><th>Score</th><th>Options</th>';
         html += '</tr>';
         items.forEach(function(s) {
           var dirClass = s.direction === 'BUY' ? 'dir-buy' : 'dir-sell';
@@ -156,8 +156,17 @@ function runScan() {
           html += '<td><span class="tf-tag ' + tfClass + '">' + s.tf_name + '</span></td>';
           html += '<td>' + s.distance_pct.toFixed(2) + '%</td>';
           html += '<td><span class="' + dirClass + '">' + s.direction + '</span></td>';
-          html += '<td><span class="' + trendCls + '">' + s.trend + '</span></td>';
-          html += '<td>' + s.adx.toFixed(0) + '</td>';
+          var mtf = s.mtf_trends || {};
+          var labels = s.trend_labels || ['M','W','D'];
+          var trendHtml = '';
+          labels.forEach(function(lbl) {
+            var t = mtf[lbl];
+            var icon = t === 'UP' ? '<span style="color:#27ae60">&#9650;</span>' :
+                       t === 'DOWN' ? '<span style="color:#c0392b">&#9660;</span>' :
+                       '<span style="color:#999">&#8212;</span>';
+            trendHtml += '<span style="color:var(--text-light)">' + lbl + '</span>' + icon + ' ';
+          });
+          html += '<td style="white-space:nowrap;font-size:0.8rem">' + trendHtml + '</td>';
           html += '<td><span class="score-badge ' + scoreClass + '">' + s.score + '</span></td>';
           var cleanTicker = s.ticker.replace('I:', '');
           var zoneType = s.direction === 'BUY' ? 'demand' : 'supply';

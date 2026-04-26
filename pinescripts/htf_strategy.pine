@@ -18,8 +18,9 @@ zoneMult   = input.float(1.0, "Zone Width (x ATR)", step=0.1, minval=0.1, maxval
 minScore   = input.int(2, "Min Score to Alert (1-4)", minval=1, maxval=4, group="Alerts", tooltip="1 = any aligned trend, 2 = two factors, 3 = strong confluence, 4 = max (5-min only)")
 webhookKey = input.string("lumisignals2026", "Webhook Key", group="Alerts")
 syncLevels = input.bool(true, "Sync Levels to Server", group="Alerts", tooltip="Send current levels and trends to the server every bar for the Compare dashboard.")
-showLevels = input.bool(true, "Show Level Lines", group="Display")
-showDash   = input.bool(true, "Show Dashboard", group="Display")
+showLevels  = input.bool(true, "Show Level Lines", group="Display")
+showSignals = input.bool(false, "Show Signal Markers on Chart", group="Display")
+showDash    = input.bool(true, "Show Dashboard", group="Display")
 
 // Colors (matching untouched_hl v5)
 colorM  = color.orange
@@ -224,12 +225,12 @@ if syncLevels
     alert(syncJson, alert.freq_once_per_bar_close)
 
 // ==================== SIGNAL MARKERS ON CHART ====================
-plotshape(dSell, "Daily Sell",  shape.triangledown, location.abovebar, color.red,     size=size.normal, text="D SELL")
-plotshape(dBuy,  "Daily Buy",   shape.triangleup,   location.belowbar, color.green,   size=size.normal, text="D BUY")
-plotshape(hSell, "Hourly Sell",  shape.triangledown, location.abovebar, color.orange,  size=size.small,  text="H SELL")
-plotshape(hBuy,  "Hourly Buy",   shape.triangleup,   location.belowbar, color.teal,    size=size.small,  text="H BUY")
-plotshape(fSell, "5m Sell",     shape.triangledown, location.abovebar, color.fuchsia, size=size.tiny,   text="5m S")
-plotshape(fBuy,  "5m Buy",      shape.triangleup,   location.belowbar, color.aqua,    size=size.tiny,   text="5m B")
+plotshape(showSignals and dSell, "Daily Sell",  shape.triangledown, location.abovebar, color.red,     size=size.normal, text="D SELL")
+plotshape(showSignals and dBuy,  "Daily Buy",   shape.triangleup,   location.belowbar, color.green,   size=size.normal, text="D BUY")
+plotshape(showSignals and hSell, "Hourly Sell",  shape.triangledown, location.abovebar, color.orange,  size=size.small,  text="H SELL")
+plotshape(showSignals and hBuy,  "Hourly Buy",   shape.triangleup,   location.belowbar, color.teal,    size=size.small,  text="H BUY")
+plotshape(showSignals and fSell, "5m Sell",     shape.triangledown, location.abovebar, color.fuchsia, size=size.tiny,   text="5m S")
+plotshape(showSignals and fBuy,  "5m Buy",      shape.triangleup,   location.belowbar, color.aqua,    size=size.tiny,   text="5m B")
 
 // ==================== LEVEL LINES ====================
 var line mSupLine = na, var line mDemLine = na

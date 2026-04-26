@@ -51,10 +51,15 @@ iframe { width: 100%; height: 600px; border: 1px solid #ddd; border-radius: 8px;
     <div style="margin-bottom:16px">
       <button class="auth-btn" onclick="checkStatus()">Check Status</button>
       <button class="auth-btn danger" onclick="showLogin()" id="loginBtn" style="display:none">Re-authenticate</button>
+      <button class="auth-btn" onclick="openFullscreen()" style="background:#2c3e50">Open VNC Fullscreen</button>
     </div>
     <div id="loginFrame" style="display:none">
-      <p style="font-size:0.78rem; color:var(--text-light); margin-bottom:8px;">Log in with your IB credentials below. Once authenticated, click "Check Status" to verify.</p>
-      <iframe src="" id="ibFrame"></iframe>
+      <p style="font-size:0.78rem; color:var(--text-light); margin-bottom:8px;">
+        IB Gateway is shown below via VNC. Log in with your IB credentials directly in the gateway window.<br>
+        VNC Password: <code>lumisignals2026</code><br>
+        Once the gateway shows "Active" or your account number, click "Check Status" above to verify.
+      </p>
+      <iframe src="" id="ibFrame" style="height:700px"></iframe>
     </div>
   </div>
 </div>
@@ -90,9 +95,13 @@ function checkStatus() {
     });
 }
 
+function openFullscreen() {
+  window.open('/ib-vnc/vnc_lite.html?path=ib-vnc/websockify&password=lumisignals2026&autoconnect=true&resize=scale', '_blank');
+}
+
 function showLogin() {
   document.getElementById('loginFrame').style.display = 'block';
-  document.getElementById('ibFrame').src = '/ib-auth/proxy/sso/Login?forwardTo=22&RL=1&ip2loc=US';
+  document.getElementById('ibFrame').src = '/ib-vnc/vnc_lite.html?path=ib-vnc/websockify&password=lumisignals2026&autoconnect=true&resize=scale';
 }
 
 checkStatus();
