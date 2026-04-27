@@ -390,27 +390,41 @@ class LevelsStrategy:
             return None
 
     def _get_trade_builder_data(self, ticker: str, market: str = "forex") -> dict:
-        """Get ATR and trend direction from Trade Builder API across timeframes."""
-        result = {"atr": None, "trends": {}}
-        try:
-            resp = self.session.get(
-                f"{self.trade_builder_url}/partners/technical-analysis/trade-builder-setup",
-                params={"ticker": ticker, "period": 14, "market": market,
-                        "frequency": "daily,weekly,monthly"},
-                timeout=30,
-            )
-            resp.raise_for_status()
-            data = resp.json().get("data", resp.json())
+        """Get ATR and trend direction using built-in ADX calculation from Polygon data.
 
-            for tf_key, tf_label in [("daily", "Daily"), ("weekly", "Weekly"), ("monthly", "Monthly")]:
-                tf_data = data.get(tf_key, {})
-                position = tf_data.get("position", "")
-                if position:
-                    result["trends"][tf_label] = "bullish" if position == "positive" else "bearish"
-                if tf_key == "daily" and tf_data.get("atr_value"):
-                    result["atr"] = float(tf_data["atr_value"])
-        except Exception as e:
-            logger.debug("Could not get Trade Builder data for %s: %s", ticker, e)
+        Replaces LumiTrade Trade Builder API. Uses the same ADX algorithm as
+        the TradingView HTF Strategy Scanner for consistent results.
+        """
+        result = {"atr": None, "trends": {}}
+
+        if not self.massive:
+            return result
+
+        # Convert forex ticker to Polygon format
+        poly_ticker = ticker
+        if market == "forex" and not ticker.startswith("X:"):
+            poly_ticker = f"X:{ticker.replace('_', '')}"
+
+        tf_map = {"1d": "Daily", "1w": "Weekly", "1mo": "Monthly"}
+
+        for tf, label in tf_map.items():
+            try:
+                count = 30 if tf in ("1mo", "1w") else 50
+                candles = self.massive.get_candles(poly_ticker, tf, count)
+                if not candles or len(candles) < 16:
+                    continue
+
+                direction, adx_val = calculate_adx_direction(candles, period=14)
+                result["trends"][label] = "bullish" if direction == "UP" else ("bearish" if direction == "DOWN" else "neutral")
+
+                # ATR from daily candles
+                if tf == "1d":
+                    ranges = [c.high - c.low for c in candles[-14:]]
+                    if ranges:
+                        result["atr"] = sum(ranges) / len(ranges)
+            except Exception as e:
+                logger.debug("Built-in trend error for %s %s: %s", ticker, tf, e)
+
         return result
 
     def _tf_label(self, tf: str) -> str:

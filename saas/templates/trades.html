@@ -163,6 +163,9 @@ tr:hover { background: rgba(0,0,0,0.015); }
     </div>
     <div id="futSyncStatus" style="text-align:right; font-size:0.7rem; color:var(--text-light); margin-top:-8px; margin-bottom:8px;"></div>
 
+    <!-- Futures Strategy Breakdown -->
+    <div id="futStrategyBreakdown"><div class="loading">Loading strategy breakdown...</div></div>
+
     <div class="card">
       <h2>Open Futures Positions <span class="count" id="futPositionCount">0</span></h2>
       <div id="futPositionsTable"><div class="loading">Loading...</div></div>
@@ -202,6 +205,7 @@ function showTab(tab) {
 
 var STRATEGY_NAMES = {
   'htf_levels': 'Front-Side HTF Untouched Levels',
+  'vwap_2n20': 'VWAP Candlestick Trigger (2n20)',
   'gap_fill': 'Gap Fill',
 };
 var MODEL_ORDER = ['scalp', 'intraday', 'swing'];
@@ -307,8 +311,9 @@ function getModel(t) {
 
 function getStrategyId(t) {
   if (t.strategy_id) return t.strategy_id;
-  // Normalize old format
   var s = (t.strategy || '').toLowerCase();
+  var m = (t.model || '').toLowerCase();
+  if (s.indexOf('2n20') >= 0 || m.indexOf('scalp_2n20') >= 0) return 'vwap_2n20';
   if (s.indexOf('level') >= 0) return 'htf_levels';
   if (s.indexOf('gap') >= 0) return 'gap_fill';
   return 'htf_levels'; // default for existing trades
@@ -331,9 +336,12 @@ function buildStrategyBreakdown(openTrades, closedTrades) {
   closedTrades.forEach(function(t) { addTrade(t, false); });
 
   var html = '';
-  var strategyIds = Object.keys(strategies);
-  // Sort: htf_levels first
-  strategyIds.sort(function(a, b) { return a === 'htf_levels' ? -1 : 1; });
+  // Always show both strategies, even if no trades yet
+  var strategyIds = ['htf_levels', 'vwap_2n20'];
+  // Add any other strategies found in trades
+  Object.keys(strategies).forEach(function(sid) {
+    if (strategyIds.indexOf(sid) < 0) strategyIds.push(sid);
+  });
 
   strategyIds.forEach(function(sid) {
     var displayName = STRATEGY_NAMES[sid] || sid;
@@ -941,6 +949,50 @@ function loadFutures() {
     document.getElementById('futClosedTable').innerHTML = buildTable(
       ['Ticker', 'Dir', 'Qty', 'Entry', 'Exit', 'P&L', 'Strategy', 'Reason', 'Result', 'Opened', 'Closed', 'Duration'], closedRows
     );
+
+    // Futures strategy breakdown
+    var futStrategies = {};
+    futClosed.forEach(function(t) {
+      var sid = (t.strategy || '').indexOf('2n20') >= 0 ? 'vwap_2n20' : 'htf_levels';
+      if (!futStrategies[sid]) futStrategies[sid] = {wins: 0, losses: 0, pnl: 0, trades: []};
+      futStrategies[sid].trades.push(t);
+      futStrategies[sid].pnl += (t.realized_pnl || 0);
+      if ((t.realized_pnl || 0) > 0) futStrategies[sid].wins++;
+      else futStrategies[sid].losses++;
+    });
+
+    var futBreakdownHtml = '';
+    ['vwap_2n20', 'htf_levels'].forEach(function(sid) {
+      var d = futStrategies[sid];
+      if (!d) d = {wins: 0, losses: 0, pnl: 0, trades: []};
+      var total = d.wins + d.losses;
+      var winRate = total > 0 ? Math.round(d.wins / total * 100) : 0;
+      var displayName = STRATEGY_NAMES[sid] || sid;
+
+      futBreakdownHtml += '<div class="strategy-section">';
+      futBreakdownHtml += '<div class="strategy-header"><span class="strategy-tag">STRATEGY</span> ' + displayName + '</div>';
+      futBreakdownHtml += '<div class="model-cards" style="grid-template-columns: repeat(2, 1fr);">';
+
+      // Scalp card (futures are all scalp for now)
+      futBreakdownHtml += '<div class="model-card">';
+      futBreakdownHtml += '<div class="model-card-title scalp">SCALP</div>';
+      futBreakdownHtml += '<div class="model-stats">';
+      futBreakdownHtml += '<div class="model-stat"><div class="model-stat-value">' + futPositions.filter(function(p) { return (sid === "vwap_2n20"); }).length + '</div><div class="model-stat-label">Open</div></div>';
+      futBreakdownHtml += '<div class="model-stat"><div class="model-stat-value">' + total + '</div><div class="model-stat-label">Closed</div></div>';
+      futBreakdownHtml += '<div class="model-stat"><div class="model-stat-value ' + (winRate >= 50 ? 'pl-pos' : (total > 0 ? 'pl-neg' : '')) + '">' + (total > 0 ? winRate + '%' : '—') + '</div><div class="model-stat-label">Win Rate</div></div>';
+      futBreakdownHtml += '<div class="model-stat"><div class="model-stat-value ' + plClass(d.pnl) + '">$' + fmt(d.pnl) + '</div><div class="model-stat-label">Realized P&L</div></div>';
+      futBreakdownHtml += '</div></div>';
+
+      // Placeholder for future intraday/swing
+      futBreakdownHtml += '<div class="model-card" style="opacity:0.4">';
+      futBreakdownHtml += '<div class="model-card-title intraday">INTRADAY / SWING</div>';
+      futBreakdownHtml += '<div style="text-align:center;padding:20px;color:var(--text-light);font-size:0.78rem">Coming soon</div>';
+      futBreakdownHtml += '</div>';
+
+      futBreakdownHtml += '</div></div>';
+    });
+
+    document.getElementById('futStrategyBreakdown').innerHTML = futBreakdownHtml || '<div style="text-align:center;padding:20px;color:#8a847e;">No futures strategy data yet</div>';
   });
 }
 loadFutures();

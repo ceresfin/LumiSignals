@@ -288,14 +288,24 @@ class MassiveClient:
         Returns:
             List of CandleData.
         """
-        # 1h and 4h for stocks: aggregate from 5m to align with market open (9:30 ET)
-        # Weekly for stocks: aggregate from daily to start on Monday (not Sunday)
-        is_stock = not ticker.startswith("X:")  # X: = crypto, I: = index (treated like stock)
-        if timespan in AGGREGATE_FROM_5M and is_stock:
+        # Detect market type for candle alignment
+        # Crypto (24/7): X:BTCUSD, X:ETHUSD etc. — in CRYPTO_TICKERS list
+        # Forex (24/5): X:EURUSD, X:GBPCAD etc. — X: prefix but not crypto
+        # Stocks/Indices: everything else (9:30-4:00 ET market hours)
+        is_crypto = ticker in CRYPTO_TICKERS
+        is_forex = ticker.startswith("X:") and not is_crypto
+
+        # 1h and 4h for stocks/indices: aggregate from 5m to align with market open (9:30 ET)
+        # Forex 1h/4h: use Polygon native (forex is 24h, no alignment needed)
+        if timespan in AGGREGATE_FROM_5M and is_stock and not is_forex:
             return self._get_market_aligned_candles(ticker, timespan, count)
-        if timespan == "1w" and is_stock:
+
+        # Weekly: always Monday-start (TradingView uses Monday for all markets)
+        if timespan == "1w" and not is_crypto:
             return self._get_monday_weekly_candles(ticker, count)
-        if timespan == "1mo" and is_stock:
+
+        # Monthly: always calendar month
+        if timespan == "1mo" and not is_crypto:
             return self._get_calendar_monthly_candles(ticker, count)
 
         if timespan in AGGREGATE_FROM_5M:
