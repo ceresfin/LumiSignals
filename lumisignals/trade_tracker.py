@@ -11,11 +11,11 @@ logger = logging.getLogger(__name__)
 
 
 def _parse_oanda_time(time_str: str) -> Optional[str]:
-    """Convert Oanda UNIX timestamp to human-readable format."""
+    """Convert Oanda UNIX timestamp to ISO format with timezone."""
     try:
         ts = float(time_str)
         dt = datetime.fromtimestamp(ts, tz=timezone.utc)
-        return dt.strftime("%Y-%m-%d %H:%M")
+        return dt.isoformat()
     except (ValueError, TypeError, OSError):
         return time_str
 
