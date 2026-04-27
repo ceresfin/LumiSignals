@@ -42,7 +42,7 @@ tr:hover { background: rgba(0,0,0,0.015); }
 .strategy-section { margin-bottom: 28px; }
 .strategy-header { font-family: 'Playfair Display', serif; font-size: 1.15rem; font-weight: 500; margin-bottom: 14px; display: flex; align-items: center; gap: 10px; }
 .strategy-tag { font-family: 'Inter'; font-size: 0.7rem; font-weight: 600; padding: 4px 12px; border-radius: 50px; background: var(--olive); color: #FFF5E1; letter-spacing: 0.3px; }
-.model-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 16px; }
+.model-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 16px; }
 .model-card { background: var(--white); border-radius: 12px; padding: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
 .model-card-title { font-size: 0.78rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 10px; padding-bottom: 6px; border-bottom: 2px solid; }
 .model-card-title.scalp { color: #be185d; border-color: #fce7f3; }
@@ -208,7 +208,8 @@ var STRATEGY_NAMES = {
   'vwap_2n20': 'VWAP Candlestick Trigger (2n20)',
   'gap_fill': 'Gap Fill',
 };
-var MODEL_ORDER = ['scalp', 'intraday', 'swing'];
+var MODEL_ORDER = ['scalp', 'scalp_2n20', 'intraday', 'swing'];
+var MODEL_LABELS = {'scalp': 'SCALP HTF', 'scalp_2n20': 'SCALP 2n20', 'intraday': 'INTRADAY', 'swing': 'SWING'};
 
 function buildTable(headers, rows) {
   if (!rows.length) return '<div style="text-align:center;padding:20px;color:#8a847e;">No data</div>';
@@ -234,7 +235,8 @@ function assetBadge(instrument) {
 function modelBadge(model) {
   if (!model) return '—';
   var m = model.toLowerCase();
-  if (m === 'scalp') return '<span class="badge" style="background:#fce7f3;color:#be185d">SCALP</span>';
+  if (m === 'scalp_2n20') return '<span class="badge" style="background:#fef3c7;color:#d97706">SCALP 2n20</span>';
+  if (m === 'scalp') return '<span class="badge" style="background:#fce7f3;color:#be185d">SCALP HTF</span>';
   if (m === 'intraday') return '<span class="badge" style="background:#dbeafe;color:#1d4ed8">INTRADAY</span>';
   if (m === 'swing') return '<span class="badge badge-open">SWING</span>';
   return '<span class="badge badge-closed">' + model + '</span>';
@@ -257,32 +259,41 @@ function fmtTime(t) {
   if (!t) return '—';
   try {
     var s = String(t).trim();
-    // Normalize: replace first space between date and time with 'T' for ISO parsing
-    // "2026-04-22 13:41:34.694+00:00" → "2026-04-22T13:41:34.694+00:00"
-    if (s.match(/^\d{4}-\d{2}-\d{2} \d{2}:/)) {
-      s = s.replace(' ', 'T');
-    }
-    // If no timezone info, assume UTC
-    if (s.indexOf('T') >= 0 && s.indexOf('+') < 0 && s.indexOf('Z') < 0 && !s.endsWith('UTC')) {
-      s += 'Z';
-    }
-    var d = new Date(s);
-    if (isNaN(d)) {
-      // Last resort: try adding UTC
-      d = new Date(t + ' UTC');
+    var d;
+    // Check if it's a Unix epoch (number-like string)
+    if (s.match(/^\d+\.\d+$/) || s.match(/^\d{10,}$/)) {
+      d = new Date(parseFloat(s) * 1000);
+    } else {
+      // Normalize ISO format
+      if (s.match(/^\d{4}-\d{2}-\d{2} \d{2}:/)) {
+        s = s.replace(' ', 'T');
+      }
+      if (s.indexOf('T') >= 0 && s.indexOf('+') < 0 && s.indexOf('Z') < 0 && !s.endsWith('UTC')) {
+        s += 'Z';
+      }
+      d = new Date(s);
+      if (isNaN(d)) d = new Date(t + ' UTC');
     }
     if (isNaN(d)) return t;
     return d.toLocaleString('en-US', {month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'America/New_York'});
   } catch(e) { return t; }
 }
 
+function parseTime(t) {
+  if (!t) return null;
+  var s = String(t).trim();
+  if (s.match(/^\d+\.\d+$/) || s.match(/^\d{10,}$/)) return new Date(parseFloat(s) * 1000);
+  var d = new Date(s);
+  if (isNaN(d)) d = new Date(s + ' UTC');
+  return isNaN(d) ? null : d;
+}
+
 function duration(opened, closed) {
   if (!opened) return '—';
   try {
-    var start = new Date(opened);
-    if (isNaN(start)) start = new Date(opened + ' UTC');
-    var end = closed ? new Date(closed) : new Date();
-    if (isNaN(end)) end = new Date(closed + ' UTC');
+    var start = parseTime(opened);
+    var end = closed ? parseTime(closed) : new Date();
+    if (!start || !end) return '—';
     if (isNaN(start) || isNaN(end)) return '—';
     var diff = Math.abs(end - start) / 1000;
     if (diff < 60) return Math.round(diff) + 's';
@@ -294,7 +305,12 @@ function duration(opened, closed) {
 
 function getModel(t) {
   // Extract model from trade data — check model field first, then parse from strategy
-  if (t.model) return t.model.toLowerCase();
+  if (t.model) {
+    var m = t.model.toLowerCase();
+    // Preserve scalp_2n20 as distinct from scalp
+    if (m === 'scalp_2n20') return 'scalp_2n20';
+    return m;
+  }
   var s = (t.strategy || '').toLowerCase();
   if (s.indexOf('scalp') >= 0) return 'scalp';
   if (s.indexOf('intraday') >= 0) return 'intraday';
@@ -366,7 +382,9 @@ function buildStrategyBreakdown(openTrades, closedTrades) {
       var winRate = total > 0 ? Math.round(wins / total * 100) : 0;
 
       html += '<div class="model-card">';
-      html += '<div class="model-card-title ' + model + '">' + model.toUpperCase() + '</div>';
+      var modelLabel = MODEL_LABELS[model] || model.toUpperCase();
+      var modelCss = model === 'scalp_2n20' ? 'scalp' : model;
+      html += '<div class="model-card-title ' + modelCss + '">' + modelLabel + '</div>';
       html += '<div class="model-stats">';
       html += '<div class="model-stat"><div class="model-stat-value">' + openCount + '</div><div class="model-stat-label">Open</div></div>';
       html += '<div class="model-stat"><div class="model-stat-value ' + plClass(unrealized) + '">$' + fmt(unrealized) + '</div><div class="model-stat-label">Unreal. P&L</div></div>';
