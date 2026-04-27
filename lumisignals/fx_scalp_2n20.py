@@ -35,8 +35,8 @@ MIN_BODY_PCT = 30.0  # Body must be >= 30% of candle range
 AVG_BODY_MULT = 0.8  # Body must be >= 80% of 10-candle average
 LOOKBACK_BARS = 3    # Look back up to 3 bars for opposite candle
 DEFAULT_SL_DOLLARS = 25.0  # Fixed stop loss per trade
-SESSION_START_HOUR = 8   # 8 AM ET
-SESSION_END_HOUR = 16    # 4 PM ET (session close = flatten)
+# Forex trades 24/5: Sunday 5PM ET through Friday 5PM ET
+# No session close flatten — forex has no maintenance break
 VWAP_CANDLE_GRAN = "M2"  # Same granularity for VWAP
 
 
@@ -78,15 +78,16 @@ class FXScalp2n20:
         now = datetime.now(timezone.utc)
         et_hour = (now.hour - 4) % 24  # Rough EDT
 
-        # Skip outside session hours
-        if et_hour < SESSION_START_HOUR or et_hour >= SESSION_END_HOUR:
-            # Session close: flatten all
-            if et_hour == SESSION_END_HOUR or (et_hour > SESSION_END_HOUR and et_hour < SESSION_END_HOUR + 1):
-                self._flatten_all("Session close")
+        # Forex trades 24/5: Sunday 5PM ET through Friday 5PM ET
+        # Friday close: flatten at 4:50 PM ET
+        if now.weekday() == 4 and et_hour == 16 and now.minute >= 50:
+            self._flatten_all("Friday close")
             return
 
-        # Skip weekends
-        if now.weekday() >= 5:
+        # Skip weekends (Saturday + Sunday before 5PM ET)
+        if now.weekday() == 5:
+            return
+        if now.weekday() == 6 and et_hour < 17:
             return
 
         for pair in self.pairs:
