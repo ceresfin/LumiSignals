@@ -225,15 +225,25 @@ class FXScalp2n20:
         return green_overwhelm, red_overwhelm
 
     def _calc_vwap(self, instrument: str) -> Optional[float]:
-        """Calculate approximate daily VWAP from today's 2-minute candles."""
+        """Calculate daily VWAP from recent 2-minute candles.
+
+        For forex, the "trading day" starts at 5 PM ET (21:00 UTC in EDT).
+        We use all candles since the last 5 PM ET rollover.
+        """
         try:
-            # Get today's candles (up to 195 = 6.5 hours of 2-min bars)
-            candles = self.oanda.get_candles(instrument, GRANULARITY, 195)
+            # Get enough candles to cover a full forex day (~720 2-min bars = 24h)
+            candles = self.oanda.get_candles(instrument, GRANULARITY, 720)
             if not candles:
                 return None
 
-            # Filter to today only
-            today = datetime.now(timezone.utc).date()
+            # Find the last 5 PM ET rollover (21:00 UTC in EDT, 22:00 in EST)
+            now = datetime.now(timezone.utc)
+            rollover_hour = 21  # 5 PM ET in UTC (EDT)
+            if now.hour >= rollover_hour:
+                rollover = now.replace(hour=rollover_hour, minute=0, second=0, microsecond=0)
+            else:
+                rollover = (now - timedelta(days=1)).replace(hour=rollover_hour, minute=0, second=0, microsecond=0)
+
             num = 0.0
             den = 0.0
             for c in candles:
@@ -242,8 +252,10 @@ class FXScalp2n20:
                 ct = c.get("time", "")
                 if ct:
                     try:
-                        cdate = datetime.fromisoformat(ct.replace("Z", "+00:00")).date()
-                        if cdate != today:
+                        # Oanda returns Unix epoch as string (e.g. "1777263480.000000000")
+                        ts = float(ct)
+                        cdt = datetime.fromtimestamp(ts, tz=timezone.utc)
+                        if cdt < rollover:
                             continue
                     except Exception:
                         continue
