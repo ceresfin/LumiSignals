@@ -606,6 +606,20 @@ def run_bot_for_user(user_data, stop_check):
         except Exception as e:
             log(f"[2n20_FX] Setup error: {e}")
 
+    # --- 2n20 MES Futures Scalp (server-side, no TradingView needed) ---
+    mes_scalp = None
+    if massive_key:
+        try:
+            from lumisignals.futures_scalp_2n20 import FuturesScalp2n20
+
+            def mes_signal_cb(sig):
+                log(f"[2n20_MES] {sig.get('direction','')} {sig.get('ticker','')} — {sig.get('reason', sig.get('strategy',''))}")
+
+            mes_scalp = FuturesScalp2n20(massive_key, signal_callback=mes_signal_cb)
+            log("[2n20_MES] Server-side futures scalp active — MES via Polygon + IB")
+        except Exception as e:
+            log(f"[2n20_MES] Setup error: {e}")
+
     # Run all models in a unified loop
     tick = 0
     while True:
@@ -646,6 +660,13 @@ def run_bot_for_user(user_data, stop_check):
                 fx_scalp.scan_all()
             except Exception as e:
                 logger.debug("[2n20_FX] Scan error: %s", e)
+
+        # 2n20 MES Futures Scalp: run every tick (self-rate-limits to 2-min candles)
+        if mes_scalp:
+            try:
+                mes_scalp.scan()
+            except Exception as e:
+                logger.debug("[2n20_MES] Scan error: %s", e)
 
         # Swing auto-scanner: run every ~480 ticks (4 hours at 30s interval)
         if tick > 0 and tick % 480 == 0:
