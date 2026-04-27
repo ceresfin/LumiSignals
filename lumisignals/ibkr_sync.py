@@ -1233,24 +1233,44 @@ def _close_spread(ib: IB, spread: dict, reason: str):
         pass
 
 
+def _connect(ib: IB) -> bool:
+    """Connect or reconnect to IB Gateway. Returns True on success."""
+    import random
+    if ib.isConnected():
+        return True
+    try:
+        cid = random.randint(20, 99)
+        ib.connect(IB_HOST, IB_PORT, clientId=cid, timeout=15)
+        logger.info("Connected to IB Gateway (clientId %d)", cid)
+        ib.reqMarketDataType(3)
+        return True
+    except Exception as e:
+        logger.error("IB connect failed: %s", e)
+        return False
+
+
 def main():
     logger.info("IB Sync starting — connecting to IB Gateway at %s:%s", IB_HOST, IB_PORT)
 
     ib = IB()
-    try:
-        import random
-        cid = random.randint(20, 99)
-        ib.connect(IB_HOST, IB_PORT, clientId=cid)
-        logger.info("Using clientId %d", cid)
-        ib.reqMarketDataType(3)  # delayed data
-    except Exception as e:
-        logger.error("Failed to connect to IB Gateway: %s", e)
-        logger.error("Make sure IB Gateway is running and API connections are enabled")
-        sys.exit(1)
-
-    logger.info("Connected to IB Gateway — syncing every %ds to %s", SYNC_INTERVAL, SERVER_URL)
+    consecutive_failures = 0
 
     while True:
+        # Auto-reconnect if disconnected
+        if not ib.isConnected():
+            if consecutive_failures > 0:
+                wait = min(consecutive_failures * 10, 60)
+                logger.info("Reconnecting in %ds... (attempt %d)", wait, consecutive_failures)
+                time.sleep(wait)
+            if not _connect(ib):
+                consecutive_failures += 1
+                if consecutive_failures == 1:
+                    logger.error("IB Gateway not reachable — will keep retrying")
+                continue
+
+            consecutive_failures = 0
+            logger.info("Connected to IB Gateway — syncing every %ds to %s", SYNC_INTERVAL, SERVER_URL)
+
         try:
             ib.sleep(1)  # let ib_insync process events
             data = collect_ib_data(ib)
@@ -1276,8 +1296,17 @@ def main():
             if data.get("spreads"):
                 monitor_spreads(ib, data["spreads"])
 
+            consecutive_failures = 0
+
         except Exception as e:
             logger.error("Sync error: %s", e)
+            # Check if it's a connection error
+            if not ib.isConnected():
+                logger.warning("Connection lost — will auto-reconnect")
+                try:
+                    ib.disconnect()
+                except Exception:
+                    pass
 
         time.sleep(SYNC_INTERVAL)
 
