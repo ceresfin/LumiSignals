@@ -489,6 +489,8 @@ function loadOandaTrades() {
 }
 
 loadOandaTrades();
+// Auto-refresh FX trades every 10s so the P&L column reflects live OANDA prices.
+setInterval(loadOandaTrades, 10000);
 
 // ---- IB Options Trades ----
 
@@ -611,15 +613,17 @@ function loadIBTrades() {
 
       // Orders table — use stored orders, filter out ones that became positions
       // Merge stored orders (have metadata) with IB sync orders (have live status)
+      // Exclude futures entries — those belong to the Futures tab.
       var spreadSymbols = (data.spreads || []).map(function(s) { return s.symbol; });
       var storedMap = {};
       storedOrders.forEach(function(o) {
+        if (o.type === 'futures') return;
         var key = (o.ticker || o.symbol || '') + '_' + (o.sell_strike || '') + '_' + (o.buy_strike || '');
         storedMap[key] = o;
       });
 
       // Start with IB sync orders, enrich with stored data
-      var ibOrders = data.open_orders || [];
+      var ibOrders = (data.open_orders || []).filter(function(o) { return o.sec_type !== 'FUT'; });
       var mergedOrders = ibOrders.map(function(o) {
         var key = (o.symbol || '') + '_' + (o.sell_strike || '') + '_' + (o.buy_strike || '');
         var stored = storedMap[key];
@@ -835,6 +839,23 @@ function loadFutures() {
     var futOrders = allOrders.filter(function(o) { return o.type === 'futures'; });
     var futClosed = allClosed.filter(function(t) { return t.type === 'futures'; });
 
+    // Active stop brackets keyed by ticker — from IB open orders
+    var stopMap = {};
+    // Check IB open orders for STP orders
+    var ibOpenOrders = (data.open_orders || []);
+    ibOpenOrders.forEach(function(o) {
+      if (o.order_type === 'STP' && o.symbol) {
+        stopMap[o.symbol] = {stop_price: o.aux_price || o.limit_price || 0, action: o.action};
+      }
+    });
+    // Also check queued orders from Redis
+    futOrders.forEach(function(o) {
+      if ((o.direction === 'STOP_LONG' || o.direction === 'STOP_SHORT') &&
+          (o.status === 'Submitted' || o.status === 'PreSubmitted' || o.status === 'queued')) {
+        stopMap[o.ticker || o.symbol] = o;
+      }
+    });
+
     // Futures positions from IB sync
     var futPositions = (data.positions || []).filter(function(p) { return p.sec_type === 'FUT'; });
 
@@ -886,11 +907,13 @@ function loadFutures() {
       var entryDir = p.quantity > 0 ? 'BUY' : 'SELL';
       var openedAt = '';
       var strategy = '';
+      var entryPrice = 0;
       for (var i = 0; i < futEntryOrders.length; i++) {
         var o = futEntryOrders[i];
         if ((o.ticker === p.symbol || o.symbol === p.symbol) && o.direction === entryDir) {
           openedAt = o.opened_at || o.queued_at || '';
           strategy = (o.strategy || '').replace('_exit', '');
+          entryPrice = o.entry_price || 0;
           break;
         }
       }
@@ -901,25 +924,32 @@ function loadFutures() {
           if (ao.type === 'futures' && (ao.ticker === p.symbol) && ao.direction === entryDir && ao.queued_at) {
             openedAt = ao.queued_at;
             strategy = (ao.strategy || '').replace('_exit', '');
+            entryPrice = ao.entry_price || 0;
             break;
           }
         }
       }
+      // Use stored fill price if available, otherwise fall back to avg_cost / multiplier
+      var displayEntry = entryPrice > 0 ? entryPrice : (p.avg_cost / (p.multiplier || 5));
+      var stop = stopMap[p.symbol];
+      var stopText = stop && stop.stop_price ? '<span class="pl-neg">$' + fmtNum(stop.stop_price) + '</span>' : '—';
       return '<td><strong>' + p.symbol + '</strong></td>' +
         '<td>' + dir + '</td>' +
         '<td>' + Math.abs(p.quantity) + '</td>' +
-        '<td>$' + fmtNum(p.avg_cost / 5) + '</td>' +
+        '<td>$' + fmtNum(displayEntry) + '</td>' +
         '<td>$' + fmtNum(p.market_price || 0) + '</td>' +
         '<td class="' + plClass(pnl) + '">$' + fmt(pnl) + '</td>' +
+        '<td>' + stopText + '</td>' +
         '<td>' + (strategy || '—') + '</td>' +
         '<td style="font-size:0.72rem">' + fmtTime(openedAt) + '<br><span style="color:var(--text-light)">' + duration(openedAt) + '</span></td>';
     });
     document.getElementById('futPositionsTable').innerHTML = buildTable(
-      ['Ticker', 'Dir', 'Qty', 'Entry', 'Current', 'P&L', 'Strategy', 'Opened'], posRows
+      ['Ticker', 'Dir', 'Qty', 'Entry', 'Current', 'P&L', 'Stop', 'Strategy', 'Opened'], posRows
     );
 
-    // Pending orders
+    // Pending orders — entries only; stop brackets are shown inline on the open position row.
     var pendingFut = futOrders.filter(function(o) {
+      if (o.direction === 'STOP_LONG' || o.direction === 'STOP_SHORT') return false;
       return o.status === 'queued' || o.status === 'placing' || o.status === 'Submitted' || o.status === 'PreSubmitted';
     });
     pendingFut.sort(function(a, b) {

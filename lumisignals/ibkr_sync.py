@@ -1,9 +1,8 @@
 """IB Gateway sync — polls positions and account data, pushes to LumiSignals server.
 
-Run locally while IB Gateway is open:
-    python3 -m lumisignals.ibkr_sync
-
-Pushes data every 30 seconds to the server API.
+Runs as the `lumisignals-sync` systemd service on the production server, talking
+to a Dockerized IB Gateway on the same host (`ib-gateway` container, port 4002).
+Pushes data every ~10s; throttled MES bar pushes every 60s.
 """
 
 import json
@@ -11,6 +10,7 @@ import logging
 import os
 import sys
 import time
+from typing import Optional
 
 import requests
 from ib_insync import IB, Stock, Option
@@ -162,6 +162,7 @@ def collect_ib_data(ib: IB) -> dict:
             "quantity": float(o.totalQuantity),
             "order_type": o.orderType,
             "limit_price": o.lmtPrice,
+            "aux_price": o.auxPrice,  # Stop price for STP orders
             "status": trade.orderStatus.status,
             "time": str(trade.log[0].time) if trade.log else "",
         }
@@ -561,6 +562,436 @@ def check_analyze_requests(ib: IB):
         logger.debug("Analyze check: %s", e)
 
 
+# --- MES real-time streaming bars ---
+# Replaces the polling-based historical fetch with a live 5-second-bar subscription.
+# We aggregate 5-sec → 2-min in memory; when a 2-min bar closes we push immediately.
+# This eliminates the IB historical-data settlement delay (which was producing
+# partial bars with lagging OHLC and missed signals).
+
+_mes_realtime_subscription = None  # ib_insync RealTimeBarList
+_mes_completed_bars: list = []     # list of finalized 2-min bars (warm + streamed)
+_mes_current_bucket: Optional[dict] = None  # in-progress 2-min bucket
+_mes_front_label: str = ""
+
+
+def _bucket_start_for(dt) -> "datetime":
+    """Round a datetime down to its 2-min bucket boundary."""
+    return dt.replace(second=0, microsecond=0,
+                      minute=(dt.minute // 2) * 2)
+
+
+def _push_completed_bars_to_server():
+    """Push the current finalized-bars list to the server."""
+    try:
+        requests.post(
+            f"{SERVER_URL}/api/ibkr/futures-bars/MES",
+            json={"bars": _mes_completed_bars, "front_month": _mes_front_label},
+            headers={"X-Sync-Key": SYNC_KEY},
+            timeout=10,
+        )
+    except Exception as e:
+        logger.warning("MES bar push failed: %s", e)
+
+
+def _on_real_time_bar(bars, has_new_bar):
+    """Callback fired by ib_insync when a new 5-sec bar arrives.
+
+    Aggregates into 2-min buckets. When a bucket rolls over, the just-completed
+    2-min bar is appended to history and pushed to the server immediately —
+    no settlement waiting, no partial-bar evaluation by the strategy.
+    """
+    global _mes_current_bucket, _mes_completed_bars
+    if not has_new_bar or not bars:
+        return
+    bar = bars[-1]
+    bar_time = bar.time
+    if hasattr(bar_time, "timestamp"):
+        # datetime — make sure it's tz-aware in UTC
+        if bar_time.tzinfo is None:
+            bar_time = bar_time.replace(tzinfo=timezone.utc)
+    else:
+        try:
+            bar_time = datetime.fromtimestamp(float(bar_time), tz=timezone.utc)
+        except Exception:
+            return
+    bucket_start = _bucket_start_for(bar_time)
+
+    if _mes_current_bucket is None or _mes_current_bucket["start"] != bucket_start:
+        # Bucket boundary crossed — finalize previous bucket if it exists
+        if _mes_current_bucket is not None:
+            done = _mes_current_bucket
+            _mes_completed_bars.append({
+                "open": done["open"],
+                "high": done["high"],
+                "low": done["low"],
+                "close": done["close"],
+                "volume": done["volume"],
+                # Keep ISO format with timezone so server-side parsing matches
+                # the historical-warm-up format.
+                "time": done["start"].isoformat(),
+            })
+            if len(_mes_completed_bars) > 1500:
+                _mes_completed_bars = _mes_completed_bars[-1500:]
+            logger.info("MES 2-min bar closed: %s O=%.2f H=%.2f L=%.2f C=%.2f V=%d",
+                        done["start"].strftime("%H:%M"),
+                        done["open"], done["high"], done["low"], done["close"],
+                        done["volume"])
+            _push_completed_bars_to_server()
+        _mes_current_bucket = {
+            "start": bucket_start,
+            "open": float(bar.open_),
+            "high": float(bar.high),
+            "low": float(bar.low),
+            "close": float(bar.close),
+            "volume": int(bar.volume) if bar.volume else 0,
+        }
+    else:
+        _mes_current_bucket["high"] = max(_mes_current_bucket["high"], float(bar.high))
+        _mes_current_bucket["low"] = min(_mes_current_bucket["low"], float(bar.low))
+        _mes_current_bucket["close"] = float(bar.close)
+        if bar.volume:
+            _mes_current_bucket["volume"] += int(bar.volume)
+
+
+def _setup_mes_realtime_stream(ib, ticker: str = "MES"):
+    """Subscribe to MES real-time bars. Idempotent — safe to call after reconnect.
+
+    Warms `_mes_completed_bars` with last 24h of historical 2-min bars so the
+    strategy has enough history for its 18:00-ET-anchored VWAP, then attaches
+    the streaming callback for live aggregation going forward.
+    """
+    global _mes_realtime_subscription, _mes_completed_bars, _mes_front_label, _mes_current_bucket
+    if _mes_realtime_subscription is not None:
+        return
+    try:
+        from ib_insync import Future
+        contract = Future(ticker, exchange="CME")
+        candidates = ib.reqContractDetails(contract)
+        if not candidates:
+            logger.warning("MES streaming setup: no contract details")
+            return
+        candidates.sort(key=lambda c: c.contract.lastTradeDateOrContractMonth)
+        front = candidates[0].contract
+        _mes_front_label = f"{front.symbol}{front.lastTradeDateOrContractMonth[:6]}"
+
+        # Warm history (one-time, on connect)
+        hist = ib.reqHistoricalData(
+            front, endDateTime='', durationStr='86400 S',
+            barSizeSetting='2 mins', whatToShow='TRADES',
+            useRTH=False, formatDate=1,
+        )
+        warmed = []
+        for b in hist:
+            try:
+                warmed.append({
+                    "open": float(b.open), "high": float(b.high),
+                    "low": float(b.low), "close": float(b.close),
+                    "volume": int(b.volume) if b.volume else 0,
+                    "time": str(b.date),
+                })
+            except Exception:
+                continue
+        _mes_completed_bars = warmed
+        _mes_current_bucket = None
+        logger.info("MES history warmed: %d 2-min bars (front: %s)",
+                    len(warmed), _mes_front_label)
+        _push_completed_bars_to_server()
+
+        # Subscribe to live 5-sec bars
+        sub = ib.reqRealTimeBars(front, 5, 'TRADES', False)
+        sub.updateEvent += _on_real_time_bar
+        _mes_realtime_subscription = sub
+        logger.info("MES real-time stream active (5-sec bars → 2-min aggregation)")
+    except Exception as e:
+        logger.error("MES real-time setup failed: %s", e)
+
+
+def _teardown_mes_realtime_stream(ib):
+    """Cancel the real-time subscription. Called before reconnect cycles."""
+    global _mes_realtime_subscription, _mes_current_bucket
+    if _mes_realtime_subscription is not None:
+        try:
+            ib.cancelRealTimeBars(_mes_realtime_subscription)
+        except Exception:
+            pass
+        _mes_realtime_subscription = None
+    _mes_current_bucket = None
+
+
+# --- Polling fallback (used when real-time streaming isn't subscribed) ---
+_last_mes_poll_push = 0.0
+MES_POLL_INTERVAL = 30  # seconds; every 30s pull last 24h of historical 2-min bars
+
+
+def _push_mes_bars_polling(ib, ticker: str = "MES"):
+    """Polling fallback: pull historical 2-min MES bars from IB and push to server.
+
+    Used when the account lacks real-time market data permissions. Has 30-60s of
+    settlement delay on the latest bar — the strategy compensates by reading
+    bars[-2] (the just-closed bar) rather than bars[-1] (still-finalizing).
+    """
+    global _last_mes_poll_push
+    now = time.time()
+    if now - _last_mes_poll_push < MES_POLL_INTERVAL:
+        return
+    _last_mes_poll_push = now
+    try:
+        from ib_insync import Future
+        contract = Future(ticker, exchange="CME")
+        candidates = ib.reqContractDetails(contract)
+        if not candidates:
+            return
+        candidates.sort(key=lambda c: c.contract.lastTradeDateOrContractMonth)
+        front = candidates[0].contract
+        front_label = f"{front.symbol}{front.lastTradeDateOrContractMonth[:6]}"
+        bars = ib.reqHistoricalData(
+            front, endDateTime='', durationStr='86400 S',
+            barSizeSetting='2 mins', whatToShow='TRADES',
+            useRTH=False, formatDate=1,
+        )
+        if not bars:
+            return
+        candles = []
+        for b in bars:
+            try:
+                candles.append({
+                    "open": float(b.open), "high": float(b.high),
+                    "low": float(b.low), "close": float(b.close),
+                    "volume": int(b.volume) if b.volume else 0,
+                    "time": str(b.date),
+                })
+            except Exception:
+                continue
+        try:
+            requests.post(
+                f"{SERVER_URL}/api/ibkr/futures-bars/{ticker}",
+                json={"bars": candles, "front_month": front_label},
+                headers={"X-Sync-Key": SYNC_KEY}, timeout=10,
+            )
+        except Exception as e:
+            logger.warning("MES poll push failed: %s", e)
+    except Exception as e:
+        logger.warning("MES poll fetch failed: %s", e)
+
+
+def _place_futures_stop(ib, contract, ticker, action, contracts, sl_price,
+                         fill_price, sl_dollars, entry_perm_id, strategy_name):
+    """Place a GTC stop on IB and mirror it to Redis so the Trades page can show it.
+
+    `outsideRth=True` is critical for futures: without it, the stop is dormant
+    during overnight Globex session (MES trades 23/5 but RTH is only 9:30-16:00 ET).
+    A trade taken at 6 AM ET with an RTH-only stop will sit unprotected through
+    the entire pre-market session — exactly what bit us on Apr 29 (entry 7173,
+    SL trigger 7168.25, but stop didn't activate until RTH open at 9:30 ET by
+    which time price was at 7154 → fill at 7163.50, $49 loss vs intended $25).
+    """
+    try:
+        from ib_insync import StopOrder
+        sl_order = StopOrder(action, contracts, sl_price)
+        sl_order.tif = "GTC"
+        sl_order.outsideRth = True
+        sl_trade = ib.placeOrder(contract, sl_order)
+        ib.sleep(1)
+        logger.info("Stop loss: %s %s @ %.2f (entry %.2f, risk $%.0f)",
+                    action, ticker, sl_price, fill_price, sl_dollars)
+        try:
+            from datetime import datetime as _sdt, timezone as _stz
+            sl_perm = sl_trade.order.permId
+            direction_label = "STOP_LONG" if action == "SELL" else "STOP_SHORT"
+            requests.post(f"{SERVER_URL}/api/ibkr/order/update",
+                json={
+                    "order_id": f"futures_stop_{sl_perm}",
+                    "perm_id": sl_perm,
+                    "entry_perm_id": entry_perm_id,
+                    "ticker": ticker,
+                    "type": "futures",
+                    "direction": direction_label,
+                    "stop_price": round(sl_price, 2),
+                    "entry_price": round(fill_price, 2),
+                    "contracts": contracts,
+                    "strategy": strategy_name,
+                    "status": "Submitted",
+                    "queued_at": _sdt.now(_stz.utc).isoformat(),
+                },
+                headers={"X-Sync-Key": SYNC_KEY}, timeout=5)
+        except Exception:
+            pass
+    except Exception as e:
+        logger.error("Failed to place stop loss: %s", e)
+
+
+# Snapshot of open futures positions from the previous sync tick — used by
+# _detect_closed_futures to spot positions that closed at the broker (e.g. SL stop fired)
+# without an explicit CLOSE_LONG/CLOSE_SHORT signal from the strategy.
+_prev_futures_positions: dict = {}
+
+
+def _detect_closed_futures(ib):
+    """Detect futures positions that closed since last tick and record a closed trade.
+
+    Handles the case where the IB-side stop fires (or the position is closed manually).
+    The explicit CLOSE_LONG/CLOSE_SHORT path also writes a closed-trade record; server-side
+    dedup on close_exec_id keeps both paths idempotent.
+    """
+    global _prev_futures_positions
+
+    current = {}
+    for item in ib.portfolio():
+        try:
+            if item.contract.secType != 'FUT':
+                continue
+            qty = int(item.position)
+            if qty == 0:
+                continue
+            sym = item.contract.symbol
+            direction = "LONG" if qty > 0 else "SHORT"
+            current[(sym, direction)] = {
+                "quantity": abs(qty),
+                "avg_cost": float(item.averageCost),
+                "multiplier": float(item.contract.multiplier or 5),
+            }
+        except Exception:
+            continue
+
+    # Closures: keys present in prev but missing in current
+    closed_keys = set(_prev_futures_positions.keys()) - set(current.keys())
+    for key in closed_keys:
+        sym, direction = key
+        prev = _prev_futures_positions[key]
+
+        # Find the most recent matching exit fill (LONG closes via SLD, SHORT via BOT)
+        exit_side = 'SLD' if direction == 'LONG' else 'BOT'
+        exit_fill = None
+        try:
+            fills_sorted = sorted(ib.fills(), key=lambda f: str(f.execution.time), reverse=True)
+        except Exception:
+            fills_sorted = list(ib.fills())
+        for fill in fills_sorted:
+            try:
+                c = fill.contract
+                e = fill.execution
+                if c.secType == 'FUT' and c.symbol == sym and e.side == exit_side:
+                    exit_fill = fill
+                    break
+            except Exception:
+                continue
+        if not exit_fill:
+            logger.info("Position closed but no exit fill found: %s %s — will retry next tick", sym, direction)
+            # Don't drop from prev so we retry next tick
+            current[key] = prev
+            continue
+
+        multiplier = prev["multiplier"]
+        # Use stored fill price from entry tracking if available, else derive from avg_cost
+        entry_price = prev.get("entry_fill_price", 0)
+        if not entry_price:
+            entry_price = prev["avg_cost"] / multiplier if multiplier else 0
+        exit_price = float(exit_fill.execution.price)
+        # Get IB's actual execution time (not sync detection time)
+        ib_exit_time = str(exit_fill.execution.time) if exit_fill.execution.time else ""
+        contracts = prev["quantity"]
+        if direction == 'LONG':
+            pnl = (exit_price - entry_price) * contracts * multiplier
+        else:
+            pnl = (entry_price - exit_price) * contracts * multiplier
+
+        # Look up entry strategy + opened_at; mark entry record closed
+        entry_dir = "BUY" if direction == "LONG" else "SELL"
+        opened_at = ""
+        strategy = ""
+        try:
+            entry_resp = requests.get(
+                f"{SERVER_URL}/api/ibkr/futures-entry/{sym}/{entry_dir}",
+                headers={"X-Sync-Key": SYNC_KEY},
+                timeout=5,
+            )
+            if entry_resp.status_code == 200:
+                d = entry_resp.json()
+                opened_at = d.get("opened_at", "")
+                strategy = (d.get("strategy", "") or "").replace("_exit", "")
+                if d.get("order_id"):
+                    try:
+                        requests.post(f"{SERVER_URL}/api/ibkr/order/update",
+                            json={"order_id": d["order_id"], "status": "closed"},
+                            headers={"X-Sync-Key": SYNC_KEY}, timeout=5)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        close_perm_id = getattr(exit_fill.execution, "permId", 0)
+        # If a Redis stop record exists for this permId, this was a SL fill.
+        close_reason = "Stop loss" if close_perm_id else "Closed at broker"
+
+        from datetime import datetime as _dt, timezone as _tz
+        # Use IB execution time if available, else fall back to current time
+        if ib_exit_time:
+            try:
+                closed_at = _dt.fromisoformat(str(ib_exit_time).replace("Z", "+00:00")).isoformat()
+            except Exception:
+                closed_at = _dt.now(_tz.utc).isoformat()
+        else:
+            closed_at = _dt.now(_tz.utc).isoformat()
+
+        closed_trade = {
+            "symbol": sym,
+            "type": "futures",
+            "direction": direction,
+            "contracts": contracts,
+            "entry_price": round(entry_price, 2),
+            "exit_price": round(exit_price, 2),
+            "realized_pnl": round(pnl, 2),
+            "strategy": strategy,
+            "close_reason": close_reason,
+            "opened_at": opened_at,
+            "closed_at": closed_at,
+            "close_exec_id": str(close_perm_id) if close_perm_id else "",
+        }
+        try:
+            requests.post(f"{SERVER_URL}/api/ibkr/closed-trade",
+                          json=closed_trade, headers={"X-Sync-Key": SYNC_KEY}, timeout=10)
+            logger.info("Auto-detected close: %s %s entry=%.2f exit=%.2f P&L=$%.2f reason=%s",
+                        sym, direction, entry_price, exit_price, pnl, close_reason)
+        except Exception:
+            pass
+
+        # Mark the linked stop record as Filled (no-op if it was an explicit close)
+        if close_perm_id:
+            try:
+                requests.post(f"{SERVER_URL}/api/ibkr/order/update",
+                    json={"order_id": f"futures_stop_{close_perm_id}", "status": "Filled"},
+                    headers={"X-Sync-Key": SYNC_KEY}, timeout=5)
+            except Exception:
+                pass
+
+    _prev_futures_positions = current
+
+
+def _cancel_futures_stop(ib, ticker):
+    """Cancel any open GTC stop on this futures ticker and mark Redis record cancelled.
+
+    Called before closing a position so the stop and the close don't both hit IB.
+    """
+    try:
+        for ot in list(ib.openTrades()):
+            try:
+                if (ot.contract.symbol == ticker and ot.contract.secType == 'FUT'
+                        and getattr(ot.order, 'orderType', '') == 'STP'):
+                    sl_perm = ot.order.permId
+                    ib.cancelOrder(ot.order)
+                    logger.info("Cancelled stop loss %s permId=%s", ticker, sl_perm)
+                    try:
+                        requests.post(f"{SERVER_URL}/api/ibkr/order/update",
+                            json={"order_id": f"futures_stop_{sl_perm}", "status": "Cancelled"},
+                            headers={"X-Sync-Key": SYNC_KEY}, timeout=5)
+                    except Exception:
+                        pass
+            except Exception:
+                continue
+    except Exception as e:
+        logger.warning("Failed to cancel stop loss for %s: %s", ticker, e)
+
+
 def check_order_requests(ib: IB):
     """Check for pending spread orders to place on IB."""
     try:
@@ -709,18 +1140,21 @@ def check_order_requests(ib: IB):
                     sl_points = sl_dollars / multiplier
 
                     if direction in ("CLOSE_LONG", "CLOSE_SHORT"):
-                        # Record entry price before closing
+                        # Record entry price before closing — prefer stored fill price
                         entry_price = 0
                         entry_qty = 0
                         for item in ib.portfolio():
                             if item.contract.symbol == ticker and item.contract.secType == 'FUT':
-                                entry_price = item.averageCost / multiplier
+                                entry_price = item.averageCost / multiplier  # fallback
                                 entry_qty = abs(int(item.position))
                                 break
 
+                        # Cancel the bracket stop first so it doesn't fight the close.
+                        _cancel_futures_stop(ib, ticker)
                         close_action = "SELL" if direction == "CLOSE_LONG" else "BUY"
                         close_ord = MktOrder(close_action, contracts)
                         close_ord.tif = "GTC"
+                        close_ord.outsideRth = True
                         trade = ib.placeOrder(contract, close_ord)
                         ib.sleep(3)
 
@@ -763,6 +1197,29 @@ def check_order_requests(ib: IB):
                             if not opened_at:
                                 opened_at = order.get("queued_at", "")
 
+                            # Use stored fill price from entry if available
+                            if entry_data and entry_data.get("entry_price"):
+                                stored_entry = float(entry_data["entry_price"])
+                                if stored_entry > 0:
+                                    entry_price = stored_entry
+
+                            # Use IB execution time, not sync detection time
+                            ib_fill_time = ""
+                            if trade.fills:
+                                try:
+                                    ib_fill_time = str(trade.fills[-1].execution.time)
+                                except Exception:
+                                    pass
+                            if ib_fill_time:
+                                try:
+                                    closed_at = _dt.fromisoformat(
+                                        ib_fill_time.replace("Z", "+00:00")
+                                    ).isoformat()
+                                except Exception:
+                                    closed_at = _dt.now(_tz.utc).isoformat()
+                            else:
+                                closed_at = _dt.now(_tz.utc).isoformat()
+
                             closed_trade = {
                                 "symbol": ticker,
                                 "type": "futures",
@@ -774,7 +1231,8 @@ def check_order_requests(ib: IB):
                                 "strategy": entry_strategy,
                                 "close_reason": close_reason,
                                 "opened_at": opened_at,
-                                "closed_at": _dt.now(_tz.utc).isoformat(),
+                                "closed_at": closed_at,
+                                "close_exec_id": str(getattr(trade.order, "permId", "") or ""),
                             }
                             try:
                                 requests.post(f"{SERVER_URL}/api/ibkr/closed-trade",
@@ -785,37 +1243,29 @@ def check_order_requests(ib: IB):
                     elif direction == "BUY":
                         buy_ord = MktOrder("BUY", contracts)
                         buy_ord.tif = "GTC"
+                        buy_ord.outsideRth = True  # MES trades 23/5; allow fills outside RTH
                         trade = ib.placeOrder(contract, buy_ord)
                         ib.sleep(2)
                         if trade.orderStatus.status in ("Filled", "PreSubmitted", "Submitted"):
-                            try:
-                                from ib_insync import StopOrder
-                                fill_price = trade.orderStatus.avgFillPrice or 0
-                                if fill_price > 0:
-                                    sl_price = fill_price - sl_points
-                                    sl_order = StopOrder("SELL", contracts, sl_price)
-                                    sl_order.tif = "GTC"
-                                    ib.placeOrder(contract, sl_order)
-                                    logger.info("Stop loss: SELL %s @ %.2f (entry %.2f, risk $%.0f)", ticker, sl_price, fill_price, sl_dollars)
-                            except Exception as e:
-                                logger.error("Failed to place stop loss: %s", e)
+                            fill_price = trade.orderStatus.avgFillPrice or 0
+                            if fill_price > 0:
+                                sl_price = fill_price - sl_points
+                                _place_futures_stop(ib, contract, ticker, "SELL", contracts,
+                                                    sl_price, fill_price, sl_dollars,
+                                                    trade.order.permId, strategy_name)
                     elif direction == "SELL":
                         sell_ord = MktOrder("SELL", contracts)
                         sell_ord.tif = "GTC"
+                        sell_ord.outsideRth = True
                         trade = ib.placeOrder(contract, sell_ord)
                         ib.sleep(2)
                         if trade.orderStatus.status in ("Filled", "PreSubmitted", "Submitted"):
-                            try:
-                                from ib_insync import StopOrder
-                                fill_price = trade.orderStatus.avgFillPrice or 0
-                                if fill_price > 0:
-                                    sl_price = fill_price + sl_points
-                                    sl_order = StopOrder("BUY", contracts, sl_price)
-                                    sl_order.tif = "GTC"
-                                    ib.placeOrder(contract, sl_order)
-                                    logger.info("Stop loss: BUY %s @ %.2f (entry %.2f, risk $%.0f)", ticker, sl_price, fill_price, sl_dollars)
-                            except Exception as e:
-                                logger.error("Failed to place stop loss: %s", e)
+                            fill_price = trade.orderStatus.avgFillPrice or 0
+                            if fill_price > 0:
+                                sl_price = fill_price + sl_points
+                                _place_futures_stop(ib, contract, ticker, "BUY", contracts,
+                                                    sl_price, fill_price, sl_dollars,
+                                                    trade.order.permId, strategy_name)
                     else:
                         logger.error("Unknown futures direction: %s", direction)
                         continue
@@ -823,7 +1273,22 @@ def check_order_requests(ib: IB):
                     ib.sleep(2)
                     from datetime import datetime as _dt2, timezone as _tz2
                     perm_id = trade.order.permId
-                    now_iso = _dt2.now(_tz2.utc).isoformat()
+                    # Use IB execution time for opened_at
+                    ib_entry_time = ""
+                    if trade.fills:
+                        try:
+                            ib_entry_time = str(trade.fills[-1].execution.time)
+                        except Exception:
+                            pass
+                    if ib_entry_time:
+                        try:
+                            now_iso = _dt2.fromisoformat(
+                                ib_entry_time.replace("Z", "+00:00")
+                            ).isoformat()
+                        except Exception:
+                            now_iso = _dt2.now(_tz2.utc).isoformat()
+                    else:
+                        now_iso = _dt2.now(_tz2.utc).isoformat()
 
                     result = {
                         "order_id": order_id,
@@ -1249,18 +1714,59 @@ def _connect(ib: IB) -> bool:
         return False
 
 
+DISCONNECT_ALERT_AFTER = 120   # seconds disconnected before sending email alert
+DISCONNECT_ALERT_COOLDOWN = 1800  # don't re-alert more often than every 30 min
+
+
+def _alert_disconnected(disconnected_seconds: float):
+    """Email the user that IB Gateway has been disconnected. Used when re-auth is needed."""
+    try:
+        from lumisignals.alerts import send_alert, AlertType
+        alert_pass = os.environ.get("ALERT_EMAIL_PASSWORD", "")
+        if not alert_pass:
+            return
+        send_alert(
+            AlertType.TOKEN_EXPIRY,
+            "IB Gateway disconnected — log in to resume trading",
+            f"The bot's IB Gateway connection has been down for {int(disconnected_seconds/60)} minutes "
+            f"and is failing to reconnect. This usually means the IB session expired (every ~24h) "
+            f"and needs you to log in again.\n\n"
+            f"Open in any browser: https://bot.lumitrade.ai/ib-vnc/vnc_lite.html\n\n"
+            f"Once you log in, the bot will resume trading automatically. "
+            f"While disconnected, no new futures trades are placed and existing positions are not monitored.",
+            details={"Reconnect URL": "https://bot.lumitrade.ai/ib-vnc/vnc_lite.html"},
+            smtp_pass=alert_pass,
+        )
+        logger.info("Sent disconnect alert email")
+    except Exception as e:
+        logger.warning("Failed to send disconnect alert: %s", e)
+
+
 def main():
     logger.info("IB Sync starting — connecting to IB Gateway at %s:%s", IB_HOST, IB_PORT)
 
     ib = IB()
     consecutive_failures = 0
+    disconnected_since: Optional[float] = None
+    last_alert_at: float = 0.0
 
     while True:
         # Auto-reconnect if disconnected
         if not ib.isConnected():
+            if disconnected_since is None:
+                disconnected_since = time.time()
+            disconnected_for = time.time() - disconnected_since
+
+            # Email alert if we've been down past the threshold (cooldowned)
+            if disconnected_for > DISCONNECT_ALERT_AFTER and \
+               (time.time() - last_alert_at) > DISCONNECT_ALERT_COOLDOWN:
+                _alert_disconnected(disconnected_for)
+                last_alert_at = time.time()
+
             if consecutive_failures > 0:
                 wait = min(consecutive_failures * 10, 60)
-                logger.info("Reconnecting in %ds... (attempt %d)", wait, consecutive_failures)
+                logger.info("Reconnecting in %ds... (attempt %d, down %.0fs)",
+                            wait, consecutive_failures, disconnected_for)
                 time.sleep(wait)
             if not _connect(ib):
                 consecutive_failures += 1
@@ -1269,10 +1775,14 @@ def main():
                 continue
 
             consecutive_failures = 0
+            disconnected_since = None
             logger.info("Connected to IB Gateway — syncing every %ds to %s", SYNC_INTERVAL, SERVER_URL)
+            # NOTE: Real-time streaming (reqRealTimeBars) requires a paid CME market
+            # data subscription which this account doesn't have. Using polling fallback.
+            # Uncomment _setup_mes_realtime_stream(ib) once subscription is in place.
 
         try:
-            ib.sleep(1)  # let ib_insync process events
+            ib.sleep(1)  # let ib_insync process events (including the realtime-bar callback)
             data = collect_ib_data(ib)
 
             acct = data["account"]
@@ -1292,6 +1802,14 @@ def main():
             # Check for pending orders to place
             check_order_requests(ib)
 
+            # Detect futures positions that closed at the broker (stop fired, manual close, etc.)
+            _detect_closed_futures(ib)
+
+            # MES bars: real-time streaming requires a paid CME market data subscription
+            # which this account doesn't have (Error 420: No market data permissions).
+            # Falling back to historical polling — runs every 30s on the regular tick.
+            _push_mes_bars_polling(ib)
+
             # Monitor open spreads for TP/SL/time stop
             if data.get("spreads"):
                 monitor_spreads(ib, data["spreads"])
@@ -1303,6 +1821,7 @@ def main():
             # Check if it's a connection error
             if not ib.isConnected():
                 logger.warning("Connection lost — will auto-reconnect")
+                _teardown_mes_realtime_stream(ib)
                 try:
                     ib.disconnect()
                 except Exception:
