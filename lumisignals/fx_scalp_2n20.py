@@ -455,9 +455,9 @@ class FXScalp2n20:
 
             # Record to signal_log so trade_tracker / Trades page can identify
             # this trade as a 2n20 entry when enriching the OANDA trade list.
-            if self.signal_log and order_id:
-                try:
-                    self.signal_log.record(str(order_id), {
+            # Record under BOTH trade_id and order_id — the tracker looks up
+            # by trade_id first, then openingTransactionID, then nearby IDs.
+            log_data = {
                         "model": "scalp_2n20",
                         "strategy": "2n20_fx",
                         "strategy_id": "vwap_2n20",
@@ -472,9 +472,18 @@ class FXScalp2n20:
                         "sl_dollars": self.sl_dollars,
                         "level_timeframe": "2m",
                         "level_type": "vwap_overwhelm",
-                    })
+                        "trigger_pattern": "Green Overwhelm" if direction == "BUY" else "Red Overwhelm",
+                    }
+            if self.signal_log:
+                try:
+                    # Record under trade_id (primary lookup key for trade_tracker)
+                    if state.trade_id:
+                        self.signal_log.record(str(state.trade_id), log_data)
+                    # Also record under order_id for redundancy
+                    if order_id:
+                        self.signal_log.record(str(order_id), log_data)
                 except Exception as e:
-                    logger.debug("signal_log record failed for %s: %s", order_id, e)
+                    logger.debug("signal_log record failed for %s: %s", state.trade_id, e)
 
             if self.signal_callback:
                 self.signal_callback({
