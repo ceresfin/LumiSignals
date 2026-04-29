@@ -6,8 +6,13 @@ from .oanda_client import OandaClient, resolve_instrument
 
 logger = logging.getLogger(__name__)
 
-# Major and major-cross forex pairs — liquid, tight spreads, available on US accounts
-MAJOR_PAIRS = {
+# USD major pairs — focused set for faster scanning
+USD_MAJORS = {
+    "EUR_USD", "GBP_USD", "USD_JPY", "USD_CHF", "AUD_USD", "NZD_USD", "USD_CAD",
+}
+
+# All major and major-cross forex pairs (kept for reference/future use)
+ALL_MAJOR_PAIRS = {
     # 7 Majors
     "EUR_USD", "GBP_USD", "USD_JPY", "USD_CHF", "AUD_USD", "NZD_USD", "USD_CAD",
     # 20 Major crosses
@@ -15,6 +20,9 @@ MAJOR_PAIRS = {
     "CAD_JPY", "AUD_NZD", "GBP_NZD", "EUR_NZD", "EUR_CAD", "GBP_CAD", "GBP_AUD",
     "NZD_CAD", "AUD_CAD", "NZD_CHF", "AUD_CHF", "CHF_JPY", "NZD_JPY",
 }
+
+# Active trading pairs — USD majors only for fast scan cycles
+MAJOR_PAIRS = USD_MAJORS
 
 
 def get_pip_precision(instrument: str) -> tuple[float, int]:
