@@ -17,7 +17,7 @@ Differences from futures:
 import logging
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time as dt_time, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
 from .oanda_client import OandaClient
@@ -38,6 +38,8 @@ DEFAULT_SL_DOLLARS = 25.0  # Fixed stop loss per trade
 # Forex trades 24/5: Sunday 5PM ET through Friday 5PM ET
 # No session close flatten — forex has no maintenance break
 VWAP_CANDLE_GRAN = "M2"  # Same granularity for VWAP
+VWAP_CACHE_TTL = 60  # Re-fetch VWAP candles per pair at most every 60s
+VWAP_CANDLE_COUNT = 720  # ~24h of 2-min bars — covers full 18:00-ET-anchored session
 
 
 @dataclass
@@ -58,36 +60,93 @@ class FXScalp2n20:
 
     def __init__(self, oanda: OandaClient, pairs: list = None,
                  sl_dollars: float = DEFAULT_SL_DOLLARS,
-                 signal_callback=None):
+                 signal_callback=None, signal_log=None):
         """
         Args:
             oanda: OandaClient instance
             pairs: List of instruments (default: MAJOR_PAIRS)
             sl_dollars: Fixed stop loss in USD per trade
             signal_callback: Optional callback(signal_dict) for logging/tracking
+            signal_log: Optional SignalLog instance — when set, every fill is recorded
+                under its OANDA order_id so the Trades page can show model metadata.
         """
         self.oanda = oanda
         self.pairs = pairs or sorted(MAJOR_PAIRS)
         self.sl_dollars = sl_dollars
         self.signal_callback = signal_callback
+        self.signal_log = signal_log
         self.states: Dict[str, FXScalpState] = {p: FXScalpState(instrument=p) for p in self.pairs}
-        self._last_scan_time: Dict[str, datetime] = {}
+        # Per-bar dedup: process each closed bar exactly once per pair (mirrors MES).
+        self._last_candle_time: Dict[str, str] = {}
+        # VWAP candle cache: (fetched_at_ts, candles) per pair. Refreshed every VWAP_CACHE_TTL.
+        self._vwap_cache: Dict[str, Tuple[float, list]] = {}
+        # On startup, reconcile in-memory state with OANDA's actual positions.
+        # Without this, every bot restart wipes state.in_short/in_long, the strategy
+        # thinks it's flat, and re-enters on the next signal — never firing exits
+        # because exit logic is gated on `if state.in_short:` / `if state.in_long:`.
+        self._init_states_from_broker()
+
+    def _init_states_from_broker(self):
+        """Read OANDA open trades and seed strategy state so exits fire correctly
+        after bot restarts. Called once at construction.
+        """
+        try:
+            resp = self.oanda._request("GET",
+                f"/v3/accounts/{self.oanda.account_id}/openTrades")
+            for t in resp.get("trades", []):
+                inst = t.get("instrument")
+                if inst not in self.states:
+                    continue
+                try:
+                    units = int(float(t.get("currentUnits", 0)))
+                except Exception:
+                    continue
+                if units == 0:
+                    continue
+                state = self.states[inst]
+                # If multiple trades exist on the same pair (legacy from earlier
+                # restart-driven duplicates), the most recent one wins — OANDA
+                # returns trades newest-first by default.
+                if state.in_long or state.in_short:
+                    continue
+                state.in_long = units > 0
+                state.in_short = units < 0
+                state.trade_id = str(t.get("id", ""))
+                try:
+                    state.entry_price = float(t.get("price", 0))
+                except Exception:
+                    pass
+                try:
+                    sl_order = t.get("stopLossOrder", {}) or {}
+                    state.stop_price = float(sl_order.get("price", 0))
+                except Exception:
+                    pass
+                logger.info("FX state reconciled: %s %s @ %.5f trade=%s (from OANDA)",
+                            inst, "LONG" if units > 0 else "SHORT",
+                            state.entry_price, state.trade_id)
+        except Exception as e:
+            logger.warning("FX state reconcile failed: %s", e)
 
     def scan_all(self):
         """Scan all pairs for 2n20 signals. Call this every ~30 seconds."""
-        now = datetime.now(timezone.utc)
-        et_hour = (now.hour - 4) % 24  # Rough EDT
+        try:
+            from zoneinfo import ZoneInfo
+            et_tz = ZoneInfo("America/New_York")
+        except Exception:
+            et_tz = timezone(timedelta(hours=-4))  # EDT fallback
+        now_et = datetime.now(timezone.utc).astimezone(et_tz)
+        et_hour, et_minute, weekday = now_et.hour, now_et.minute, now_et.weekday()
 
-        # Forex trades 24/5: Sunday 5PM ET through Friday 5PM ET
-        # Friday close: flatten at 4:50 PM ET
-        if now.weekday() == 4 and et_hour == 16 and now.minute >= 50:
+        # Forex trades 24/5: Sunday 17:00 ET through Friday 17:00 ET
+        # Friday close: flatten at 16:50 ET
+        if weekday == 4 and et_hour == 16 and et_minute >= 50:
             self._flatten_all("Friday close")
             return
 
-        # Skip weekends (Saturday + Sunday before 5PM ET)
-        if now.weekday() == 5:
+        # Skip weekends (Saturday + Sunday before 17:00 ET)
+        if weekday == 5:
             return
-        if now.weekday() == 6 and et_hour < 17:
+        if weekday == 6 and et_hour < 17:
             return
 
         for pair in self.pairs:
@@ -97,18 +156,28 @@ class FXScalp2n20:
                 logger.debug("2n20 scan error %s: %s", pair, e)
 
     def _scan_pair(self, instrument: str):
-        """Scan one pair for 2n20 signals."""
-        # Rate limit: don't scan same pair more than once per 2 minutes
-        now = datetime.now(timezone.utc)
-        last = self._last_scan_time.get(instrument)
-        if last and (now - last).total_seconds() < 110:
-            return
-        self._last_scan_time[instrument] = now
+        """Scan one pair for 2n20 signals.
 
+        Per-bar dedup: each closed bar is processed exactly once. Cheap enough
+        that scan_all can run every ~30s without hammering OANDA — the dedup
+        check returns before any heavy computation when no new bar is present.
+        """
         # Get 2-minute candles
         candles = self.oanda.get_candles(instrument, GRANULARITY, CANDLE_COUNT)
         if not candles or len(candles) < 12:
             return
+
+        # Per-bar dedup — find latest complete bar's time, skip if already processed.
+        latest_complete_time = ""
+        for c in reversed(candles):
+            if c.get("complete", True):
+                latest_complete_time = str(c.get("time", ""))
+                break
+        if not latest_complete_time:
+            return
+        if self._last_candle_time.get(instrument) == latest_complete_time:
+            return
+        self._last_candle_time[instrument] = latest_complete_time
 
         # Parse candle data
         bars = []
@@ -225,24 +294,51 @@ class FXScalp2n20:
         return green_overwhelm, red_overwhelm
 
     def _calc_vwap(self, instrument: str) -> Optional[float]:
-        """Calculate daily VWAP from recent 2-minute candles.
+        """Cumulative session VWAP anchored at 18:00 ET (matches futures).
 
-        For forex, the "trading day" starts at 5 PM ET (21:00 UTC in EDT).
-        We use all candles since the last 5 PM ET rollover.
+        On the user's TV setup, Pine's `time("D")` for OANDA forex resolves to
+        18:00 ET — same as CME futures. Anchoring here resets at each 18:00 ET
+        and accumulates through to the next 18:00 ET. Returns None outside an
+        active session (Sat, Sun before 18:00, Fri post-17:00 maintenance).
         """
         try:
-            # Get enough candles to cover a full forex day (~720 2-min bars = 24h)
-            candles = self.oanda.get_candles(instrument, GRANULARITY, 720)
+            from zoneinfo import ZoneInfo
+            et = ZoneInfo("America/New_York")
+        except Exception:
+            et = timezone(timedelta(hours=-4))
+
+        now_et = datetime.now(timezone.utc).astimezone(et)
+        weekday, hour = now_et.weekday(), now_et.hour
+
+        # Outside active session — VWAP undefined
+        if weekday == 5:                     # Saturday
+            return None
+        if weekday == 4 and hour >= 17:      # Friday post-close
+            return None
+        if weekday == 6 and hour < 18:       # Sunday before Globex/VWAP anchor
+            return None
+
+        # Anchor = most recent 18:00 ET on a valid trading day (Sun-Thu)
+        if hour >= 18:
+            anchor_date = now_et.date()
+        else:
+            anchor_date = (now_et - timedelta(days=1)).date()
+        anchor_et = datetime.combine(anchor_date, dt_time(18, 0)).replace(tzinfo=et)
+
+        try:
+            # Cached fetch — 720 2-min bars per pair, refreshed every VWAP_CACHE_TTL.
+            # Without caching, scan_all hits OANDA 28 × 720-bar requests every cycle,
+            # making the loop too slow to scan each 2-min bar across all pairs.
+            cached = self._vwap_cache.get(instrument)
+            now_ts = time.time()
+            if cached and (now_ts - cached[0]) < VWAP_CACHE_TTL:
+                candles = cached[1]
+            else:
+                candles = self.oanda.get_candles(instrument, GRANULARITY, VWAP_CANDLE_COUNT)
+                if candles:
+                    self._vwap_cache[instrument] = (now_ts, candles)
             if not candles:
                 return None
-
-            # Find the last 5 PM ET rollover (21:00 UTC in EDT, 22:00 in EST)
-            now = datetime.now(timezone.utc)
-            rollover_hour = 21  # 5 PM ET in UTC (EDT)
-            if now.hour >= rollover_hour:
-                rollover = now.replace(hour=rollover_hour, minute=0, second=0, microsecond=0)
-            else:
-                rollover = (now - timedelta(days=1)).replace(hour=rollover_hour, minute=0, second=0, microsecond=0)
 
             num = 0.0
             den = 0.0
@@ -250,15 +346,14 @@ class FXScalp2n20:
                 if not c.get("complete", True):
                     continue
                 ct = c.get("time", "")
-                if ct:
-                    try:
-                        # Oanda returns Unix epoch as string (e.g. "1777263480.000000000")
-                        ts = float(ct)
-                        cdt = datetime.fromtimestamp(ts, tz=timezone.utc)
-                        if cdt < rollover:
-                            continue
-                    except Exception:
-                        continue
+                if not ct:
+                    continue
+                try:
+                    cdt = datetime.fromtimestamp(float(ct), tz=timezone.utc).astimezone(et)
+                except Exception:
+                    continue
+                if cdt < anchor_et:
+                    continue
                 mid = c.get("mid", {})
                 h = float(mid.get("h", 0))
                 l = float(mid.get("l", 0))
@@ -331,20 +426,55 @@ class FXScalp2n20:
             }
             result = self.oanda.create_order(order_data)
 
-            # Extract trade ID from fill
+            # Extract trade ID, order ID, and actual fill price/time from Oanda response
             fill = result.get("orderFillTransaction", {})
             trade_ids = fill.get("tradeOpened", {}).get("tradeID") or fill.get("tradesClosed", [{}])[0].get("tradeID", "")
+            order_id = (result.get("orderCreateTransaction", {}) or {}).get("id", "") or fill.get("orderID", "")
+
+            # Use Oanda's actual fill price and time, not our candle close
+            fill_price = float(fill.get("price", 0)) or price
+            fill_time_str = fill.get("time", "")
+            if fill_time_str:
+                try:
+                    fill_time = datetime.fromtimestamp(float(fill_time_str), tz=timezone.utc)
+                except Exception:
+                    fill_time = datetime.now(timezone.utc)
+            else:
+                fill_time = datetime.now(timezone.utc)
 
             state.in_long = direction == "BUY"
             state.in_short = direction == "SELL"
             state.trade_id = str(trade_ids) if trade_ids else ""
-            state.entry_price = price
-            state.entry_time = datetime.now(timezone.utc)
+            state.entry_price = fill_price
+            state.entry_time = fill_time
             state.stop_price = stop_price
 
-            logger.info("2n20 FX %s %s @ %s — SL %s, units %d",
-                       direction, instrument, format_price(price, precision),
-                       stop_str, abs(units))
+            logger.info("2n20 FX %s %s @ %s (fill: %s) — SL %s, units %d",
+                       direction, instrument, format_price(fill_price, precision),
+                       format_price(price, precision), stop_str, abs(units))
+
+            # Record to signal_log so trade_tracker / Trades page can identify
+            # this trade as a 2n20 entry when enriching the OANDA trade list.
+            if self.signal_log and order_id:
+                try:
+                    self.signal_log.record(str(order_id), {
+                        "model": "scalp_2n20",
+                        "strategy": "2n20_fx",
+                        "strategy_id": "vwap_2n20",
+                        "instrument": instrument,
+                        "symbol": instrument,
+                        "action": direction,
+                        "direction": direction,
+                        "entry_price": fill_price,
+                        "stop_price": stop_price,
+                        "units": abs(units),
+                        "trade_id": state.trade_id,
+                        "sl_dollars": self.sl_dollars,
+                        "level_timeframe": "2m",
+                        "level_type": "vwap_overwhelm",
+                    })
+                except Exception as e:
+                    logger.debug("signal_log record failed for %s: %s", order_id, e)
 
             if self.signal_callback:
                 self.signal_callback({
@@ -356,6 +486,7 @@ class FXScalp2n20:
                     "model": "scalp_2n20",
                     "strategy": "2n20_fx",
                     "trade_id": state.trade_id,
+                    "order_id": str(order_id) if order_id else "",
                     "sl_dollars": self.sl_dollars,
                 })
 
@@ -369,30 +500,39 @@ class FXScalp2n20:
         direction = "LONG" if state.in_long else "SHORT"
 
         try:
+            close_result = {}
             if state.trade_id:
                 # Close specific trade
-                self.oanda._request(
+                close_result = self.oanda._request(
                     "PUT",
                     f"/v3/accounts/{self.oanda.account_id}/trades/{state.trade_id}/close",
                 )
             else:
                 # Close all for this instrument
                 close_data = {"longUnits": "ALL"} if state.in_long else {"shortUnits": "ALL"}
-                self.oanda._request(
+                close_result = self.oanda._request(
                     "PUT",
                     f"/v3/accounts/{self.oanda.account_id}/positions/{instrument}/close",
                     close_data,
                 )
 
-            # Calculate P&L
+            # Get actual fill price and time from Oanda response
+            close_fill = close_result.get("orderFillTransaction", {})
+            actual_exit_price = float(close_fill.get("price", 0)) or price
+            close_time_str = close_fill.get("time", "")
+            actual_pnl = float(close_fill.get("pl", 0))
+
+            # Calculate P&L in pips using actual fill prices
+            pip = get_pip_precision(instrument)[0]
             if state.entry_price > 0:
                 if state.in_long:
-                    pnl_pips = (price - state.entry_price) / get_pip_precision(instrument)[0]
+                    pnl_pips = (actual_exit_price - state.entry_price) / pip
                 else:
-                    pnl_pips = (state.entry_price - price) / get_pip_precision(instrument)[0]
+                    pnl_pips = (state.entry_price - actual_exit_price) / pip
             else:
                 pnl_pips = 0
 
+            # Duration from actual entry time
             duration = ""
             if state.entry_time:
                 dur = datetime.now(timezone.utc) - state.entry_time
@@ -406,7 +546,7 @@ class FXScalp2n20:
                 self.signal_callback({
                     "instrument": instrument,
                     "direction": f"CLOSE_{direction}",
-                    "exit_price": price,
+                    "exit_price": actual_exit_price,
                     "entry_price": state.entry_price,
                     "pnl_pips": round(pnl_pips, 1),
                     "reason": reason,
