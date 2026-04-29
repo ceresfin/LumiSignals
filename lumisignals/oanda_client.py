@@ -71,6 +71,9 @@ class OandaClient:
             "Content-Type": "application/json",
             "Accept-Datetime-Format": "UNIX",
         })
+        # Candle cache: {(instrument, granularity, count): (timestamp, result)}
+        self._candle_cache = {}
+        self._candle_cache_ttl = 25  # seconds — just under the 30s bot loop
 
     def _request(self, method: str, endpoint: str, json_data: dict = None) -> dict:
         """Make an HTTP request to the Oanda API."""
@@ -123,7 +126,7 @@ class OandaClient:
         return self._request("GET", f"/v3/accounts/{self.account_id}/pricing?instruments={instrument}")
 
     def get_candles(self, instrument: str, granularity: str = "D", count: int = 2) -> list:
-        """Get recent candles for an instrument.
+        """Get recent candles for an instrument. Results cached for 25 seconds.
 
         Args:
             instrument: e.g. "EUR_USD"
@@ -133,11 +136,21 @@ class OandaClient:
         Returns:
             List of candle dicts with mid OHLC.
         """
+        import time as _time
+        cache_key = (instrument, granularity, count)
+        cached = self._candle_cache.get(cache_key)
+        if cached:
+            ts, data = cached
+            if _time.time() - ts < self._candle_cache_ttl:
+                return data
+
         result = self._request(
             "GET",
             f"/v3/instruments/{instrument}/candles?granularity={granularity}&count={count}&price=M",
         )
-        return result.get("candles", [])
+        candles = result.get("candles", [])
+        self._candle_cache[cache_key] = (_time.time(), candles)
+        return candles
 
     def create_order(self, order_data: dict) -> dict:
         """Create a new order."""
