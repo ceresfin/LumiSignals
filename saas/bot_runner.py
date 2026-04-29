@@ -601,9 +601,11 @@ def run_bot_for_user(user_data, stop_check):
                 except Exception:
                     pass
 
-            # Active FX pairs — narrowed from 28 to 3 to make signal validation
-            # tractable while we debug TV ↔ bot alignment. Expand as confidence grows.
-            ACTIVE_FX_PAIRS = ["EUR_USD", "GBP_CAD", "USD_JPY"]
+            # USD majors only — 7 pairs for fast scan cycles (~2-3 sec vs 18+ min for 28)
+            ACTIVE_FX_PAIRS = [
+                "EUR_USD", "GBP_USD", "USD_JPY", "USD_CHF",
+                "AUD_USD", "NZD_USD", "USD_CAD",
+            ]
             fx_scalp = FXScalp2n20(oanda, pairs=ACTIVE_FX_PAIRS, sl_dollars=fx_sl,
                                     signal_callback=fx_signal_cb, signal_log=signal_log)
             log(f"[2n20_FX] Scalp strategy active — {len(fx_scalp.pairs)} pairs, SL ${fx_sl}")

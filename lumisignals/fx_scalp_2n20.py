@@ -38,7 +38,7 @@ DEFAULT_SL_DOLLARS = 25.0  # Fixed stop loss per trade
 # Forex trades 24/5: Sunday 5PM ET through Friday 5PM ET
 # No session close flatten — forex has no maintenance break
 VWAP_CANDLE_GRAN = "M2"  # Same granularity for VWAP
-VWAP_CACHE_TTL = 60  # Re-fetch VWAP candles per pair at most every 60s
+VWAP_CACHE_TTL = 120  # Re-fetch VWAP candles per pair at most every 2 min (matches candle close)
 VWAP_CANDLE_COUNT = 720  # ~24h of 2-min bars — covers full 18:00-ET-anchored session
 
 
