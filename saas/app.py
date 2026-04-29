@@ -5,7 +5,7 @@ import os
 import logging
 from datetime import datetime, timezone, timedelta
 
-from flask import Flask, render_template, request, jsonify, redirect, url_for, session, flash
+from flask import Flask, render_template, request, jsonify, redirect, url_for, session, flash, make_response
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -118,6 +118,7 @@ def create_app():
 
         # Futures settings
         futures_stop_loss = db.Column(db.Float, default=25.0)  # Stop loss in dollars per contract
+        futures_contracts = db.Column(db.Integer, default=1)   # N contracts per entry; exits flatten actual position
 
     @login_manager.user_loader
     def load_user(user_id):
@@ -240,6 +241,7 @@ def create_app():
 
             # Futures settings
             current_user.futures_stop_loss = float(request.form.get("futures_stop_loss", 25) or 25)
+            current_user.futures_contracts = max(1, int(request.form.get("futures_contracts", 1) or 1))
 
             db.session.commit()
             flash("Settings saved", "success")
@@ -681,7 +683,10 @@ def create_app():
                         pass
             if not order.get("ticker") and not order.get("symbol"):
                 continue
-            if order.get("user_id") == current_user.id:
+            # Include if user_id matches, OR if it's a futures entry (sync doesn't set user_id)
+            if order.get("user_id") == current_user.id or (
+                order.get("type") == "futures" and "futures_entry" in order.get("order_id", "")
+            ):
                 orders.append(order)
         # Sort: queued/placing first, then by time
         status_order = {"queued": 0, "placing": 1, "submitted": 2, "filled": 3, "failed": 4, "cancelled": 5}
@@ -722,6 +727,78 @@ def create_app():
             rdb.setex(f"ibkr:order:perm:{perm_id}", 604800, json.dumps(data))
         return jsonify({"status": "created"})
 
+    @app.route("/api/ibkr/futures-bars/<ticker>", methods=["GET", "POST"])
+    def api_ibkr_futures_bars(ticker):
+        """Cache of 2-min IB futures bars. Sync POSTs them; strategy GETs them.
+
+        Replaces the Polygon I:SPX feed for 2n20 — sync pulls from IB's CME-consolidated
+        feed so our candles match TV's MES1! chart.
+
+        POST body: {"bars": [{"open": ..., "high": ..., "low": ..., "close": ...,
+                              "volume": ..., "time": "..."}], "front_month": "MESM26"}
+        GET response: same shape + last_synced + stale flag
+        """
+        sync_key = request.headers.get("X-Sync-Key", "")
+        if sync_key != os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026"):
+            return jsonify({"error": "Invalid sync key"}), 403
+        import redis as _redis
+        rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+        sym = ticker.upper()
+        key = f"ibkr:bars:{sym}:2m"
+
+        if request.method == "POST":
+            from datetime import datetime as _dt, timezone as _tz
+            body = request.get_json(silent=True) or {}
+            payload = {
+                "bars": body.get("bars", []),
+                "front_month": body.get("front_month", ""),
+                "updated_at": _dt.now(_tz.utc).isoformat(),
+            }
+            # 5-min TTL; sync pushes every 60s so this stays warm during normal operation.
+            rdb.setex(key, 300, json.dumps(payload))
+            return jsonify({"status": "ok", "count": len(payload["bars"])})
+
+        # GET
+        raw = rdb.get(key)
+        if not raw:
+            return jsonify({"bars": [], "stale": True, "reason": "no recent bar push"})
+        return jsonify(json.loads(raw))
+
+    @app.route("/api/ibkr/futures-position/<ticker>")
+    def api_ibkr_futures_position(ticker):
+        """Return the current futures position for a ticker as seen at the broker.
+
+        Used by internally-generated strategies to verify state before placing
+        entry/exit orders. Sync-key authed (internal callers only).
+        """
+        sync_key = request.headers.get("X-Sync-Key", "")
+        if sync_key != os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026"):
+            return jsonify({"error": "Invalid sync key"}), 403
+        import redis as _redis
+        rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+        raw = rdb.get("ibkr:data:1")
+        if not raw:
+            return jsonify({"connected": False, "ticker": ticker.upper(),
+                            "position": 0, "reason": "no recent sync data"})
+        data = json.loads(raw)
+        sym = ticker.upper()
+        for p in data.get("positions", []):
+            if p.get("symbol") == sym and p.get("sec_type") == "FUT":
+                return jsonify({
+                    "connected": True,
+                    "ticker": sym,
+                    "position": int(p.get("quantity", 0)),
+                    "avg_cost": float(p.get("avg_cost", 0)),
+                    "last_synced": data.get("last_synced", ""),
+                })
+        return jsonify({
+            "connected": True,
+            "ticker": sym,
+            "position": 0,
+            "avg_cost": 0,
+            "last_synced": data.get("last_synced", ""),
+        })
+
     @app.route("/api/ibkr/exit-rules")
     def api_ibkr_exit_rules():
         """Return options exit rules for the sync script."""
@@ -748,7 +825,7 @@ def create_app():
 
     @app.route("/api/ibkr/closed-trade", methods=["POST"])
     def api_ibkr_closed_trade():
-        """Record a closed options trade."""
+        """Record a closed options/futures trade. Idempotent on close_exec_id when provided."""
         sync_key = request.headers.get("X-Sync-Key", "")
         if sync_key != os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026"):
             return jsonify({"error": "Invalid sync key"}), 403
@@ -756,16 +833,32 @@ def create_app():
         import uuid
         rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
         data = request.get_json()
+        # Dedup: if close_exec_id was already recorded, return the existing trade_id.
+        # Lets explicit-CLOSE path and auto-detector both fire safely on the same close.
+        close_exec_id = str(data.get("close_exec_id", "") or "")
+        if close_exec_id:
+            existing = rdb.get(f"ibkr:closed_exec:{close_exec_id}")
+            if existing:
+                return jsonify({"status": "duplicate", "trade_id": existing.decode() if isinstance(existing, bytes) else existing})
         trade_id = str(uuid.uuid4())[:8]
         data["trade_id"] = trade_id
         # Store with 30-day TTL
         rdb.setex(f"ibkr:closed:{trade_id}", 2592000, json.dumps(data))
+        if close_exec_id:
+            rdb.setex(f"ibkr:closed_exec:{close_exec_id}", 2592000, trade_id)
         return jsonify({"status": "ok", "trade_id": trade_id})
 
     @app.route("/api/ibkr/closed-trades")
     @login_required
     def api_ibkr_closed_trades():
-        """Return all closed options trades."""
+        """Return closed trades with optional filtering.
+
+        Query params:
+            type: "futures" or "options" (default: all)
+            limit: max trades to return (default: 50)
+            offset: skip first N trades (default: 0)
+            days: only trades from last N days (default: all)
+        """
         import redis as _redis
         rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
         trades = []
@@ -775,7 +868,91 @@ def create_app():
                 trades.append(json.loads(raw))
         # Sort by closed_at descending
         trades.sort(key=lambda t: t.get("closed_at", ""), reverse=True)
-        return jsonify({"trades": trades})
+
+        # Filter by type
+        trade_type = request.args.get("type")
+        if trade_type:
+            trades = [t for t in trades if t.get("type") == trade_type]
+
+        # Filter by days
+        days = request.args.get("days")
+        if days:
+            try:
+                cutoff = (datetime.now(timezone.utc) - timedelta(days=int(days))).isoformat()
+                trades = [t for t in trades if t.get("closed_at", "") >= cutoff]
+            except Exception:
+                pass
+
+        total = len(trades)
+
+        # Pagination
+        limit = int(request.args.get("limit", 50))
+        offset = int(request.args.get("offset", 0))
+        if limit > 0:
+            trades = trades[offset:offset + limit]
+
+        return jsonify({"trades": trades, "total": total, "offset": offset, "limit": limit})
+
+    @app.route("/api/ibkr/closed-trades/csv")
+    @login_required
+    def api_ibkr_closed_trades_csv():
+        """Download all closed trades as CSV."""
+        import redis as _redis
+        import csv
+        import io
+        rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+        trades = []
+        for key in rdb.scan_iter("ibkr:closed:*"):
+            raw = rdb.get(key)
+            if raw:
+                trades.append(json.loads(raw))
+        trades.sort(key=lambda t: t.get("closed_at", ""), reverse=True)
+
+        # Filter by type if specified
+        trade_type = request.args.get("type")
+        if trade_type:
+            trades = [t for t in trades if t.get("type") == trade_type]
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+        # Header
+        writer.writerow([
+            "Type", "Symbol", "Direction", "Contracts/Qty", "Entry Price", "Exit Price",
+            "Realized P&L", "Strategy", "Close Reason", "Result",
+            "Opened", "Closed", "Duration (min)"
+        ])
+        for t in trades:
+            # Calculate duration
+            dur = ""
+            try:
+                if t.get("opened_at") and t.get("closed_at"):
+                    from datetime import datetime as _dt
+                    o = _dt.fromisoformat(t["opened_at"].replace("Z", "+00:00"))
+                    c = _dt.fromisoformat(t["closed_at"].replace("Z", "+00:00"))
+                    dur = str(int((c - o).total_seconds() / 60))
+            except Exception:
+                pass
+            pnl = t.get("realized_pnl", 0)
+            writer.writerow([
+                t.get("type", ""),
+                t.get("symbol", t.get("ticker", "")),
+                t.get("direction", ""),
+                t.get("contracts", t.get("quantity", 1)),
+                t.get("entry_price", ""),
+                t.get("exit_price", ""),
+                round(pnl, 2) if pnl else "",
+                t.get("strategy", ""),
+                t.get("close_reason", ""),
+                "WIN" if pnl and pnl > 0 else ("LOSS" if pnl and pnl < 0 else ""),
+                t.get("opened_at", ""),
+                t.get("closed_at", ""),
+                dur,
+            ])
+
+        response = make_response(output.getvalue())
+        response.headers["Content-Type"] = "text/csv"
+        response.headers["Content-Disposition"] = f"attachment; filename=closed_trades_{datetime.now().strftime('%Y%m%d')}.csv"
+        return response
 
     @app.route("/api/ibkr/signal-lookup/<ticker>")
     def api_ibkr_signal_lookup(ticker):
@@ -1030,9 +1207,10 @@ def create_app():
         }
         """
         import redis as _redis
+        sync_key = request.headers.get("X-Sync-Key", "")
+        if sync_key != os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026"):
+            return jsonify({"error": "Internal endpoint — invalid or missing X-Sync-Key header"}), 403
         data = request.get_json(silent=True) or {}
-        if data.get("key") != os.environ.get("TV_WEBHOOK_KEY", "lumisignals2026"):
-            return jsonify({"error": "Invalid key"}), 403
         ticker = data.get("ticker", "").upper().strip()
         if not ticker:
             return jsonify({"error": "Missing ticker"}), 400
@@ -1335,31 +1513,28 @@ def create_app():
 
     @app.route("/api/webhook/tradingview", methods=["POST"])
     def api_tradingview_webhook():
-        """Receive a TradingView alert and queue a 0DTE options trade.
+        """Trade-signal queue accepting either TV alerts (body `key`) or internal callers.
 
-        Expected JSON payload:
-        {
-            "ticker": "SPY",           # required
-            "direction": "BUY",        # BUY or SELL
-            "strategy": "vwap_bounce", # strategy name for logging
-            "key": "lumisignals2026",  # simple auth key
-            "spread_type": "credit",   # credit, debit, or both (default: credit)
-            "contracts": 2,            # override contract count (optional)
-            "dte": 0,                  # 0 for 0DTE, or specific days (optional)
-            "tp_pct": 35,              # take profit % (optional, default by dte)
-            "sl_pct": 25,              # stop loss % (optional, default by dte)
-            "time_stop_min": 15        # close after X minutes (optional)
-        }
+        Auth: passes if EITHER
+          - `X-Sync-Key` header matches IBKR_SYNC_KEY (internal callers like swing_scanner), OR
+          - body `key` field matches TV_WEBHOOK_KEY (TradingView alerts).
+
+        TV is the real-time data source for futures (MES/ES) since the IB account
+        lacks a CME real-time market data subscription. The TV Pine Script alert
+        fires on bar close with the canonical 2n20 logic — same script the bot's
+        internal strategy mirrors — so this gives us scalp-grade lag (~10-20s)
+        without needing to pay for IB market data.
         """
         import redis as _redis
         import uuid
 
         data = request.get_json(silent=True) or {}
-
-        # Simple auth
-        webhook_key = data.get("key", "")
-        if webhook_key != os.environ.get("TV_WEBHOOK_KEY", "lumisignals2026"):
-            return jsonify({"error": "Invalid key"}), 403
+        sync_key = request.headers.get("X-Sync-Key", "")
+        body_key = data.get("key", "")
+        ok_sync = sync_key == os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026")
+        ok_tv = body_key and body_key == os.environ.get("TV_WEBHOOK_KEY", "lumisignals2026")
+        if not (ok_sync or ok_tv):
+            return jsonify({"error": "Invalid auth — provide X-Sync-Key header or body key"}), 403
 
         ticker = data.get("ticker", "").upper().strip()
         direction = data.get("direction", "").upper().strip()
@@ -1387,6 +1562,28 @@ def create_app():
         if trade_type == "futures":
             rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
             today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+            # Refuse to queue if IB sync is offline. Better to skip the trade
+            # than to pile up stale orders that fire on reconnect. User's pref:
+            # "rather not trade than have stale orders build up".
+            sync_alive = False
+            try:
+                ib_raw = rdb.get("ibkr:data:1")
+                if ib_raw:
+                    ib_data = json.loads(ib_raw)
+                    last_sync_str = ib_data.get("last_synced", "")
+                    if last_sync_str:
+                        last_dt = datetime.fromisoformat(last_sync_str.replace("Z", "+00:00"))
+                        age = (datetime.now(timezone.utc) - last_dt).total_seconds()
+                        sync_alive = age < 90  # stale if no push in last 90s
+            except Exception:
+                sync_alive = False
+            if not sync_alive:
+                return jsonify({
+                    "status": "skipped",
+                    "reason": "IB sync offline — order not queued (re-auth IB Gateway via VNC)",
+                    "ticker": ticker, "direction": direction,
+                })
 
             # Handle close signals
             close_reason = data.get("reason", "")
@@ -1429,18 +1626,31 @@ def create_app():
                 "signal_action": direction,
             }
             rdb.setex(f"ibkr:order:pending:{order_id}", 86400, json.dumps(order))
-            rdb.setex(dedup_key, 180, "1")  # 3-min dedup for futures (covers one 2-min candle)
+            # 30s dedup — only protects against accidental webhook retries from TV
+            # itself. Pine's `alert.freq_once_per_bar_close` already ensures one
+            # alert per bar (every 2 min), so anything past 30s is a legitimate
+            # new bar's entry that we want to take.
+            rdb.setex(dedup_key, 30, "1")
 
-            # Alert
-            try:
-                from lumisignals.alerts import send_alert, AlertType
-                alert_pass = os.environ.get("ALERT_EMAIL_PASSWORD", "")
-                if alert_pass:
-                    send_alert(AlertType.TRADE_OPENED, f"Futures: {direction} {ticker} — {strategy}",
-                               f"TradingView 2n20 signal", details={"Ticker": ticker, "Direction": direction, "Strategy": strategy, "Contracts": str(override_contracts or 1)},
-                               smtp_pass=alert_pass)
-            except Exception:
-                pass
+            # Email alert — fired in a background thread so we respond to TV
+            # within ms. SMTP can take 10s+ to time out (DO blocks port 587),
+            # which made TV fail webhook delivery even when the order was queued.
+            import threading
+            def _bg_alert():
+                try:
+                    from lumisignals.alerts import send_alert, AlertType
+                    alert_pass = os.environ.get("ALERT_EMAIL_PASSWORD", "")
+                    if alert_pass:
+                        send_alert(AlertType.TRADE_OPENED,
+                                   f"Futures: {direction} {ticker} — {strategy}",
+                                   "TradingView 2n20 signal",
+                                   details={"Ticker": ticker, "Direction": direction,
+                                            "Strategy": strategy,
+                                            "Contracts": str(override_contracts or 1)},
+                                   smtp_pass=alert_pass)
+                except Exception:
+                    pass
+            threading.Thread(target=_bg_alert, daemon=True).start()
 
             return jsonify({"status": "queued", "ticker": ticker, "direction": direction, "strategy": strategy, "contracts": override_contracts or 1})
 

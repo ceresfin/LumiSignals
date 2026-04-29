@@ -39,6 +39,8 @@ def start_bot_for_user(user) -> bool:
         "min_risk_reward": user.min_risk_reward,
         "stock_atr_multiplier": user.stock_atr_multiplier,
         "dry_run": user.dry_run,
+        "futures_stop_loss": user.futures_stop_loss,
+        "futures_contracts": user.futures_contracts,
     }
 
     stop_event = threading.Event()

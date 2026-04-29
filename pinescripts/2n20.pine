@@ -144,20 +144,112 @@ plotshape(showExits and inShort[1] and sessionEnd, "Session Close Short", shape.
 tradeColor = inLong ? color.new(color.green, 88) : inShort ? color.new(color.red, 88) : na
 bgcolor(tradeColor, title="In Trade")
 
-// ─── ALERTS ───
+// ─── DEBUG TABLE ───
+// Records OHLC + VWAP at each signal so TV's view can be compared to our
+// internal bot's interpretation. Helps spot data-feed or overwhelm-detection
+// divergence at the bar level.
+showDebugTable = input.bool(true, "Show Debug Table", group="Debug")
+maxDebugRows = input.int(10, "Max Debug Rows", minval=3, maxval=30, group="Debug")
+
+var array<string> dbgTime = array.new<string>()
+var array<string> dbgSig = array.new<string>()
+var array<float> dbgO = array.new<float>()
+var array<float> dbgH = array.new<float>()
+var array<float> dbgL = array.new<float>()
+var array<float> dbgC = array.new<float>()
+var array<float> dbgV = array.new<float>()
+
+addDebugRow(string sig) =>
+    array.push(dbgTime, str.format_time(time, "HH:mm", "America/New_York"))
+    array.push(dbgSig, sig)
+    array.push(dbgO, open)
+    array.push(dbgH, high)
+    array.push(dbgL, low)
+    array.push(dbgC, close)
+    array.push(dbgV, vwapVal)
+    while array.size(dbgTime) > maxDebugRows
+        array.shift(dbgTime)
+        array.shift(dbgSig)
+        array.shift(dbgO)
+        array.shift(dbgH)
+        array.shift(dbgL)
+        array.shift(dbgC)
+        array.shift(dbgV)
+
 if buySignal and not inLong[1]
-    alert('{"ticker":"MES","direction":"BUY","strategy":"2n20","key":"lumisignals2026","type":"futures","contracts":1,"msg":"2n20 BUY MES — Long Entry"}', alert.freq_once_per_bar_close)
+    addDebugRow("BUY")
 if sellSignal and not inShort[1]
-    alert('{"ticker":"MES","direction":"SELL","strategy":"2n20","key":"lumisignals2026","type":"futures","contracts":1,"msg":"2n20 SELL MES — Short Entry"}', alert.freq_once_per_bar_close)
+    addDebugRow("SELL")
 if inLong[1] and exitLong and not crossedBelowVwap and not sessionEnd
-    alert('{"ticker":"MES","direction":"CLOSE_LONG","strategy":"2n20","key":"lumisignals2026","type":"futures","reason":"Red Takeout Green","msg":"2n20 EXIT LONG — Red Takeout Green"}', alert.freq_once_per_bar_close)
-if inLong[1] and crossedBelowVwap and not sessionEnd
-    alert('{"ticker":"MES","direction":"CLOSE_LONG","strategy":"2n20","key":"lumisignals2026","type":"futures","reason":"VWAP Cross","msg":"2n20 EXIT LONG — VWAP Cross"}', alert.freq_once_per_bar_close)
+    addDebugRow("X-LONG")
 if inShort[1] and exitShort and not crossedAboveVwap and not sessionEnd
-    alert('{"ticker":"MES","direction":"CLOSE_SHORT","strategy":"2n20","key":"lumisignals2026","type":"futures","reason":"Green Takeout Red","msg":"2n20 EXIT SHORT — Green Takeout Red"}', alert.freq_once_per_bar_close)
+    addDebugRow("X-SHORT")
+if inLong[1] and crossedBelowVwap and not sessionEnd
+    addDebugRow("VWAP-X-L")
 if inShort[1] and crossedAboveVwap and not sessionEnd
-    alert('{"ticker":"MES","direction":"CLOSE_SHORT","strategy":"2n20","key":"lumisignals2026","type":"futures","reason":"VWAP Cross","msg":"2n20 EXIT SHORT — VWAP Cross"}', alert.freq_once_per_bar_close)
+    addDebugRow("VWAP-X-S")
+
+var table dbgTable = table.new(position.top_right, 7, 32, border_width=1, frame_color=color.gray, frame_width=1)
+
+if barstate.islast and showDebugTable
+    headerBg = color.new(color.gray, 30)
+    headerFg = color.white
+    table.cell(dbgTable, 0, 0, "Time", bgcolor=headerBg, text_color=headerFg, text_size=size.small)
+    table.cell(dbgTable, 1, 0, "Signal", bgcolor=headerBg, text_color=headerFg, text_size=size.small)
+    table.cell(dbgTable, 2, 0, "Open", bgcolor=headerBg, text_color=headerFg, text_size=size.small)
+    table.cell(dbgTable, 3, 0, "High", bgcolor=headerBg, text_color=headerFg, text_size=size.small)
+    table.cell(dbgTable, 4, 0, "Low", bgcolor=headerBg, text_color=headerFg, text_size=size.small)
+    table.cell(dbgTable, 5, 0, "Close", bgcolor=headerBg, text_color=headerFg, text_size=size.small)
+    table.cell(dbgTable, 6, 0, "VWAP", bgcolor=headerBg, text_color=headerFg, text_size=size.small)
+
+    n = array.size(dbgTime)
+    fmt = syminfo.mintick < 0.001 ? "#.#####" : "#.##"
+    if n > 0
+        for i = 0 to n - 1
+            idx = n - 1 - i  // newest at top
+            sig = array.get(dbgSig, idx)
+            bg = sig == "BUY" ? color.new(color.green, 75) :
+                 sig == "SELL" ? color.new(color.red, 75) :
+                 str.contains(sig, "VWAP") ? color.new(color.yellow, 75) :
+                 color.new(color.orange, 75)
+            table.cell(dbgTable, 0, i + 1, array.get(dbgTime, idx), bgcolor=bg, text_size=size.small)
+            table.cell(dbgTable, 1, i + 1, sig, bgcolor=bg, text_size=size.small)
+            table.cell(dbgTable, 2, i + 1, str.tostring(array.get(dbgO, idx), fmt), bgcolor=bg, text_size=size.small)
+            table.cell(dbgTable, 3, i + 1, str.tostring(array.get(dbgH, idx), fmt), bgcolor=bg, text_size=size.small)
+            table.cell(dbgTable, 4, i + 1, str.tostring(array.get(dbgL, idx), fmt), bgcolor=bg, text_size=size.small)
+            table.cell(dbgTable, 5, i + 1, str.tostring(array.get(dbgC, idx), fmt), bgcolor=bg, text_size=size.small)
+            table.cell(dbgTable, 6, i + 1, str.tostring(array.get(dbgV, idx), fmt), bgcolor=bg, text_size=size.small)
+
+// ─── ALERTS ───
+// Use the chart's actual ticker so the same indicator works on any symbol.
+// `type` routes the trade on the server: "futures" → IB, "forex" → OANDA.
+// We map by syminfo.type (TV's classification): forex stays forex, everything
+// else (futures, indices) routes as futures.
+tickerStr = syminfo.ticker
+typeStr = syminfo.type == "forex" ? "forex" : "futures"
+
+buyMsg = '{"ticker":"' + tickerStr + '","direction":"BUY","strategy":"2n20","key":"lumisignals2026","type":"' + typeStr + '","contracts":1,"msg":"2n20 BUY ' + tickerStr + ' — Long Entry"}'
+sellMsg = '{"ticker":"' + tickerStr + '","direction":"SELL","strategy":"2n20","key":"lumisignals2026","type":"' + typeStr + '","contracts":1,"msg":"2n20 SELL ' + tickerStr + ' — Short Entry"}'
+closeLongRedMsg = '{"ticker":"' + tickerStr + '","direction":"CLOSE_LONG","strategy":"2n20","key":"lumisignals2026","type":"' + typeStr + '","reason":"Red Takeout Green","msg":"2n20 EXIT LONG ' + tickerStr + ' — Red Takeout Green"}'
+closeLongVwapMsg = '{"ticker":"' + tickerStr + '","direction":"CLOSE_LONG","strategy":"2n20","key":"lumisignals2026","type":"' + typeStr + '","reason":"VWAP Cross","msg":"2n20 EXIT LONG ' + tickerStr + ' — VWAP Cross"}'
+closeShortGreenMsg = '{"ticker":"' + tickerStr + '","direction":"CLOSE_SHORT","strategy":"2n20","key":"lumisignals2026","type":"' + typeStr + '","reason":"Green Takeout Red","msg":"2n20 EXIT SHORT ' + tickerStr + ' — Green Takeout Red"}'
+closeShortVwapMsg = '{"ticker":"' + tickerStr + '","direction":"CLOSE_SHORT","strategy":"2n20","key":"lumisignals2026","type":"' + typeStr + '","reason":"VWAP Cross","msg":"2n20 EXIT SHORT ' + tickerStr + ' — VWAP Cross"}'
+sessionCloseLongMsg = '{"ticker":"' + tickerStr + '","direction":"CLOSE_LONG","strategy":"2n20","key":"lumisignals2026","type":"' + typeStr + '","reason":"Session Close 4:59pm","msg":"2n20 CLOSE ALL ' + tickerStr + ' — Session End 4:59pm"}'
+sessionCloseShortMsg = '{"ticker":"' + tickerStr + '","direction":"CLOSE_SHORT","strategy":"2n20","key":"lumisignals2026","type":"' + typeStr + '","reason":"Session Close 4:59pm","msg":"2n20 CLOSE ALL ' + tickerStr + ' — Session End 4:59pm"}'
+
+if buySignal and not inLong[1]
+    alert(buyMsg, alert.freq_once_per_bar_close)
+if sellSignal and not inShort[1]
+    alert(sellMsg, alert.freq_once_per_bar_close)
+if inLong[1] and exitLong and not crossedBelowVwap and not sessionEnd
+    alert(closeLongRedMsg, alert.freq_once_per_bar_close)
+if inLong[1] and crossedBelowVwap and not sessionEnd
+    alert(closeLongVwapMsg, alert.freq_once_per_bar_close)
+if inShort[1] and exitShort and not crossedAboveVwap and not sessionEnd
+    alert(closeShortGreenMsg, alert.freq_once_per_bar_close)
+if inShort[1] and crossedAboveVwap and not sessionEnd
+    alert(closeShortVwapMsg, alert.freq_once_per_bar_close)
 if inLong[1] and sessionEnd
-    alert('{"ticker":"MES","direction":"CLOSE_LONG","strategy":"2n20","key":"lumisignals2026","type":"futures","reason":"Session Close 4:59pm","msg":"2n20 CLOSE ALL — Session End 4:59pm"}', alert.freq_once_per_bar_close)
+    alert(sessionCloseLongMsg, alert.freq_once_per_bar_close)
 if inShort[1] and sessionEnd
-    alert('{"ticker":"MES","direction":"CLOSE_SHORT","strategy":"2n20","key":"lumisignals2026","type":"futures","reason":"Session Close 4:59pm","msg":"2n20 CLOSE ALL — Session End 4:59pm"}', alert.freq_once_per_bar_close)
+    alert(sessionCloseShortMsg, alert.freq_once_per_bar_close)

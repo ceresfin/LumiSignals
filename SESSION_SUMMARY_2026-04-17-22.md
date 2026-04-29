@@ -40,7 +40,7 @@ Bot tries preferred width ($5) first, falls back to $2.50 then $1 if risk per co
 - Combo (BAG) orders for credit/debit spreads
 - Credit spreads use negative limit price
 - permId tracking through full lifecycle
-- Sync script runs locally, pushes to server via API
+- Sync runs server-side as the `lumisignals-sync` systemd service
 
 ### Trades Page Restructure
 - Tab toggle: Forex (Oanda) | Options (IB)
@@ -76,9 +76,13 @@ Bot tries preferred width ($5) first, falls back to $2.50 then $1 if risk per co
 - **Redis** — watchlist zones, order queue, IB data, closed trades
 - **PostgreSQL** — user settings, credentials
 
-### Local (Mac)
-- **IB Gateway** — options execution
-- **Sync script** — bridges IB Gateway to server, monitors spreads, places orders
+### Server (also)
+- **IB Gateway** — Docker container `ib-gateway` (image `ghcr.io/gnzsnz/ib-gateway`), port 4002 (TWS API), port 5900 (VNC)
+- **noVNC** — Docker container `ib-novnc`, accessible at `bot.lumitrade.ai/ib-vnc/` for browser-based IB re-auth
+- **Sync** — `lumisignals-sync.service`, talks to local Docker IB Gateway, places orders, monitors spreads, pushes MES bars
+
+### Mac dependency
+- None for runtime. IB session re-authentication (~24h cycle) is done via the noVNC browser URL above from any device.
 
 ### Data Flow
 ```
@@ -113,7 +117,7 @@ Trades Page → displays pending, open, closed trades
 2. **Single legs from partial closes** — monitor's market close orders sometimes fill one leg but not the other, leaving orphaned positions.
 
 ### Important
-3. **Sync script dependency** — runs locally on Mac, requires IB Gateway open. Consider moving to cloud IB Gateway or Schwab execution.
+3. ~~Sync script dependency~~ — RESOLVED. IB Gateway runs in Docker on the server; sync runs as `lumisignals-sync` systemd service. Mac is no longer required.
 4. **SNR API rate limiting** — 429 errors when scanning 120 stocks + 27 forex × 3 models. Need throttling or caching.
 5. **Schwab token expiry** — 7-day refresh cycle, requires manual re-auth via browser.
 
@@ -193,8 +197,13 @@ ssh root@174.138.46.187 "sudo -u postgres psql -d lumisignals_db"
 ssh root@174.138.46.187 "tail -50 /var/log/lumisignals_bot.log"
 journalctl -u lumisignals -f       # web app logs
 
-# IB Sync (run locally)
-python3 -m lumisignals.ibkr_sync   # requires IB Gateway open
+# IB Sync (server-side systemd, no manual start needed)
+ssh root@174.138.46.187 "systemctl status lumisignals-sync"
+ssh root@174.138.46.187 "systemctl restart lumisignals-sync"
+ssh root@174.138.46.187 "journalctl -u lumisignals-sync -f"
+
+# IB Gateway re-auth (when session expires ~24h)
+# Open in any browser: https://bot.lumitrade.ai/ib-vnc/vnc_lite.html
 ```
 
 ---

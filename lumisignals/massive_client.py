@@ -1,9 +1,10 @@
 """Massive (formerly Polygon) market data client for stocks and crypto."""
 
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import requests
 
@@ -12,6 +13,23 @@ from .candle_classifier import CandleData
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://api.polygon.io"
+
+# Per-timespan TTL for the in-memory candle cache. Values chosen to refresh
+# faster than the bar size so the strategy never works off a stale bar.
+# A bar that just closed can't change until the next bar of that timeframe
+# closes, so we can cache aggressively.
+CANDLE_CACHE_TTL = {
+    "1m": 30,        # 30s
+    "5m": 90,        # 1.5 min
+    "15m": 300,      # 5 min
+    "30m": 600,      # 10 min
+    "1h": 1200,      # 20 min
+    "4h": 7200,      # 2 hours
+    "1d": 14400,     # 4 hours
+    "1w": 86400,     # 1 day
+    "1mo": 86400,    # 1 day
+}
+_DEFAULT_CACHE_TTL = 120
 
 # -----------------------------------------------------------------------
 # Ticker watchlists — easy to extend, just add tickers to the lists
@@ -264,6 +282,9 @@ class MassiveClient:
     def __init__(self, api_key: str):
         self.api_key = api_key
         self.session = requests.Session()
+        # Candle cache shared across strategies that hit this client. Levels
+        # SCALP and INTRADAY both pull 1h bars for the same tickers, etc.
+        self._candle_cache: Dict[Tuple[str, str, int], Tuple[float, List[CandleData]]] = {}
 
     def _request(self, endpoint: str, params: dict = None) -> dict:
         """Make a request to the Massive/Polygon API."""
@@ -278,26 +299,44 @@ class MassiveClient:
 
     def get_candles(self, ticker: str, timespan: str = "1d",
                     count: int = 100) -> List[CandleData]:
-        """Fetch OHLC candles for a ticker.
+        """Fetch OHLC candles for a ticker. TTL-cached per (ticker, timespan, count).
 
-        Args:
-            ticker: e.g. "AAPL", "SPY", "X:BTCUSD"
-            timespan: our internal format ("1mo", "1w", "1d", "4h", "1h", "30m", "15m", "5m")
-            count: approximate number of candles to return
-
-        Returns:
-            List of CandleData.
+        Multiple levels-strategy models commonly request the same bars
+        (SCALP and INTRADAY both want 1h stocks; SWING and SWING_OPTIONS both
+        want 1w/1mo). Cache TTL is per timespan (see CANDLE_CACHE_TTL), tuned
+        below the bar interval so we never serve stale-bar data.
         """
+        cache_key = (ticker, timespan, count)
+        ttl = CANDLE_CACHE_TTL.get(timespan, _DEFAULT_CACHE_TTL)
+        cached = self._candle_cache.get(cache_key)
+        if cached:
+            fetched_at, candles = cached
+            if (time.time() - fetched_at) < ttl:
+                return candles
+
+        candles = self._get_candles_uncached(ticker, timespan, count)
+        if candles:
+            self._candle_cache[cache_key] = (time.time(), candles)
+        return candles
+
+    def _get_candles_uncached(self, ticker: str, timespan: str = "1d",
+                               count: int = 100) -> List[CandleData]:
+        """Underlying implementation — hits Polygon. Use get_candles instead."""
         # Detect market type for candle alignment
         # Crypto (24/7): X:BTCUSD, X:ETHUSD etc. — in CRYPTO_TICKERS list
         # Forex (24/5): X:EURUSD, X:GBPCAD etc. — X: prefix but not crypto
         # Stocks/Indices: everything else (9:30-4:00 ET market hours)
         is_crypto = ticker in CRYPTO_TICKERS
         is_forex = ticker.startswith("X:") and not is_crypto
+        is_stock = not is_crypto and not is_forex
 
-        # 1h and 4h for stocks/indices: aggregate from 5m to align with market open (9:30 ET)
-        # Forex 1h/4h: use Polygon native (forex is 24h, no alignment needed)
-        if timespan in AGGREGATE_FROM_5M and is_stock and not is_forex:
+        # 1h and 4h for stocks/indices: aggregate from 5m to align with market open (9:30 ET).
+        # DISABLED — running the alignment path makes one extra Polygon call per ticker per
+        # refresh, which compounds with rate limits and blocks the whole bot loop. Skipping
+        # alignment means the levels strategy uses Polygon-native 1h/4h bars (slightly
+        # misaligned to RTH) but the bot loop stays responsive so 2n20 MES/FX can run.
+        # Re-enable once we have proper caching/throttling on the alignment path.
+        if False and timespan in AGGREGATE_FROM_5M and is_stock:
             return self._get_market_aligned_candles(ticker, timespan, count)
 
         # Weekly: always Monday-start (TradingView uses Monday for all markets)

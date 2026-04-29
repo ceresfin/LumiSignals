@@ -177,8 +177,19 @@ tr:hover { background: rgba(0,0,0,0.015); }
     </div>
 
     <div class="card">
-      <h2>Closed Futures Trades <span class="count" id="futClosedCount">0</span></h2>
+      <h2>Closed Futures Trades <span class="count" id="futClosedCount">0</span>
+        <span style="float:right;display:flex;gap:8px;align-items:center;">
+          <select id="futDaysFilter" onchange="loadFutures()" style="font-size:0.75rem;padding:4px 8px;border:1px solid #ddd;border-radius:6px;">
+            <option value="1">Today</option>
+            <option value="7" selected>This Week</option>
+            <option value="30">This Month</option>
+            <option value="0">All Time</option>
+          </select>
+          <a href="/api/ibkr/closed-trades/csv?type=futures" class="refresh-btn" style="font-size:0.72rem;text-decoration:none;">Download CSV</a>
+        </span>
+      </h2>
       <div id="futClosedTable"><div class="loading">Loading...</div></div>
+      <div id="futPagination" style="text-align:center;padding:10px;font-size:0.78rem;"></div>
     </div>
   </div><!-- end sectionFutures -->
 
@@ -825,15 +836,23 @@ loadIBTrades();
 setInterval(loadIBTrades, 10000);
 
 // ─── FUTURES ───
+var futPage = 0;
+var FUT_PAGE_SIZE = 25;
+
 function loadFutures() {
+  var days = document.getElementById('futDaysFilter') ? document.getElementById('futDaysFilter').value : '7';
+  var closedUrl = '/api/ibkr/closed-trades?type=futures&limit=' + FUT_PAGE_SIZE + '&offset=' + (futPage * FUT_PAGE_SIZE);
+  if (days !== '0') closedUrl += '&days=' + days;
+
   Promise.all([
     fetch('/api/ibkr/trades').then(function(r) { return r.json(); }).catch(function() { return {}; }),
     fetch('/api/ibkr/orders/all').then(function(r) { return r.json(); }).catch(function() { return {orders: []}; }),
-    fetch('/api/ibkr/closed-trades').then(function(r) { return r.json(); }).catch(function() { return {trades: []}; }),
+    fetch(closedUrl).then(function(r) { return r.json(); }).catch(function() { return {trades: [], total: 0}; }),
   ]).then(function(results) {
     var data = results[0];
     var allOrders = results[1].orders || [];
     var allClosed = results[2].trades || [];
+    var totalClosed = results[2].total || allClosed.length;
 
     // Filter to futures only
     var futOrders = allOrders.filter(function(o) { return o.type === 'futures'; });
@@ -998,6 +1017,29 @@ function loadFutures() {
       ['Ticker', 'Dir', 'Qty', 'Entry', 'Exit', 'P&L', 'Strategy', 'Reason', 'Result', 'Opened', 'Closed', 'Duration'], closedRows
     );
 
+    // Pagination
+    var totalPages = Math.ceil(totalClosed / FUT_PAGE_SIZE);
+    var pagHtml = '';
+    if (totalPages > 1) {
+      pagHtml += '<span style="color:var(--text-light)">Showing ' + (futPage * FUT_PAGE_SIZE + 1) + '-' + Math.min((futPage + 1) * FUT_PAGE_SIZE, totalClosed) + ' of ' + totalClosed + '</span> &nbsp; ';
+      if (futPage > 0) pagHtml += '<button class="refresh-btn" style="font-size:0.72rem;padding:4px 10px;" onclick="futPage=0;loadFutures()">First</button> ';
+      if (futPage > 0) pagHtml += '<button class="refresh-btn" style="font-size:0.72rem;padding:4px 10px;" onclick="futPage--;loadFutures()">Prev</button> ';
+      pagHtml += ' Page ' + (futPage + 1) + ' of ' + totalPages + ' ';
+      if (futPage < totalPages - 1) pagHtml += '<button class="refresh-btn" style="font-size:0.72rem;padding:4px 10px;" onclick="futPage++;loadFutures()">Next</button> ';
+      if (futPage < totalPages - 1) pagHtml += '<button class="refresh-btn" style="font-size:0.72rem;padding:4px 10px;" onclick="futPage=' + (totalPages-1) + ';loadFutures()">Last</button>';
+    } else if (totalClosed > 0) {
+      pagHtml = '<span style="color:var(--text-light)">' + totalClosed + ' trades</span>';
+    }
+    document.getElementById('futPagination').innerHTML = pagHtml;
+
+    // Futures strategy breakdown — use ALL closed for stats (not just current page)
+    // Fetch full stats separately
+    var statsUrl = '/api/ibkr/closed-trades?type=futures&limit=0';
+    var statsDays = document.getElementById('futDaysFilter') ? document.getElementById('futDaysFilter').value : '7';
+    if (statsDays !== '0') statsUrl += '&days=' + statsDays;
+    fetch(statsUrl).then(function(r) { return r.json(); }).then(function(statsData) {
+    var futClosed = statsData.trades || allClosed;
+
     // Futures strategy breakdown
     var futStrategies = {};
     futClosed.forEach(function(t) {
@@ -1041,6 +1083,7 @@ function loadFutures() {
     });
 
     document.getElementById('futStrategyBreakdown').innerHTML = futBreakdownHtml || '<div style="text-align:center;padding:20px;color:#8a847e;">No futures strategy data yet</div>';
+    }); // end stats fetch
   });
 }
 loadFutures();

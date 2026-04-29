@@ -347,8 +347,13 @@ button:hover { opacity: 0.9; }
 
     <div class="card">
       <h2>7. Futures Settings</h2>
-      <p style="font-size:0.8rem;color:var(--text-light);margin-bottom:16px;">Risk management for MES/ES futures trades via TradingView webhooks (2n20 strategy).</p>
-      <div class="field-row" style="grid-template-columns: 1fr 2fr;">
+      <p style="font-size:0.8rem;color:var(--text-light);margin-bottom:16px;">Risk management for MES/ES futures trades (2n20 strategy, internally generated signals).</p>
+      <div class="field-row" style="grid-template-columns: 1fr 1fr 2fr;">
+        <div>
+          <label>Contracts per Entry</label>
+          <input type="number" name="futures_contracts" value="{{ user.futures_contracts if user.futures_contracts is not none else 1 }}" min="1" max="20" step="1">
+          <small>Buy N, exit N. Positions never stack.</small>
+        </div>
         <div>
           <label>Stop Loss ($ per contract)</label>
           <input type="number" name="futures_stop_loss" value="{{ user.futures_stop_loss if user.futures_stop_loss is not none else 25 }}" min="5" max="500" step="5">

@@ -303,12 +303,11 @@ def _execute_swing_trade(setup: dict, rdb, api_key: str):
         direction = setup["direction"]
         zone_type = "demand" if direction == "BUY" else "supply"
 
-        # Send to the TradingView webhook endpoint (reuses existing options pipeline)
+        # Internal trade-signal queue (was TV webhook, now sync-key authed).
         payload = {
             "ticker": ticker,
             "direction": direction,
             "strategy": "swing_scanner",
-            "key": os.environ.get("TV_WEBHOOK_KEY", "lumisignals2026"),
             "type": "stock",
             "spread_type": "both",
             "trade_duration": "daily",
@@ -318,8 +317,10 @@ def _execute_swing_trade(setup: dict, rdb, api_key: str):
             "dte": 7,  # 7 DTE for swing trades
         }
 
+        sync_key = os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026")
         resp = requests.post(f"{SERVER_URL}/api/webhook/tradingview",
-                           json=payload, timeout=15)
+                           json=payload, timeout=15,
+                           headers={"X-Sync-Key": sync_key})
 
         if resp.ok:
             result = resp.json()

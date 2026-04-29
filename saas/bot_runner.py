@@ -601,24 +601,36 @@ def run_bot_for_user(user_data, stop_check):
                 except Exception:
                     pass
 
-            fx_scalp = FXScalp2n20(oanda, sl_dollars=fx_sl, signal_callback=fx_signal_cb)
+            # Active FX pairs — narrowed from 28 to 3 to make signal validation
+            # tractable while we debug TV ↔ bot alignment. Expand as confidence grows.
+            ACTIVE_FX_PAIRS = ["EUR_USD", "GBP_CAD", "USD_JPY"]
+            fx_scalp = FXScalp2n20(oanda, pairs=ACTIVE_FX_PAIRS, sl_dollars=fx_sl,
+                                    signal_callback=fx_signal_cb, signal_log=signal_log)
             log(f"[2n20_FX] Scalp strategy active — {len(fx_scalp.pairs)} pairs, SL ${fx_sl}")
         except Exception as e:
             log(f"[2n20_FX] Setup error: {e}")
 
-    # --- 2n20 MES Futures Scalp (server-side, no TradingView needed) ---
+    # --- 2n20 MES Futures Scalp (server-side) ---
+    # Disabled by default: TradingView's Pine Script alert is the source for MES
+    # signals because the IB account lacks a CME real-time market data subscription,
+    # so internally-polled bars lag 2-3 min. TV fires on bar close in real-time
+    # and POSTs to /api/webhook/tradingview. Set INTERNAL_MES_2N20=1 to re-enable.
     mes_scalp = None
-    if massive_key:
+    if massive_key and os.environ.get("INTERNAL_MES_2N20") == "1":
         try:
             from lumisignals.futures_scalp_2n20 import FuturesScalp2n20
 
             def mes_signal_cb(sig):
                 log(f"[2n20_MES] {sig.get('direction','')} {sig.get('ticker','')} — {sig.get('reason', sig.get('strategy',''))}")
 
-            mes_scalp = FuturesScalp2n20(massive_key, signal_callback=mes_signal_cb)
-            log("[2n20_MES] Server-side futures scalp active — MES via Polygon + IB")
+            contract_count = max(1, int(user_data.get("futures_contracts", 1) or 1))
+            mes_scalp = FuturesScalp2n20(massive_key, signal_callback=mes_signal_cb,
+                                          contract_count=contract_count)
+            log(f"[2n20_MES] Server-side futures scalp active — MES via Polygon + IB ({contract_count} contracts/entry)")
         except Exception as e:
             log(f"[2n20_MES] Setup error: {e}")
+    else:
+        log("[2n20_MES] Internal strategy disabled — using TradingView webhook for MES signals")
 
     # Run all models in a unified loop
     tick = 0
@@ -629,9 +641,42 @@ def run_bot_for_user(user_data, stop_check):
                 log("Bot stopped by user")
                 break
 
-        for model_name, strategy in models.items():
-            ticks_per_wl = max(1, strategy.watchlist_interval // 30)
+        # 2n20 strategies first — they're fast and shouldn't be starved by slow
+        # per-ticker API calls in the levels-strategy iteration below.
+        if fx_scalp:
+            try:
+                fx_scalp.scan_all()
+            except Exception as e:
+                logger.exception("[2n20_FX] Scan error: %s", e)
 
+        if mes_scalp:
+            try:
+                mes_scalp.scan()
+            except Exception as e:
+                logger.exception("[2n20_MES] Scan error: %s", e)
+
+        # Per-model scan cadence — match the trigger timeframe so we don't
+        # over-scan and starve the 2n20 strategies. Each tick is 10 seconds
+        # (TICK_INTERVAL below). SCALP iterates ~120 tickers per refresh; we
+        # space it out so it doesn't block the fast 2n20 path.
+        #   SCALP (15m trigger):       every 30 ticks (~5 min)
+        #   INTRADAY (1h trigger):     every 90 ticks (~15 min)
+        #   SWING_OPTIONS (1h trigger):every 90 ticks (~15 min)
+        #   SWING (1d trigger):        every 8640 ticks (~24 hr)
+        MODEL_SCAN_CADENCE = {
+            "SCALP": 30,
+            "INTRADAY": 90,
+            "SWING_OPTIONS": 90,
+            "SWING": 8640,
+        }
+        for model_name, strategy in models.items():
+            scan_cadence = MODEL_SCAN_CADENCE.get(model_name, 30)
+            # Skip on tick 0 — otherwise every model runs at once on startup,
+            # blocking the first ~5 min of 2n20 scans.
+            if tick == 0 or tick % scan_cadence != 0:
+                continue
+
+            ticks_per_wl = max(1, strategy.watchlist_interval // 30)
             if tick % ticks_per_wl == 0:
                 try:
                     strategy._refresh_watchlist()
@@ -650,26 +695,12 @@ def run_bot_for_user(user_data, stop_check):
 
             strategy._watchlist = [z for z in strategy._watchlist if z.status != "triggered"]
 
-            # Publish current watchlist to Redis every cycle
+            # Publish current watchlist to Redis (per model)
             zones = get_watchlist_snapshot(model_name)
             publish_watchlist_model(user_id, model_name, zones)
 
-        # 2n20 FX Scalp: run every tick (30 seconds)
-        if fx_scalp:
-            try:
-                fx_scalp.scan_all()
-            except Exception as e:
-                logger.debug("[2n20_FX] Scan error: %s", e)
-
-        # 2n20 MES Futures Scalp: run every tick (self-rate-limits to 2-min candles)
-        if mes_scalp:
-            try:
-                mes_scalp.scan()
-            except Exception as e:
-                logger.debug("[2n20_MES] Scan error: %s", e)
-
-        # Swing auto-scanner: run every ~480 ticks (4 hours at 30s interval)
-        if tick > 0 and tick % 480 == 0:
+        # Swing auto-scanner: run every ~1440 ticks (4 hours at 10s interval)
+        if tick > 0 and tick % 1440 == 0:
             try:
                 from lumisignals.swing_scanner import run_swing_scan, should_scan_now
                 if should_scan_now():
@@ -687,7 +718,9 @@ def run_bot_for_user(user_data, stop_check):
                 logger.debug("Swing scan error: %s", e)
 
         tick += 1
-        time.sleep(30)
+        # 10s loop — fast enough for the 2n20 streaming MES bars to fire scans
+        # within ~10s of bar close. Levels models gate themselves by cadence.
+        time.sleep(10)
 
     log("Bot stopped")
 
