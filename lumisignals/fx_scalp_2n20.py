@@ -551,6 +551,18 @@ class FXScalp2n20:
             logger.info("2n20 FX CLOSE %s %s — %s | %.1f pips | %s",
                        direction, instrument, reason, pnl_pips, duration)
 
+            # Update signal log with close reason so trade_tracker shows it
+            if self.signal_log and state.trade_id:
+                try:
+                    existing = self.signal_log.get(str(state.trade_id))
+                    if existing and isinstance(existing, dict):
+                        existing["close_reason"] = reason
+                        existing["exit_price"] = actual_exit_price
+                        existing["pnl_pips"] = round(pnl_pips, 1)
+                        self.signal_log.record(str(state.trade_id), existing)
+                except Exception:
+                    pass
+
             if self.signal_callback:
                 self.signal_callback({
                     "instrument": instrument,

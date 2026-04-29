@@ -367,9 +367,19 @@ def get_closed_trades(client: OandaClient, count: int = 50) -> list:
         open_time = _parse_oanda_time(trade.get("openTime", ""))
         close_time = _parse_oanda_time(trade.get("closeTime", ""))
 
-        # Get planned SL/TP from signal log if available
-        opening_order = trade.get("openingTransactionID", trade.get("id", ""))
-        sig = get_signal_log().get(opening_order) or get_signal_log().get(trade.get("id", ""))
+        # Get planned SL/TP and close reason from signal log
+        trade_id = trade.get("id", "")
+        opening_order = trade.get("openingTransactionID", trade_id)
+        sig = get_signal_log().get(trade_id) or get_signal_log().get(opening_order)
+        # Try nearby IDs if not found
+        if not sig and trade_id.isdigit():
+            for offset in [1, 2, 3, -1, -2, -3]:
+                sig = get_signal_log().get(str(int(trade_id) + offset))
+                if sig:
+                    break
+        # Override close reason from signal log if available
+        if sig and sig.get("close_reason"):
+            close_reason = sig["close_reason"]
         planned_sl = sig.get("stop", 0) if sig else 0
         planned_tp = sig.get("target", 0) if sig else 0
 
