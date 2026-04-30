@@ -1708,6 +1708,14 @@ def _connect(ib: IB) -> bool:
         ib.connect(IB_HOST, IB_PORT, clientId=cid, timeout=15)
         logger.info("Connected to IB Gateway (clientId %d)", cid)
         ib.reqMarketDataType(3)
+        # Store auth time for the IB session timer on the dashboard
+        try:
+            import redis as _rdb
+            from datetime import datetime as _dtc, timezone as _tzc
+            rdb = _rdb.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+            rdb.set("ib:auth_time", _dtc.now(_tzc.utc).isoformat())
+        except Exception:
+            pass
         return True
     except Exception as e:
         logger.error("IB connect failed: %s", e)

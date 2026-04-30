@@ -337,6 +337,9 @@ def create_app():
         import redis as _redis
         rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
         raw = rdb.get("ibkr:data:1")
+        auth_time = rdb.get("ib:auth_time")
+        auth_time_str = auth_time.decode() if auth_time else ""
+
         if raw:
             data = json.loads(raw)
             last_synced = data.get("last_synced", "")
@@ -349,11 +352,12 @@ def create_app():
                         return jsonify({
                             "authenticated": True,
                             "connected": True,
+                            "auth_time": auth_time_str,
                             "serverInfo": {"serverName": "IB Gateway (Docker)", "serverVersion": f"Synced {int(age)}s ago"},
                         })
                 except Exception:
                     pass
-        return jsonify({"authenticated": False, "connected": False, "error": "Sync not running or stale"})
+        return jsonify({"authenticated": False, "connected": False, "auth_time": auth_time_str, "error": "Sync not running or stale"})
 
     # -----------------------------------------------------------------------
     # API endpoints
@@ -915,6 +919,22 @@ def create_app():
 
         output = io.StringIO()
         writer = csv.writer(output)
+
+        def to_et(iso_str):
+            """Convert ISO UTC timestamp to 'M/D/YYYY H:MM AM/PM' in ET."""
+            if not iso_str:
+                return ""
+            try:
+                from zoneinfo import ZoneInfo
+                et = ZoneInfo("America/New_York")
+            except ImportError:
+                et = timezone(timedelta(hours=-4))
+            try:
+                dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+                return dt.astimezone(et).strftime("%-m/%-d/%Y %-I:%M %p")
+            except Exception:
+                return iso_str
+
         # Header
         writer.writerow([
             "Type", "Symbol", "Direction", "Contracts/Qty", "Entry Price", "Exit Price",
@@ -922,13 +942,11 @@ def create_app():
             "Opened", "Closed", "Duration (min)"
         ])
         for t in trades:
-            # Calculate duration
             dur = ""
             try:
                 if t.get("opened_at") and t.get("closed_at"):
-                    from datetime import datetime as _dt
-                    o = _dt.fromisoformat(t["opened_at"].replace("Z", "+00:00"))
-                    c = _dt.fromisoformat(t["closed_at"].replace("Z", "+00:00"))
+                    o = datetime.fromisoformat(t["opened_at"].replace("Z", "+00:00"))
+                    c = datetime.fromisoformat(t["closed_at"].replace("Z", "+00:00"))
                     dur = str(int((c - o).total_seconds() / 60))
             except Exception:
                 pass
@@ -944,8 +962,8 @@ def create_app():
                 t.get("strategy", ""),
                 t.get("close_reason", ""),
                 "WIN" if pnl and pnl > 0 else ("LOSS" if pnl and pnl < 0 else ""),
-                t.get("opened_at", ""),
-                t.get("closed_at", ""),
+                to_et(t.get("opened_at", "")),
+                to_et(t.get("closed_at", "")),
                 dur,
             ])
 

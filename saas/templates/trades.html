@@ -161,7 +161,10 @@ tr:hover { background: rgba(0,0,0,0.015); }
       <div class="stat-card"><div class="stat-value" id="futRealPL">—</div><div class="stat-label">Realized P&L</div></div>
       <div class="stat-card"><div class="stat-value" id="futTrades">—</div><div class="stat-label">Trades Today</div></div>
     </div>
-    <div id="futSyncStatus" style="text-align:right; font-size:0.7rem; color:var(--text-light); margin-top:-8px; margin-bottom:8px;"></div>
+    <div style="display:flex; justify-content:space-between; margin-top:-8px; margin-bottom:8px;">
+      <div id="ibSessionTimer" style="font-size:0.7rem; color:var(--text-light);"></div>
+      <div id="futSyncStatus" style="font-size:0.7rem; color:var(--text-light);"></div>
+    </div>
 
     <!-- Futures Strategy Breakdown -->
     <div id="futStrategyBreakdown"><div class="loading">Loading strategy breakdown...</div></div>
@@ -839,6 +842,32 @@ setInterval(loadIBTrades, 10000);
 var futPage = 0;
 var FUT_PAGE_SIZE = 25;
 
+// IB Session Timer
+function updateIBTimer() {
+  fetch('/ib-auth/status').then(function(r) { return r.json(); }).then(function(d) {
+    var el = document.getElementById('ibSessionTimer');
+    if (!el) return;
+    if (d.authenticated && d.auth_time) {
+      var authAt = new Date(d.auth_time);
+      var now = new Date();
+      var elapsed = (now - authAt) / 1000;
+      var remaining = (24 * 3600) - elapsed;
+      if (remaining <= 0) {
+        el.innerHTML = '<span style="color:#c0392b">&#9679; IB session expired — <a href="/ib-auth">re-authenticate</a></span>';
+      } else {
+        var h = Math.floor(remaining / 3600);
+        var m = Math.floor((remaining % 3600) / 60);
+        var color = remaining < 4*3600 ? '#f39c12' : '#2ecc71';
+        el.innerHTML = '<span style="color:' + color + '">&#9679;</span> IB session: ' + h + 'h ' + m + 'm remaining';
+      }
+    } else {
+      el.innerHTML = '<span style="color:#c0392b">&#9679; IB disconnected — <a href="/ib-auth">re-authenticate</a></span>';
+    }
+  }).catch(function() {});
+}
+updateIBTimer();
+setInterval(updateIBTimer, 30000);
+
 function loadFutures() {
   var days = document.getElementById('futDaysFilter') ? document.getElementById('futDaysFilter').value : '7';
   var closedUrl = '/api/ibkr/closed-trades?type=futures&limit=' + FUT_PAGE_SIZE + '&offset=' + (futPage * FUT_PAGE_SIZE);
@@ -1059,11 +1088,21 @@ function loadFutures() {
       var winRate = total > 0 ? Math.round(d.wins / total * 100) : 0;
       var displayName = STRATEGY_NAMES[sid] || sid;
 
+      // Calculate avg win and avg loss
+      var winSum = 0, lossSum = 0;
+      d.trades.forEach(function(t) {
+        var p = t.realized_pnl || 0;
+        if (p > 0) winSum += p;
+        else if (p < 0) lossSum += p;
+      });
+      var avgWin = d.wins > 0 ? winSum / d.wins : 0;
+      var avgLoss = d.losses > 0 ? lossSum / d.losses : 0;
+
       futBreakdownHtml += '<div class="strategy-section">';
       futBreakdownHtml += '<div class="strategy-header"><span class="strategy-tag">STRATEGY</span> ' + displayName + '</div>';
       futBreakdownHtml += '<div class="model-cards" style="grid-template-columns: repeat(2, 1fr);">';
 
-      // Scalp card (futures are all scalp for now)
+      // Scalp card
       futBreakdownHtml += '<div class="model-card">';
       futBreakdownHtml += '<div class="model-card-title scalp">SCALP</div>';
       futBreakdownHtml += '<div class="model-stats">';
@@ -1071,6 +1110,8 @@ function loadFutures() {
       futBreakdownHtml += '<div class="model-stat"><div class="model-stat-value">' + total + '</div><div class="model-stat-label">Closed</div></div>';
       futBreakdownHtml += '<div class="model-stat"><div class="model-stat-value ' + (winRate >= 50 ? 'pl-pos' : (total > 0 ? 'pl-neg' : '')) + '">' + (total > 0 ? winRate + '%' : '—') + '</div><div class="model-stat-label">Win Rate</div></div>';
       futBreakdownHtml += '<div class="model-stat"><div class="model-stat-value ' + plClass(d.pnl) + '">$' + fmt(d.pnl) + '</div><div class="model-stat-label">Realized P&L</div></div>';
+      futBreakdownHtml += '<div class="model-stat"><div class="model-stat-value pl-pos">$' + fmtNum(avgWin) + '</div><div class="model-stat-label">Avg Win</div></div>';
+      futBreakdownHtml += '<div class="model-stat"><div class="model-stat-value pl-neg">$' + fmtNum(Math.abs(avgLoss)) + '</div><div class="model-stat-label">Avg Loss</div></div>';
       futBreakdownHtml += '</div></div>';
 
       // Placeholder for future intraday/swing

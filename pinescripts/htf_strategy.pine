@@ -74,20 +74,26 @@ findAll(int adxLen) =>
 [dDir,  dAdx,  dAtr,  dSupply,  dSupply2,  dDemand,  dDemand2]  = request.security(syminfo.tickerid, "D",   findAll(adxPeriod))
 [h4Dir, h4Adx, h4Atr, h4Supply, h4Supply2, h4Demand, h4Demand2] = request.security(syminfo.tickerid, "240", findAll(adxPeriod))
 [h1Dir, h1Adx, h1Atr, h1Supply, h1Supply2, h1Demand, h1Demand2] = request.security(syminfo.tickerid, "60",  findAll(adxPeriod))
+[m30Dir, m30Adx, m30Atr, m30Supply, m30Supply2, m30Demand, m30Demand2] = request.security(syminfo.tickerid, "30", findAll(adxPeriod))
+[m15Dir, m15Adx, m15Atr, m15Supply, m15Supply2, m15Demand, m15Demand2] = request.security(syminfo.tickerid, "15", findAll(adxPeriod))
 
 // Fix stale levels from request.security — supply must be above price, demand below
 mSupply  := not na(mSupply) and mSupply < close ? close : mSupply
 wSupply  := not na(wSupply) and wSupply < close ? close : wSupply
 dSupply  := not na(dSupply) and dSupply < close ? close : dSupply
 h4Supply := not na(h4Supply) and h4Supply < close ? close : h4Supply
-h1Supply := not na(h1Supply) and h1Supply < close ? close : h1Supply
-qSupply  := not na(qSupply) and qSupply < close ? close : qSupply
+h1Supply  := not na(h1Supply) and h1Supply < close ? close : h1Supply
+m30Supply := not na(m30Supply) and m30Supply < close ? close : m30Supply
+m15Supply := not na(m15Supply) and m15Supply < close ? close : m15Supply
+qSupply   := not na(qSupply) and qSupply < close ? close : qSupply
 mSupply2  := not na(mSupply2) and mSupply2 < close ? na : mSupply2
 wSupply2  := not na(wSupply2) and wSupply2 < close ? na : wSupply2
 dSupply2  := not na(dSupply2) and dSupply2 < close ? na : dSupply2
 h4Supply2 := not na(h4Supply2) and h4Supply2 < close ? na : h4Supply2
-h1Supply2 := not na(h1Supply2) and h1Supply2 < close ? na : h1Supply2
-qSupply2  := not na(qSupply2) and qSupply2 < close ? na : qSupply2
+h1Supply2  := not na(h1Supply2) and h1Supply2 < close ? na : h1Supply2
+m30Supply2 := not na(m30Supply2) and m30Supply2 < close ? na : m30Supply2
+m15Supply2 := not na(m15Supply2) and m15Supply2 < close ? na : m15Supply2
+qSupply2   := not na(qSupply2) and qSupply2 < close ? na : qSupply2
 
 // ==================== HELPERS ====================
 dirStr(int d) =>
@@ -284,7 +290,7 @@ if showLevels
         h4DemLbl  := label.new(futureTime, h4Demand, "4H Demand", xloc.bar_time, yloc.price, color.new(color4H, 80), label.style_label_left, color4H, size.small, tooltip="4H Demand: " + str.tostring(h4Demand, format.mintick) + "\nTrend: " + dirStr(h4Dir) + " | ADX: " + str.tostring(h4Adx, "#.#"))
 
 // ==================== DASHBOARD TABLE ====================
-var table dash = table.new(position.top_right, 6, 9, bgcolor=color.rgb(20, 20, 30), border_width=1, border_color=color.gray)
+var table dash = table.new(position.top_right, 6, 11, bgcolor=color.rgb(20, 20, 30), border_width=1, border_color=color.gray)
 
 if barstate.islast and showDash
     // Header
@@ -343,6 +349,22 @@ if barstate.islast and showDash
     table.cell(dash, 4, 6, not na(h1Demand) ? str.tostring(h1Demand, format.mintick) : "—", text_color=color.green, text_size=size.small, text_halign=text.align_right)
     table.cell(dash, 5, 6, not na(h1Demand2) ? str.tostring(h1Demand2, format.mintick) : "—", text_color=color.rgb(80,160,80), text_size=size.small, text_halign=text.align_right)
 
+    // 30-Minute
+    table.cell(dash, 0, 7, "30min", text_color=color.teal, text_size=size.small, text_halign=text.align_left)
+    table.cell(dash, 1, 7, dirStr(m30Dir) + " (" + str.tostring(m30Adx, "#") + ")", text_color=dirColor(m30Dir), text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 2, 7, not na(m30Supply) ? str.tostring(m30Supply, format.mintick) : "—", text_color=color.teal, text_size=size.small, text_halign=text.align_right)
+    table.cell(dash, 3, 7, not na(m30Supply2) ? str.tostring(m30Supply2, format.mintick) : "—", text_color=color.rgb(80,180,180), text_size=size.small, text_halign=text.align_right)
+    table.cell(dash, 4, 7, not na(m30Demand) ? str.tostring(m30Demand, format.mintick) : "—", text_color=color.teal, text_size=size.small, text_halign=text.align_right)
+    table.cell(dash, 5, 7, not na(m30Demand2) ? str.tostring(m30Demand2, format.mintick) : "—", text_color=color.rgb(80,180,180), text_size=size.small, text_halign=text.align_right)
+
+    // 15-Minute
+    table.cell(dash, 0, 8, "15min", text_color=color.gray, text_size=size.small, text_halign=text.align_left)
+    table.cell(dash, 1, 8, dirStr(m15Dir) + " (" + str.tostring(m15Adx, "#") + ")", text_color=dirColor(m15Dir), text_size=size.small, text_halign=text.align_center)
+    table.cell(dash, 2, 8, not na(m15Supply) ? str.tostring(m15Supply, format.mintick) : "—", text_color=color.gray, text_size=size.small, text_halign=text.align_right)
+    table.cell(dash, 3, 8, not na(m15Supply2) ? str.tostring(m15Supply2, format.mintick) : "—", text_color=color.rgb(150,150,150), text_size=size.small, text_halign=text.align_right)
+    table.cell(dash, 4, 8, not na(m15Demand) ? str.tostring(m15Demand, format.mintick) : "—", text_color=color.gray, text_size=size.small, text_halign=text.align_right)
+    table.cell(dash, 5, 8, not na(m15Demand2) ? str.tostring(m15Demand2, format.mintick) : "—", text_color=color.rgb(150,150,150), text_size=size.small, text_halign=text.align_right)
+
     // Active signal summary
     string sigText = "No signal"
     color sigColor = color.gray
@@ -365,6 +387,6 @@ if barstate.islast and showDash
         sigText := "5MIN BUY @ 4H D1| Score " + str.tostring(fBuyScore) + "/4"
         sigColor := color.green
 
-    table.cell(dash, 0, 7, "Signal", text_color=color.white, text_size=size.small, text_halign=text.align_left)
-    table.cell(dash, 1, 7, sigText, text_color=sigColor, text_size=size.small, text_halign=text.align_left)
-    table.merge_cells(dash, 1, 7, 3, 8)
+    table.cell(dash, 0, 9, "Signal", text_color=color.white, text_size=size.small, text_halign=text.align_left)
+    table.cell(dash, 1, 9, sigText, text_color=sigColor, text_size=size.small, text_halign=text.align_left)
+    table.merge_cells(dash, 1, 9, 3, 10)
