@@ -25,15 +25,15 @@ from .order_manager import (
     MAJOR_PAIRS, calculate_position_size, format_price,
     get_pip_precision,
 )
+from .overwhelm_detector import (
+    detect_overwhelm, detect_vwap_cross, parse_oanda_candles,
+)
 
 logger = logging.getLogger(__name__)
 
 # Config
 GRANULARITY = "M2"  # 2-minute candles on Oanda
 CANDLE_COUNT = 15   # Pull 15 candles for analysis (need 10 for avg body + lookback)
-MIN_BODY_PCT = 30.0  # Body must be >= 30% of candle range
-AVG_BODY_MULT = 0.8  # Body must be >= 80% of 10-candle average
-LOOKBACK_BARS = 3    # Look back up to 3 bars for opposite candle
 DEFAULT_SL_DOLLARS = 25.0  # Fixed stop loss per trade
 # Forex trades 24/5: Sunday 5PM ET through Friday 5PM ET
 # No session close flatten — forex has no maintenance break
@@ -179,24 +179,13 @@ class FXScalp2n20:
             return
         self._last_candle_time[instrument] = latest_complete_time
 
-        # Parse candle data
-        bars = []
-        for c in candles:
-            if c.get("complete", True):
-                mid = c.get("mid", {})
-                bars.append({
-                    "open": float(mid.get("o", 0)),
-                    "high": float(mid.get("h", 0)),
-                    "low": float(mid.get("l", 0)),
-                    "close": float(mid.get("c", 0)),
-                    "volume": int(c.get("volume", 0)),
-                    "time": c.get("time", ""),
-                })
+        # Parse candle data using shared parser
+        bars = parse_oanda_candles(candles)
 
         if len(bars) < 12:
             return
 
-        # Calculate daily VWAP (approximation from today's candles)
+        # Calculate daily VWAP
         vwap = self._calc_vwap(instrument)
 
         state = self.states[instrument]
@@ -209,13 +198,11 @@ class FXScalp2n20:
         above_vwap = close > vwap
         below_vwap = close < vwap
 
-        # Detect overwhelm
-        green_overwhelm, red_overwhelm = self._detect_overwhelm(bars)
+        # Detect overwhelm using shared detector
+        green_overwhelm, red_overwhelm = detect_overwhelm(bars)
 
-        # VWAP cross exit
-        prev_close = bars[-2]["close"]
-        crossed_below_vwap = close < vwap and prev_close >= vwap
-        crossed_above_vwap = close > vwap and prev_close <= vwap
+        # VWAP cross using shared detector
+        crossed_below_vwap, crossed_above_vwap = detect_vwap_cross(bars, vwap)
 
         # --- EXIT LOGIC ---
         if state.in_long:
@@ -236,62 +223,7 @@ class FXScalp2n20:
             elif below_vwap and red_overwhelm:
                 self._open_position(state, "SELL", close, instrument)
 
-    def _detect_overwhelm(self, bars: list) -> Tuple[bool, bool]:
-        """Detect green/red overwhelm patterns. Returns (green_overwhelm, red_overwhelm)."""
-        curr = bars[-1]
-        curr_close = curr["close"]
-        curr_open = curr["open"]
-        curr_high = curr["high"]
-        curr_low = curr["low"]
-
-        is_green = curr_close > curr_open
-        is_red = curr_close < curr_open
-        green_body = curr_close - curr_open if is_green else 0
-        red_body = curr_open - curr_close if is_red else 0
-
-        # Body size filter
-        candle_range = curr_high - curr_low
-        body_size = abs(curr_close - curr_open)
-        body_pct = (body_size / candle_range * 100) if candle_range > 0 else 0
-        has_real_body = body_pct >= MIN_BODY_PCT
-
-        # Significant body (>= 80% of 10-bar average)
-        avg_body = sum(abs(b["close"] - b["open"]) for b in bars[-11:-1]) / 10
-        is_significant = body_size >= avg_body * AVG_BODY_MULT
-
-        if not has_real_body or not is_significant:
-            return False, False
-
-        # Find most recent opposite candle within LOOKBACK_BARS
-        # For green overwhelm: find last red candle
-        last_red_body = 0.0
-        last_red_high = 0.0
-        for i in range(2, min(2 + LOOKBACK_BARS, len(bars))):
-            b = bars[-i]
-            if b["close"] < b["open"]:  # red
-                last_red_body = b["open"] - b["close"]
-                last_red_high = b["open"]
-                break
-
-        # For red overwhelm: find last green candle
-        last_green_body = 0.0
-        last_green_low = 0.0
-        for i in range(2, min(2 + LOOKBACK_BARS, len(bars))):
-            b = bars[-i]
-            if b["close"] > b["open"]:  # green
-                last_green_body = b["close"] - b["open"]
-                last_green_low = b["open"]
-                break
-
-        green_overwhelm = (is_green and last_red_body > 0
-                          and green_body > last_red_body
-                          and curr_close > last_red_high)
-
-        red_overwhelm = (is_red and last_green_body > 0
-                        and red_body > last_green_body
-                        and curr_close < last_green_low)
-
-        return green_overwhelm, red_overwhelm
+    # _detect_overwhelm removed — uses shared detect_overwhelm() from overwhelm_detector.py
 
     def _calc_vwap(self, instrument: str) -> Optional[float]:
         """Cumulative session VWAP anchored at 18:00 ET (matches futures).
