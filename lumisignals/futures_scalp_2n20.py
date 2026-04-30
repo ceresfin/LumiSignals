@@ -18,6 +18,8 @@ from typing import Dict, Optional, Tuple
 import redis as _redis
 import requests
 
+from .overwhelm_detector import detect_overwhelm, detect_vwap_cross
+
 logger = logging.getLogger(__name__)
 
 SERVER_URL = os.environ.get("LUMISIGNALS_URL", "https://bot.lumitrade.ai")
@@ -160,17 +162,15 @@ class FuturesScalp2n20:
         above_vwap = close > vwap
         below_vwap = close < vwap
 
-        # Detect overwhelm
-        green_overwhelm, red_overwhelm = self._detect_overwhelm(candles)
+        # Detect overwhelm using shared detector
+        green_overwhelm, red_overwhelm = detect_overwhelm(candles)
         logger.info("[2n20_MES] scan bar=%s close=%.2f vwap=%.2f above=%s below=%s green_ow=%s red_ow=%s in_long=%s in_short=%s",
                     last_time, close, vwap, above_vwap, below_vwap,
                     green_overwhelm, red_overwhelm,
                     self.state.in_long, self.state.in_short)
 
-        # VWAP cross detection
-        prev_close = candles[-2]["close"]
-        crossed_below_vwap = close < vwap and prev_close >= vwap
-        crossed_above_vwap = close > vwap and prev_close <= vwap
+        # VWAP cross using shared detector
+        crossed_below_vwap, crossed_above_vwap = detect_vwap_cross(candles, vwap)
 
         # --- EXIT LOGIC ---
         if self.state.in_long:
@@ -274,53 +274,7 @@ class FuturesScalp2n20:
             den += vol
         return num / den if den > 0 else None
 
-    def _detect_overwhelm(self, bars: list) -> Tuple[bool, bool]:
-        """Detect green/red overwhelm. Returns (green_overwhelm, red_overwhelm)."""
-        curr = bars[-1]
-        is_green = curr["close"] > curr["open"]
-        is_red = curr["close"] < curr["open"]
-        green_body = curr["close"] - curr["open"] if is_green else 0
-        red_body = curr["open"] - curr["close"] if is_red else 0
-
-        candle_range = curr["high"] - curr["low"]
-        body_size = abs(curr["close"] - curr["open"])
-        body_pct = (body_size / candle_range * 100) if candle_range > 0 else 0
-        has_real_body = body_pct >= MIN_BODY_PCT
-
-        avg_body = sum(abs(b["close"] - b["open"]) for b in bars[-11:-1]) / 10
-        is_significant = body_size >= avg_body * AVG_BODY_MULT
-
-        if not has_real_body or not is_significant:
-            return False, False
-
-        # Find most recent opposite candle
-        last_red_body = 0.0
-        last_red_high = 0.0
-        for i in range(2, min(2 + LOOKBACK_BARS, len(bars))):
-            b = bars[-i]
-            if b["close"] < b["open"]:
-                last_red_body = b["open"] - b["close"]
-                last_red_high = b["open"]
-                break
-
-        last_green_body = 0.0
-        last_green_low = 0.0
-        for i in range(2, min(2 + LOOKBACK_BARS, len(bars))):
-            b = bars[-i]
-            if b["close"] > b["open"]:
-                last_green_body = b["close"] - b["open"]
-                last_green_low = b["open"]
-                break
-
-        green_overwhelm = (is_green and last_red_body > 0
-                          and green_body > last_red_body
-                          and curr["close"] > last_red_high)
-
-        red_overwhelm = (is_red and last_green_body > 0
-                        and red_body > last_green_body
-                        and curr["close"] < last_green_low)
-
-        return green_overwhelm, red_overwhelm
+    # _detect_overwhelm removed — uses shared detect_overwhelm() from overwhelm_detector.py
 
     def _send_entry(self, direction: str, price: float):
         """Send entry signal through the webhook pipeline.
