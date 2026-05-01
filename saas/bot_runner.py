@@ -82,7 +82,7 @@ def publish_log(user_id, entries):
     rdb.setex(f"botlog:{user_id}", 600, json.dumps(entries[-100:]))
 
 
-def _auto_trade_options(user_data, signal, extra_meta, model_name, log, alert_pass, email):
+def _auto_trade_options(user_data, signal, extra_meta, model_name, log, alert_pass, email, model_cfg=None):
     """Analyze and queue options spread when a stock signal fires."""
     from datetime import datetime as _dt, timezone, timedelta
     from lumisignals.polygon_options import analyze_spreads_polygon
@@ -129,14 +129,12 @@ def _auto_trade_options(user_data, signal, extra_meta, model_name, log, alert_pa
         max_spreads=int(user_data.get("options_max_spreads") or 10),
     )
 
-    # Model-specific DTE ranges
-    dte_ranges = {
-        "scalp": (3, 7),
-        "intraday": (7, 14),
-        "swing": (25, 40),
-        "swing_options": (25, 40),
-    }
-    min_dte, max_dte = dte_ranges.get(model_name, (25, 40))
+    # Model-specific DTE ranges — from ModelConfig or fallback
+    if model_cfg and model_cfg.options_dte_range:
+        min_dte, max_dte = model_cfg.options_dte_range
+    else:
+        _dte_fallback = {"scalp": (3, 7), "intraday": (7, 14), "swing": (25, 40)}
+        min_dte, max_dte = _dte_fallback.get(model_name, (25, 40))
 
     log(f"[{model_name.upper()}] OPTIONS: Analyzing {symbol} ({zone_type} zone @ {zone_price:.2f}, DTE {min_dte}-{max_dte}d)")
 
@@ -400,6 +398,9 @@ def run_bot_for_user(user_data, stop_check):
             cfg.min_risk_reward = float(user_rr)
         if user_atr is not None:
             cfg.atr_stop_multiplier = float(user_atr)
+        # Apply options trigger TF if auto-trade is enabled
+        if user_data.get("options_auto_trade"):
+            cfg.options_trigger_tf = user_data.get("options_trigger_tf") or "4h"
         user_models.append(cfg)
 
     # Create all three model strategies
@@ -447,7 +448,7 @@ def run_bot_for_user(user_data, stop_check):
                     try:
                         _auto_trade_options(
                             user_data, signal, extra_meta, model_name,
-                            log, alert_pass, email,
+                            log, alert_pass, email, model_cfg=_model_cfg,
                         )
                     except Exception as e:
                         log(f"[{model_name.upper()}] OPTIONS AUTO-TRADE ERROR: {e}")
@@ -530,56 +531,10 @@ def run_bot_for_user(user_data, stop_check):
 
         strategy._refresh_watchlist = make_patched(original, mn)
 
-    # Create stock options model with custom trigger TF (if different from swing's daily)
-    options_trigger_tf = user_data.get("options_trigger_tf") or "4h"
-    if user_data.get("options_auto_trade") and options_trigger_tf != "1d" and massive:
-        from lumisignals.levels_strategy import ModelConfig
-        from copy import copy
-
-        stock_options_model = ModelConfig(
-            name="swing_options",
-            trigger_tf=options_trigger_tf,
-            zone_tfs=["1w", "1mo"],
-            bias_tf="1mo",
-            bias_candle_tfs=["1w", "1mo"],
-            risk_percent=1.0,
-            zone_tolerance_pct={"1w": 0.006, "1mo": 0.009},
-            min_score=50,
-            min_risk_reward=1.5,
-            watchlist_interval=300,
-        )
-
-        # This model only scans stocks — no forex
-        stock_options_strategy = LevelsStrategy(
-            oanda_client=oanda, snr_client=snr,
-            trade_builder_url=snr_base_url, api_key=snr_api_key,
-            model=stock_options_model,
-            massive_client=massive, stock_tickers=stock_tickers,
-            stock_atr_multiplier=user_data.get("stock_atr_multiplier") or 0.5,
-            on_signal=make_signal_handler("swing_options"),
-        )
-        # Override watchlist refresh to skip forex — only scan stocks
-        original_refresh = stock_options_strategy._refresh_watchlist
-        def stock_only_refresh(pairs=None):
-            original_refresh(pairs=[])  # empty forex list — only stocks via Massive
-        stock_options_strategy._refresh_watchlist = stock_only_refresh
-        models["swing_options"] = stock_options_strategy
-
-        # Patch watchlist refresh
-        original = stock_options_strategy._refresh_watchlist
-        def make_patched_opts(orig):
-            def patched(pairs=None):
-                orig(pairs)
-                zones = get_watchlist_snapshot("swing_options")
-                publish_watchlist_model(user_id, "swing_options", zones)
-                log(f"[SWING_OPTIONS] Watchlist: {len(zones)} zones")
-            return patched
-        stock_options_strategy._refresh_watchlist = make_patched_opts(original)
-
-        log(f"[SWING_OPTIONS] Configured — zones: {stock_options_model.zone_tfs}, trigger: {options_trigger_tf}, stocks only")
-        log(f"All 4 models running — SCALP (15m) + INTRADAY (1h) + SWING (daily) + SWING_OPTIONS ({options_trigger_tf})")
-    else:
-        log("All 3 models running — SCALP (15m) + INTRADAY (1h) + SWING (daily)")
+    opts_tf = user_data.get("options_trigger_tf") or "4h"
+    if user_data.get("options_auto_trade"):
+        log(f"Options auto-trade enabled — stock zones get extra trigger check at {opts_tf}")
+    log("All 3 models running — SCALP (15m) + INTRADAY (1h) + SWING (daily)")
 
     # --- 2n20 FX Scalp Strategy ---
     fx_scalp = None
@@ -595,7 +550,8 @@ def run_bot_for_user(user_data, stop_check):
                     import redis as _rdb
                     rdb = _rdb.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
                     import json as _json
-                    sig["timestamp"] = datetime.now(timezone.utc).isoformat()
+                    from datetime import datetime as _dt2, timezone as _tz2
+                    sig["timestamp"] = _dt2.now(_tz2.utc).isoformat()
                     rdb.lpush("fx_scalp_2n20:signals", _json.dumps(sig))
                     rdb.ltrim("fx_scalp_2n20:signals", 0, 99)
                 except Exception:
@@ -634,75 +590,76 @@ def run_bot_for_user(user_data, stop_check):
     else:
         log("[2n20_MES] Internal strategy disabled — using TradingView webhook for MES signals")
 
-    # Run all models in a unified loop
-    tick = 0
-    while True:
-        # Check if user deactivated
-        if tick > 0 and tick % 10 == 0:
-            if stop_check(user_id):
-                log("Bot stopped by user")
-                break
+    # ─── THREADED STRATEGY RUNNERS ─────────────────────────────────────
+    # Each strategy runs in its own thread with its own loop speed.
+    # They don't wait for each other — the 2n20 scalp fires every 10s
+    # regardless of how long the HTF levels scan takes.
+    import threading
 
-        # 2n20 strategies first — they're fast and shouldn't be starved by slow
-        # per-ticker API calls in the levels-strategy iteration below.
-        if fx_scalp:
-            try:
-                fx_scalp.scan_all()
-            except Exception as e:
-                logger.exception("[2n20_FX] Scan error: %s", e)
+    _stop_event = threading.Event()
 
-        if mes_scalp:
-            try:
-                mes_scalp.scan()
-            except Exception as e:
-                logger.exception("[2n20_MES] Scan error: %s", e)
-
-        # Per-model scan cadence — match the trigger timeframe so we don't
-        # over-scan and starve the 2n20 strategies. Each tick is 10 seconds
-        # (TICK_INTERVAL below). SCALP iterates ~120 tickers per refresh; we
-        # space it out so it doesn't block the fast 2n20 path.
-        #   SCALP (15m trigger):       every 30 ticks (~5 min)
-        #   INTRADAY (1h trigger):     every 90 ticks (~15 min)
-        #   SWING_OPTIONS (1h trigger):every 90 ticks (~15 min)
-        #   SWING (1d trigger):        every 8640 ticks (~24 hr)
-        MODEL_SCAN_CADENCE = {
-            "SCALP": 30,
-            "INTRADAY": 90,
-            "SWING_OPTIONS": 90,
-            "SWING": 8640,
-        }
-        for model_name, strategy in models.items():
-            scan_cadence = MODEL_SCAN_CADENCE.get(model_name, 30)
-            # Skip on tick 0 — otherwise every model runs at once on startup,
-            # blocking the first ~5 min of 2n20 scans.
-            if tick == 0 or tick % scan_cadence != 0:
-                continue
-
-            ticks_per_wl = max(1, strategy.watchlist_interval // 30)
-            if tick % ticks_per_wl == 0:
+    def run_2n20_thread():
+        """Fast loop: 2n20 scalp strategies. Runs every 10 seconds."""
+        log("[Thread-2n20] Started — scanning every 10s")
+        while not _stop_event.is_set():
+            if fx_scalp:
                 try:
-                    strategy._refresh_watchlist()
+                    fx_scalp.scan_all()
                 except Exception as e:
-                    logger.debug("[%s] Watchlist error: %s", model_name, e)
+                    logger.debug("[2n20_FX] Scan error: %s", e)
+            if mes_scalp:
+                try:
+                    mes_scalp.scan()
+                except Exception as e:
+                    logger.debug("[2n20_MES] Scan error: %s", e)
+            _stop_event.wait(10)
+        log("[Thread-2n20] Stopped")
 
-            try:
-                strategy._monitor_zones()
-            except Exception as e:
-                logger.debug("[%s] Monitor error: %s", model_name, e)
+    def run_htf_thread():
+        """Slow loop: HTF levels strategies. Each model runs at its own cadence."""
+        log("[Thread-HTF] Started — levels strategies running independently")
+        tick = 0
+        MODEL_SCAN_CADENCE = {
+            "scalp": 30,       # every 5 min (30 × 10s)
+            "intraday": 90,    # every 15 min
+            "swing": 8640,     # every 24 hr
+        }
+        while not _stop_event.is_set():
+            for model_name, strategy in models.items():
+                scan_cadence = MODEL_SCAN_CADENCE.get(model_name, 30)
+                if tick % scan_cadence != 0:
+                    continue
 
-            try:
-                strategy._check_triggers()
-            except Exception as e:
-                logger.debug("[%s] Trigger error: %s", model_name, e)
+                ticks_per_wl = max(1, strategy.watchlist_interval // 30)
+                if tick % ticks_per_wl == 0:
+                    try:
+                        strategy._refresh_watchlist()
+                    except Exception as e:
+                        logger.debug("[%s] Watchlist error: %s", model_name, e)
 
-            strategy._watchlist = [z for z in strategy._watchlist if z.status != "triggered"]
+                try:
+                    strategy._monitor_zones()
+                except Exception as e:
+                    logger.debug("[%s] Monitor error: %s", model_name, e)
 
-            # Publish current watchlist to Redis (per model)
-            zones = get_watchlist_snapshot(model_name)
-            publish_watchlist_model(user_id, model_name, zones)
+                try:
+                    strategy._check_triggers()
+                except Exception as e:
+                    logger.debug("[%s] Trigger error: %s", model_name, e)
 
-        # Swing auto-scanner: run every ~1440 ticks (4 hours at 10s interval)
-        if tick > 0 and tick % 1440 == 0:
+                strategy._watchlist = [z for z in strategy._watchlist if z.status != "triggered"]
+
+                zones = get_watchlist_snapshot(model_name)
+                publish_watchlist_model(user_id, model_name, zones)
+
+            tick += 1
+            _stop_event.wait(10)
+        log("[Thread-HTF] Stopped")
+
+    def run_swing_thread():
+        """Periodic: swing auto-scanner. Runs every 4 hours during market hours."""
+        log("[Thread-Swing] Started — scanning every 4 hours")
+        while not _stop_event.is_set():
             try:
                 from lumisignals.swing_scanner import run_swing_scan, should_scan_now
                 if should_scan_now():
@@ -718,11 +675,38 @@ def run_bot_for_user(user_data, stop_check):
                             log("Swing scan: no confirmed setups")
             except Exception as e:
                 logger.debug("Swing scan error: %s", e)
+            # Wait 4 hours (check every 60s if stop requested)
+            for _ in range(240):
+                if _stop_event.is_set():
+                    break
+                _stop_event.wait(60)
+        log("[Thread-Swing] Stopped")
 
-        tick += 1
-        # 10s loop — fast enough for the 2n20 streaming MES bars to fire scans
-        # within ~10s of bar close. Levels models gate themselves by cadence.
-        time.sleep(10)
+    # Start all threads
+    threads = []
+    if fx_scalp or mes_scalp:
+        t = threading.Thread(target=run_2n20_thread, name="2n20", daemon=True)
+        t.start()
+        threads.append(t)
+
+    if models:
+        t = threading.Thread(target=run_htf_thread, name="HTF", daemon=True)
+        t.start()
+        threads.append(t)
+
+    t = threading.Thread(target=run_swing_thread, name="Swing", daemon=True)
+    t.start()
+    threads.append(t)
+
+    log(f"All {len(threads)} strategy threads running")
+
+    # Main thread: monitor for user deactivation
+    while True:
+        if stop_check(user_id):
+            log("Bot stopped by user")
+            _stop_event.set()
+            break
+        time.sleep(30)
 
     log("Bot stopped")
 

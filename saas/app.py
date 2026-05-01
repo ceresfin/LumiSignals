@@ -938,7 +938,7 @@ def create_app():
         # Header
         writer.writerow([
             "Type", "Symbol", "Direction", "Contracts/Qty", "Entry Price", "Exit Price",
-            "Realized P&L", "Strategy", "Close Reason", "Result",
+            "Realized P&L", "Strategy", "Model", "Close Reason", "Result",
             "Opened", "Closed", "Duration (min)"
         ])
         for t in trades:
@@ -960,6 +960,7 @@ def create_app():
                 t.get("exit_price", ""),
                 round(pnl, 2) if pnl else "",
                 t.get("strategy", ""),
+                t.get("model", ""),
                 t.get("close_reason", ""),
                 "WIN" if pnl and pnl > 0 else ("LOSS" if pnl and pnl < 0 else ""),
                 to_et(t.get("opened_at", "")),
@@ -1151,6 +1152,70 @@ def create_app():
             logger.error("Oanda trades error: %s", e)
             return jsonify({"error": str(e)}), 500
 
+    @app.route("/api/oanda/trades/csv")
+    @login_required
+    def api_oanda_trades_csv():
+        """Download closed FX trades as CSV."""
+        import csv
+        import io
+        if not current_user.oanda_api_key:
+            return jsonify({"error": "No Oanda credentials"}), 400
+        try:
+            from lumisignals.oanda_client import OandaClient
+            from lumisignals.trade_tracker import get_closed_trades
+            from lumisignals.signal_log import SignalLog
+            import lumisignals.signal_log as _sl
+
+            client = OandaClient(
+                account_id=current_user.oanda_account_id,
+                api_key=current_user.oanda_api_key,
+                environment=current_user.oanda_environment or "practice",
+            )
+            sig_log_path = f"/opt/lumisignals/signal_log_user_{current_user.id}.json"
+            old_log = _sl._log
+            _sl._log = SignalLog(path=sig_log_path)
+
+            count = int(request.args.get("count", 500))
+            closed = get_closed_trades(client, count=count)
+            _sl._log = old_log
+
+            output = io.StringIO()
+            writer = csv.writer(output)
+            writer.writerow([
+                "Pair", "Direction", "Units", "Entry", "Exit", "Pips",
+                "Realized P&L", "Strategy", "Model", "Close Reason", "Result",
+                "Planned SL", "Planned TP", "Planned R:R", "Achieved R:R",
+                "Opened", "Closed",
+            ])
+            for t in closed:
+                pnl = t.get("realized_pl", 0)
+                writer.writerow([
+                    t.get("instrument", ""),
+                    t.get("direction", ""),
+                    t.get("units", ""),
+                    t.get("entry", ""),
+                    t.get("close_price", ""),
+                    t.get("pips", ""),
+                    round(pnl, 2),
+                    t.get("strategy", t.get("strategy_id", "")),
+                    t.get("model", ""),
+                    t.get("close_reason", ""),
+                    "WIN" if pnl > 0 else "LOSS",
+                    t.get("stop_loss", ""),
+                    t.get("take_profit", ""),
+                    t.get("planned_rr", ""),
+                    t.get("achieved_rr", ""),
+                    t.get("time_opened", ""),
+                    t.get("time_closed", ""),
+                ])
+            response = make_response(output.getvalue())
+            response.headers["Content-Type"] = "text/csv"
+            response.headers["Content-Disposition"] = f"attachment; filename=fx_trades_{datetime.now().strftime('%Y%m%d')}.csv"
+            return response
+        except Exception as e:
+            logger.error("Oanda CSV error: %s", e)
+            return jsonify({"error": str(e)}), 500
+
     @app.route("/api/ibkr/sync", methods=["POST"])
     def api_ibkr_sync():
         """Receive IB data from local sync script and store in Redis."""
@@ -1263,21 +1328,70 @@ def create_app():
         freq_to_tf = {"quarterly": "Q", "monthly": "M", "weekly": "W", "daily": "D", "fourhour": "4H", "hourly": "1H"}
         frequencies = ["quarterly", "monthly", "weekly", "daily", "fourhour", "hourly"]
 
+        # Built-in Polygon levels (replaces LumiTrade API)
+        massive_key = os.environ.get("MASSIVE_API_KEY", "")
+        massive = None
+        if massive_key:
+            from lumisignals.massive_client import MassiveClient
+            from lumisignals.untouched_levels import find_untouched_levels, calculate_adx_direction
+            massive = MassiveClient(massive_key)
+
         results = []
         for ticker in tickers:
-            item = {"ticker": ticker, "lumitrade": {}, "tradingview": {}, "tv_trends": {}, "lt_trends": {}, "tv_updated": ""}
+            item = {"ticker": ticker, "server": {}, "tradingview": {}, "tv_trends": {}, "server_trends": {}, "tv_updated": ""}
 
+            # Determine if ticker is forex (e.g. EURUSD, GBPUSD)
+            is_forex = len(ticker) == 6 and ticker[:3].isalpha() and ticker[3:].isalpha() and ticker not in ("GOOGL",)
+
+            if massive:
+                if is_forex:
+                    poly_ticker = f"C:{ticker}"
+                else:
+                    poly_ticker = ticker
+
+                for tf, tf_label in interval_to_tf.items():
+                    try:
+                        count = 30 if tf in ("3mo", "1mo", "1w") else 50
+                        candles = massive.get_candles(poly_ticker, tf, count)
+                        if not candles or len(candles) < 3:
+                            continue
+                        price = candles[-1].close
+                        highs = [c.high for c in reversed(candles)]
+                        lows = [c.low for c in reversed(candles)]
+                        s1, s2, d1, d2 = find_untouched_levels(highs, lows, price, lookback=10)
+                        item["server"][tf_label] = {
+                            "supply": s1, "supply2": s2,
+                            "demand": d1, "demand2": d2,
+                        }
+                        # ADX trend
+                        adx_dir = calculate_adx_direction(candles)
+                        if adx_dir:
+                            item["server_trends"][tf_label] = adx_dir.get("direction", "SIDE")
+                    except Exception as e:
+                        logger.debug("Compare level error %s %s: %s", ticker, tf, e)
+            else:
+                item["server"]["error"] = "No Polygon API key configured"
+
+            # --- TradingView levels from Redis ---
+            tv_raw = rdb.get(f"tv:levels:{ticker}")
+            if tv_raw:
+                tv_data = json.loads(tv_raw)
+                item["tradingview"] = tv_data.get("levels", {})
+                item["tv_trends"] = tv_data.get("trends", {})
+                item["tv_updated"] = tv_data.get("updated_at", "")
+
+            # --- LumiTrade API levels (third source) ---
+            item["lumitrade"] = {}
+            item["lt_trends"] = {}
             if snr_api_key:
                 import requests as _requests
                 session = _requests.Session()
                 session.headers["Authorization"] = f"Bearer {snr_api_key}"
-
-                # --- SNR Frequency API (matches LumiTrade chart exactly) ---
                 try:
                     resp = session.get(
                         f"{snr_base_url}/partners/technical-analysis/snr/frequency/",
                         params={"ticker": ticker, "intervals": ",".join(snr_intervals),
-                                "type": "stock", "days": 256},
+                                "type": "forex" if is_forex else "stock", "days": 256},
                         timeout=15,
                     )
                     if resp.status_code == 200:
@@ -1292,11 +1406,11 @@ def create_app():
                 except Exception as e:
                     item["lumitrade"]["error"] = str(e)
 
-                # --- Trade-builder for trend/direction data ---
                 try:
                     resp2 = session.get(
                         f"{snr_base_url}/partners/technical-analysis/trade-builder-setup",
-                        params={"ticker": ticker, "period": 14, "market": "stock",
+                        params={"ticker": ticker, "period": 14,
+                                "market": "forex" if is_forex else "stock",
                                 "frequency": ",".join(frequencies)},
                         timeout=15,
                     )
@@ -1311,16 +1425,6 @@ def create_app():
                                     item["lt_trends"][tv_tf] = dir_str
                 except Exception:
                     pass
-            else:
-                item["lumitrade"]["error"] = "No LumiTrade API key configured"
-
-            # --- TradingView levels from Redis ---
-            tv_raw = rdb.get(f"tv:levels:{ticker}")
-            if tv_raw:
-                tv_data = json.loads(tv_raw)
-                item["tradingview"] = tv_data.get("levels", {})
-                item["tv_trends"] = tv_data.get("trends", {})
-                item["tv_updated"] = tv_data.get("updated_at", "")
 
             results.append(item)
 

@@ -21,10 +21,10 @@ body { font-family: 'Inter', sans-serif; background: var(--cream); color: var(--
 .card h2 { font-family: 'Playfair Display', serif; font-size: 1.1rem; font-weight: 400; margin-bottom: 16px; padding-bottom: 10px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; }
 .card h2 .count { font-family: 'Inter'; font-size: 0.8rem; color: var(--text-light); background: var(--cream); padding: 2px 10px; border-radius: 50px; }
 .card h3 { font-family: 'Playfair Display', serif; font-size: 0.95rem; font-weight: 400; margin: 16px 0 10px; color: var(--text-medium); }
-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; table-layout: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 0.82rem; table-layout: auto; min-width: 700px; }
 th { text-align: left; font-weight: 500; color: var(--text-light); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.5px; padding: 8px 6px; border-bottom: 2px solid #eee; white-space: nowrap; }
-td { padding: 8px 6px; border-bottom: 1px solid #f5f5f5; vertical-align: top; font-size: 0.78rem; word-break: break-word; max-width: 120px; }
-.card { overflow-x: auto; }
+td { padding: 8px 6px; border-bottom: 1px solid #f5f5f5; vertical-align: top; font-size: 0.78rem; white-space: nowrap; }
+.card { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 tr:hover { background: rgba(0,0,0,0.015); }
 .dir-buy { color: var(--green); font-weight: 600; }
 .dir-sell { color: var(--red); font-weight: 600; }
@@ -58,6 +58,26 @@ tr:hover { background: rgba(0,0,0,0.015); }
 .stat-card { background: var(--white); border-radius: 12px; padding: 16px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
 .stat-value { font-family: 'Playfair Display', serif; font-size: 1.6rem; color: var(--dark); }
 .stat-label { font-size: 0.72rem; color: var(--text-light); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 4px; }
+
+/* Mobile responsive */
+@media (max-width: 768px) {
+  .header-inner { flex-wrap: wrap; gap: 8px; }
+  .header-nav { flex-wrap: wrap; gap: 4px; }
+  .header-nav a { font-size: 0.75rem; padding: 6px 10px; }
+  .container { padding: 12px; }
+  .stats-grid { grid-template-columns: repeat(3, 1fr) !important; gap: 8px; }
+  .stat-value { font-size: 1.2rem; }
+  .stat-label { font-size: 0.65rem; }
+  .stat-card { padding: 10px; }
+  .card { padding: 12px; }
+  .model-cards { grid-template-columns: 1fr !important; }
+  .strategy-header { font-size: 1rem; }
+}
+@media (max-width: 480px) {
+  .stats-grid { grid-template-columns: repeat(2, 1fr) !important; }
+  .header h1 { font-size: 1.1rem; }
+  .header-nav a { font-size: 0.7rem; padding: 5px 8px; }
+}
 </style>
 </head>
 <body>
@@ -106,7 +126,9 @@ tr:hover { background: rgba(0,0,0,0.015); }
   </div>
 
   <div class="card">
-    <h2>Closed FX Trades <span class="count" id="closedCount">0</span></h2>
+    <h2>Closed FX Trades <span class="count" id="closedCount">0</span>
+      <a href="/api/oanda/trades/csv" class="refresh-btn" style="font-size:0.72rem;text-decoration:none;">Download CSV</a>
+    </h2>
     <div id="closedTable"><div class="loading">Loading...</div></div>
   </div>
   </div><!-- end sectionFX -->
@@ -222,8 +244,8 @@ var STRATEGY_NAMES = {
   'vwap_2n20': 'VWAP Candlestick Trigger (2n20)',
   'gap_fill': 'Gap Fill',
 };
-var MODEL_ORDER = ['scalp', 'scalp_2n20', 'intraday', 'swing'];
-var MODEL_LABELS = {'scalp': 'SCALP HTF', 'scalp_2n20': 'SCALP 2n20', 'intraday': 'INTRADAY', 'swing': 'SWING'};
+var MODEL_ORDER = ['scalp', 'scalp_2n20', 'intraday', 'intraday_2n20', 'swing', 'swing_2n20'];
+var MODEL_LABELS = {'scalp': 'SCALP HTF', 'scalp_2n20': 'SCALP 2n20', 'intraday': 'INTRADAY', 'intraday_2n20': 'INTRADAY 2n20', 'swing': 'SWING', 'swing_2n20': 'SWING 2n20'};
 
 function buildTable(headers, rows) {
   if (!rows.length) return '<div style="text-align:center;padding:20px;color:#8a847e;">No data</div>';
@@ -249,7 +271,7 @@ function assetBadge(instrument) {
 function modelBadge(model) {
   if (!model) return '—';
   var m = model.toLowerCase();
-  if (m === 'scalp_2n20') return '<span class="badge" style="background:#fef3c7;color:#d97706">SCALP 2n20</span>';
+  if (m.indexOf('2n20') >= 0) return '<span class="badge" style="background:#fef3c7;color:#d97706">' + (MODEL_LABELS[m] || m.toUpperCase()) + '</span>';
   if (m === 'scalp') return '<span class="badge" style="background:#fce7f3;color:#be185d">SCALP HTF</span>';
   if (m === 'intraday') return '<span class="badge" style="background:#dbeafe;color:#1d4ed8">INTRADAY</span>';
   if (m === 'swing') return '<span class="badge badge-open">SWING</span>';
@@ -340,13 +362,19 @@ function getModel(t) {
 }
 
 function getStrategyId(t) {
-  if (t.strategy_id) return t.strategy_id;
-  var s = (t.strategy || '').toLowerCase();
+  // Check model first — most reliable indicator
   var m = (t.model || '').toLowerCase();
-  if (s.indexOf('2n20') >= 0 || m.indexOf('scalp_2n20') >= 0) return 'vwap_2n20';
+  if (m.indexOf('2n20') >= 0) return 'vwap_2n20';
+  // Then check explicit strategy_id
+  if (t.strategy_id) return t.strategy_id;
+  // Then parse from strategy string
+  var s = (t.strategy || '').toLowerCase();
+  if (s.indexOf('2n20') >= 0) return 'vwap_2n20';
   if (s.indexOf('level') >= 0) return 'htf_levels';
   if (s.indexOf('gap') >= 0) return 'gap_fill';
-  return 'htf_levels'; // default for existing trades
+  // If model is set (scalp/intraday/swing without 2n20), it's HTF
+  if (m) return 'htf_levels';
+  return 'htf_levels';
 }
 
 function buildStrategyBreakdown(openTrades, closedTrades) {
@@ -397,7 +425,7 @@ function buildStrategyBreakdown(openTrades, closedTrades) {
 
       html += '<div class="model-card">';
       var modelLabel = MODEL_LABELS[model] || model.toUpperCase();
-      var modelCss = model === 'scalp_2n20' ? 'scalp' : model;
+      var modelCss = model.replace('_2n20', '');
       html += '<div class="model-card-title ' + modelCss + '">' + modelLabel + '</div>';
       html += '<div class="model-stats">';
       html += '<div class="model-stat"><div class="model-stat-value">' + openCount + '</div><div class="model-stat-label">Open</div></div>';

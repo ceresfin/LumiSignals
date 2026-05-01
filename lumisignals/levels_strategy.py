@@ -79,6 +79,8 @@ class ModelConfig:
     atr_stop_multiplier: float = 1.0
     watchlist_interval: int = 300
     monitor_interval: int = 30
+    options_trigger_tf: str = None     # Faster trigger TF for stock options (e.g. "1h")
+    options_dte_range: tuple = None    # (min_dte, max_dte) for options expiration
 
 
 SCALP_MODEL = ModelConfig(
@@ -93,6 +95,7 @@ SCALP_MODEL = ModelConfig(
     min_risk_reward=1.5,
     watchlist_interval=300,
     monitor_interval=30,
+    options_dte_range=(3, 7),
 )
 
 INTRADAY_MODEL = ModelConfig(
@@ -107,6 +110,7 @@ INTRADAY_MODEL = ModelConfig(
     min_risk_reward=1.5,
     watchlist_interval=300,
     monitor_interval=30,
+    options_dte_range=(7, 14),
 )
 
 SWING_MODEL = ModelConfig(
@@ -121,6 +125,7 @@ SWING_MODEL = ModelConfig(
     min_risk_reward=1.5,
     watchlist_interval=7200,   # 2 hours — swing zones don't change fast
     monitor_interval=30,
+    options_dte_range=(25, 40),
 )
 
 ALL_MODELS = {"scalp": SCALP_MODEL, "intraday": INTRADAY_MODEL, "swing": SWING_MODEL}
@@ -472,10 +477,10 @@ class LevelsStrategy:
         extended_hours = (et_hour > 9 or (et_hour == 9 and et_minute >= 15)) and (et_hour < 17 or (et_hour == 17 and et_minute <= 15))  # 9:15am-5:15pm ET
 
         should_scan_stocks = False
-        if self.massive and self.stock_tickers and self.model_name in ("scalp", "intraday", "swing", "swing_options"):
+        if self.massive and self.stock_tickers and self.model_name in ("scalp", "intraday", "swing"):
             if self.model_name in ("scalp", "intraday"):
                 should_scan_stocks = regular_hours  # 9:30am-4pm ET
-            elif self.model_name in ("swing", "swing_options"):
+            elif self.model_name == "swing":
                 should_scan_stocks = extended_hours  # 9:15am-5:15pm ET
 
         if should_scan_stocks:
@@ -1019,18 +1024,33 @@ class LevelsStrategy:
             except Exception as e:
                 logger.error("Error checking trigger for %s: %s", zone.instrument, e)
 
-    def _check_zone_trigger(self, zone: ZoneEntry, granularity: str):
+        # Options trigger pass: check activated stock zones at the faster options TF
+        opts_tf = self.model.options_trigger_tf if self.model else None
+        if opts_tf and opts_tf != self.trading_timeframe:
+            stock_activated = [z for z in activated
+                               if z.status == "activated" and "_" not in z.instrument]
+            if stock_activated:
+                for zone in stock_activated:
+                    try:
+                        self._check_zone_trigger(zone, None, timeframe_override=opts_tf)
+                    except Exception as e:
+                        logger.error("Options trigger error for %s: %s", zone.instrument, e)
+
+    def _check_zone_trigger(self, zone: ZoneEntry, granularity: str,
+                            timeframe_override: str = None):
         """Check a single activated zone for a LTF trigger pattern."""
+        tf = timeframe_override or self.trading_timeframe
         is_forex = "_" in zone.instrument
         if is_forex:
+            gran = granularity or OANDA_GRANULARITY.get(tf, "M5")
             candles = self._get_candles(
-                zone.instrument, granularity=granularity,
+                zone.instrument, granularity=gran,
                 count=self.trigger_candle_count + 1,
             )
         else:
             # Stocks/crypto — use Massive
             candles = self.massive.get_candles(
-                zone.instrument, timespan=self.trading_timeframe,
+                zone.instrument, timespan=tf,
                 count=self.trigger_candle_count + 1,
             ) if self.massive else []
         if len(candles) < 3:
@@ -1076,7 +1096,7 @@ class LevelsStrategy:
 
         trigger = TriggerResult(
             zone=zone,
-            trigger_timeframe=self.trading_timeframe,
+            trigger_timeframe=tf,
             trigger_pattern=classification.pattern,
             trigger_direction=classification.direction,
             entry=entry,

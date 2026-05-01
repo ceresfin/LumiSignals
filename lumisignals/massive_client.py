@@ -293,7 +293,7 @@ class MassiveClient:
         url = f"{BASE_URL}{endpoint}"
         resp = self.session.get(url, params=params, timeout=30)
         if not resp.ok:
-            logger.error("Massive API error: %s - %s", resp.status_code, resp.text[:200])
+            logger.error("Massive API error: %s %s - %s", resp.status_code, endpoint, resp.text[:200])
             resp.raise_for_status()
         return resp.json()
 

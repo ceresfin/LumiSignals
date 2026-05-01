@@ -34,6 +34,22 @@ body { font-family: 'Inter', sans-serif; background: var(--cream); color: var(--
 .btn:hover { opacity: 0.9; }
 .plan-badge { display: inline-block; padding: 4px 12px; border-radius: 50px; font-size: 0.75rem; font-weight: 600; background: var(--olive); color: #FFF5E1; }
 .disclaimer { text-align: center; font-size: 0.72rem; color: var(--text-light); margin-top: 24px; }
+
+@media (max-width: 768px) {
+  .header-inner { flex-wrap: wrap; gap: 8px; }
+  .header-nav { flex-wrap: wrap; gap: 4px; }
+  .header-nav a { font-size: 0.75rem; padding: 6px 10px; }
+  .container { padding: 12px; }
+  .stats-grid { grid-template-columns: repeat(2, 1fr) !important; gap: 8px; }
+  .stats-grid-wide { grid-template-columns: repeat(2, 1fr) !important; gap: 8px; }
+  .stat-value { font-size: 1.3rem; }
+  .stat-card { padding: 12px; }
+  .card { padding: 14px; }
+}
+@media (max-width: 480px) {
+  .header h1 { font-size: 1.1rem; }
+  .header-nav a { font-size: 0.7rem; padding: 5px 8px; }
+}
 </style>
 </head>
 <body>
