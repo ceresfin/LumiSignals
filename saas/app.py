@@ -714,7 +714,13 @@ def create_app():
                 order = json.loads(raw)
                 if order.get("order_id") == order_id:
                     order.update(data)
-                    rdb.setex(key, 86400, json.dumps(order))
+                    # Terminal statuses get short TTL to auto-clean
+                    new_status = data.get("status", order.get("status", ""))
+                    if new_status in ("expired", "superseded", "cancelled", "Cancelled", "failed", "closed"):
+                        ttl = 3600  # 1 hour — enough for closed trade recording
+                    else:
+                        ttl = 86400
+                    rdb.setex(key, ttl, json.dumps(order))
                     # Also store by IB order ID and permId for enrichment
                     ib_order_id = data.get("ib_order_id")
                     perm_id = data.get("perm_id")

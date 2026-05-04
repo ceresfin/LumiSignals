@@ -179,6 +179,37 @@ def cleanup(dry_run: bool = False) -> dict:
         except Exception:
             stats["errors"] += 1
 
+    # --- Clean ibkr:order:futures_stop_* older than 7 days ---
+    for key in rdb.scan_iter("ibkr:order:futures_stop_*"):
+        stats["scanned"] += 1
+        try:
+            raw = rdb.get(key)
+            if not raw:
+                if not dry_run:
+                    rdb.delete(key)
+                stats["purged"] += 1
+                continue
+            data = json.loads(raw)
+            ts = data.get("queued_at", data.get("opened_at", ""))
+            status = data.get("status", "")
+            # Purge filled/cancelled stops immediately if older than 24h
+            if status in ("Filled", "Cancelled", "cancelled"):
+                if is_older_than(ts, hours=ORDER_STALE_HOURS):
+                    if not dry_run:
+                        rdb.delete(key)
+                    stats["purged"] += 1
+                else:
+                    stats["kept"] += 1
+            # Purge any stop older than 7 days regardless of status
+            elif is_older_than(ts, days=REF_STALE_DAYS):
+                if not dry_run:
+                    rdb.delete(key)
+                stats["purged"] += 1
+            else:
+                stats["kept"] += 1
+        except Exception:
+            stats["errors"] += 1
+
     # --- Clean stale dedup keys ---
     for pattern in ["tv:futures:*", "tv:traded:*", "swing:traded:*"]:
         for key in rdb.scan_iter(pattern):

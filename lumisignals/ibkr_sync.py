@@ -876,10 +876,37 @@ def _detect_closed_futures(ib):
             except Exception:
                 continue
         if not exit_fill:
-            logger.info("Position closed but no exit fill found: %s %s — will retry next tick", sym, direction)
-            # Don't drop from prev so we retry next tick
-            current[key] = prev
-            continue
+            # Track retry count — give up after 30 retries (~5 min at 10s intervals)
+            retry_count = prev.get("_close_retries", 0) + 1
+            prev["_close_retries"] = retry_count
+            if retry_count <= 30:
+                logger.info("Position closed but no exit fill found: %s %s — retry %d/30", sym, direction, retry_count)
+                current[key] = prev
+                continue
+            else:
+                # Give up — mark entry as closed without fill data, clean up
+                logger.warning("Giving up on exit fill for %s %s after 30 retries — marking closed", sym, direction)
+                entry_dir = "BUY" if direction == "LONG" else "SELL"
+                try:
+                    requests.post(f"{SERVER_URL}/api/ibkr/order/update",
+                        json={"order_id": f"futures_entry_{sym}_{entry_dir}", "status": "closed"},
+                        headers={"X-Sync-Key": SYNC_KEY}, timeout=5)
+                except Exception:
+                    pass
+                # Clean up any futures_entry_ keys for this symbol
+                try:
+                    import redis as _rdb
+                    rdb = _rdb.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+                    for fk in rdb.scan_iter(f"ibkr:order:futures_entry_*"):
+                        raw = rdb.get(fk)
+                        if raw:
+                            fd = json.loads(raw)
+                            if fd.get("ticker") == sym and fd.get("direction") == entry_dir:
+                                rdb.delete(fk)
+                                logger.info("Cleaned stale futures entry: %s", fk)
+                except Exception:
+                    pass
+                continue
 
         multiplier = prev["multiplier"]
         # Use stored fill price from entry tracking if available, else derive from avg_cost

@@ -559,8 +559,7 @@ def run_bot_for_user(user_data, stop_check):
 
             # USD majors only — 7 pairs for fast scan cycles (~2-3 sec vs 18+ min for 28)
             ACTIVE_FX_PAIRS = [
-                "EUR_USD", "GBP_USD", "USD_JPY", "USD_CHF",
-                "AUD_USD", "NZD_USD", "USD_CAD",
+                "EUR_USD", "USD_JPY",
             ]
             fx_scalp = FXScalp2n20(oanda, pairs=ACTIVE_FX_PAIRS, sl_dollars=fx_sl,
                                     signal_callback=fx_signal_cb, signal_log=signal_log)

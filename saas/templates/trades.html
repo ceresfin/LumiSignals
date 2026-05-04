@@ -163,7 +163,9 @@ tr:hover { background: rgba(0,0,0,0.015); }
     </div>
 
     <div class="card">
-      <h2>Closed Options Trades <span class="count" id="ibClosedCount">0</span></h2>
+      <h2>Closed Options Trades <span class="count" id="ibClosedCount">0</span>
+        <a href="/api/ibkr/closed-trades/csv?type=options" class="refresh-btn" style="font-size:0.72rem;text-decoration:none;">Download CSV</a>
+      </h2>
       <div id="ibClosedTable"><div class="loading">Loading...</div></div>
     </div>
   </div>
@@ -565,7 +567,7 @@ function loadIBTrades() {
   Promise.all([
     fetch('/api/ibkr/trades').then(function(r) { return r.json(); }),
     fetch('/api/ibkr/orders/all').then(function(r) { return r.json(); }).catch(function() { return {orders: []}; }),
-    fetch('/api/ibkr/closed-trades').then(function(r) { return r.json(); }).catch(function() { return {trades: []}; }),
+    fetch('/api/ibkr/closed-trades?type=options').then(function(r) { return r.json(); }).catch(function() { return {trades: []}; }),
   ]).then(function(results) {
     var data = results[0];
     var storedOrders = results[1].orders || [];
@@ -1026,7 +1028,7 @@ function loadFutures() {
     // Pending orders — entries only; stop brackets are shown inline on the open position row.
     var pendingFut = futOrders.filter(function(o) {
       if (o.direction === 'STOP_LONG' || o.direction === 'STOP_SHORT') return false;
-      return o.status === 'queued' || o.status === 'placing' || o.status === 'Submitted' || o.status === 'PreSubmitted';
+      return o.status === 'queued' || o.status === 'placing' || o.status === 'Submitted' || o.status === 'PreSubmitted' || o.status === 'entry';
     });
     pendingFut.sort(function(a, b) {
       return (a.queued_at || '').localeCompare(b.queued_at || '');
