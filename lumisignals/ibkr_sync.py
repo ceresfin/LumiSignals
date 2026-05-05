@@ -1096,34 +1096,52 @@ def check_order_requests(ib: IB):
 
                 logger.info("Futures order: %s %s %dx — %s", direction, ticker, contracts, strategy_name)
 
-                # Position awareness — check current position before acting
-                # Force portfolio refresh
+                # Per-strategy position awareness
+                # Each strategy (2n20, orb_breakout, etc.) tracks its own position
+                # via futures_entry_{permId} Redis records. A BUY from ORB doesn't
+                # block a BUY from 2n20 — they're independent.
+                import redis as _rdb_pos
+                rdb_pos = _rdb_pos.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+
+                strategy_pos = 0  # per-strategy position for this ticker
+                for fk in rdb_pos.scan_iter("ibkr:order:futures_entry_*"):
+                    raw_fe = rdb_pos.get(fk)
+                    if raw_fe:
+                        fe = json.loads(raw_fe)
+                        if fe.get("ticker") == ticker and fe.get("strategy") == strategy_name and fe.get("status") == "entry":
+                            if fe.get("direction") == "BUY":
+                                strategy_pos += int(fe.get("contracts", 1))
+                            elif fe.get("direction") == "SELL":
+                                strategy_pos -= int(fe.get("contracts", 1))
+
+                # Also check total broker position for CLOSE orders
                 ib.sleep(1)
-                current_pos = 0
+                broker_pos = 0
                 for item in ib.portfolio():
                     if item.contract.symbol == ticker and item.contract.secType == 'FUT':
-                        current_pos = int(item.position)
+                        broker_pos = int(item.position)
                         break
-                # Fallback to positions() if portfolio is empty
-                if current_pos == 0:
+                if broker_pos == 0:
                     for pos in ib.positions():
                         if pos.contract.symbol == ticker and pos.contract.secType == 'FUT':
-                            current_pos = int(pos.position)
+                            broker_pos = int(pos.position)
                             break
-                logger.info("Position check: %s pos=%d (direction=%s)", ticker, current_pos, direction)
+
+                logger.info("Position check: %s strategy=%s strategy_pos=%d broker_pos=%d (direction=%s)",
+                            ticker, strategy_name, strategy_pos, broker_pos, direction)
 
                 skip = False
-                if direction == "BUY" and current_pos != 0:
-                    logger.info("SKIP %s BUY — not flat (pos=%d)", ticker, current_pos)
+                if direction == "BUY" and strategy_pos > 0:
+                    logger.info("SKIP %s BUY — %s already long (strategy_pos=%d)", ticker, strategy_name, strategy_pos)
                     skip = True
-                elif direction == "SELL" and current_pos != 0:
-                    logger.info("SKIP %s SELL — not flat (pos=%d)", ticker, current_pos)
+                elif direction == "SELL" and strategy_pos < 0:
+                    logger.info("SKIP %s SELL — %s already short (strategy_pos=%d)", ticker, strategy_name, strategy_pos)
                     skip = True
-                elif direction == "CLOSE_LONG" and current_pos <= 0:
-                    logger.info("SKIP %s CLOSE_LONG — not long (pos=%d)", ticker, current_pos)
+                elif direction == "CLOSE_LONG" and broker_pos <= 0:
+                    logger.info("SKIP %s CLOSE_LONG — not long at broker (pos=%d)", ticker, broker_pos)
                     skip = True
-                elif direction == "CLOSE_SHORT" and current_pos >= 0:
-                    logger.info("SKIP %s CLOSE_SHORT — not short (pos=%d)", ticker, current_pos)
+                elif direction == "CLOSE_SHORT" and broker_pos >= 0:
+                    logger.info("SKIP %s CLOSE_SHORT — not short at broker (pos=%d)", ticker, broker_pos)
                     skip = True
 
                 if skip:
@@ -1336,6 +1354,7 @@ def check_order_requests(ib: IB):
                                     "order_id": f"futures_entry_{perm_id}",
                                     "ticker": ticker,
                                     "direction": direction,
+                                    "contracts": contracts,
                                     "perm_id": perm_id,
                                     "opened_at": now_iso,
                                     "strategy": strategy_name,
