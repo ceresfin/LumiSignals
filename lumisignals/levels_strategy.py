@@ -25,12 +25,12 @@ def get_builtin_snr_levels(massive_client, ticker: str, intervals: list,
     Replaces LumiTrade SNR API calls. Returns same format:
     {"1mo": {"support_price": x, "resistance_price": y}, ...}
     """
-    # For forex, Polygon uses X: prefix
+    # For forex, Polygon uses C: prefix (X: is crypto)
     poly_ticker = ticker
-    if market_type == "forex" and not ticker.startswith("X:"):
-        poly_ticker = f"X:{ticker}"
+    if market_type == "forex" and not ticker.startswith("C:"):
+        poly_ticker = f"C:{ticker}"
     elif market_type == "forex" and "_" in ticker:
-        poly_ticker = f"X:{ticker.replace('_', '')}"
+        poly_ticker = f"C:{ticker.replace('_', '')}"
 
     result = {}
     for tf in intervals:

@@ -327,7 +327,7 @@ class MassiveClient:
         # Forex (24/5): X:EURUSD, X:GBPCAD etc. — X: prefix but not crypto
         # Stocks/Indices: everything else (9:30-4:00 ET market hours)
         is_crypto = ticker in CRYPTO_TICKERS
-        is_forex = ticker.startswith("X:") and not is_crypto
+        is_forex = ticker.startswith("C:") or (ticker.startswith("X:") and not is_crypto)
         is_stock = not is_crypto and not is_forex
 
         # 1h and 4h for stocks/indices: aggregate from 5m to align with market open (9:30 ET).
@@ -336,7 +336,7 @@ class MassiveClient:
         # alignment means the levels strategy uses Polygon-native 1h/4h bars (slightly
         # misaligned to RTH) but the bot loop stays responsive so 2n20 MES/FX can run.
         # Re-enable once we have proper caching/throttling on the alignment path.
-        if False and timespan in AGGREGATE_FROM_5M and is_stock:
+        if timespan in AGGREGATE_FROM_5M and (is_stock or is_forex):
             return self._get_market_aligned_candles(ticker, timespan, count)
 
         # Weekly: always Monday-start (TradingView uses Monday for all markets)
@@ -397,11 +397,20 @@ class MassiveClient:
         We pull 5m bars from Massive, filter to regular market hours,
         then aggregate into market-aligned buckets.
         """
+        is_forex = ticker.startswith("C:")
+
         # How many trading days of 5m data do we need?
-        if timespan == "4h":
-            bars_per_day = 2  # two 4h candles per session
+        if is_forex:
+            # Forex: 24h/day, ~288 5m bars/day
+            if timespan == "4h":
+                bars_per_day = 6
+            else:
+                bars_per_day = 24
         else:
-            bars_per_day = 7  # seven 1h candles per session (9:30-3:59)
+            if timespan == "4h":
+                bars_per_day = 2  # two 4h candles per session
+            else:
+                bars_per_day = 7  # seven 1h candles per session (9:30-3:59)
 
         days_needed = max(5, (count // bars_per_day) + 3)  # buffer for weekends
         now = datetime.now(timezone.utc)
@@ -417,20 +426,23 @@ class MassiveClient:
         if not bars_5m:
             return []
 
-        # Market hours in UTC (EDT: ET + 4h)
-        # 9:30 ET = 13:30 UTC, 16:00 ET = 20:00 UTC
-        market_open_utc = (13, 30)
-        market_close_utc = (20, 0)
+        if is_forex:
+            # Forex trades 24h — use all bars, no market hours filter
+            market_bars = bars_5m
+        else:
+            # Stock market hours in UTC (EDT: ET + 4h)
+            # 9:30 ET = 13:30 UTC, 16:00 ET = 20:00 UTC
+            market_open_utc = (13, 30)
+            market_close_utc = (20, 0)
 
-        # Filter to regular market hours only
-        market_bars = []
-        for bar in bars_5m:
-            dt = datetime.fromtimestamp(bar["t"] / 1000, tz=timezone.utc)
-            bar_minutes = dt.hour * 60 + dt.minute
-            open_minutes = market_open_utc[0] * 60 + market_open_utc[1]
-            close_minutes = market_close_utc[0] * 60 + market_close_utc[1]
-            if open_minutes <= bar_minutes < close_minutes:
-                market_bars.append(bar)
+            market_bars = []
+            for bar in bars_5m:
+                dt = datetime.fromtimestamp(bar["t"] / 1000, tz=timezone.utc)
+                bar_minutes = dt.hour * 60 + dt.minute
+                open_minutes = market_open_utc[0] * 60 + market_open_utc[1]
+                close_minutes = market_close_utc[0] * 60 + market_close_utc[1]
+                if open_minutes <= bar_minutes < close_minutes:
+                    market_bars.append(bar)
 
         if not market_bars:
             return []
@@ -441,20 +453,32 @@ class MassiveClient:
         else:  # 4h
             bucket_minutes = 240
 
-        # Group bars into market-aligned buckets
-        # Bucket start = 9:30 ET (13:30 UTC), then +60m or +240m
+        # Group bars into buckets
         buckets = {}  # key = (date_str, bucket_index) → list of bars
 
-        for bar in market_bars:
-            dt = datetime.fromtimestamp(bar["t"] / 1000, tz=timezone.utc)
-            date_key = dt.strftime("%Y-%m-%d")
-            minutes_since_open = (dt.hour * 60 + dt.minute) - (market_open_utc[0] * 60 + market_open_utc[1])
-            bucket_idx = minutes_since_open // bucket_minutes
-            key = (date_key, bucket_idx)
-
-            if key not in buckets:
-                buckets[key] = []
-            buckets[key].append(bar)
+        if is_forex:
+            # Forex: clock-aligned buckets (00:00, 01:00, ... for 1h)
+            for bar in market_bars:
+                dt = datetime.fromtimestamp(bar["t"] / 1000, tz=timezone.utc)
+                date_key = dt.strftime("%Y-%m-%d")
+                minutes_since_midnight = dt.hour * 60 + dt.minute
+                bucket_idx = minutes_since_midnight // bucket_minutes
+                key = (date_key, bucket_idx)
+                if key not in buckets:
+                    buckets[key] = []
+                buckets[key].append(bar)
+        else:
+            # Stocks: market-open-aligned buckets (9:30 ET start)
+            market_open_utc = (13, 30)
+            for bar in market_bars:
+                dt = datetime.fromtimestamp(bar["t"] / 1000, tz=timezone.utc)
+                date_key = dt.strftime("%Y-%m-%d")
+                minutes_since_open = (dt.hour * 60 + dt.minute) - (market_open_utc[0] * 60 + market_open_utc[1])
+                bucket_idx = minutes_since_open // bucket_minutes
+                key = (date_key, bucket_idx)
+                if key not in buckets:
+                    buckets[key] = []
+                buckets[key].append(bar)
 
         # Aggregate each bucket into a single candle
         candles = []
