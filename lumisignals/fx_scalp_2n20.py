@@ -535,17 +535,68 @@ class FXScalp2n20:
             logger.info("2n20 FX CLOSE %s %s — %s | %.1f pips | %s",
                        direction, instrument, reason, pnl_pips, duration)
 
-            # Update signal log with close reason so trade_tracker shows it
+            # Update signal log with close data
+            closed_at = ""
+            if close_time_str:
+                try:
+                    closed_at = datetime.fromtimestamp(
+                        float(close_time_str), tz=timezone.utc
+                    ).isoformat()
+                except Exception:
+                    try:
+                        closed_at = datetime.fromisoformat(
+                            close_time_str.replace("Z", "+00:00")
+                        ).isoformat()
+                    except Exception:
+                        closed_at = datetime.now(timezone.utc).isoformat()
+            else:
+                closed_at = datetime.now(timezone.utc).isoformat()
+
             if self.signal_log and state.trade_id:
                 try:
                     existing = self.signal_log.get(str(state.trade_id))
                     if existing and isinstance(existing, dict):
                         existing["close_reason"] = reason
                         existing["exit_price"] = actual_exit_price
+                        existing["realized_pl"] = round(actual_pnl, 2)
                         existing["pnl_pips"] = round(pnl_pips, 1)
+                        existing["closed_at"] = closed_at
                         self.signal_log.record(str(state.trade_id), existing)
                 except Exception:
                     pass
+
+            # Store closed trade to Redis (independent of Oanda history)
+            try:
+                import redis as _rdb_close
+                rdb_close = _rdb_close.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+                import json as _json_close
+                closed_trade = {
+                    "id": state.trade_id,
+                    "instrument": instrument,
+                    "direction": direction,
+                    "units": abs(int(float(self.states[instrument].entry_price and 1 or 0))),
+                    "entry": state.entry_price,
+                    "close_price": actual_exit_price,
+                    "realized_pl": round(actual_pnl, 2),
+                    "pips": round(pnl_pips, 1),
+                    "close_reason": reason,
+                    "time_opened": state.entry_time.isoformat() if state.entry_time else "",
+                    "time_closed": closed_at,
+                    "strategy": "vwap_2n20",
+                    "strategy_id": "vwap_2n20",
+                    "model": "scalp_2n20",
+                    "won": actual_pnl > 0,
+                    "stop_loss": state.stop_price,
+                    "planned_rr": 0,
+                    "achieved_rr": 0,
+                }
+                rdb_close.setex(
+                    f"fx:closed:{state.trade_id}",
+                    604800,  # 7 day TTL
+                    _json_close.dumps(closed_trade),
+                )
+            except Exception as e:
+                logger.debug("Redis closed trade store error: %s", e)
 
             if self.signal_callback:
                 self.signal_callback({

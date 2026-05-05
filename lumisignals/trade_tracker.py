@@ -445,6 +445,24 @@ def get_closed_trades(client: OandaClient, count: int = 50) -> list:
         if sig or trade_entry.get("strategy"):
             result.append(trade_entry)
 
+    # Merge Redis-stored closed trades (fallback for Oanda practice API gaps)
+    try:
+        import redis as _rdb_ct
+        import os as _os_ct
+        rdb_ct = _rdb_ct.from_url(_os_ct.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+        oanda_ids = {t.get("id", "") for t in result}
+        for key in rdb_ct.scan_iter("fx:closed:*"):
+            raw = rdb_ct.get(key)
+            if not raw:
+                continue
+            import json as _json_ct
+            ct = _json_ct.loads(raw)
+            if ct.get("id") in oanda_ids:
+                continue  # Already have it from Oanda
+            result.append(ct)
+    except Exception:
+        pass
+
     return result
 
 
