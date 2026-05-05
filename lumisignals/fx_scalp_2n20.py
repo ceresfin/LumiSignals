@@ -565,6 +565,32 @@ class FXScalp2n20:
                 except Exception:
                     pass
 
+            # Calculate R:R ratios (from Airtable trade journal logic)
+            planned_rr = 0
+            achieved_rr = 0
+            if state.entry_price and state.stop_price:
+                risk = abs(state.entry_price - state.stop_price)
+                if risk > 0:
+                    actual_move = abs(actual_exit_price - state.entry_price)
+                    achieved_rr = round(actual_move / risk, 2)
+                    if actual_pnl < 0:
+                        achieved_rr = -achieved_rr
+
+            # Get units from signal log entry
+            units = 0
+            if self.signal_log and state.trade_id:
+                try:
+                    sig = self.signal_log.get(str(state.trade_id))
+                    if sig:
+                        units = abs(int(sig.get("units", 0)))
+                except Exception:
+                    pass
+
+            # Duration
+            duration_mins = 0
+            if state.entry_time:
+                duration_mins = int((datetime.now(timezone.utc) - state.entry_time).total_seconds() / 60)
+
             # Store closed trade to Redis (independent of Oanda history)
             try:
                 import redis as _rdb_close
@@ -574,21 +600,22 @@ class FXScalp2n20:
                     "id": state.trade_id,
                     "instrument": instrument,
                     "direction": direction,
-                    "units": abs(int(float(self.states[instrument].entry_price and 1 or 0))),
+                    "units": units,
                     "entry": state.entry_price,
                     "close_price": actual_exit_price,
+                    "stop_loss": state.stop_price,
                     "realized_pl": round(actual_pnl, 2),
                     "pips": round(pnl_pips, 1),
+                    "planned_rr": planned_rr,
+                    "achieved_rr": achieved_rr,
                     "close_reason": reason,
                     "time_opened": state.entry_time.isoformat() if state.entry_time else "",
                     "time_closed": closed_at,
+                    "duration_mins": duration_mins,
                     "strategy": "vwap_2n20",
                     "strategy_id": "vwap_2n20",
                     "model": "scalp_2n20",
                     "won": actual_pnl > 0,
-                    "stop_loss": state.stop_price,
-                    "planned_rr": 0,
-                    "achieved_rr": 0,
                 }
                 rdb_close.setex(
                     f"fx:closed:{state.trade_id}",

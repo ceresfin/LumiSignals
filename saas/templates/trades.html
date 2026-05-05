@@ -562,27 +562,34 @@ function loadOandaTrades() {
       // Closed trades table
       document.getElementById('closedCount').textContent = closedTrades.length;
       var closedRows = closedTrades.map(function(t) {
-        var badge = t.won ? '<span class="badge" style="background:#e8f5e9;color:#27ae60">WIN</span>' : '<span class="badge" style="background:#fdecea;color:#c0392b">LOSS</span>';
-        var dirClass = t.direction === 'BUY' ? 'dir-buy' : 'dir-sell';
+        var pnl = t.realized_pl || 0;
+        var badge = (t.won || pnl > 0) ? '<span class="badge" style="background:#e8f5e9;color:#27ae60">WIN</span>' : '<span class="badge" style="background:#fdecea;color:#c0392b">LOSS</span>';
+        var dir = t.direction || '';
+        if (dir === 'LONG') dir = 'BUY';
+        if (dir === 'SHORT') dir = 'SELL';
+        var dirClass = dir === 'BUY' ? 'dir-buy' : 'dir-sell';
+        var entryPrice = typeof t.entry === 'number' ? t.entry.toFixed(5) : (t.entry || '—');
+        var closePrice = typeof t.close_price === 'number' ? t.close_price.toFixed(5) : (t.close_price || '—');
+        var rrDisplay = t.achieved_rr ? t.achieved_rr.toFixed(1) + 'R' : (t.planned_rr ? t.planned_rr.toFixed(1) : '—');
         var signalInfo = '';
         if (t.trigger_pattern) signalInfo += t.trigger_pattern + '<br>';
         if (t.level_timeframe) signalInfo += t.level_timeframe + ' ' + (t.level_type || '') + '<br>';
         signalInfo += scoreBadge(t.final_score);
         return '<td>' + t.instrument + '<br>' + assetBadge(t.instrument) + '</td>' +
-          '<td class="' + dirClass + '">' + t.direction + '</td>' +
-          '<td>' + t.entry.toFixed(5) + '</td>' +
-          '<td>' + t.close_price.toFixed(5) + '</td>' +
-          '<td>' + (t.planned_rr ? t.planned_rr.toFixed(1) : '—') + '</td>' +
-          '<td class="' + plClass(t.pips) + '">' + fmt(t.pips, 1) + '</td>' +
-          '<td class="' + plClass(t.realized_pl) + '">$' + fmt(t.realized_pl) + '</td>' +
-          '<td>' + t.close_reason + '</td>' +
+          '<td class="' + dirClass + '">' + dir + '</td>' +
+          '<td>' + entryPrice + '</td>' +
+          '<td>' + closePrice + '</td>' +
+          '<td class="' + (t.achieved_rr > 0 ? 'pl-pos' : t.achieved_rr < 0 ? 'pl-neg' : '') + '">' + rrDisplay + '</td>' +
+          '<td class="' + plClass(t.pips) + '">' + fmt(t.pips || 0, 1) + '</td>' +
+          '<td class="' + plClass(pnl) + '">$' + fmt(pnl) + '</td>' +
+          '<td>' + (t.close_reason || '') + '</td>' +
           '<td>' + badge + '</td>' +
           '<td>' + modelBadge(getModel(t)) + '</td>' +
           '<td style="font-size:0.72rem">' + fmtTime(t.time_opened) + '<br><span style="color:var(--text-light)">' + duration(t.time_opened, t.time_closed) + '</span></td>' +
           '<td style="font-size:0.75rem">' + signalInfo + '</td>';
       });
       document.getElementById('closedTable').innerHTML = buildTable(
-        ['Pair', 'Dir', 'Entry', 'Close', 'Plan R:R', 'Pips', 'P&L', 'Reason', 'Result', 'Model', 'Duration', 'Signal'], closedRows
+        ['Pair', 'Dir', 'Entry', 'Close', 'R:R', 'Pips', 'P&L', 'Reason', 'Result', 'Model', 'Duration', 'Signal'], closedRows
       );
     })
     .catch(function(e) { console.error('Oanda trades error:', e); });
