@@ -126,6 +126,12 @@ tr:hover { background: rgba(0,0,0,0.015); }
   </div>
 
   <div class="card">
+    <h2>2n20 Scalp — Performance by Pair</h2>
+    <div id="pairDateRange" style="font-size:0.72rem;color:var(--text-light);margin:-8px 0 12px 0;"></div>
+    <div id="pairBreakdown"><div class="loading">Loading...</div></div>
+  </div>
+
+  <div class="card">
     <h2>Closed FX Trades <span class="count" id="closedCount">0</span>
       <a href="/api/oanda/trades/csv" class="refresh-btn" style="font-size:0.72rem;text-decoration:none;">Download CSV</a>
     </h2>
@@ -407,9 +413,24 @@ function buildStrategyBreakdown(openTrades, closedTrades) {
     var displayName = STRATEGY_NAMES[sid] || sid;
     html += '<div class="strategy-section">';
     html += '<div class="strategy-header"><span class="strategy-tag">STRATEGY</span> ' + displayName + '</div>';
+    // Per-strategy date range
+    var stratClosed = closedTrades.filter(function(t) { return getStrategyId(t) === sid; });
+    if (stratClosed.length > 0) {
+      var stimes = stratClosed.map(function(t) { return t.time_opened || ''; }).filter(Boolean).sort();
+      if (stimes.length > 0) {
+        var fmtD = function(d) { return d.toLocaleDateString('en-US', {month: 'short', day: 'numeric', year: 'numeric'}); };
+        html += '<div style="font-size:0.72rem;color:var(--text-light);margin:-10px 0 10px 0;">' + fmtD(new Date(stimes[0])) + ' — ' + fmtD(new Date(stimes[stimes.length - 1])) + ' (' + stratClosed.length + ' trades)</div>';
+      }
+    }
     html += '<div class="model-cards">';
 
-    MODEL_ORDER.forEach(function(model) {
+    // Only show relevant models per strategy
+    var is2n20 = sid === 'vwap_2n20';
+    var modelsForStrategy = MODEL_ORDER.filter(function(m) {
+      if (is2n20) return m.indexOf('2n20') >= 0;
+      return m.indexOf('2n20') < 0;
+    });
+    modelsForStrategy.forEach(function(model) {
       var data = (strategies[sid] || {})[model];
       var openCount = data ? data.open.length : 0;
       var closedCount = data ? data.closed.length : 0;
@@ -475,6 +496,41 @@ function loadOandaTrades() {
 
       // Strategy Breakdown
       buildStrategyBreakdown(openTrades, closedTrades);
+
+      // Date range for 2n20 pair breakdown
+      var trades2n20 = closedTrades.filter(function(t) { return getStrategyId(t) === 'vwap_2n20'; });
+      var pairDateRange = '';
+      if (trades2n20.length > 0) {
+        var t2 = trades2n20.map(function(t) { return t.time_opened || ''; }).filter(Boolean).sort();
+        if (t2.length > 0) {
+          var fmtDate = function(d) { return d.toLocaleDateString('en-US', {month: 'short', day: 'numeric', year: 'numeric'}); };
+          pairDateRange = fmtDate(new Date(t2[0])) + ' — ' + fmtDate(new Date(t2[t2.length - 1])) + ' (' + trades2n20.length + ' trades)';
+        }
+      }
+      document.getElementById('pairDateRange').textContent = pairDateRange;
+      var bp = s.by_pair_2n20 || {};
+      var pairs = Object.keys(bp).sort(function(a, b) { return bp[b].pl - bp[a].pl; });
+      if (pairs.length) {
+        var pairRows = pairs.map(function(pair) {
+          var d = bp[pair];
+          var wr = d.win_rate || 0;
+          return '<td><strong>' + pair + '</strong></td>' +
+            '<td>' + d.trades + '</td>' +
+            '<td>' + d.wins + '</td>' +
+            '<td>' + d.losses + '</td>' +
+            '<td class="' + (wr >= 50 ? 'pl-pos' : (d.trades > 0 ? 'pl-neg' : '')) + '">' + wr + '%</td>' +
+            '<td class="' + plClass(d.pl) + '">$' + fmt(d.pl) + '</td>' +
+            '<td class="' + plClass(d.pips) + '">' + fmt(d.pips, 1) + '</td>' +
+            '<td class="' + plClass(d.avg_pips || 0) + '">' + fmt(d.avg_pips || 0, 1) + '</td>' +
+            '<td class="pl-pos">$' + fmt(d.avg_win) + '</td>' +
+            '<td class="pl-neg">$' + fmt(d.avg_loss) + '</td>';
+        });
+        document.getElementById('pairBreakdown').innerHTML = buildTable(
+          ['Pair', 'Trades', 'Wins', 'Losses', 'Win %', 'P&L', 'Pips', 'Avg Pips', 'Avg Win', 'Avg Loss'], pairRows
+        );
+      } else {
+        document.getElementById('pairBreakdown').innerHTML = '<div style="text-align:center;padding:20px;color:#8a847e;">No closed trades yet</div>';
+      }
 
       // Open trades table
       document.getElementById('openCount').textContent = openTrades.length;
@@ -1110,6 +1166,18 @@ function loadFutures() {
       else futStrategies[sid].losses++;
     });
 
+    // Compute futures date range
+    var futDateRange = '';
+    if (futClosed.length > 0) {
+      var ftimes = futClosed.map(function(t) { return t.opened_at || t.closed_at || ''; }).filter(Boolean).sort();
+      if (ftimes.length > 0) {
+        var fe = new Date(ftimes[0]);
+        var fl = new Date(ftimes[ftimes.length - 1]);
+        var fmtD = function(d) { return d.toLocaleDateString('en-US', {month: 'short', day: 'numeric', year: 'numeric'}); };
+        futDateRange = fmtD(fe) + ' — ' + fmtD(fl) + ' (' + futClosed.length + ' trades)';
+      }
+    }
+
     var futBreakdownHtml = '';
     ['vwap_2n20', 'htf_levels'].forEach(function(sid) {
       var d = futStrategies[sid];
@@ -1130,6 +1198,7 @@ function loadFutures() {
 
       futBreakdownHtml += '<div class="strategy-section">';
       futBreakdownHtml += '<div class="strategy-header"><span class="strategy-tag">STRATEGY</span> ' + displayName + '</div>';
+      if (futDateRange) futBreakdownHtml += '<div style="font-size:0.72rem;color:var(--text-light);margin:-10px 0 10px 0;">' + futDateRange + '</div>';
       futBreakdownHtml += '<div class="model-cards" style="grid-template-columns: repeat(2, 1fr);">';
 
       // Scalp card

@@ -6,24 +6,40 @@ showExits = input.bool(true, "Show Exit Signals", group="Display")
 showBias = input.bool(true, "Show Bias Background", group="Display")
 minBodyPct = input.float(30.0, "Min Body Size (% of range)", step=5.0, group="Entry")
 
-// ─── DAILY ANCHORED VWAP ───
-// Manual calculation for futures compatibility
-isNewDay = ta.change(time("D")) != 0
-var dayVwapNum = 0.0
-var dayVwapDen = 0.0
-if isNewDay
-    dayVwapNum := 0.0
-    dayVwapDen := 0.0
-dayVwapNum += hlc3 * volume
-dayVwapDen += volume
-vwapVal = dayVwapDen > 0 ? dayVwapNum / dayVwapDen : hlc3
+// ─── PAIR-SPECIFIC SETTINGS ───
+// VWAP anchor: hour (ET) when VWAP resets. Align with the pair's primary session.
+// USD/JPY = 19 (Tokyo open), EUR/USD = 3 (London open), Futures = 18 (default)
+vwapAnchorHour = input.int(18, "VWAP Anchor Hour (ET)", minval=0, maxval=23, group="Session",
+     tooltip="Hour in ET when VWAP resets. 19=Tokyo open (JPY), 3=London open (EUR), 18=standard forex")
+
+// Trading window: only generate entry signals during these hours (ET)
+windowStart = input.int(0, "Window Start Hour (ET)", minval=0, maxval=23, group="Session",
+     tooltip="First hour to allow new entries. Set 0 + end 24 for all hours.")
+windowEnd = input.int(24, "Window End Hour (ET)", minval=0, maxval=24, group="Session",
+     tooltip="Last hour for entries. Wraps: start=19 end=12 means 7PM-noon next day.")
 
 // ─── MARKET HOURS ───
 etHour = hour(time, "America/New_York")
 etMinute = minute(time, "America/New_York")
 etTime = etHour * 100 + etMinute
-// MES trades Sun 6PM - Fri 5PM ET, maintenance break 5PM-6PM ET daily
+
+// Trading window check (handles overnight wrap: e.g. start=19, end=12)
+inWindow = windowStart < windowEnd ? (etHour >= windowStart and etHour < windowEnd) : (etHour >= windowStart or etHour < windowEnd)
+
+// Forex session: Sun 5PM - Fri 5PM ET
 inSession = not (etTime >= 1700 and etTime < 1800)
+
+// ─── SESSION-ANCHORED VWAP ───
+// Reset VWAP at the configured anchor hour instead of hardcoded daily boundary
+isNewSession = ta.change(etHour) != 0 and etHour == vwapAnchorHour
+var dayVwapNum = 0.0
+var dayVwapDen = 0.0
+if isNewSession
+    dayVwapNum := 0.0
+    dayVwapDen := 0.0
+dayVwapNum += hlc3 * volume
+dayVwapDen += volume
+vwapVal = dayVwapDen > 0 ? dayVwapNum / dayVwapDen : hlc3
 
 // ─── BIAS: Above or Below VWAP ───
 aboveVwap = close > vwapVal
@@ -67,11 +83,11 @@ greenOverwhelmsRed = isGreen and hasRealBody and isSignificantBody and lastRedBo
 redOverwhelmsGreen = isRed and hasRealBody and isSignificantBody and lastGreenBody > 0 and redBody > lastGreenBody and close < lastGreenLow
 
 // ─── TRADE SIGNALS ───
-// BUY: above VWAP + green overwhelms red
-buySignal = inSession and aboveVwap and greenOverwhelmsRed
+// BUY: above VWAP + green overwhelms red (only during trading window)
+buySignal = inSession and inWindow and aboveVwap and greenOverwhelmsRed
 
-// SELL: below VWAP + red overwhelms green
-sellSignal = inSession and belowVwap and redOverwhelmsGreen
+// SELL: below VWAP + red overwhelms green (only during trading window)
+sellSignal = inSession and inWindow and belowVwap and redOverwhelmsGreen
 
 // ─── EXIT SIGNALS ───
 // Exit long: red overwhelms green (while in a long)
@@ -109,8 +125,8 @@ if inLong and crossedBelowVwap
 if inShort and crossedAboveVwap
     inShort := false
 
-// Session close: flatten 4:55-4:59 PM ET (before 5PM maintenance break)
-sessionEnd = etTime >= 1655 and etTime <= 1659
+// Session close: flatten 4:50-4:59 PM ET (before 5PM maintenance/Friday close)
+sessionEnd = etTime >= 1650 and etTime <= 1659
 if inLong and sessionEnd
     inLong := false
 if inShort and sessionEnd

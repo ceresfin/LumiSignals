@@ -479,18 +479,40 @@ def get_performance_stats(closed_trades: list) -> dict:
     best = max(closed_trades, key=lambda t: t["realized_pl"]) if closed_trades else None
     worst = min(closed_trades, key=lambda t: t["realized_pl"]) if closed_trades else None
 
-    # By pair
-    by_pair = {}
-    for t in closed_trades:
-        pair = t["instrument"]
-        if pair not in by_pair:
-            by_pair[pair] = {"wins": 0, "losses": 0, "pl": 0, "pips": 0}
-        by_pair[pair]["pl"] += t["realized_pl"]
-        by_pair[pair]["pips"] += t["pips"]
-        if t["realized_pl"] > 0:
-            by_pair[pair]["wins"] += 1
-        else:
-            by_pair[pair]["losses"] += 1
+    # By pair, split by strategy (2n20 vs HTF)
+    def _build_pair_stats(trades_subset):
+        bp = {}
+        for t in trades_subset:
+            pair = t["instrument"]
+            if pair not in bp:
+                bp[pair] = {"wins": 0, "losses": 0, "pl": 0, "pips": 0,
+                            "win_pls": [], "loss_pls": []}
+            bp[pair]["pl"] += t["realized_pl"]
+            bp[pair]["pips"] += t["pips"]
+            if t["realized_pl"] > 0:
+                bp[pair]["wins"] += 1
+                bp[pair]["win_pls"].append(t["realized_pl"])
+            else:
+                bp[pair]["losses"] += 1
+                bp[pair]["loss_pls"].append(t["realized_pl"])
+        for pair, data in bp.items():
+            total = data["wins"] + data["losses"]
+            data["trades"] = total
+            data["win_rate"] = round(data["wins"] / total * 100, 1) if total else 0
+            data["avg_win"] = round(sum(data["win_pls"]) / len(data["win_pls"]), 2) if data["win_pls"] else 0
+            data["avg_loss"] = round(sum(data["loss_pls"]) / len(data["loss_pls"]), 2) if data["loss_pls"] else 0
+            data["avg_pips"] = round(data["pips"] / total, 1) if total else 0
+            data["pl"] = round(data["pl"], 2)
+            data["pips"] = round(data["pips"], 1)
+            del data["win_pls"]
+            del data["loss_pls"]
+        return bp
+
+    trades_2n20 = [t for t in closed_trades if "2n20" in (t.get("strategy") or "") or "2n20" in (t.get("model") or "")]
+    trades_htf = [t for t in closed_trades if t not in trades_2n20]
+    by_pair = _build_pair_stats(closed_trades)
+    by_pair_2n20 = _build_pair_stats(trades_2n20)
+    by_pair_htf = _build_pair_stats(trades_htf)
 
     # By direction
     by_direction = {"BUY": {"wins": 0, "losses": 0, "pl": 0}, "SELL": {"wins": 0, "losses": 0, "pl": 0}}
@@ -545,6 +567,8 @@ def get_performance_stats(closed_trades: list) -> dict:
         "best_trade": best,
         "worst_trade": worst,
         "by_pair": by_pair,
+        "by_pair_2n20": by_pair_2n20,
+        "by_pair_htf": by_pair_htf,
         "by_direction": by_direction,
         "by_strategy": by_strategy,
     }

@@ -1142,7 +1142,7 @@ def create_app():
 
             open_trades = get_open_trades(client)
             pending = get_pending_orders(client)
-            closed = get_closed_trades(client, count=50)
+            closed = get_closed_trades(client, count=500)
             stats = get_performance_stats(closed)
 
             # Restore

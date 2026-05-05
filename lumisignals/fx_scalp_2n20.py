@@ -41,6 +41,42 @@ VWAP_CANDLE_GRAN = "M2"  # Same granularity for VWAP
 VWAP_CACHE_TTL = 120  # Re-fetch VWAP candles per pair at most every 2 min (matches candle close)
 VWAP_CANDLE_COUNT = 720  # ~24h of 2-min bars — covers full 18:00-ET-anchored session
 
+# Per-pair trading windows (ET hours). Entries only fire during these windows.
+# Exits always fire regardless of window (don't hold a losing trade because the window closed).
+# Format: {pair: {"hours": [(start, end), ...], "days": [0=Mon, ..., 4=Fri]}}
+# Hours wrap: (19, 24) means 7PM-midnight, (0, 12) means midnight-noon.
+PAIR_SCHEDULE = {
+    "USD_JPY": {
+        # Tokyo (7PM-4AM ET) + London (3AM-8AM) + NY morning (8AM-12PM)
+        # Skip the 12PM-5PM ET dead zone (low volume, choppy)
+        "hours": [(19, 24), (0, 12)],
+        "vwap_anchor": 19,  # VWAP resets at 7 PM ET (Tokyo open)
+        # Best days: Tue-Thu have highest volume. Mon can be slow (Asia holidays),
+        # Fri risk of position into weekend
+        "days": [0, 1, 2, 3, 4],  # Mon-Fri (all days for now, tune later)
+    },
+    "EUR_USD": {
+        # London (3AM-12PM ET) + NY overlap (8AM-12PM) + early NY (12PM-2PM)
+        # Skip late NY (2PM-5PM) and Asian session (7PM-3AM) — EUR is quiet
+        "hours": [(3, 14)],
+        "vwap_anchor": 3,   # VWAP resets at 3 AM ET (London open)
+        "days": [0, 1, 2, 3, 4],
+    },
+}
+# Default: trade all hours, all weekdays (used for pairs not in PAIR_SCHEDULE)
+DEFAULT_SCHEDULE = {"hours": [(0, 24)], "vwap_anchor": 18, "days": [0, 1, 2, 3, 4]}
+
+
+def _in_trading_window(pair: str, et_hour: int, weekday: int) -> bool:
+    """Check if current ET time falls within the pair's trading window."""
+    sched = PAIR_SCHEDULE.get(pair, DEFAULT_SCHEDULE)
+    if weekday not in sched["days"]:
+        return False
+    for start, end in sched["hours"]:
+        if start <= et_hour < end:
+            return True
+    return False
+
 
 @dataclass
 class FXScalpState:
@@ -151,11 +187,12 @@ class FXScalp2n20:
 
         for pair in self.pairs:
             try:
-                self._scan_pair(pair)
+                in_window = _in_trading_window(pair, et_hour, weekday)
+                self._scan_pair(pair, entries_allowed=in_window)
             except Exception as e:
                 logger.debug("2n20 scan error %s: %s", pair, e)
 
-    def _scan_pair(self, instrument: str):
+    def _scan_pair(self, instrument: str, entries_allowed: bool = True):
         """Scan one pair for 2n20 signals.
 
         Per-bar dedup: each closed bar is processed exactly once. Cheap enough
@@ -214,8 +251,8 @@ class FXScalp2n20:
                 reason = "Green overwhelm" if green_overwhelm else "VWAP cross"
                 self._close_position(state, close, reason)
 
-        # --- ENTRY LOGIC ---
-        if not state.in_long and not state.in_short:
+        # --- ENTRY LOGIC (only during trading window) ---
+        if entries_allowed and not state.in_long and not state.in_short:
             # BUY: above VWAP + green overwhelms red
             if above_vwap and green_overwhelm:
                 self._open_position(state, "BUY", close, instrument)
@@ -226,12 +263,13 @@ class FXScalp2n20:
     # _detect_overwhelm removed — uses shared detect_overwhelm() from overwhelm_detector.py
 
     def _calc_vwap(self, instrument: str) -> Optional[float]:
-        """Cumulative session VWAP anchored at 18:00 ET (matches futures).
+        """Cumulative session VWAP anchored at pair-specific time.
 
-        On the user's TV setup, Pine's `time("D")` for OANDA forex resolves to
-        18:00 ET — same as CME futures. Anchoring here resets at each 18:00 ET
-        and accumulates through to the next 18:00 ET. Returns None outside an
-        active session (Sat, Sun before 18:00, Fri post-17:00 maintenance).
+        Each pair has its own VWAP anchor aligned with its primary session:
+        - USD_JPY: 19:00 ET (Tokyo open)
+        - EUR_USD: 03:00 ET (London open)
+        - Default: 18:00 ET (standard forex session)
+        Returns None outside active forex hours.
         """
         try:
             from zoneinfo import ZoneInfo
@@ -247,15 +285,29 @@ class FXScalp2n20:
             return None
         if weekday == 4 and hour >= 17:      # Friday post-close
             return None
-        if weekday == 6 and hour < 18:       # Sunday before Globex/VWAP anchor
+        if weekday == 6 and hour < 17:       # Sunday before forex open
             return None
 
-        # Anchor = most recent 18:00 ET on a valid trading day (Sun-Thu)
-        if hour >= 18:
+        # Per-pair VWAP anchor hour
+        sched = PAIR_SCHEDULE.get(instrument, DEFAULT_SCHEDULE)
+        anchor_hour = sched.get("vwap_anchor", 18)
+
+        # Find most recent anchor time
+        if hour >= anchor_hour:
             anchor_date = now_et.date()
         else:
             anchor_date = (now_et - timedelta(days=1)).date()
-        anchor_et = datetime.combine(anchor_date, dt_time(18, 0)).replace(tzinfo=et)
+        anchor_et = datetime.combine(anchor_date, dt_time(anchor_hour, 0)).replace(tzinfo=et)
+
+        # Don't go back before Sunday forex open (5 PM ET)
+        sunday_open = None
+        days_since_sunday = weekday if weekday != 6 else 0
+        if weekday == 6:
+            sunday_open = datetime.combine(now_et.date(), dt_time(17, 0)).replace(tzinfo=et)
+        elif weekday == 0:
+            sunday_open = datetime.combine(now_et.date() - timedelta(days=1), dt_time(17, 0)).replace(tzinfo=et)
+        if sunday_open and anchor_et < sunday_open:
+            anchor_et = sunday_open
 
         try:
             # Cached fetch — 720 2-min bars per pair, refreshed every VWAP_CACHE_TTL.
