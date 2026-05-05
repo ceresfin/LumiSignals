@@ -15,6 +15,7 @@ Differences from futures:
 """
 
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, time as dt_time, timedelta, timezone
