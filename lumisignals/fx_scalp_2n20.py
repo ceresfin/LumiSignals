@@ -626,6 +626,16 @@ class FXScalp2n20:
             except Exception as e:
                 logger.debug("Redis closed trade store error: %s", e)
 
+            # Dual-write to Supabase (for mobile app)
+            try:
+                from .supabase_client import record_closed_trade
+                record_closed_trade(
+                    user_id=os.environ.get("SUPABASE_USER_ID", ""),
+                    trade=closed_trade,
+                )
+            except Exception as e:
+                logger.debug("Supabase trade write error: %s", e)
+
             if self.signal_callback:
                 self.signal_callback({
                     "instrument": instrument,
