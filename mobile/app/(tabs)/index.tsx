@@ -64,7 +64,7 @@ function calcStats(trades: Trade[]): BrokerStats {
 function calcStrategies(trades: Trade[]): StrategyStats[] {
   const map: Record<string, StrategyStats> = {};
   trades.forEach(t => {
-    const key = (t.strategy || 'unknown');
+    const key = normalizeStrategy(t.strategy || '');
     if (!map[key]) map[key] = { name: key, wins: 0, losses: 0, pl: 0 };
     map[key].pl += t.realized_pl || 0;
     if (t.won) map[key].wins++; else map[key].losses++;
@@ -90,11 +90,29 @@ function calcPairs(trades: Trade[]): PairStats[] {
   })).sort((a, b) => b.pl - a.pl);
 }
 
-const STRATEGY_LABELS: Record<string, string> = {
+// Map raw strategy names to display names + group related strategies
+const STRATEGY_GROUPS: Record<string, string> = {
   'vwap_2n20': 'VWAP 2n20',
+  '2n20': 'VWAP 2n20',
+  '2n20_exit': 'VWAP 2n20',
   'htf_levels': 'HTF Untouched Levels',
+  'htf_supply_demand': 'HTF Untouched Levels',
   'orb_breakout': 'Opening Range Breakout',
+  'manual_close': 'Manual',
+  'manual_test': 'Manual',
+  '': 'HTF Untouched Levels',  // Options with no strategy tag are HTF
 };
+
+function normalizeStrategy(raw: string): string {
+  return STRATEGY_GROUPS[raw] || raw;
+}
+
+function fmt(val: number, decimals: number = 2): string {
+  return Math.abs(val).toLocaleString('en-US', {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  });
+}
 
 const TABS = [
   { key: 'forex', label: 'Forex', filter: (t: Trade) => t.broker === 'oanda' || t.asset_type === 'forex' },
@@ -168,7 +186,7 @@ export default function Dashboard() {
           </View>
           <View style={styles.statCard}>
             <Text style={[styles.statValue, { color: plColor(stats.totalPl) }]}>
-              ${Math.abs(stats.totalPl).toFixed(2)}
+              {stats.totalPl >= 0 ? '' : '-'}${fmt(stats.totalPl)}
             </Text>
             <Text style={styles.statLabel}>P&L</Text>
           </View>
@@ -180,7 +198,7 @@ export default function Dashboard() {
           </View>
           <View style={styles.statCard}>
             <Text style={[styles.statValue, { color: plColor(stats.totalPips) }]}>
-              {stats.totalPips.toFixed(1)}
+              {fmt(stats.totalPips, 1)}
             </Text>
             <Text style={styles.statLabel}>PIPS</Text>
           </View>
@@ -196,7 +214,7 @@ export default function Dashboard() {
                   <View style={styles.strategyBadge}>
                     <Text style={styles.strategyBadgeText}>STRATEGY</Text>
                   </View>
-                  <Text style={styles.strategyName}>{STRATEGY_LABELS[s.name] || s.name}</Text>
+                  <Text style={styles.strategyName}>{s.name}</Text>
                 </View>
                 <View style={styles.strategyStats}>
                   <View style={styles.strategyStat}>
@@ -209,7 +227,7 @@ export default function Dashboard() {
                   </View>
                   <View style={styles.strategyStat}>
                     <Text style={[styles.strategyStatValue, { color: plColor(s.pl) }]}>
-                      ${Math.abs(s.pl).toFixed(2)}
+                      {s.pl >= 0 ? '' : '-'}${fmt(s.pl)}
                     </Text>
                     <Text style={styles.strategyStatLabel}>P&L</Text>
                   </View>
@@ -239,10 +257,10 @@ export default function Dashboard() {
                     {p.winRate}%
                   </Text>
                   <Text style={[styles.pairCell, { color: plColor(p.pl) }]}>
-                    ${p.pl.toFixed(2)}
+                    {p.pl >= 0 ? '' : '-'}${fmt(p.pl)}
                   </Text>
                   <Text style={[styles.pairCell, { color: plColor(p.pips) }]}>
-                    {p.pips.toFixed(1)}
+                    {fmt(p.pips, 1)}
                   </Text>
                 </View>
               ))}

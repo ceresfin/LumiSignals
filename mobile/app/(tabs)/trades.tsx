@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { View, Text, FlatList, StyleSheet, RefreshControl } from 'react-native';
+import { View, Text, FlatList, StyleSheet, RefreshControl, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/auth';
@@ -7,6 +7,8 @@ import { Colors } from '@/constants/theme';
 
 type Trade = {
   id: number;
+  broker: string;
+  asset_type: string;
   instrument: string;
   direction: string;
   entry_price: number;
@@ -79,8 +81,15 @@ function TradeRow({ trade }: { trade: Trade }) {
 
 export default function Trades() {
   const { user } = useAuth();
-  const [trades, setTrades] = useState<Trade[]>([]);
+  const [allTrades, setAllTrades] = useState<Trade[]>([]);
+  const [activeTab, setActiveTab] = useState('forex');
   const [refreshing, setRefreshing] = useState(false);
+
+  const TABS = [
+    { key: 'forex', label: 'Forex', filter: (t: Trade) => t.broker === 'oanda' || t.asset_type === 'forex' },
+    { key: 'options', label: 'Options', filter: (t: Trade) => t.asset_type === 'options' },
+    { key: 'futures', label: 'Futures', filter: (t: Trade) => t.asset_type === 'futures' },
+  ];
 
   const loadTrades = async () => {
     if (!user) return;
@@ -90,9 +99,9 @@ export default function Trades() {
         .select('*')
         .eq('user_id', user.id)
         .order('closed_at', { ascending: false })
-        .limit(100);
+        .limit(500);
 
-      if (data) setTrades(data);
+      if (data) setAllTrades(data);
     } catch (e) {
       console.error('Trades load error:', e);
     }
@@ -109,7 +118,7 @@ export default function Trades() {
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'trades', filter: `user_id=eq.${user.id}` },
         (payload) => {
-          setTrades(prev => [payload.new as Trade, ...prev]);
+          setAllTrades(prev => [payload.new as Trade, ...prev]);
         }
       )
       .subscribe();
@@ -123,12 +132,31 @@ export default function Trades() {
     setRefreshing(false);
   };
 
+  const tab = TABS.find(t => t.key === activeTab)!;
+  const trades = allTrades.filter(tab.filter);
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Closed Trades</Text>
         <Text style={styles.headerCount}>{trades.length}</Text>
       </View>
+
+      {/* Broker Tabs */}
+      <View style={styles.tabBar}>
+        {TABS.map(t => (
+          <TouchableOpacity
+            key={t.key}
+            style={[styles.tab, activeTab === t.key && styles.tabActive]}
+            onPress={() => setActiveTab(t.key)}
+          >
+            <Text style={[styles.tabText, activeTab === t.key && styles.tabTextActive]}>
+              {t.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
       <FlatList
         data={trades}
         keyExtractor={(item) => item.id.toString()}
@@ -157,6 +185,25 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
   },
   headerTitle: { fontSize: 22, fontWeight: '300', color: Colors.dark },
+  tabBar: {
+    flexDirection: 'row',
+    marginHorizontal: 16,
+    marginBottom: 12,
+    backgroundColor: Colors.white,
+    borderRadius: 10,
+    padding: 3,
+  },
+  tab: {
+    flex: 1,
+    paddingVertical: 10,
+    alignItems: 'center',
+    borderRadius: 8,
+  },
+  tabActive: {
+    backgroundColor: Colors.olive,
+  },
+  tabText: { fontSize: 13, fontWeight: '500', color: Colors.textLight },
+  tabTextActive: { color: Colors.gold },
   headerCount: {
     fontSize: 13,
     color: Colors.textLight,

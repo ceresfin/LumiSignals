@@ -330,6 +330,30 @@ def create_app():
         except Exception as e:
             return jsonify({"error": f"CPAPI proxy error: {e}"}), 502
 
+    @app.route("/api/ib/status")
+    def api_ib_status_public():
+        """Public IB status for mobile app — no login required."""
+        import redis as _redis
+        rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+        raw = rdb.get("ibkr:data:1")
+        if raw:
+            data = json.loads(raw)
+            last_synced = data.get("last_synced", "")
+            if last_synced:
+                try:
+                    sync_time = datetime.fromisoformat(last_synced.replace("Z", "+00:00"))
+                    age = (datetime.now(timezone.utc) - sync_time).total_seconds()
+                    return jsonify({
+                        "connected": age < 60,
+                        "last_synced": last_synced,
+                        "age_seconds": int(age),
+                        "nav": data.get("account", {}).get("NetLiquidation"),
+                        "positions": len(data.get("positions", [])),
+                    })
+                except Exception:
+                    pass
+        return jsonify({"connected": False, "last_synced": None, "age_seconds": None})
+
     @app.route("/ib-auth/status")
     @login_required
     def ib_auth_status():
