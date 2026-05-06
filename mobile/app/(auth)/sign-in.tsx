@@ -18,6 +18,7 @@ export default function SignIn() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   const handleSignIn = async () => {
     if (!email || !password) {
@@ -51,14 +52,22 @@ export default function SignIn() {
             keyboardType="email-address"
             autoCorrect={false}
           />
-          <TextInput
-            style={styles.input}
-            placeholder="Password"
-            placeholderTextColor={Colors.textLight}
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry
-          />
+          <View style={styles.passwordRow}>
+            <TextInput
+              style={styles.passwordInput}
+              placeholder="Password"
+              placeholderTextColor={Colors.textLight}
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry={!showPassword}
+            />
+            <TouchableOpacity
+              style={styles.eyeButton}
+              onPress={() => setShowPassword(!showPassword)}
+            >
+              <Text style={styles.eyeText}>{showPassword ? 'Hide' : 'Show'}</Text>
+            </TouchableOpacity>
+          </View>
 
           {error ? <Text style={styles.error}>{error}</Text> : null}
 
@@ -120,6 +129,29 @@ const styles = StyleSheet.create({
     color: Colors.red,
     fontSize: 13,
     textAlign: 'center',
+  },
+  passwordRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.white,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#e0ddd8',
+  },
+  passwordInput: {
+    flex: 1,
+    padding: 14,
+    fontSize: 16,
+    color: Colors.dark,
+  },
+  eyeButton: {
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+  },
+  eyeText: {
+    color: Colors.olive,
+    fontSize: 14,
+    fontWeight: '500',
   },
   button: {
     backgroundColor: Colors.olive,

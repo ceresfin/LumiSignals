@@ -484,6 +484,39 @@ class FXScalp2n20:
                     "sl_dollars": self.sl_dollars,
                 })
 
+            # Write position to Supabase (for mobile app)
+            try:
+                from .supabase_client import upsert_position
+                upsert_position(
+                    user_id=os.environ.get("SUPABASE_USER_ID", ""),
+                    position={
+                        "id": state.trade_id,
+                        "broker": "oanda",
+                        "instrument": instrument,
+                        "asset_type": "forex",
+                        "direction": direction,
+                        "units": abs(units),
+                        "entry_price": fill_price,
+                        "stop_loss": stop_price,
+                        "strategy": "vwap_2n20",
+                        "model": "scalp_2n20",
+                        "opened_at": fill_time.isoformat(),
+                    },
+                )
+            except Exception:
+                pass
+
+            # Push notification — trade opened
+            try:
+                from .supabase_client import notify_trade_opened
+                notify_trade_opened(
+                    user_id=os.environ.get("SUPABASE_USER_ID", ""),
+                    instrument=instrument, direction=direction,
+                    entry_price=fill_price, strategy="2n20 Scalp",
+                )
+            except Exception:
+                pass
+
         except Exception as e:
             logger.error("2n20 FX order error %s %s: %s", direction, instrument, e)
 
@@ -635,6 +668,29 @@ class FXScalp2n20:
                 )
             except Exception as e:
                 logger.debug("Supabase trade write error: %s", e)
+
+            # Remove position from Supabase
+            try:
+                from .supabase_client import remove_position
+                remove_position(
+                    user_id=os.environ.get("SUPABASE_USER_ID", ""),
+                    broker="oanda",
+                    broker_trade_id=str(state.trade_id),
+                )
+            except Exception:
+                pass
+
+            # Push notification — trade closed
+            try:
+                from .supabase_client import notify_trade_closed
+                notify_trade_closed(
+                    user_id=os.environ.get("SUPABASE_USER_ID", ""),
+                    instrument=instrument, direction=direction,
+                    pl=round(actual_pnl, 2), pips=round(pnl_pips, 1),
+                    reason=reason,
+                )
+            except Exception:
+                pass
 
             if self.signal_callback:
                 self.signal_callback({

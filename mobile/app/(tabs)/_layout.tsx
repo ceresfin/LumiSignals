@@ -19,6 +19,13 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="positions"
+        options={{
+          title: 'Positions',
+          tabBarIcon: ({ color }) => <IconSymbol size={24} name="chart.line.uptrend.xyaxis" color={color} />,
+        }}
+      />
+      <Tabs.Screen
         name="trades"
         options={{
           title: 'Trades',

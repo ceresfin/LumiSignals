@@ -7,8 +7,10 @@ dashboard retired, the Redis writes can be removed.
 Uses the service_role key to bypass RLS (server-side writes only).
 """
 
+import json
 import logging
 import os
+import urllib.request
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
@@ -179,3 +181,61 @@ def record_account_snapshot(user_id: str, broker: str, snapshot: dict):
         sb.table("account_snapshots").insert(row).execute()
     except Exception as e:
         logger.debug("Supabase snapshot write error: %s", e)
+
+
+def send_push_notification(user_id: str, title: str, body: str, data: dict = None):
+    """Send push notification via Expo Push API.
+
+    Looks up the user's push_token from profiles table, then sends
+    via Expo's push service (no server key needed for Expo tokens).
+    """
+    sb = get_client()
+    if not sb:
+        return
+    try:
+        # Get push token from profiles
+        result = sb.table("profiles").select("push_token").eq("id", user_id).single().execute()
+        token = result.data.get("push_token") if result.data else None
+        if not token:
+            return
+
+        # Send via Expo Push API
+        message = {
+            "to": token,
+            "sound": "default",
+            "title": title,
+            "body": body,
+            "data": data or {},
+        }
+        req = urllib.request.Request(
+            "https://exp.host/--/api/v2/push/send",
+            data=json.dumps(message).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        urllib.request.urlopen(req, timeout=10)
+        logger.debug("Push sent to %s: %s", user_id[:8], title)
+    except Exception as e:
+        logger.debug("Push notification error: %s", e)
+
+
+def notify_trade_opened(user_id: str, instrument: str, direction: str, entry_price: float, strategy: str = ""):
+    """Send push when a trade opens."""
+    dir_label = "BUY" if direction in ("BUY", "LONG") else "SELL"
+    send_push_notification(
+        user_id,
+        f"{dir_label} {instrument}",
+        f"Entry @ {entry_price:.5f} | {strategy}",
+        {"type": "trade_opened", "instrument": instrument},
+    )
+
+
+def notify_trade_closed(user_id: str, instrument: str, direction: str, pl: float, pips: float, reason: str = ""):
+    """Send push when a trade closes."""
+    dir_label = "LONG" if direction in ("BUY", "LONG") else "SHORT"
+    result = "WIN" if pl > 0 else "LOSS"
+    send_push_notification(
+        user_id,
+        f"Closed {instrument} {dir_label} — {result}",
+        f"P&L: ${pl:+.2f} | {pips:+.1f} pips | {reason}",
+        {"type": "trade_closed", "instrument": instrument, "pl": pl},
+    )
