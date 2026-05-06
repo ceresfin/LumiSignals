@@ -33,10 +33,22 @@ export async function registerForPushNotifications(userId: string): Promise<stri
   }
 
   // Get the Expo push token
-  const tokenData = await Notifications.getExpoPushTokenAsync({
-    projectId: process.env.EXPO_PUBLIC_PROJECT_ID,
-  });
-  const token = tokenData.data;
+  let token: string;
+  try {
+    const tokenData = await Notifications.getExpoPushTokenAsync();
+    token = tokenData.data;
+  } catch {
+    // Fallback: try with explicit project ID from Constants
+    const Constants = require('expo-constants').default;
+    const projectId = Constants.expoConfig?.extra?.eas?.projectId ??
+                      Constants.easConfig?.projectId;
+    if (!projectId) {
+      console.log('No project ID for push tokens — skipping (expected in Expo Go)');
+      return null;
+    }
+    const tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
+    token = tokenData.data;
+  }
 
   // Store the token in Supabase for the bot to use
   try {

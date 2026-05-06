@@ -856,6 +856,44 @@ def create_app():
         rdb.setex(f"ibkr:closed:{trade_id}", 2592000, json.dumps(data))
         if close_exec_id:
             rdb.setex(f"ibkr:closed_exec:{close_exec_id}", 2592000, trade_id)
+
+        # Dual-write to Supabase
+        try:
+            from lumisignals.supabase_client import record_closed_trade, notify_trade_closed
+            user_id = os.environ.get("SUPABASE_USER_ID", "")
+            if user_id:
+                asset_type = data.get("type", "options")
+                record_closed_trade(user_id, {
+                    "id": trade_id,
+                    "broker": "ib",
+                    "asset_type": asset_type,
+                    "instrument": data.get("ticker", data.get("symbol", "")),
+                    "direction": data.get("direction", ""),
+                    "contracts": data.get("contracts", 1),
+                    "entry_price": data.get("entry_price", 0),
+                    "exit_price": data.get("exit_price", 0),
+                    "realized_pl": data.get("realized_pnl", 0),
+                    "stop_loss": data.get("stop_loss"),
+                    "strategy": data.get("strategy", ""),
+                    "model": data.get("model", ""),
+                    "close_reason": data.get("close_reason", ""),
+                    "won": (data.get("realized_pnl", 0) or 0) > 0,
+                    "spread_type": data.get("spread_type"),
+                    "sell_strike": data.get("sell_strike"),
+                    "buy_strike": data.get("buy_strike"),
+                    "opened_at": data.get("opened_at", ""),
+                    "closed_at": data.get("closed_at", ""),
+                    "duration_mins": data.get("duration_mins"),
+                })
+                # Push notification
+                pl = data.get("realized_pnl", 0) or 0
+                ticker = data.get("ticker", data.get("symbol", ""))
+                direction = data.get("direction", "")
+                notify_trade_closed(user_id, ticker, direction, pl, 0,
+                                    data.get("close_reason", ""))
+        except Exception as e:
+            logger.debug("Supabase IB trade write error: %s", e)
+
         return jsonify({"status": "ok", "trade_id": trade_id})
 
     @app.route("/api/ibkr/closed-trades")
