@@ -1097,22 +1097,22 @@ def check_order_requests(ib: IB):
                 logger.info("Futures order: %s %s %dx — %s", direction, ticker, contracts, strategy_name)
 
                 # Per-strategy position awareness
-                # Each strategy (2n20, orb_breakout, etc.) tracks its own position
-                # via futures_entry_{permId} Redis records. A BUY from ORB doesn't
-                # block a BUY from 2n20 — they're independent.
+                # Check if this strategy already has an active entry for this ticker.
+                # Uses the most recent entry record only (not cumulative count).
                 import redis as _rdb_pos
                 rdb_pos = _rdb_pos.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
 
-                strategy_pos = 0  # per-strategy position for this ticker
+                has_active_long = False
+                has_active_short = False
                 for fk in rdb_pos.scan_iter("ibkr:order:futures_entry_*"):
                     raw_fe = rdb_pos.get(fk)
                     if raw_fe:
                         fe = json.loads(raw_fe)
                         if fe.get("ticker") == ticker and fe.get("strategy") == strategy_name and fe.get("status") == "entry":
                             if fe.get("direction") == "BUY":
-                                strategy_pos += int(fe.get("contracts", 1))
+                                has_active_long = True
                             elif fe.get("direction") == "SELL":
-                                strategy_pos -= int(fe.get("contracts", 1))
+                                has_active_short = True
 
                 # Also check total broker position for CLOSE orders
                 ib.sleep(1)
@@ -1127,15 +1127,15 @@ def check_order_requests(ib: IB):
                             broker_pos = int(pos.position)
                             break
 
-                logger.info("Position check: %s strategy=%s strategy_pos=%d broker_pos=%d (direction=%s)",
-                            ticker, strategy_name, strategy_pos, broker_pos, direction)
+                logger.info("Position check: %s strategy=%s has_long=%s has_short=%s broker_pos=%d (direction=%s)",
+                            ticker, strategy_name, has_active_long, has_active_short, broker_pos, direction)
 
                 skip = False
-                if direction == "BUY" and strategy_pos > 0:
-                    logger.info("SKIP %s BUY — %s already long (strategy_pos=%d)", ticker, strategy_name, strategy_pos)
+                if direction == "BUY" and has_active_long:
+                    logger.info("SKIP %s BUY — %s already has active long", ticker, strategy_name)
                     skip = True
-                elif direction == "SELL" and strategy_pos < 0:
-                    logger.info("SKIP %s SELL — %s already short (strategy_pos=%d)", ticker, strategy_name, strategy_pos)
+                elif direction == "SELL" and has_active_short:
+                    logger.info("SKIP %s SELL — %s already has active short", ticker, strategy_name)
                     skip = True
                 elif direction == "CLOSE_LONG" and broker_pos <= 0:
                     logger.info("SKIP %s CLOSE_LONG — not long at broker (pos=%d)", ticker, broker_pos)
@@ -1232,11 +1232,22 @@ def check_order_requests(ib: IB):
                                     entry_data = entry_resp.json()
                                     opened_at = entry_data.get("opened_at", "")
                                     entry_strategy = entry_data.get("strategy", entry_strategy)
-                                    # Mark this entry as closed so it's not reused
-                                    if entry_data.get("order_id"):
-                                        requests.post(f"{SERVER_URL}/api/ibkr/order/update",
-                                            json={"order_id": entry_data["order_id"], "status": "closed"},
-                                            headers={"X-Sync-Key": SYNC_KEY}, timeout=5)
+                                    # Mark ALL matching entries as closed (not just this one)
+                                    try:
+                                        import redis as _rdb_close_entry
+                                        rdb_ce = _rdb_close_entry.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+                                        for fk in rdb_ce.scan_iter("ibkr:order:futures_entry_*"):
+                                            raw_fe = rdb_ce.get(fk)
+                                            if raw_fe:
+                                                fe = json.loads(raw_fe)
+                                                if (fe.get("ticker") == ticker and
+                                                    fe.get("strategy") == entry_strategy and
+                                                    fe.get("status") == "entry"):
+                                                    fe["status"] = "closed"
+                                                    rdb_ce.setex(fk, 3600, json.dumps(fe))
+                                                    logger.info("Marked entry closed: %s", fk)
+                                    except Exception:
+                                        pass
                             except Exception:
                                 pass
                             if not opened_at:
