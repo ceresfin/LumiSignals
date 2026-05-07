@@ -610,8 +610,8 @@ class MassiveClient:
                     return float(day["c"])
                 prev = data.get("ticker", {}).get("prevDay", {})
                 return float(prev.get("c", 0)) or None
-            elif ticker.startswith("I:"):
-                # Indices — use v3 universal snapshot
+            elif ticker.startswith("C:") or ticker.startswith("I:"):
+                # Forex / Commodities / Indices — use v3 universal snapshot
                 data = self._request(f"/v3/snapshot", params={"ticker.any_of": ticker})
                 results = data.get("results", [])
                 if results:

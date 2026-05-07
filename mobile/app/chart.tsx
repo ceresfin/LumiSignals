@@ -14,6 +14,9 @@ const TV_SYMBOLS: Record<string, string> = {
   'ES': 'CME_MINI:ES1!',
   'SPY': 'AMEX:SPY',
   'QQQ': 'NASDAQ:QQQ',
+  'GOLD': 'OANDA:XAUUSD',
+  'OIL': 'OANDA:WTICOUSD',
+  'I:SPX': 'SP:SPX',
 };
 
 function getTvUrl(instrument: string): string {

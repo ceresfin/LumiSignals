@@ -376,12 +376,17 @@ def create_app():
                 from lumisignals.levels_strategy import get_builtin_snr_levels
                 from lumisignals.untouched_levels import calculate_adx_direction
                 massive = MassiveClient(massive_key)
-                for idx_ticker, display_name in [("I:SPX", "I:SPX"), ("SPY", "SPY")]:
+                for idx_ticker, display_name, mkt in [
+                    ("I:SPX", "I:SPX", "stock"),
+                    ("SPY", "SPY", "stock"),
+                    ("C:XAUUSD", "GOLD", "forex"),
+                    ("C:WTICOUSD", "OIL", "forex"),
+                ]:
                     try:
                         price = massive.get_price(idx_ticker)
                         if not price:
                             continue
-                        snr = get_builtin_snr_levels(massive, idx_ticker, ["1h", "4h", "1d"], market_type="stock")
+                        snr = get_builtin_snr_levels(massive, idx_ticker, ["1h", "4h", "1d"], market_type=mkt)
                         for tf, data in snr.items():
                             for zone_type, key in [("supply", "resistance_price"), ("demand", "support_price")]:
                                 level = data.get(key)
@@ -494,12 +499,14 @@ def create_app():
         from lumisignals.massive_client import MassiveClient
         massive = MassiveClient(massive_key)
 
+        # Map display names to Polygon tickers
+        TICKER_MAP = {"GOLD": "C:XAUUSD", "OIL": "C:WTICOUSD"}
+        poly_ticker = TICKER_MAP.get(ticker_upper, ticker_upper)
+
         # Detect ticker type and format for Polygon
         is_forex = "_" in ticker_upper
         if is_forex:
             poly_ticker = f"C:{ticker_upper.replace('_', '')}"
-        else:
-            poly_ticker = ticker_upper
 
         try:
             candle_data = massive.get_candles(poly_ticker, timespan, count)
@@ -531,6 +538,10 @@ def create_app():
         rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
         ticker_upper = ticker.upper().replace("_", "")
 
+        # Map display names to Polygon tickers for levels
+        LEVELS_TICKER_MAP = {"GOLD": "C:XAUUSD", "OIL": "C:WTICOUSD"}
+        poly_levels_ticker = LEVELS_TICKER_MAP.get(ticker_upper, ticker_upper)
+
         result = {"ticker": ticker_upper, "tv": {}, "server": {}}
 
         # TradingView levels from Redis
@@ -548,9 +559,9 @@ def create_app():
                 from lumisignals.massive_client import MassiveClient
                 from lumisignals.levels_strategy import get_builtin_snr_levels
                 massive = MassiveClient(massive_key)
-                is_forex = "_" in ticker or len(ticker_upper) == 6 and ticker_upper[:3].isalpha()
+                is_forex = "_" in ticker or poly_levels_ticker.startswith("C:")
                 market_type = "forex" if is_forex else "stock"
-                snr = get_builtin_snr_levels(massive, ticker_upper, ["1mo", "1w", "1d", "4h", "1h"], market_type=market_type)
+                snr = get_builtin_snr_levels(massive, poly_levels_ticker, ["1mo", "1w", "1d", "4h", "1h"], market_type=market_type)
                 # Convert to chart format
                 tf_map = {"1mo": "M", "1w": "W", "1d": "D", "4h": "4H", "1h": "1H"}
                 for tf, label in tf_map.items():

@@ -211,7 +211,7 @@ export default function Positions() {
 
   // Filter zones by active tab
   const isForexZone = (z: any) => z.instrument?.includes('_');
-  const isIndexZone = (z: any) => ['MES', 'ES', 'NQ', 'I:SPX', 'I:NDX'].includes(z.instrument) || z.instrument?.startsWith('I:');
+  const isIndexZone = (z: any) => ['MES', 'ES', 'NQ', 'I:SPX', 'I:NDX', 'GOLD', 'OIL'].includes(z.instrument) || z.instrument?.startsWith('I:');
   const isStockZone = (z: any) => !isForexZone(z) && !isIndexZone(z);
 
   const filteredZones = zones.filter(z => {
