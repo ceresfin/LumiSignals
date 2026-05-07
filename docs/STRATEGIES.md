@@ -130,11 +130,63 @@ When a stock signal fires, automatically analyzes and queues credit/debit spread
 
 ## Chart Overlay Rules by Strategy
 
-| Strategy | VWAP | S/R Levels | Entry/Exit | ORB Range | Stop Loss |
-|----------|------|-----------|------------|-----------|-----------|
-| **2n20** | Yes (orange) | No | Yes | No | Yes |
-| **ORB** | No | No | Yes | Yes (cyan) + targets | Yes |
-| **HTF Levels** | No | Yes (colored by TF) | Yes | No | Yes |
+### 2n20 VWAP Overwhelm Scalp
+| Element | Show | Details |
+|---------|------|---------|
+| VWAP | Yes | Orange line, anchored at pair-specific session open |
+| S/R Levels | No | — |
+| ORB Range | No | — |
+| Entry line | Yes | Green (long) / Red (short), solid |
+| Exit line | Yes | Orange, solid — closed trades only |
+| Stop Loss | Yes | Red, dotted |
+
+**Direction logic on chart:**
+- Price above VWAP → bullish bias (background tint green)
+- Price below VWAP → bearish bias (background tint red)
+- BUY signal: green overwhelm candle while above VWAP
+- SELL signal: red overwhelm candle while below VWAP
+- Exit: opposite overwhelm or VWAP cross
+
+### Opening Range Breakout (ORB)
+| Element | Show | Details |
+|---------|------|---------|
+| VWAP | No | — |
+| S/R Levels | No | — |
+| ORB High | Yes | Cyan solid line — top of 9:30–9:45 bar |
+| ORB Low | Yes | Cyan solid line — bottom of 9:30–9:45 bar |
+| Target +20 | Yes | Green dotted — OR High + 20 pts (long target) |
+| Target −20 | Yes | Green dotted — OR Low − 20 pts (short target) |
+| Entry line | Yes | Green (long) / Red (short), solid |
+| Exit line | Yes | Orange, solid — closed trades only |
+| Stop Loss | Yes | Red, dotted — VIX-dependent distance |
+
+**Direction logic on chart:**
+- BUY: price breaks above OR High + 0.50 pts → entry line above cyan OR High
+- SELL: price breaks below OR Low − 0.50 pts → entry line below cyan OR Low
+- Target: always 20 pts from entry in trade direction
+- Stop: 4 pts (VIX<25) or OR range ÷ 2 (VIX≥25, wide range) or full OR range (VIX≥25, narrow)
+- Fakeout: if stopped out, reverse at opposite OR boundary
+
+### HTF Untouched Levels
+| Element | Show | Details |
+|---------|------|---------|
+| VWAP | No | — |
+| ORB Range | No | — |
+| Monthly S/R | Yes | Orange dashed lines, labeled "M S1" / "M D1" |
+| Weekly S/R | Yes | Yellow dashed lines, labeled "W S1" / "W D1" |
+| Daily S/R | Yes | Blue dashed lines, labeled "D S1" / "D D1" |
+| 4H S/R | Yes | Purple dashed lines, labeled "4H S1" / "4H D1" |
+| 1H S/R | Yes | Green dashed lines, labeled "1H S1" / "1H D1" |
+| Entry line | Yes | Green (long) / Red (short), solid |
+| Exit line | Yes | Orange, solid — closed trades only |
+| Stop Loss | Yes | Red, dotted — ATR × multiplier below/above zone |
+
+**Direction logic on chart:**
+- BUY at demand zone: price approaches D1 (support) from above → bullish candle pattern triggers entry
+- SELL at supply zone: price approaches S1 (resistance) from below → bearish candle pattern triggers entry
+- Entry line sits near the zone level that triggered it
+- Stop sits on the other side of the zone (ATR distance)
+- Target is the next S/R level in trade direction
 
 ---
 
