@@ -28,7 +28,23 @@ type Position = {
   updated_at: string;
 };
 
-function PositionRow({ position, onChartPress }: { position: Position; onChartPress: (instrument: string) => void }) {
+const STRATEGY_TIMEFRAMES: Record<string, string> = {
+  'scalp_2n20': '5m',
+  'vwap_2n20': '5m',
+  '2n20': '5m',
+  'scalp': '15m',
+  'intraday': '1h',
+  'swing': '1d',
+  'orb_breakout': '5m',
+};
+
+function getChartTimeframe(model?: string, strategy?: string): string {
+  if (model && STRATEGY_TIMEFRAMES[model]) return STRATEGY_TIMEFRAMES[model];
+  if (strategy && STRATEGY_TIMEFRAMES[strategy]) return STRATEGY_TIMEFRAMES[strategy];
+  return '15m';
+}
+
+function PositionRow({ position, onChartPress }: { position: Position; onChartPress: (instrument: string, tf: string) => void }) {
   const dir = position.direction === 'LONG' || position.direction === 'BUY' ? 'BUY' : 'SELL';
   const pl = position.unrealized_pl || 0;
   const isOptions = position.asset_type === 'options';
@@ -36,7 +52,7 @@ function PositionRow({ position, onChartPress }: { position: Position; onChartPr
   return (
     <View style={styles.posRow}>
       <View style={styles.posTop}>
-        <TouchableOpacity onPress={() => onChartPress(position.instrument)}>
+        <TouchableOpacity onPress={() => onChartPress(position.instrument, getChartTimeframe(position.model, position.strategy))}>
           <Text style={[styles.posInstrument, { textDecorationLine: 'underline' }]}>{position.instrument}</Text>
         </TouchableOpacity>
         <View style={[styles.dirBadge, { backgroundColor: dir === 'BUY' ? '#e8f5e9' : '#fdecea' }]}>
@@ -115,8 +131,15 @@ function PositionRow({ position, onChartPress }: { position: Position; onChartPr
 export default function Positions() {
   const { user } = useAuth();
   const router = useRouter();
-  const [positions, setPositions] = useState<Position[]>([]);
+  const [allPositions, setAllPositions] = useState<Position[]>([]);
+  const [activeTab, setActiveTab] = useState('forex');
   const [refreshing, setRefreshing] = useState(false);
+
+  const TABS = [
+    { key: 'forex', label: 'Forex', filter: (p: Position) => p.broker === 'oanda' || p.asset_type === 'forex' },
+    { key: 'options', label: 'Options', filter: (p: Position) => p.asset_type === 'options' },
+    { key: 'futures', label: 'Futures', filter: (p: Position) => p.asset_type === 'futures' },
+  ];
 
   const loadPositions = async () => {
     if (!user) return;
@@ -127,7 +150,7 @@ export default function Positions() {
         .eq('user_id', user.id)
         .order('opened_at', { ascending: false });
 
-      if (data) setPositions(data);
+      if (data) setAllPositions(data);
     } catch (e) {
       console.error('Positions load error:', e);
     }
@@ -156,6 +179,8 @@ export default function Positions() {
     setRefreshing(false);
   };
 
+  const tab = TABS.find(t => t.key === activeTab)!;
+  const positions = allPositions.filter(tab.filter);
   const totalPl = positions.reduce((s, p) => s + (p.unrealized_pl || 0), 0);
 
   return (
@@ -175,10 +200,25 @@ export default function Positions() {
         </View>
       </View>
 
+      {/* Broker Tabs */}
+      <View style={styles.tabBar}>
+        {TABS.map(t => (
+          <TouchableOpacity
+            key={t.key}
+            style={[styles.tab, activeTab === t.key && styles.tabActive]}
+            onPress={() => setActiveTab(t.key)}
+          >
+            <Text style={[styles.tabText, activeTab === t.key && styles.tabTextActive]}>
+              {t.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
       <FlatList
         data={positions}
         keyExtractor={(item) => item.id.toString()}
-        renderItem={({ item }) => <PositionRow position={item} onChartPress={(sym) => router.push({ pathname: '/chart', params: { symbol: sym } })} />}
+        renderItem={({ item }) => <PositionRow position={item} onChartPress={(sym, tf) => router.push({ pathname: '/chart', params: { symbol: sym, interval: tf } })} />}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 20 }}
         ListEmptyComponent={
@@ -204,6 +244,23 @@ const styles = StyleSheet.create({
   },
   headerTitle: { fontSize: 22, fontWeight: '300', color: Colors.dark },
   headerSubtitle: { fontSize: 12, color: Colors.textLight, marginTop: 2 },
+  tabBar: {
+    flexDirection: 'row',
+    marginHorizontal: 16,
+    marginBottom: 12,
+    backgroundColor: Colors.white,
+    borderRadius: 10,
+    padding: 3,
+  },
+  tab: {
+    flex: 1,
+    paddingVertical: 10,
+    alignItems: 'center',
+    borderRadius: 8,
+  },
+  tabActive: { backgroundColor: Colors.olive },
+  tabText: { fontSize: 13, fontWeight: '500', color: Colors.textLight },
+  tabTextActive: { color: Colors.gold },
   plSummary: { alignItems: 'flex-end' },
   plLabel: { fontSize: 10, color: Colors.textLight, letterSpacing: 0.5, textTransform: 'uppercase' },
   plTotal: { fontSize: 20, fontWeight: '300' },

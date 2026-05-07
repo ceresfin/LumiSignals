@@ -41,7 +41,7 @@ export default function ChartScreen() {
       ];
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
           <Text style={styles.backText}>Back</Text>
@@ -82,8 +82,9 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingHorizontal: 20,
+    paddingTop: 56,
+    paddingBottom: 10,
     backgroundColor: '#1a1a2e',
     gap: 8,
   },

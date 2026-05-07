@@ -26,14 +26,30 @@ type Trade = {
   duration_mins: number;
 };
 
-function TradeRow({ trade, onChartPress }: { trade: Trade; onChartPress: (instrument: string) => void }) {
+const STRATEGY_TIMEFRAMES: Record<string, string> = {
+  'scalp_2n20': '5m',
+  'vwap_2n20': '5m',
+  '2n20': '5m',
+  'scalp': '15m',
+  'intraday': '1h',
+  'swing': '1d',
+  'orb_breakout': '5m',
+};
+
+function getChartTimeframe(model?: string, strategy?: string): string {
+  if (model && STRATEGY_TIMEFRAMES[model]) return STRATEGY_TIMEFRAMES[model];
+  if (strategy && STRATEGY_TIMEFRAMES[strategy]) return STRATEGY_TIMEFRAMES[strategy];
+  return '15m';
+}
+
+function TradeRow({ trade, onChartPress }: { trade: Trade; onChartPress: (instrument: string, tf: string) => void }) {
   const dir = trade.direction === 'LONG' || trade.direction === 'BUY' ? 'BUY' : 'SELL';
   const pl = trade.realized_pl || 0;
 
   return (
     <View style={styles.tradeRow}>
       <View style={styles.tradeTop}>
-        <TouchableOpacity onPress={() => onChartPress(trade.instrument)}>
+        <TouchableOpacity onPress={() => onChartPress(trade.instrument, getChartTimeframe(trade.model, trade.strategy))}>
           <Text style={[styles.tradePair, { textDecorationLine: 'underline' }]}>{trade.instrument}</Text>
         </TouchableOpacity>
         <View style={[styles.dirBadge, { backgroundColor: dir === 'BUY' ? '#e8f5e9' : '#fdecea' }]}>
@@ -164,7 +180,7 @@ export default function Trades() {
       <FlatList
         data={trades}
         keyExtractor={(item) => item.id.toString()}
-        renderItem={({ item }) => <TradeRow trade={item} onChartPress={(sym) => router.push({ pathname: '/chart', params: { symbol: sym } })} />}
+        renderItem={({ item }) => <TradeRow trade={item} onChartPress={(sym, tf) => router.push({ pathname: '/chart', params: { symbol: sym, interval: tf } })} />}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 20 }}
         ListEmptyComponent={
