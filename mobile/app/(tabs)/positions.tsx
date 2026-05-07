@@ -35,7 +35,7 @@ const STRATEGY_TIMEFRAMES: Record<string, string> = {
   'scalp': '15m',
   'intraday': '1h',
   'swing': '1d',
-  'orb_breakout': '5m',
+  'orb_breakout': '15m',
 };
 
 function getChartTimeframe(model?: string, strategy?: string): string {

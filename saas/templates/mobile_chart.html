@@ -38,9 +38,10 @@
     const DIRECTION = params.get('direction') || '';
     const STRATEGY = params.get('strategy') || '';
 
-    // Show HTF levels only for HTF strategies (not 2n20 scalp)
+    // Show HTF levels only for HTF strategies (not 2n20 scalp or ORB)
     const IS_2N20 = STRATEGY.includes('2n20') || STRATEGY.includes('vwap');
-    const SHOW_LEVELS = !IS_2N20;
+    const IS_ORB = STRATEGY.includes('orb');
+    const SHOW_LEVELS = !IS_2N20 && !IS_ORB;
 
     const LEVEL_COLORS = {
       "M": { color: "#ff9800", label: "M" },
@@ -209,6 +210,61 @@
             axisLabelVisible: true,
             title: 'SL',
           });
+        }
+
+        // ORB: draw opening range (first 15-min bar after 9:30 AM ET)
+        if (IS_ORB && unique.length > 0) {
+          // Find the 9:30 AM ET candle (timestamps are already shifted to ET)
+          // In ET-shifted data, 9:30 AM = hour 9, minute 30
+          let orbHigh = null, orbLow = null;
+          for (const c of unique) {
+            const d = new Date(c.time * 1000);
+            const h = d.getUTCHours();
+            const m = d.getUTCMinutes();
+            // First bar at or after 9:30 (in our ET-shifted timestamps)
+            if (h === 9 && m >= 30 && m < 45) {
+              orbHigh = c.high;
+              orbLow = c.low;
+              break;
+            }
+          }
+          if (orbHigh && orbLow) {
+            // ORB High line
+            candleSeries.createPriceLine({
+              price: orbHigh,
+              color: '#00e5ff',
+              lineWidth: 2,
+              lineStyle: LightweightCharts.LineStyle.Solid,
+              axisLabelVisible: true,
+              title: 'ORB High',
+            });
+            // ORB Low line
+            candleSeries.createPriceLine({
+              price: orbLow,
+              color: '#00e5ff',
+              lineWidth: 2,
+              lineStyle: LightweightCharts.LineStyle.Solid,
+              axisLabelVisible: true,
+              title: 'ORB Low',
+            });
+            // Target lines (20 pts from breakout)
+            candleSeries.createPriceLine({
+              price: orbHigh + 20,
+              color: '#69f0ae',
+              lineWidth: 1,
+              lineStyle: LightweightCharts.LineStyle.Dotted,
+              axisLabelVisible: true,
+              title: 'Target +20',
+            });
+            candleSeries.createPriceLine({
+              price: orbLow - 20,
+              color: '#69f0ae',
+              lineWidth: 1,
+              lineStyle: LightweightCharts.LineStyle.Dotted,
+              axisLabelVisible: true,
+              title: 'Target -20',
+            });
+          }
         }
 
         chart.timeScale().fitContent();
