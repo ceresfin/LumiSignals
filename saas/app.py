@@ -354,6 +354,135 @@ def create_app():
                     pass
         return jsonify({"connected": False, "last_synced": None, "age_seconds": None})
 
+    # -----------------------------------------------------------------------
+    # Chart Data APIs (public — market data, not user-specific)
+    # -----------------------------------------------------------------------
+
+    @app.route("/api/candles/<ticker>")
+    def api_candles(ticker):
+        """Fetch OHLC candles for chart display.
+
+        Query params:
+            timespan: 1m, 2m, 5m, 15m, 30m, 1h, 4h, 1d, 1w, 1mo (default: 15m)
+            count: number of candles (default: 200)
+
+        Futures (MES, ES): reads from IB sync Redis cache (2m bars only).
+        Forex (EUR_USD): fetches from Polygon with C: prefix.
+        Stocks (SPY, AAPL): fetches from Polygon directly.
+        """
+        import redis as _redis
+        timespan = request.args.get("timespan", "15m")
+        count = int(request.args.get("count", 200))
+        ticker_upper = ticker.upper()
+
+        # Futures: read from IB Redis cache
+        if ticker_upper in ("MES", "ES", "NQ", "YM", "RTY"):
+            rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+            raw = rdb.get(f"ibkr:bars:{ticker_upper}:2m")
+            if not raw:
+                return jsonify({"candles": [], "source": "ibkr", "stale": True})
+            data = json.loads(raw)
+            bars = data.get("bars", [])
+            candles = []
+            for b in bars:
+                t = b.get("time", "")
+                try:
+                    if isinstance(t, (int, float)):
+                        ts = int(t)
+                    else:
+                        ts = int(datetime.fromisoformat(str(t).replace("Z", "+00:00")).timestamp())
+                except Exception:
+                    continue
+                candles.append({
+                    "time": ts,
+                    "open": float(b.get("open", 0)),
+                    "high": float(b.get("high", 0)),
+                    "low": float(b.get("low", 0)),
+                    "close": float(b.get("close", 0)),
+                })
+            # Return last N candles
+            candles = candles[-count:] if len(candles) > count else candles
+            return jsonify({"candles": candles, "source": "ibkr", "ticker": ticker_upper,
+                            "timespan": "2m", "front_month": data.get("front_month", "")})
+
+        # Forex / Stocks: fetch from Polygon
+        massive_key = os.environ.get("MASSIVE_API_KEY", "")
+        if not massive_key:
+            return jsonify({"candles": [], "error": "No Polygon API key"}), 400
+
+        from lumisignals.massive_client import MassiveClient
+        massive = MassiveClient(massive_key)
+
+        # Detect ticker type and format for Polygon
+        is_forex = "_" in ticker_upper
+        if is_forex:
+            poly_ticker = f"C:{ticker_upper.replace('_', '')}"
+        else:
+            poly_ticker = ticker_upper
+
+        try:
+            candle_data = massive.get_candles(poly_ticker, timespan, count)
+            candles = []
+            for c in candle_data:
+                try:
+                    ts = int(float(c.timestamp)) if c.timestamp else 0
+                except Exception:
+                    ts = 0
+                candles.append({
+                    "time": ts,
+                    "open": c.open,
+                    "high": c.high,
+                    "low": c.low,
+                    "close": c.close,
+                })
+            return jsonify({"candles": candles, "source": "polygon", "ticker": ticker_upper, "timespan": timespan})
+        except Exception as e:
+            return jsonify({"candles": [], "error": str(e)}), 500
+
+    @app.route("/api/levels/<ticker>")
+    def api_levels(ticker):
+        """Fetch S/R levels for chart overlay.
+
+        Returns both TradingView-sourced levels (from Pine Script webhooks)
+        and server-calculated levels (from Polygon data).
+        """
+        import redis as _redis
+        rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+        ticker_upper = ticker.upper().replace("_", "")
+
+        result = {"ticker": ticker_upper, "tv": {}, "server": {}}
+
+        # TradingView levels from Redis
+        tv_raw = rdb.get(f"tv:levels:{ticker_upper}")
+        if tv_raw:
+            tv_data = json.loads(tv_raw)
+            result["tv"] = tv_data.get("levels", {})
+            result["tv_trends"] = tv_data.get("trends", {})
+            result["tv_updated"] = tv_data.get("updated_at", "")
+
+        # Server-calculated levels from Polygon
+        massive_key = os.environ.get("MASSIVE_API_KEY", "")
+        if massive_key:
+            try:
+                from lumisignals.massive_client import MassiveClient
+                from lumisignals.levels_strategy import get_builtin_snr_levels
+                massive = MassiveClient(massive_key)
+                is_forex = "_" in ticker or len(ticker_upper) == 6 and ticker_upper[:3].isalpha()
+                market_type = "forex" if is_forex else "stock"
+                snr = get_builtin_snr_levels(massive, ticker_upper, ["1mo", "1w", "1d", "4h", "1h"], market_type=market_type)
+                # Convert to chart format
+                tf_map = {"1mo": "M", "1w": "W", "1d": "D", "4h": "4H", "1h": "1H"}
+                for tf, label in tf_map.items():
+                    if tf in snr:
+                        result["server"][label] = {
+                            "supply": snr[tf].get("resistance_price"),
+                            "demand": snr[tf].get("support_price"),
+                        }
+            except Exception as e:
+                logger.debug("Server levels error for %s: %s", ticker, e)
+
+        return jsonify(result)
+
     @app.route("/ib-auth/status")
     @login_required
     def ib_auth_status():
