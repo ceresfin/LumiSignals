@@ -151,8 +151,8 @@ export default function Positions() {
 
   const TABS = [
     { key: 'forex', label: 'Forex', filter: (p: Position) => p.broker === 'oanda' || p.asset_type === 'forex' },
-    { key: 'options', label: 'Options', filter: (p: Position) => p.asset_type === 'options' },
-    { key: 'futures', label: 'Futures', filter: (p: Position) => p.asset_type === 'futures' },
+    { key: 'stocks', label: 'Stocks', filter: (p: Position) => p.asset_type === 'options' || (p.asset_type === 'stock' && !p.instrument?.startsWith('I:')) },
+    { key: 'indices', label: 'Indices', filter: (p: Position) => p.asset_type === 'futures' || p.instrument?.startsWith('I:') },
   ];
 
   const loadPositions = async () => {
@@ -211,13 +211,13 @@ export default function Positions() {
 
   // Filter zones by active tab
   const isForexZone = (z: any) => z.instrument?.includes('_');
-  const isFuturesZone = (z: any) => ['MES', 'ES', 'NQ', 'I:SPX', 'I:NDX', 'SPX'].includes(z.instrument);
-  const isStockZone = (z: any) => !isForexZone(z) && !isFuturesZone(z);
+  const isIndexZone = (z: any) => ['MES', 'ES', 'NQ', 'I:SPX', 'I:NDX'].includes(z.instrument) || z.instrument?.startsWith('I:');
+  const isStockZone = (z: any) => !isForexZone(z) && !isIndexZone(z);
 
   const filteredZones = zones.filter(z => {
     if (activeTab === 'forex') return isForexZone(z);
-    if (activeTab === 'futures') return isFuturesZone(z);
-    if (activeTab === 'options') return isStockZone(z);
+    if (activeTab === 'indices') return isIndexZone(z);
+    if (activeTab === 'stocks') return isStockZone(z);
     return true;
   });
 
