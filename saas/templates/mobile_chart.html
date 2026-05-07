@@ -38,10 +38,24 @@
     const DIRECTION = params.get('direction') || '';
     const STRATEGY = params.get('strategy') || '';
 
-    // Show HTF levels only for HTF strategies (not 2n20 scalp or ORB)
+    // Strategy display rules
     const IS_2N20 = STRATEGY.includes('2n20') || STRATEGY.includes('vwap');
     const IS_ORB = STRATEGY.includes('orb');
+    const IS_HTF = STRATEGY.includes('htf') || STRATEGY.includes('levels') || (!IS_2N20 && !IS_ORB && !ENTRY_PRICE);
     const SHOW_LEVELS = !IS_2N20 && !IS_ORB;
+    const SHOW_VWAP = IS_2N20;  // VWAP only for 2n20 strategy
+    const HAS_TRADE = ENTRY_PRICE !== null;  // Only show entry/exit/stop if it's an actual trade
+
+    // Filter levels by chart timeframe — don't show lower TF levels on higher TF charts
+    const TF_RANK = { '1m': 1, '2m': 2, '5m': 3, '15m': 4, '30m': 5, '1h': 6, '4h': 7, '1d': 8, '1w': 9, '1mo': 10 };
+    const LEVEL_TF_MAP = { '1H': '1h', '4H': '4h', 'D': '1d', 'W': '1w', 'M': '1mo', 'Q': '1mo' };
+    const chartRank = TF_RANK[TIMESPAN] || 4;
+    function shouldShowLevel(levelTf) {
+      const mapped = LEVEL_TF_MAP[levelTf];
+      if (!mapped) return true;
+      const levelRank = TF_RANK[mapped] || 4;
+      return levelRank >= chartRank;  // Only show levels at or above chart timeframe
+    }
 
     const LEVEL_COLORS = {
       "M": { color: "#ff9800", label: "M" },
@@ -124,22 +138,24 @@
         }
         candleSeries.setData(unique);
 
-        // VWAP line
-        let vwapNum = 0, vwapDen = 0;
-        const vwapData = [];
-        for (const c of unique) {
-          const hlc3 = (c.high + c.low + c.close) / 3;
-          vwapNum += hlc3;
-          vwapDen += 1;
-          vwapData.push({ time: c.time, value: vwapNum / vwapDen });
+        // VWAP line — only for 2n20 strategy
+        if (SHOW_VWAP) {
+          let vwapNum = 0, vwapDen = 0;
+          const vwapData = [];
+          for (const c of unique) {
+            const hlc3 = (c.high + c.low + c.close) / 3;
+            vwapNum += hlc3;
+            vwapDen += 1;
+            vwapData.push({ time: c.time, value: vwapNum / vwapDen });
+          }
+          const vwapSeries = chart.addLineSeries({
+            color: '#ff6d00',
+            lineWidth: 2,
+            title: 'VWAP',
+            priceLineVisible: false,
+          });
+          vwapSeries.setData(vwapData);
         }
-        const vwapSeries = chart.addLineSeries({
-          color: '#ff6d00',
-          lineWidth: 2,
-          title: 'VWAP',
-          priceLineVisible: false,
-        });
-        vwapSeries.setData(vwapData);
 
         // Fetch and overlay S/R levels (only for HTF strategies, not 2n20)
         if (SHOW_LEVELS) try {
@@ -153,6 +169,7 @@
           for (const [tf, data] of Object.entries(levels)) {
             const cfg = LEVEL_COLORS[tf];
             if (!cfg || !data) continue;
+            if (!shouldShowLevel(tf)) continue;  // Filter by chart timeframe
 
             if (data.supply) {
               candleSeries.createPriceLine({
@@ -179,8 +196,8 @@
           console.log('Levels error:', e);
         }
 
-        // Trade entry/exit/stop lines
-        if (ENTRY_PRICE) {
+        // Trade entry/exit/stop lines — only when viewing an actual trade
+        if (HAS_TRADE && ENTRY_PRICE) {
           const isLong = DIRECTION === 'BUY' || DIRECTION === 'LONG';
           candleSeries.createPriceLine({
             price: ENTRY_PRICE,
@@ -191,7 +208,7 @@
             title: 'Entry',
           });
         }
-        if (EXIT_PRICE) {
+        if (HAS_TRADE && EXIT_PRICE) {
           candleSeries.createPriceLine({
             price: EXIT_PRICE,
             color: '#ff9800',
@@ -201,7 +218,7 @@
             title: 'Exit',
           });
         }
-        if (STOP_PRICE) {
+        if (HAS_TRADE && STOP_PRICE) {
           candleSeries.createPriceLine({
             price: STOP_PRICE,
             color: '#ff1744',
