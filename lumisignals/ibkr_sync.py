@@ -979,15 +979,33 @@ def _detect_closed_futures(ib):
                           json=closed_trade, headers={"X-Sync-Key": SYNC_KEY}, timeout=10)
             logger.info("Auto-detected close: %s %s entry=%.2f exit=%.2f P&L=$%.2f reason=%s",
                         sym, direction, entry_price, exit_price, pnl, close_reason)
-            # Remove position from Supabase
+            # Write closed trade + remove position directly to Supabase
             try:
-                from lumisignals.supabase_client import get_client
+                from lumisignals.supabase_client import record_closed_trade, notify_trade_closed, get_client
                 supabase_uid = os.environ.get("SUPABASE_USER_ID", "")
-                sb = get_client()
-                if sb and supabase_uid:
-                    sb.table("positions").delete().eq(
-                        "user_id", supabase_uid
-                    ).eq("broker", "ib").eq("instrument", sym).execute()
+                if supabase_uid:
+                    record_closed_trade(supabase_uid, {
+                        "id": str(close_perm_id or ""),
+                        "broker": "ib",
+                        "asset_type": "futures",
+                        "instrument": sym,
+                        "direction": direction,
+                        "contracts": prev["quantity"],
+                        "entry_price": entry_price,
+                        "exit_price": exit_price,
+                        "realized_pl": round(pnl, 2),
+                        "strategy": entry_strategy,
+                        "close_reason": close_reason,
+                        "won": pnl > 0,
+                        "opened_at": opened_at,
+                        "closed_at": closed_at,
+                    })
+                    notify_trade_closed(supabase_uid, sym, direction, round(pnl, 2), 0, close_reason)
+                    sb = get_client()
+                    if sb:
+                        sb.table("positions").delete().eq(
+                            "user_id", supabase_uid
+                        ).eq("broker", "ib").eq("instrument", sym).execute()
             except Exception:
                 pass
         except Exception:
