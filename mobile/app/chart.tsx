@@ -33,6 +33,7 @@ export default function ChartScreen() {
   const timespans = ticker === 'MES' || ticker === 'ES'
     ? [{ key: '2m', label: '2m' }]
     : [
+        { key: '2m', label: '2m' },
         { key: '5m', label: '5m' },
         { key: '15m', label: '15m' },
         { key: '1h', label: '1H' },

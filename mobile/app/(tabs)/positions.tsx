@@ -29,9 +29,9 @@ type Position = {
 };
 
 const STRATEGY_TIMEFRAMES: Record<string, string> = {
-  'scalp_2n20': '5m',
-  'vwap_2n20': '5m',
-  '2n20': '5m',
+  'scalp_2n20': '2m',
+  'vwap_2n20': '2m',
+  '2n20': '2m',
   'scalp': '15m',
   'intraday': '1h',
   'swing': '1d',

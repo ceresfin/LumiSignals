@@ -68,6 +68,10 @@
           timeScale: { borderColor: '#333', timeVisible: true, secondsVisible: false },
         });
 
+        // Detect precision: JPY pairs use 3 decimals, others use 5
+        const isJpy = TICKER.includes('JPY');
+        const priceDecimals = isJpy ? 3 : (TICKER.includes('_') ? 5 : 2);
+
         // Candlestick series
         const candleSeries = chart.addCandlestickSeries({
           upColor: '#27ae60',
@@ -76,6 +80,7 @@
           borderUpColor: '#27ae60',
           wickDownColor: '#c0392b',
           wickUpColor: '#27ae60',
+          priceFormat: { type: 'price', precision: priceDecimals, minMove: Math.pow(10, -priceDecimals) },
         });
 
         // Sort + dedup candles

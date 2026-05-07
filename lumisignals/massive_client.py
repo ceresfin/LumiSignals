@@ -266,6 +266,8 @@ MASSIVE_TIMESPAN = {
     "30m": ("30", "minute"),
     "15m": ("15", "minute"),
     "5m": ("5", "minute"),
+    "2m": ("2", "minute"),
+    "1m": ("1", "minute"),
 }
 
 # Timespans that need market-aligned aggregation from 5m data
