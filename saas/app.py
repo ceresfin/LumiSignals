@@ -330,6 +330,48 @@ def create_app():
         except Exception as e:
             return jsonify({"error": f"CPAPI proxy error: {e}"}), 502
 
+    @app.route("/api/watchlist/zones")
+    def api_watchlist_zones():
+        """Return active HTF watchlist zones for mobile app."""
+        import redis as _redis
+        rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+
+        result = []
+        for model in ["scalp", "intraday", "swing"]:
+            raw = rdb.get(f"watchlist:1:{model}")
+            if not raw:
+                continue
+            zones = json.loads(raw)
+            for z in zones:
+                instrument = z.get("instrument", "")
+                zone_price = z.get("zone_price", 0)
+                zone_type = z.get("zone_type", "")
+                zone_tf = z.get("zone_timeframe", "")
+                status = z.get("status", "watching")
+                bias_score = z.get("bias_score", 0)
+                trends = z.get("trends", {})
+                trade_dir = z.get("trade_direction", "")
+
+                # Calculate distance from current price (if available in zone data)
+                atr = z.get("atr", 0)
+
+                result.append({
+                    "instrument": instrument,
+                    "model": model,
+                    "zone_type": zone_type,
+                    "zone_timeframe": zone_tf,
+                    "zone_price": round(zone_price, 5),
+                    "status": status,
+                    "bias_score": bias_score,
+                    "trade_direction": trade_dir,
+                    "trends": trends,
+                    "atr": round(atr, 5) if atr else 0,
+                })
+
+        # Sort: activated first, then by score
+        result.sort(key=lambda z: (0 if z["status"] == "activated" else 1, -z["bias_score"]))
+        return jsonify({"zones": result})
+
     @app.route("/api/ib/status")
     def api_ib_status_public():
         """Public IB status for mobile app — no login required."""

@@ -147,6 +147,7 @@ export default function Positions() {
   const [allPositions, setAllPositions] = useState<Position[]>([]);
   const [activeTab, setActiveTab] = useState('forex');
   const [refreshing, setRefreshing] = useState(false);
+  const [zones, setZones] = useState<any[]>([]);
 
   const TABS = [
     { key: 'forex', label: 'Forex', filter: (p: Position) => p.broker === 'oanda' || p.asset_type === 'forex' },
@@ -169,7 +170,19 @@ export default function Positions() {
     }
   };
 
-  useEffect(() => { loadPositions(); }, [user]);
+  const loadZones = async () => {
+    try {
+      const resp = await fetch('https://bot.lumitrade.ai/api/watchlist/zones');
+      const data = await resp.json();
+      setZones(data.zones || []);
+    } catch { }
+  };
+
+  useEffect(() => { loadPositions(); loadZones(); }, [user]);
+  useEffect(() => {
+    const interval = setInterval(loadZones, 30000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Realtime: live position updates
   useEffect(() => {
@@ -188,7 +201,7 @@ export default function Positions() {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadPositions();
+    await Promise.all([loadPositions(), loadZones()]);
     setRefreshing(false);
   };
 
@@ -248,6 +261,70 @@ export default function Positions() {
           <View style={styles.empty}>
             <Text style={styles.emptyText}>No open positions</Text>
             <Text style={styles.emptySubtext}>Positions appear here when the bot opens a trade</Text>
+          </View>
+        }
+        ListFooterComponent={
+          <View style={styles.watchlistSection}>
+            <Text style={styles.watchlistTitle}>
+              HTF Zones {zones.length > 0 ? `(${zones.filter(z => z.status === 'activated').length} activated)` : ''}
+            </Text>
+            {zones.length === 0 ? (
+              <Text style={{ color: Colors.textLight, fontSize: 13 }}>No zones being monitored</Text>
+            ) : (
+              zones.map((z, i) => {
+                const isActivated = z.status === 'activated';
+                const isSupply = z.zone_type === 'supply';
+                const tfColors: Record<string, string> = { '1mo': '#ff9800', '1w': '#ffeb3b', '1d': '#2196f3', '4h': '#ce93d8', '1h': '#66bb6a' };
+                const tfLabels: Record<string, string> = { '1mo': 'M', '1w': 'W', '1d': 'D', '4h': '4H', '1h': '1H' };
+                const tfColor = tfColors[z.zone_timeframe] || '#888';
+                const trends = z.trends || {};
+
+                return (
+                  <TouchableOpacity
+                    key={`${z.instrument}-${z.zone_type}-${z.zone_timeframe}-${i}`}
+                    style={[styles.zoneCard, isActivated && styles.zoneCardActivated]}
+                    onPress={() => router.push({
+                      pathname: '/chart',
+                      params: { symbol: z.instrument, interval: z.zone_timeframe, strategy: 'htf_levels' }
+                    })}
+                  >
+                    <View style={styles.zoneTop}>
+                      <Text style={styles.zoneTicker}>{z.instrument}</Text>
+                      <View style={[styles.zoneBadge, { backgroundColor: isSupply ? '#fdecea' : '#e8f5e9' }]}>
+                        <Text style={[styles.zoneBadgeText, { color: isSupply ? Colors.red : Colors.green }]}>
+                          {isSupply ? 'SUPPLY' : 'DEMAND'}
+                        </Text>
+                      </View>
+                      <View style={[styles.tfBadge, { backgroundColor: tfColor + '22', borderColor: tfColor }]}>
+                        <Text style={[styles.tfBadgeText, { color: tfColor }]}>
+                          {tfLabels[z.zone_timeframe] || z.zone_timeframe}
+                        </Text>
+                      </View>
+                      {isActivated && (
+                        <View style={styles.activatedDot} />
+                      )}
+                      <View style={{ flex: 1 }} />
+                      <Text style={styles.zoneScore}>{z.bias_score}</Text>
+                    </View>
+                    <View style={styles.zoneBottom}>
+                      <Text style={styles.zonePrice}>
+                        @ {z.zone_price.toFixed(z.instrument.includes('JPY') ? 3 : (z.instrument.includes('_') ? 5 : 2))}
+                      </Text>
+                      <Text style={styles.zoneModel}>{z.model.toUpperCase()}</Text>
+                      <View style={styles.trendRow}>
+                        {Object.entries(trends).map(([tf, dir]) => (
+                          <Text key={tf} style={[styles.trendBadge, {
+                            color: dir === 'bullish' ? Colors.green : dir === 'bearish' ? Colors.red : Colors.textLight
+                          }]}>
+                            {tf[0]}{dir === 'bullish' ? '↑' : dir === 'bearish' ? '↓' : '→'}
+                          </Text>
+                        ))}
+                      </View>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })
+            )}
           </View>
         }
       />
@@ -324,6 +401,29 @@ const styles = StyleSheet.create({
   },
   posTime: { fontSize: 11, color: Colors.textLight },
   modelBadge: { fontSize: 10, fontWeight: '700', letterSpacing: 0.3 },
+  watchlistSection: { marginTop: 24, paddingBottom: 20 },
+  watchlistTitle: { fontSize: 16, fontWeight: '500', color: Colors.dark, marginBottom: 12 },
+  zoneCard: {
+    backgroundColor: Colors.white, borderRadius: 12, padding: 14,
+    marginBottom: 8, borderLeftWidth: 3, borderLeftColor: '#e0ddd8',
+  },
+  zoneCardActivated: {
+    borderLeftColor: Colors.green,
+    backgroundColor: '#f8fdf8',
+  },
+  zoneTop: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
+  zoneTicker: { fontSize: 15, fontWeight: '600', color: Colors.dark },
+  zoneBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
+  zoneBadgeText: { fontSize: 10, fontWeight: '700' },
+  tfBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, borderWidth: 1 },
+  tfBadgeText: { fontSize: 10, fontWeight: '700' },
+  activatedDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: Colors.green },
+  zoneScore: { fontSize: 14, fontWeight: '600', color: Colors.olive },
+  zoneBottom: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  zonePrice: { fontSize: 13, color: Colors.textMedium },
+  zoneModel: { fontSize: 10, fontWeight: '700', color: Colors.textLight, letterSpacing: 0.3 },
+  trendRow: { flexDirection: 'row', gap: 4 },
+  trendBadge: { fontSize: 11, fontWeight: '600' },
   empty: { alignItems: 'center', paddingTop: 60 },
   emptyText: { fontSize: 16, color: Colors.textLight },
   emptySubtext: { fontSize: 13, color: Colors.textLight, marginTop: 6, textAlign: 'center' },
