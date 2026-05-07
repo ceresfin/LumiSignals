@@ -22,8 +22,8 @@ function getTvUrl(instrument: string): string {
 }
 
 export default function ChartScreen() {
-  const { symbol, interval, entry, exit, direction, stop } = useLocalSearchParams<{
-    symbol: string; interval?: string; entry?: string; exit?: string; direction?: string; stop?: string;
+  const { symbol, interval, entry, exit, direction, stop, strategy } = useLocalSearchParams<{
+    symbol: string; interval?: string; entry?: string; exit?: string; direction?: string; stop?: string; strategy?: string;
   }>();
   const router = useRouter();
   const tf = interval || '15m';
@@ -35,6 +35,7 @@ export default function ChartScreen() {
   if (exit) chartUrl += `&exit=${exit}`;
   if (direction) chartUrl += `&direction=${direction}`;
   if (stop) chartUrl += `&stop=${stop}`;
+  if (strategy) chartUrl += `&strategy=${strategy}`;
 
   const timespans = ticker === 'MES' || ticker === 'ES'
     ? [{ key: '2m', label: '2m' }]

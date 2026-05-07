@@ -36,6 +36,11 @@
     const EXIT_PRICE = params.get('exit') ? parseFloat(params.get('exit')) : null;
     const STOP_PRICE = params.get('stop') ? parseFloat(params.get('stop')) : null;
     const DIRECTION = params.get('direction') || '';
+    const STRATEGY = params.get('strategy') || '';
+
+    // Show HTF levels only for HTF strategies (not 2n20 scalp)
+    const IS_2N20 = STRATEGY.includes('2n20') || STRATEGY.includes('vwap');
+    const SHOW_LEVELS = !IS_2N20;
 
     const LEVEL_COLORS = {
       "M": { color: "#ff9800", label: "M" },
@@ -95,6 +100,17 @@
           priceFormat: { type: 'price', precision: priceDecimals, minMove: Math.pow(10, -priceDecimals) },
         });
 
+        // Shift timestamps from UTC to ET (UTC-4 EDT / UTC-5 EST)
+        // Lightweight Charts treats timestamps as local time, so we offset to ET
+        const now = new Date();
+        const jan = new Date(now.getFullYear(), 0, 1);
+        const jul = new Date(now.getFullYear(), 6, 1);
+        const isDST = Math.max(jan.getTimezoneOffset(), jul.getTimezoneOffset()) > now.getTimezoneOffset();
+        // We want ET offset: -4h EDT, -5h EST. But since the device might be any tz,
+        // we apply a fixed offset to make the chart axis show ET.
+        const ET_OFFSET = isDST ? -4 * 3600 : -5 * 3600;
+        candleData.candles.forEach(c => { c.time = c.time + ET_OFFSET; });
+
         // Sort + dedup candles
         const sorted = candleData.candles.filter(c => c.time > 0).sort((a, b) => a.time - b.time);
         const unique = [];
@@ -124,8 +140,8 @@
         });
         vwapSeries.setData(vwapData);
 
-        // Fetch and overlay S/R levels
-        try {
+        // Fetch and overlay S/R levels (only for HTF strategies, not 2n20)
+        if (SHOW_LEVELS) try {
           const levelsResp = await fetch('/api/levels/' + LEVELS_TICKER);
           const levelsData = await levelsResp.json();
 

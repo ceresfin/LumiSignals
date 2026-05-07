@@ -226,6 +226,7 @@ export default function Positions() {
             entry: item.entry_price?.toString(),
             stop: item.stop_loss?.toString(),
             direction: item.direction,
+            strategy: item.strategy || item.model || '',
           }
         })} />}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
