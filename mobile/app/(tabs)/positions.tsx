@@ -218,7 +218,16 @@ export default function Positions() {
       <FlatList
         data={positions}
         keyExtractor={(item) => item.id.toString()}
-        renderItem={({ item }) => <PositionRow position={item} onChartPress={(sym, tf) => router.push({ pathname: '/chart', params: { symbol: sym, interval: tf } })} />}
+        renderItem={({ item }) => <PositionRow position={item} onChartPress={(sym, tf) => router.push({
+          pathname: '/chart',
+          params: {
+            symbol: sym,
+            interval: tf,
+            entry: item.entry_price?.toString(),
+            stop: item.stop_loss?.toString(),
+            direction: item.direction,
+          }
+        })} />}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 20 }}
         ListEmptyComponent={

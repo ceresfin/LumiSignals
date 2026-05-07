@@ -22,13 +22,19 @@ function getTvUrl(instrument: string): string {
 }
 
 export default function ChartScreen() {
-  const { symbol, interval } = useLocalSearchParams<{ symbol: string; interval?: string }>();
+  const { symbol, interval, entry, exit, direction, stop } = useLocalSearchParams<{
+    symbol: string; interval?: string; entry?: string; exit?: string; direction?: string; stop?: string;
+  }>();
   const router = useRouter();
   const tf = interval || '15m';
   const ticker = symbol || 'EUR_USD';
 
-  // Load the chart page from the server — JS library is served locally on the server
-  const chartUrl = `${API_BASE}/chart?ticker=${encodeURIComponent(ticker)}&timespan=${tf}&count=300`;
+  // Build chart URL with optional trade lines
+  let chartUrl = `${API_BASE}/chart?ticker=${encodeURIComponent(ticker)}&timespan=${tf}&count=300`;
+  if (entry) chartUrl += `&entry=${entry}`;
+  if (exit) chartUrl += `&exit=${exit}`;
+  if (direction) chartUrl += `&direction=${direction}`;
+  if (stop) chartUrl += `&stop=${stop}`;
 
   const timespans = ticker === 'MES' || ticker === 'ES'
     ? [{ key: '2m', label: '2m' }]

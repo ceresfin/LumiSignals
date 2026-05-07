@@ -180,7 +180,17 @@ export default function Trades() {
       <FlatList
         data={trades}
         keyExtractor={(item) => item.id.toString()}
-        renderItem={({ item }) => <TradeRow trade={item} onChartPress={(sym, tf) => router.push({ pathname: '/chart', params: { symbol: sym, interval: tf } })} />}
+        renderItem={({ item }) => <TradeRow trade={item} onChartPress={(sym, tf) => router.push({
+          pathname: '/chart',
+          params: {
+            symbol: sym,
+            interval: tf,
+            entry: item.entry_price?.toString(),
+            exit: item.exit_price?.toString(),
+            stop: item.stop_loss?.toString(),
+            direction: item.direction,
+          }
+        })} />}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 20 }}
         ListEmptyComponent={

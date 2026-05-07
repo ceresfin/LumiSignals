@@ -31,6 +31,12 @@
     const COUNT = params.get('count') || '300';
     const LEVELS_TICKER = TICKER.replace('_', '');
 
+    // Trade lines (optional — passed from positions/trades screens)
+    const ENTRY_PRICE = params.get('entry') ? parseFloat(params.get('entry')) : null;
+    const EXIT_PRICE = params.get('exit') ? parseFloat(params.get('exit')) : null;
+    const STOP_PRICE = params.get('stop') ? parseFloat(params.get('stop')) : null;
+    const DIRECTION = params.get('direction') || '';
+
     const LEVEL_COLORS = {
       "M": { color: "#ff9800", label: "M" },
       "W": { color: "#ffeb3b", label: "W" },
@@ -65,7 +71,13 @@
           },
           crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
           rightPriceScale: { borderColor: '#333' },
-          timeScale: { borderColor: '#333', timeVisible: true, secondsVisible: false },
+          timeScale: { borderColor: '#333', timeVisible: true, secondsVisible: false, fixLeftEdge: true },
+          localization: {
+            timeFormatter: function(timestamp) {
+              const d = new Date(timestamp * 1000);
+              return d.toLocaleString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', hour12: true });
+            },
+          },
         });
 
         // Detect precision: JPY pairs use 3 decimals, others use 5
@@ -148,6 +160,39 @@
           }
         } catch (e) {
           console.log('Levels error:', e);
+        }
+
+        // Trade entry/exit/stop lines
+        if (ENTRY_PRICE) {
+          const isLong = DIRECTION === 'BUY' || DIRECTION === 'LONG';
+          candleSeries.createPriceLine({
+            price: ENTRY_PRICE,
+            color: isLong ? '#27ae60' : '#c0392b',
+            lineWidth: 2,
+            lineStyle: LightweightCharts.LineStyle.Solid,
+            axisLabelVisible: true,
+            title: 'Entry',
+          });
+        }
+        if (EXIT_PRICE) {
+          candleSeries.createPriceLine({
+            price: EXIT_PRICE,
+            color: '#ff9800',
+            lineWidth: 2,
+            lineStyle: LightweightCharts.LineStyle.Solid,
+            axisLabelVisible: true,
+            title: 'Exit',
+          });
+        }
+        if (STOP_PRICE) {
+          candleSeries.createPriceLine({
+            price: STOP_PRICE,
+            color: '#ff1744',
+            lineWidth: 1,
+            lineStyle: LightweightCharts.LineStyle.Dotted,
+            axisLabelVisible: true,
+            title: 'SL',
+          });
         }
 
         chart.timeScale().fitContent();
