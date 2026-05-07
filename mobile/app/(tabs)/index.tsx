@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, RefreshControl, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/auth';
 import { Colors } from '@/constants/theme';
@@ -122,6 +123,7 @@ const TABS = [
 
 export default function Dashboard() {
   const { user } = useAuth();
+  const router = useRouter();
   const [allTrades, setAllTrades] = useState<Trade[]>([]);
   const [activeTab, setActiveTab] = useState('forex');
   const [refreshing, setRefreshing] = useState(false);
@@ -251,7 +253,9 @@ export default function Dashboard() {
               </View>
               {pairs.map(p => (
                 <View key={p.instrument} style={styles.pairRow}>
-                  <Text style={[styles.pairCell, { flex: 2, fontWeight: '600' }]}>{p.instrument}</Text>
+                  <TouchableOpacity style={{ flex: 2 }} onPress={() => router.push({ pathname: '/chart', params: { symbol: p.instrument } })}>
+                    <Text style={[styles.pairCell, { fontWeight: '600', textDecorationLine: 'underline' }]}>{p.instrument}</Text>
+                  </TouchableOpacity>
                   <Text style={styles.pairCell}>{p.trades}</Text>
                   <Text style={[styles.pairCell, { color: p.winRate >= 50 ? Colors.green : Colors.red }]}>
                     {p.winRate}%

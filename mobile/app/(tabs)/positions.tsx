@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { View, Text, FlatList, StyleSheet, RefreshControl } from 'react-native';
+import { View, Text, FlatList, StyleSheet, RefreshControl, TouchableOpacity } from 'react-native';
+import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/auth';
@@ -27,7 +28,7 @@ type Position = {
   updated_at: string;
 };
 
-function PositionRow({ position }: { position: Position }) {
+function PositionRow({ position, onChartPress }: { position: Position; onChartPress: (instrument: string) => void }) {
   const dir = position.direction === 'LONG' || position.direction === 'BUY' ? 'BUY' : 'SELL';
   const pl = position.unrealized_pl || 0;
   const isOptions = position.asset_type === 'options';
@@ -35,7 +36,9 @@ function PositionRow({ position }: { position: Position }) {
   return (
     <View style={styles.posRow}>
       <View style={styles.posTop}>
-        <Text style={styles.posInstrument}>{position.instrument}</Text>
+        <TouchableOpacity onPress={() => onChartPress(position.instrument)}>
+          <Text style={[styles.posInstrument, { textDecorationLine: 'underline' }]}>{position.instrument}</Text>
+        </TouchableOpacity>
         <View style={[styles.dirBadge, { backgroundColor: dir === 'BUY' ? '#e8f5e9' : '#fdecea' }]}>
           <Text style={[styles.dirText, { color: dir === 'BUY' ? Colors.green : Colors.red }]}>{dir}</Text>
         </View>
@@ -111,6 +114,7 @@ function PositionRow({ position }: { position: Position }) {
 
 export default function Positions() {
   const { user } = useAuth();
+  const router = useRouter();
   const [positions, setPositions] = useState<Position[]>([]);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -174,7 +178,7 @@ export default function Positions() {
       <FlatList
         data={positions}
         keyExtractor={(item) => item.id.toString()}
-        renderItem={({ item }) => <PositionRow position={item} />}
+        renderItem={({ item }) => <PositionRow position={item} onChartPress={(sym) => router.push({ pathname: '/chart', params: { symbol: sym } })} />}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 20 }}
         ListEmptyComponent={

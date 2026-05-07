@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { View, Text, FlatList, StyleSheet, RefreshControl, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/auth';
 import { Colors } from '@/constants/theme';
@@ -25,14 +26,16 @@ type Trade = {
   duration_mins: number;
 };
 
-function TradeRow({ trade }: { trade: Trade }) {
+function TradeRow({ trade, onChartPress }: { trade: Trade; onChartPress: (instrument: string) => void }) {
   const dir = trade.direction === 'LONG' || trade.direction === 'BUY' ? 'BUY' : 'SELL';
   const pl = trade.realized_pl || 0;
 
   return (
     <View style={styles.tradeRow}>
       <View style={styles.tradeTop}>
-        <Text style={styles.tradePair}>{trade.instrument}</Text>
+        <TouchableOpacity onPress={() => onChartPress(trade.instrument)}>
+          <Text style={[styles.tradePair, { textDecorationLine: 'underline' }]}>{trade.instrument}</Text>
+        </TouchableOpacity>
         <View style={[styles.dirBadge, { backgroundColor: dir === 'BUY' ? '#e8f5e9' : '#fdecea' }]}>
           <Text style={[styles.dirText, { color: dir === 'BUY' ? Colors.green : Colors.red }]}>{dir}</Text>
         </View>
@@ -80,6 +83,7 @@ function TradeRow({ trade }: { trade: Trade }) {
 }
 
 export default function Trades() {
+  const router = useRouter();
   const { user } = useAuth();
   const [allTrades, setAllTrades] = useState<Trade[]>([]);
   const [activeTab, setActiveTab] = useState('forex');
@@ -160,7 +164,7 @@ export default function Trades() {
       <FlatList
         data={trades}
         keyExtractor={(item) => item.id.toString()}
-        renderItem={({ item }) => <TradeRow trade={item} />}
+        renderItem={({ item }) => <TradeRow trade={item} onChartPress={(sym) => router.push({ pathname: '/chart', params: { symbol: sym } })} />}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 20 }}
         ListEmptyComponent={
