@@ -209,6 +209,18 @@ export default function Positions() {
   const positions = allPositions.filter(tab.filter);
   const totalPl = positions.reduce((s, p) => s + (p.unrealized_pl || 0), 0);
 
+  // Filter zones by active tab
+  const isForexZone = (z: any) => z.instrument?.includes('_');
+  const isFuturesZone = (z: any) => ['MES', 'ES', 'NQ', 'I:SPX', 'I:NDX', 'SPX'].includes(z.instrument);
+  const isStockZone = (z: any) => !isForexZone(z) && !isFuturesZone(z);
+
+  const filteredZones = zones.filter(z => {
+    if (activeTab === 'forex') return isForexZone(z);
+    if (activeTab === 'futures') return isFuturesZone(z);
+    if (activeTab === 'options') return isStockZone(z);
+    return true;
+  });
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
@@ -266,12 +278,12 @@ export default function Positions() {
         ListFooterComponent={
           <View style={styles.watchlistSection}>
             <Text style={styles.watchlistTitle}>
-              HTF Zones {zones.length > 0 ? `(${zones.filter(z => z.status === 'activated').length} activated)` : ''}
+              HTF Zones {filteredZones.length > 0 ? `(${filteredZones.filter(z => z.status === 'activated').length} activated)` : ''}
             </Text>
-            {zones.length === 0 ? (
+            {filteredZones.length === 0 ? (
               <Text style={{ color: Colors.textLight, fontSize: 13 }}>No zones being monitored</Text>
             ) : (
-              zones.map((z, i) => {
+              filteredZones.map((z, i) => {
                 const isActivated = z.status === 'activated';
                 const isSupply = z.zone_type === 'supply';
                 const tfColors: Record<string, string> = { '1mo': '#ff9800', '1w': '#ffeb3b', '1d': '#2196f3', '4h': '#ce93d8', '1h': '#66bb6a' };

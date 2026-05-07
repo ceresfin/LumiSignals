@@ -368,6 +368,45 @@ def create_app():
                     "atr": round(atr, 5) if atr else 0,
                 })
 
+        # Add index/futures zones from server-calculated levels
+        massive_key = os.environ.get("MASSIVE_API_KEY", "")
+        if massive_key:
+            try:
+                from lumisignals.massive_client import MassiveClient
+                from lumisignals.levels_strategy import get_builtin_snr_levels
+                from lumisignals.untouched_levels import calculate_adx_direction
+                massive = MassiveClient(massive_key)
+                for idx_ticker, display_name in [("I:SPX", "I:SPX"), ("SPY", "SPY")]:
+                    try:
+                        price = massive.get_price(idx_ticker)
+                        if not price:
+                            continue
+                        snr = get_builtin_snr_levels(massive, idx_ticker, ["1h", "4h", "1d"], market_type="stock")
+                        for tf, data in snr.items():
+                            for zone_type, key in [("supply", "resistance_price"), ("demand", "support_price")]:
+                                level = data.get(key)
+                                if not level:
+                                    continue
+                                dist_pct = abs(price - level) / price * 100
+                                status = "activated" if dist_pct < 0.5 else "watching"
+                                result.append({
+                                    "instrument": display_name,
+                                    "model": "scalp" if tf in ("1h", "4h") else "intraday",
+                                    "zone_type": zone_type,
+                                    "zone_timeframe": tf,
+                                    "zone_price": round(level, 2),
+                                    "status": status,
+                                    "bias_score": 50,
+                                    "trade_direction": "BUY" if zone_type == "demand" else "SELL",
+                                    "trends": {},
+                                    "atr": 0,
+                                    "distance_pct": round(dist_pct, 2),
+                                })
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
         # Sort: activated first, then by score
         result.sort(key=lambda z: (0 if z["status"] == "activated" else 1, -z["bias_score"]))
         return jsonify({"zones": result})
