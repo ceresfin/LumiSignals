@@ -979,6 +979,17 @@ def _detect_closed_futures(ib):
                           json=closed_trade, headers={"X-Sync-Key": SYNC_KEY}, timeout=10)
             logger.info("Auto-detected close: %s %s entry=%.2f exit=%.2f P&L=$%.2f reason=%s",
                         sym, direction, entry_price, exit_price, pnl, close_reason)
+            # Remove position from Supabase
+            try:
+                from lumisignals.supabase_client import get_client
+                supabase_uid = os.environ.get("SUPABASE_USER_ID", "")
+                sb = get_client()
+                if sb and supabase_uid:
+                    sb.table("positions").delete().eq(
+                        "user_id", supabase_uid
+                    ).eq("broker", "ib").eq("instrument", sym).execute()
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -1310,6 +1321,21 @@ def check_order_requests(ib: IB):
                             except Exception:
                                 pass
                             logger.info("Closed %s %s: entry=%.2f exit=%.2f P&L=$%.2f", ticker, direction, entry_price, exit_price, pnl)
+
+                            # Remove position from Supabase
+                            try:
+                                from lumisignals.supabase_client import remove_position
+                                supabase_uid = os.environ.get("SUPABASE_USER_ID", "")
+                                if supabase_uid:
+                                    # Remove all futures positions for this ticker
+                                    from lumisignals.supabase_client import get_client
+                                    sb = get_client()
+                                    if sb:
+                                        sb.table("positions").delete().eq(
+                                            "user_id", supabase_uid
+                                        ).eq("broker", "ib").eq("instrument", ticker).execute()
+                            except Exception:
+                                pass
                     elif direction == "BUY":
                         buy_ord = MktOrder("BUY", contracts)
                         buy_ord.tif = "GTC"
@@ -1373,6 +1399,7 @@ def check_order_requests(ib: IB):
 
                     # Store entry details for BUY/SELL (not CLOSE) using permId as unique key
                     if direction in ("BUY", "SELL"):
+                        fill_price = trade.orderStatus.avgFillPrice or 0
                         try:
                             requests.post(f"{SERVER_URL}/api/ibkr/order/update",
                                 json={
@@ -1385,9 +1412,29 @@ def check_order_requests(ib: IB):
                                     "strategy": strategy_name,
                                     "status": "entry",
                                     "type": "futures",
-                                    "entry_price": trade.orderStatus.avgFillPrice or 0,
+                                    "entry_price": fill_price,
                                 },
                                 headers={"X-Sync-Key": SYNC_KEY}, timeout=5)
+                        except Exception:
+                            pass
+
+                        # Write position to Supabase (for mobile app)
+                        try:
+                            from lumisignals.supabase_client import upsert_position
+                            supabase_uid = os.environ.get("SUPABASE_USER_ID", "")
+                            if supabase_uid:
+                                upsert_position(supabase_uid, {
+                                    "id": str(perm_id),
+                                    "broker": "ib",
+                                    "instrument": ticker,
+                                    "asset_type": "futures",
+                                    "direction": direction,
+                                    "contracts": contracts,
+                                    "entry_price": fill_price,
+                                    "strategy": strategy_name,
+                                    "model": strategy_name,
+                                    "opened_at": now_iso,
+                                })
                         except Exception:
                             pass
 
