@@ -1143,14 +1143,15 @@ def check_order_requests(ib: IB):
 
                 skip = False
 
-                # Fakeout reversal: BUY while short (or SELL while long) = reverse position
+                # ORB reversal: BUY while short (or SELL while long) = reverse position
                 # Double the contracts: 1 to close existing + 1 to open new direction
-                if direction == "BUY" and broker_pos < 0 and "fakeout" in strategy_name:
+                is_reversal = order.get("reversal", False)
+                if direction == "BUY" and broker_pos < 0 and (is_reversal or "fakeout" in strategy_name):
                     reversal_qty = abs(broker_pos) + contracts
                     logger.info("ORB REVERSAL: %s BUY while short %d — sending %d contracts (close %d + open %d)",
                                 ticker, broker_pos, reversal_qty, abs(broker_pos), contracts)
                     contracts = reversal_qty
-                elif direction == "SELL" and broker_pos > 0 and "fakeout" in strategy_name:
+                elif direction == "SELL" and broker_pos > 0 and (is_reversal or "fakeout" in strategy_name):
                     reversal_qty = abs(broker_pos) + contracts
                     logger.info("ORB REVERSAL: %s SELL while long %d — sending %d contracts (close %d + open %d)",
                                 ticker, broker_pos, reversal_qty, broker_pos, contracts)
@@ -1207,6 +1208,8 @@ def check_order_requests(ib: IB):
 
                     # MES = $5/point, ES = $50/point
                     multiplier = float(contract.multiplier or 5)
+                    # Use webhook stop_price if provided (ORB sends exact levels)
+                    webhook_stop = order.get("stop_price")
                     sl_points = sl_dollars / multiplier
 
                     if direction in ("CLOSE_LONG", "CLOSE_SHORT"):
@@ -1345,7 +1348,11 @@ def check_order_requests(ib: IB):
                         if trade.orderStatus.status in ("Filled", "PreSubmitted", "Submitted"):
                             fill_price = trade.orderStatus.avgFillPrice or 0
                             if fill_price > 0:
-                                sl_price = fill_price - sl_points
+                                if webhook_stop:
+                                    sl_price = float(webhook_stop)
+                                    sl_dollars = abs(fill_price - sl_price) * multiplier
+                                else:
+                                    sl_price = fill_price - sl_points
                                 _place_futures_stop(ib, contract, ticker, "SELL", contracts,
                                                     sl_price, fill_price, sl_dollars,
                                                     trade.order.permId, strategy_name)
@@ -1358,7 +1365,11 @@ def check_order_requests(ib: IB):
                         if trade.orderStatus.status in ("Filled", "PreSubmitted", "Submitted"):
                             fill_price = trade.orderStatus.avgFillPrice or 0
                             if fill_price > 0:
-                                sl_price = fill_price + sl_points
+                                if webhook_stop:
+                                    sl_price = float(webhook_stop)
+                                    sl_dollars = abs(fill_price - sl_price) * multiplier
+                                else:
+                                    sl_price = fill_price + sl_points
                                 _place_futures_stop(ib, contract, ticker, "BUY", contracts,
                                                     sl_price, fill_price, sl_dollars,
                                                     trade.order.permId, strategy_name)

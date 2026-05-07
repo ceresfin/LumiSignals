@@ -252,11 +252,15 @@ if barstate.islast
     table.cell(orbDash, 1, 10, not na(sellStop) ? str.tostring(sellStop, format.mintick) : "—", text_color=color.orange, text_size=size.small)
 
 // ─── ALERTS ───
+string orbBase = '{"ticker":"MES","strategy":"orb_breakout","key":"lumisignals2026","type":"futures","contracts":1,'
+string stopReason = vixClose < vixThreshold ? "VIX<25 fixed " + str.tostring(lowVolStop, "#.#") + "pts" : (orRange > maxRangeStop ? "VIX>=25 range/2 " + str.tostring(orRange/2, "#.#") + "pts" : "VIX>=25 full range " + str.tostring(orRange, "#.#") + "pts")
+string orbLevels = '"or_high":' + str.tostring(orHigh, format.mintick) + ',"or_low":' + str.tostring(orLow, format.mintick) + ',"or_range":' + str.tostring(orRange, "#.#") + ',"vix":' + str.tostring(vixClose, "#.#") + ',"stop_size":' + str.tostring(stopSize, "#.#") + ',"stop_reason":"' + stopReason + '",'
+
 if buySignal
-    alert('{"ticker":"MES","direction":"BUY","strategy":"orb_breakout","key":"lumisignals2026","type":"futures","contracts":1,"msg":"ORB BUY — break above ' + str.tostring(orHigh, format.mintick) + ' | SL ' + str.tostring(stopSize, "#.#") + 'pts | TP +20pts"}', alert.freq_once_per_bar_close)
+    alert(orbBase + '"direction":"BUY","reversal":false,' + orbLevels + '"entry_price":' + str.tostring(buyEntry, format.mintick) + ',"stop_price":' + str.tostring(buyStop, format.mintick) + ',"target_price":' + str.tostring(buyTarget, format.mintick) + '}', alert.freq_once_per_bar_close)
 if sellSignal
-    alert('{"ticker":"MES","direction":"SELL","strategy":"orb_breakout","key":"lumisignals2026","type":"futures","contracts":1,"msg":"ORB SELL — break below ' + str.tostring(orLow, format.mintick) + ' | SL ' + str.tostring(stopSize, "#.#") + 'pts | TP +20pts"}', alert.freq_once_per_bar_close)
+    alert(orbBase + '"direction":"SELL","reversal":false,' + orbLevels + '"entry_price":' + str.tostring(sellEntry, format.mintick) + ',"stop_price":' + str.tostring(sellStop, format.mintick) + ',"target_price":' + str.tostring(sellTarget, format.mintick) + '}', alert.freq_once_per_bar_close)
 if reverseBuySignal
-    alert('{"ticker":"MES","direction":"BUY","strategy":"orb_fakeout","key":"lumisignals2026","type":"futures","contracts":1,"msg":"FAKEOUT BUY — reversal above ' + str.tostring(orHigh, format.mintick) + ' | SL ' + str.tostring(stopSize, "#.#") + 'pts | TP +20pts"}', alert.freq_once_per_bar_close)
+    alert(orbBase + '"direction":"BUY","reversal":true,' + orbLevels + '"entry_price":' + str.tostring(buyEntry, format.mintick) + ',"stop_price":' + str.tostring(buyStop, format.mintick) + ',"target_price":' + str.tostring(buyTarget, format.mintick) + '}', alert.freq_once_per_bar_close)
 if reverseSellSignal
-    alert('{"ticker":"MES","direction":"SELL","strategy":"orb_fakeout","key":"lumisignals2026","type":"futures","contracts":1,"msg":"FAKEOUT SELL — reversal below ' + str.tostring(orLow, format.mintick) + ' | SL ' + str.tostring(stopSize, "#.#") + 'pts | TP +20pts"}', alert.freq_once_per_bar_close)
+    alert(orbBase + '"direction":"SELL","reversal":true,' + orbLevels + '"entry_price":' + str.tostring(sellEntry, format.mintick) + ',"stop_price":' + str.tostring(sellStop, format.mintick) + ',"target_price":' + str.tostring(sellTarget, format.mintick) + '}', alert.freq_once_per_bar_close)
