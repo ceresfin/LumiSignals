@@ -1131,6 +1131,20 @@ def check_order_requests(ib: IB):
                             ticker, strategy_name, has_active_long, has_active_short, broker_pos, direction)
 
                 skip = False
+
+                # Fakeout reversal: BUY while short (or SELL while long) = reverse position
+                # Double the contracts: 1 to close existing + 1 to open new direction
+                if direction == "BUY" and broker_pos < 0 and "fakeout" in strategy_name:
+                    reversal_qty = abs(broker_pos) + contracts
+                    logger.info("ORB REVERSAL: %s BUY while short %d — sending %d contracts (close %d + open %d)",
+                                ticker, broker_pos, reversal_qty, abs(broker_pos), contracts)
+                    contracts = reversal_qty
+                elif direction == "SELL" and broker_pos > 0 and "fakeout" in strategy_name:
+                    reversal_qty = abs(broker_pos) + contracts
+                    logger.info("ORB REVERSAL: %s SELL while long %d — sending %d contracts (close %d + open %d)",
+                                ticker, broker_pos, reversal_qty, broker_pos, contracts)
+                    contracts = reversal_qty
+
                 if direction == "BUY" and has_active_long:
                     logger.info("SKIP %s BUY — %s already has active long", ticker, strategy_name)
                     skip = True

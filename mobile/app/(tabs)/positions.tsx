@@ -96,6 +96,19 @@ function PositionRow({ position, onChartPress }: { position: Position; onChartPr
             </Text>
           </View>
         ) : null}
+        {position.opened_at ? (
+          <View style={styles.posDetail}>
+            <Text style={styles.posDetailLabel}>Duration</Text>
+            <Text style={styles.posDetailValue}>
+              {(() => {
+                const mins = Math.round((Date.now() - new Date(position.opened_at).getTime()) / 60000);
+                if (mins < 60) return mins + 'm';
+                if (mins < 1440) return Math.floor(mins / 60) + 'h ' + (mins % 60) + 'm';
+                return Math.floor(mins / 1440) + 'd ' + Math.floor((mins % 1440) / 60) + 'h';
+              })()}
+            </Text>
+          </View>
+        ) : null}
         {isOptions && position.spread_type ? (
           <View style={styles.posDetail}>
             <Text style={styles.posDetailLabel}>Spread</Text>

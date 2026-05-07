@@ -85,9 +85,16 @@ function TradeRow({ trade, onChartPress }: { trade: Trade; onChartPress: (instru
             month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true,
           }) : ''}
         </Text>
-        {trade.duration_mins ? (
-          <Text style={styles.tradeTime}>{trade.duration_mins}m</Text>
-        ) : null}
+        <Text style={styles.tradeTime}>
+          {(() => {
+            if (trade.duration_mins) return trade.duration_mins + 'm';
+            if (trade.opened_at && trade.closed_at) {
+              const mins = Math.round((new Date(trade.closed_at).getTime() - new Date(trade.opened_at).getTime()) / 60000);
+              if (mins > 0) return mins + 'm';
+            }
+            return '';
+          })()}
+        </Text>
         <Text style={[styles.modelBadge, {
           color: trade.model?.includes('2n20') ? Colors.amber : Colors.scalp,
         }]}>
