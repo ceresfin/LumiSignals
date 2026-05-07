@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <script src="/static/js/lightweight-charts.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #1a1a2e; overflow: hidden; font-family: -apple-system, sans-serif; }
+    #chart { width: 100vw; height: 100vh; }
+    #loading {
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      color: #888; font-size: 14px;
+    }
+    #error {
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      color: #c0392b; font-size: 14px; text-align: center; padding: 20px; display: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="chart"></div>
+  <div id="loading">Loading chart...</div>
+  <div id="error"></div>
+
+  <script>
+    // Read params from URL
+    const params = new URLSearchParams(window.location.search);
+    const TICKER = params.get('ticker') || 'EUR_USD';
+    const TIMESPAN = params.get('timespan') || '15m';
+    const COUNT = params.get('count') || '300';
+    const LEVELS_TICKER = TICKER.replace('_', '');
+
+    const LEVEL_COLORS = {
+      "M": { color: "#ff9800", label: "M" },
+      "W": { color: "#ffeb3b", label: "W" },
+      "D": { color: "#2196f3", label: "D" },
+      "4H": { color: "#ce93d8", label: "4H" },
+      "1H": { color: "#66bb6a", label: "1H" },
+      "Q": { color: "#ff5722", label: "Q" },
+    };
+
+    async function loadChart() {
+      try {
+        // Fetch candles
+        const candleResp = await fetch('/api/candles/' + TICKER + '?timespan=' + TIMESPAN + '&count=' + COUNT);
+        const candleData = await candleResp.json();
+
+        if (!candleData.candles || candleData.candles.length === 0) {
+          document.getElementById('loading').style.display = 'none';
+          document.getElementById('error').style.display = 'block';
+          document.getElementById('error').textContent = 'No candle data for ' + TICKER + ' (' + TIMESPAN + ')';
+          return;
+        }
+
+        // Create chart
+        const chart = LightweightCharts.createChart(document.getElementById('chart'), {
+          layout: {
+            background: { color: '#1a1a2e' },
+            textColor: '#888',
+          },
+          grid: {
+            vertLines: { color: '#252547' },
+            horzLines: { color: '#252547' },
+          },
+          crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+          rightPriceScale: { borderColor: '#333' },
+          timeScale: { borderColor: '#333', timeVisible: true, secondsVisible: false },
+        });
+
+        // Candlestick series
+        const candleSeries = chart.addCandlestickSeries({
+          upColor: '#27ae60',
+          downColor: '#c0392b',
+          borderDownColor: '#c0392b',
+          borderUpColor: '#27ae60',
+          wickDownColor: '#c0392b',
+          wickUpColor: '#27ae60',
+        });
+
+        // Sort + dedup candles
+        const sorted = candleData.candles.filter(c => c.time > 0).sort((a, b) => a.time - b.time);
+        const unique = [];
+        const seen = new Set();
+        for (const c of sorted) {
+          if (!seen.has(c.time)) {
+            seen.add(c.time);
+            unique.push(c);
+          }
+        }
+        candleSeries.setData(unique);
+
+        // VWAP line
+        let vwapNum = 0, vwapDen = 0;
+        const vwapData = [];
+        for (const c of unique) {
+          const hlc3 = (c.high + c.low + c.close) / 3;
+          vwapNum += hlc3;
+          vwapDen += 1;
+          vwapData.push({ time: c.time, value: vwapNum / vwapDen });
+        }
+        const vwapSeries = chart.addLineSeries({
+          color: '#ff6d00',
+          lineWidth: 2,
+          title: 'VWAP',
+          priceLineVisible: false,
+        });
+        vwapSeries.setData(vwapData);
+
+        // Fetch and overlay S/R levels
+        try {
+          const levelsResp = await fetch('/api/levels/' + LEVELS_TICKER);
+          const levelsData = await levelsResp.json();
+
+          const levels = levelsData.tv && Object.keys(levelsData.tv).length > 0
+            ? levelsData.tv
+            : levelsData.server || {};
+
+          for (const [tf, data] of Object.entries(levels)) {
+            const cfg = LEVEL_COLORS[tf];
+            if (!cfg || !data) continue;
+
+            if (data.supply) {
+              candleSeries.createPriceLine({
+                price: data.supply,
+                color: cfg.color,
+                lineWidth: 1,
+                lineStyle: LightweightCharts.LineStyle.Dashed,
+                axisLabelVisible: true,
+                title: cfg.label + ' S1',
+              });
+            }
+            if (data.demand) {
+              candleSeries.createPriceLine({
+                price: data.demand,
+                color: cfg.color,
+                lineWidth: 1,
+                lineStyle: LightweightCharts.LineStyle.Dashed,
+                axisLabelVisible: true,
+                title: cfg.label + ' D1',
+              });
+            }
+          }
+        } catch (e) {
+          console.log('Levels error:', e);
+        }
+
+        chart.timeScale().fitContent();
+
+        // Resize handler
+        new ResizeObserver(() => {
+          chart.applyOptions({
+            width: document.getElementById('chart').clientWidth,
+            height: document.getElementById('chart').clientHeight,
+          });
+        }).observe(document.getElementById('chart'));
+
+        document.getElementById('loading').style.display = 'none';
+
+      } catch (err) {
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('error').style.display = 'block';
+        document.getElementById('error').textContent = 'Error: ' + err.message;
+      }
+    }
+
+    if (typeof LightweightCharts === 'undefined') {
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('error').style.display = 'block';
+      document.getElementById('error').textContent = 'Chart library failed to load';
+    } else {
+      loadChart();
+    }
+  </script>
+</body>
+</html>

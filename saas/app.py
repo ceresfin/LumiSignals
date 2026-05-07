@@ -483,6 +483,11 @@ def create_app():
 
         return jsonify(result)
 
+    @app.route("/chart")
+    def mobile_chart_page():
+        """Serve the Lightweight Charts page for mobile WebView."""
+        return render_template("mobile_chart.html")
+
     @app.route("/ib-auth/status")
     @login_required
     def ib_auth_status():
