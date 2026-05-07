@@ -405,10 +405,10 @@ class LevelsStrategy:
         if not self.massive:
             return result
 
-        # Convert forex ticker to Polygon format
+        # Convert forex ticker to Polygon format (C: for forex, not X: which is crypto)
         poly_ticker = ticker
-        if market == "forex" and not ticker.startswith("X:"):
-            poly_ticker = f"X:{ticker.replace('_', '')}"
+        if market == "forex" and not ticker.startswith("C:"):
+            poly_ticker = f"C:{ticker.replace('_', '')}"
 
         tf_map = {"1d": "Daily", "1w": "Weekly", "1mo": "Monthly"}
 
