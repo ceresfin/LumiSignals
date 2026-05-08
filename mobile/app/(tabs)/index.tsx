@@ -117,8 +117,10 @@ function fmt(val: number, decimals: number = 2): string {
 
 const TABS = [
   { key: 'forex', label: 'Forex', filter: (t: Trade) => t.broker === 'oanda' || t.asset_type === 'forex' },
+  { key: 'stocks', label: 'Stocks', filter: (t: Trade) => t.asset_type === 'stock' && !t.instrument?.startsWith('I:') },
   { key: 'options', label: 'Options', filter: (t: Trade) => t.asset_type === 'options' },
-  { key: 'futures', label: 'Futures', filter: (t: Trade) => t.asset_type === 'futures' },
+  { key: 'indices', label: 'Indices', filter: (t: Trade) => !!t.instrument?.startsWith('I:') },
+  { key: 'futures', label: 'Futures', filter: (t: Trade) => t.asset_type === 'futures' && !t.instrument?.startsWith('I:') },
 ];
 
 export default function Dashboard() {
