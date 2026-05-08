@@ -1,0 +1,59 @@
+# IBeam-managed IB Client Portal Gateway.
+#
+# Replaces the gnzsnz/ib-gateway + noVNC stack. IBeam wraps the CPAPI gateway
+# and handles login + session keepalive automatically. No VNC required.
+#
+# Deploy path on prod: /opt/lumisignals/cpapi/docker-compose.yml
+# Bring up:  docker compose up -d
+# Bring down: docker compose down
+# Logs:      docker logs -f ibeam
+#
+# First-run: tail logs while it logs in. If the IB account uses IBKR Mobile
+# push 2FA, a notification will appear on the registered phone — approve it.
+# IBeam continues automatically after that. Subsequent reconnects within the
+# same daily window are silent.
+#
+# Credentials live in ./ibeam.env (chmod 600, gitignored). See ibeam.env.example.
+
+version: "3.8"
+
+services:
+  ibeam:
+    image: voyz/ibeam:latest
+    container_name: ibeam
+    # CPAPI listens on 5000/HTTPS with a self-signed cert.
+    # Bind to 127.0.0.1 only — the sync process and Flask app reach it locally.
+    ports:
+      - "127.0.0.1:5000:5000"
+    env_file:
+      - ./ibeam.env
+    volumes:
+      # Override the gateway conf.yaml shipped inside the IBeam image so the
+      # IP allowlist accepts requests from the docker bridge (default IBeam
+      # config only allows 172.17.0.*; compose creates 172.18.0.0/16).
+      - ./ibeam-conf.yaml:/srv/clientportal.gw/root/conf.yaml:ro
+    environment:
+      # IBeam tunables. Anything sensitive stays in ibeam.env.
+      - IBEAM_GATEWAY_STARTUP=30
+      - IBEAM_MAINTENANCE_INTERVAL=60
+      - IBEAM_LOG_LEVEL=INFO
+      # Run a tickle/keepalive every minute so the session doesn't drift idle.
+      - IBEAM_REQUEST_TIMEOUT=15
+      - IBEAM_RESTART_FAILED_SESSIONS=true
+      # Two-factor: 'B' = use the input prompt strategy (works for IBKR Mobile push).
+      # If the account is on the Secure Login Device or SMS, IBeam can't fully
+      # automate — a manual session via /v1/api login page is required.
+      - IBEAM_TWO_FA_HANDLING=true
+    restart: unless-stopped
+    mem_limit: 1024m
+    healthcheck:
+      test: ["CMD", "curl", "-fsk", "https://localhost:5000/v1/api/one/user"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"

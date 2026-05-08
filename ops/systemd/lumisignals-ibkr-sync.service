@@ -1,0 +1,38 @@
+# /etc/systemd/system/lumisignals-ibkr-sync.service
+#
+# Runs the CPAPI-based IBKR sync as a managed service so it auto-restarts on
+# crash and starts on boot. Replaces the manual `python -m lumisignals.ibkr_sync`
+# invocation that was running detached on prod.
+
+[Unit]
+Description=LumiSignals IBKR Sync (CPAPI / IBeam)
+After=network.target redis.service docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/lumisignals/app
+Environment=PYTHONPATH=/opt/lumisignals/app
+Environment=PYTHONUNBUFFERED=1
+
+# CPAPI endpoint exposed by the IBeam container (see /opt/lumisignals/cpapi/docker-compose.yml).
+Environment=CPAPI_BASE_URL=https://localhost:5000/v1/api
+Environment=LUMISIGNALS_URL=https://bot.lumitrade.ai
+
+# IBKR_SYNC_KEY is shared with the Flask app (saas/app.py reads the same env).
+# Real value lives in /etc/lumisignals/ibkr-sync.env (root:root 600).
+EnvironmentFile=/etc/lumisignals/ibkr-sync.env
+
+ExecStart=/opt/lumisignals/venv/bin/python3 -m lumisignals.ibkr_sync_cpapi
+Restart=always
+RestartSec=10
+
+# Wait for IBeam to be reachable before pretending we're up.
+ExecStartPre=/bin/bash -c 'for i in {1..30}; do curl -fsk https://localhost:5000/v1/api/one/user >/dev/null 2>&1 && exit 0; sleep 2; done; exit 1'
+
+StandardOutput=append:/var/log/lumisignals_ibkr_sync.log
+StandardError=append:/var/log/lumisignals_ibkr_sync.log
+
+[Install]
+WantedBy=multi-user.target

@@ -312,17 +312,20 @@ class CPAPIClient:
         Returns:
             conId or None
         """
-        # Get option strikes
-        # First, find the underlying conid
-        results = self.search_contract(symbol, "OPT")
+        # First, find the underlying conid (secdef/info needs conid, not symbol)
+        results = self.search_contract(symbol, "STK")
         if not results:
             return None
+        underlying_conid = results[0].get("conid")
+        if not underlying_conid:
+            return None
 
-        # Search for specific option
-        sec_def = self._request("POST", "/iserver/secdef/info",
-                                json_data={
-                                    "symbol": symbol,
-                                    "secType": "OPT",
+        # Look up the specific option. /iserver/secdef/info is GET with query
+        # params (not POST + JSON body — that returns 405).
+        sec_def = self._request("GET", "/iserver/secdef/info",
+                                params={
+                                    "conid": underlying_conid,
+                                    "sectype": "OPT",
                                     "month": expiration[:6],  # YYYYMM
                                     "strike": strike,
                                     "right": right,

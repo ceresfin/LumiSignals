@@ -1,0 +1,46 @@
+# Custom CPAPI gateway config mounted into the IBeam container.
+#
+# Replaces the default conf.yaml shipped inside voyz/ibeam, which only
+# whitelists 172.17.0.* (the default Docker bridge). Compose creates a
+# user-defined network at 172.18.0.0/16, so requests from the host get
+# rejected as "ipv4 address 172.18.0.1 is forbidden".
+#
+# The IPv4Validator inside the gateway uses glob matching, NOT CIDR — so
+# 172.16.0.0/12 silently fails. Use 172.16.*, 172.17.*, etc.
+#
+# Mounted by /opt/lumisignals/cpapi/docker-compose.yml as read-only.
+ip2loc: "US"
+proxyRemoteSsl: true
+proxyRemoteHost: "https://api.ibkr.com"
+listenPort: 5000
+listenSsl: true
+ccp: false
+svcEnvironment: "v1"
+sslCert: "vertx.jks"
+sslPwd: "mywebapi"
+authDelay: 3000
+portalBaseURL: ""
+serverOptions:
+  blockedThreadCheckInterval: 1000000
+  eventLoopPoolSize: 20
+  workerPoolSize: 20
+  maxWorkerExecuteTime: 100
+  internalBlockingPoolSize: 20
+cors:
+  origin.allowed: "*"
+  allowCredentials: false
+webApps:
+  - name: "demo"
+    index: "index.html"
+ips:
+  allow:
+    - 127.0.0.1
+    - 10.*
+    - 172.16.*
+    - 172.17.*
+    - 172.18.*
+    - 172.19.*
+    - 172.20.*
+    - 192.168.*
+  deny:
+    - 0.0.0.0/0

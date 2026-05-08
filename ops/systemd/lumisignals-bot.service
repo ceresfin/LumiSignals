@@ -1,0 +1,25 @@
+# /etc/systemd/system/lumisignals-bot.service
+#
+# LumiSignals bot runner (FX/Oanda strategies). Secrets live in
+# /etc/lumisignals/bot-runner.env (chown root:root, chmod 600).
+# PYTHONUNBUFFERED stays inline since it's not sensitive.
+
+[Unit]
+Description=LumiSignals Bot Runner
+After=network.target postgresql.service redis.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/lumisignals/app
+Environment=PYTHONPATH=/opt/lumisignals/app
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=/etc/lumisignals/bot-runner.env
+ExecStart=/opt/lumisignals/venv/bin/python3 saas/bot_runner.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/var/log/lumisignals_bot.log
+StandardError=append:/var/log/lumisignals_bot.log
+
+[Install]
+WantedBy=multi-user.target

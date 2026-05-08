@@ -1,0 +1,21 @@
+# /etc/systemd/system/lumisignals.service
+#
+# LumiSignals web app (gunicorn). Secrets live in /etc/lumisignals/web-app.env
+# (chown root:root, chmod 600). Only non-sensitive ops settings stay inline.
+
+[Unit]
+Description=LumiSignals Bot SaaS
+After=network.target postgresql.service redis.service
+
+[Service]
+Type=exec
+User=root
+WorkingDirectory=/opt/lumisignals/app
+Environment=PYTHONPATH=/opt/lumisignals/app
+EnvironmentFile=/etc/lumisignals/web-app.env
+ExecStart=/opt/lumisignals/venv/bin/gunicorn --timeout 300 -w 8 -b 127.0.0.1:8000 saas.app:create_app()
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
