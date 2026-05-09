@@ -7,14 +7,23 @@ import { useAuth } from '@/contexts/auth';
 import { Colors } from '@/constants/theme';
 
 type Trade = {
-  realized_pl: number;
+  realized_pl: number | null;
   pips: number;
-  won: boolean;
+  won: boolean | null;
   strategy: string;
   model: string;
   broker: string;
   asset_type: string;
   instrument: string;
+  opened_at: string | null;
+};
+
+type Position = {
+  strategy: string;
+  asset_type: string;
+  instrument: string;
+  broker: string;
+  model?: string;
 };
 
 type BrokerStats = {
@@ -26,11 +35,25 @@ type BrokerStats = {
   totalPips: number;
 };
 
-type StrategyStats = {
-  name: string;
+type ModelKey = 'scalp' | 'intraday' | 'swing';
+
+type ModelStats = {
+  open: number;
+  closed: number;
   wins: number;
   losses: number;
-  pl: number;
+  winRate: number;
+  realizedPl: number;
+  avgWin: number;
+  avgLoss: number;
+};
+
+type StrategyStats = {
+  key: string;
+  name: string;
+  totalTrades: number;
+  dateRange: string;
+  byModel: Record<ModelKey, ModelStats>;
 };
 
 type PairStats = {
@@ -48,29 +71,106 @@ function emptyStats(): BrokerStats {
 }
 
 function calcStats(trades: Trade[]): BrokerStats {
-  if (!trades.length) return emptyStats();
-  const wins = trades.filter(t => t.won).length;
-  const totalPl = trades.reduce((s, t) => s + (t.realized_pl || 0), 0);
-  const totalPips = trades.reduce((s, t) => s + (t.pips || 0), 0);
+  const closed = trades.filter(t => t.realized_pl !== null && t.realized_pl !== undefined);
+  if (!closed.length) return emptyStats();
+  const wins = closed.filter(t => (t.realized_pl || 0) > 0).length;
+  const totalPl = closed.reduce((s, t) => s + (t.realized_pl || 0), 0);
+  const totalPips = closed.reduce((s, t) => s + (t.pips || 0), 0);
   return {
-    totalTrades: trades.length,
+    totalTrades: closed.length,
     wins,
-    losses: trades.length - wins,
-    winRate: Math.round((wins / trades.length) * 100),
+    losses: closed.length - wins,
+    winRate: Math.round((wins / closed.length) * 100),
     totalPl: Math.round(totalPl * 100) / 100,
     totalPips: Math.round(totalPips * 10) / 10,
   };
 }
 
-function calcStrategies(trades: Trade[]): StrategyStats[] {
+function emptyModelStats(): ModelStats {
+  return { open: 0, closed: 0, wins: 0, losses: 0, winRate: 0, realizedPl: 0, avgWin: 0, avgLoss: 0 };
+}
+
+function modelKey(raw: string): ModelKey {
+  const m = (raw || '').toLowerCase();
+  if (m.includes('scalp')) return 'scalp';
+  if (m.includes('intraday')) return 'intraday';
+  if (m.includes('swing')) return 'swing';
+  return 'scalp'; // sensible default
+}
+
+function calcStrategiesByModel(trades: Trade[], positions: Position[]): StrategyStats[] {
   const map: Record<string, StrategyStats> = {};
+
+  // Closed trade aggregation — won/lost determined by realized_pl > 0 (matches website)
   trades.forEach(t => {
-    const key = normalizeStrategy(t.strategy || '');
-    if (!map[key]) map[key] = { name: key, wins: 0, losses: 0, pl: 0 };
-    map[key].pl += t.realized_pl || 0;
-    if (t.won) map[key].wins++; else map[key].losses++;
+    const sid = strategyKey(t.strategy || '');
+    if (!map[sid]) {
+      map[sid] = {
+        key: sid,
+        name: STRATEGY_NAMES[sid] || normalizeStrategy(t.strategy || ''),
+        totalTrades: 0,
+        dateRange: '',
+        byModel: { scalp: emptyModelStats(), intraday: emptyModelStats(), swing: emptyModelStats() },
+      };
+    }
+    map[sid].totalTrades++;
+
+    const isClosed = t.realized_pl !== null && t.realized_pl !== undefined;
+    if (!isClosed) return;
+
+    const mk = modelKey(t.model);
+    const ms = map[sid].byModel[mk];
+    const pl = t.realized_pl || 0;
+    ms.closed++;
+    ms.realizedPl += pl;
+    if (pl > 0) {
+      ms.wins++;
+    } else if (pl < 0) {
+      ms.losses++;
+    }
   });
-  return Object.values(map).sort((a, b) => b.pl - a.pl);
+
+  // Open positions per strategy/model
+  positions.forEach(p => {
+    const sid = strategyKey(p.strategy || '');
+    if (!map[sid]) return;
+    // Position records often lack a model; default to scalp for now (matches website)
+    const mk = modelKey(p.model || 'scalp');
+    map[sid].byModel[mk].open++;
+  });
+
+  // Date range subtitle + averages — done after all trades counted
+  Object.values(map).forEach(s => {
+    const stratTrades = trades.filter(t => strategyKey(t.strategy || '') === s.key);
+    const times = stratTrades.map(t => t.opened_at || '').filter(Boolean).sort();
+    if (times.length) {
+      const fmtD = (iso: string) => {
+        const d = new Date(iso);
+        return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      };
+      s.dateRange = `${fmtD(times[0])} — ${fmtD(times[times.length - 1])} (${stratTrades.length} trades)`;
+    }
+
+    (Object.keys(s.byModel) as ModelKey[]).forEach(mk => {
+      const ms = s.byModel[mk];
+      const total = ms.wins + ms.losses;
+      ms.winRate = total > 0 ? Math.round((ms.wins / total) * 100) : 0;
+      // Sum win/loss amounts from per-model trades
+      const modelTrades = stratTrades.filter(t => modelKey(t.model) === mk
+                                              && t.realized_pl !== null
+                                              && t.realized_pl !== undefined);
+      const winSum = modelTrades.reduce((acc, t) => acc + Math.max(t.realized_pl || 0, 0), 0);
+      const lossSum = modelTrades.reduce((acc, t) => acc + Math.min(t.realized_pl || 0, 0), 0);
+      ms.avgWin = ms.wins > 0 ? winSum / ms.wins : 0;
+      ms.avgLoss = ms.losses > 0 ? lossSum / ms.losses : 0; // negative
+    });
+  });
+
+  return Object.values(map).sort((a, b) => {
+    const aPl = a.byModel.scalp.realizedPl + a.byModel.intraday.realizedPl + a.byModel.swing.realizedPl;
+    const bPl = b.byModel.scalp.realizedPl + b.byModel.intraday.realizedPl + b.byModel.swing.realizedPl;
+    return bPl - aPl;
+  });
 }
 
 function calcPairs(trades: Trade[]): PairStats[] {
@@ -91,21 +191,47 @@ function calcPairs(trades: Trade[]): PairStats[] {
   })).sort((a, b) => b.pl - a.pl);
 }
 
-// Map raw strategy names to display names + group related strategies
-const STRATEGY_GROUPS: Record<string, string> = {
-  'vwap_2n20': 'VWAP 2n20',
-  '2n20': 'VWAP 2n20',
-  '2n20_exit': 'VWAP 2n20',
-  'htf_levels': 'HTF Untouched Levels',
-  'htf_supply_demand': 'HTF Untouched Levels',
-  'orb_breakout': 'Opening Range Breakout',
-  'manual_close': 'Manual',
-  'manual_test': 'Manual',
-  '': 'HTF Untouched Levels',  // Options with no strategy tag are HTF
+// Group raw strategy names into one canonical key per strategy.
+const STRATEGY_KEYS: Record<string, string> = {
+  'vwap_2n20': 'vwap_2n20',
+  '2n20': 'vwap_2n20',
+  '2n20_exit': 'vwap_2n20',
+  'htf_levels': 'htf_levels',
+  'htf_supply_demand': 'htf_levels',
+  'orb_breakout': 'orb_breakout',
+  'manual_close': 'manual',
+  'manual_test': 'manual',
+  '': 'htf_levels',  // Options with no strategy tag are HTF
 };
 
+// Display name shown in the strategy card header. Matches the website's
+// STRATEGY_NAMES map in saas/templates/trades.html so mobile and web
+// stay in sync.
+const STRATEGY_NAMES: Record<string, string> = {
+  'vwap_2n20': 'VWAP Candlestick Trigger (2n20)',
+  'htf_levels': 'HTF Untouched Levels',
+  'orb_breakout': 'Opening Range Breakout',
+  'manual': 'Manual',
+};
+
+const MODEL_LABELS: Record<ModelKey, string> = {
+  scalp: 'SCALP',
+  intraday: 'INTRADAY',
+  swing: 'SWING',
+};
+
+const MODEL_COLORS: Record<ModelKey, string> = {
+  scalp: Colors.scalp,
+  intraday: Colors.intraday,
+  swing: Colors.swing,
+};
+
+function strategyKey(raw: string): string {
+  return STRATEGY_KEYS[raw] || raw || 'htf_levels';
+}
+
 function normalizeStrategy(raw: string): string {
-  return STRATEGY_GROUPS[raw] || raw;
+  return STRATEGY_NAMES[strategyKey(raw)] || raw;
 }
 
 function fmt(val: number, decimals: number = 2): string {
@@ -127,36 +253,51 @@ export default function Dashboard() {
   const { user } = useAuth();
   const router = useRouter();
   const [allTrades, setAllTrades] = useState<Trade[]>([]);
+  const [allPositions, setAllPositions] = useState<Position[]>([]);
   const [activeTab, setActiveTab] = useState('forex');
   const [refreshing, setRefreshing] = useState(false);
 
-  const loadTrades = async () => {
+  const loadData = async () => {
     if (!user) return;
     try {
-      const { data } = await supabase
-        .from('trades')
-        .select('realized_pl, pips, won, strategy, model, broker, asset_type, instrument')
-        .eq('user_id', user.id);
-      if (data) setAllTrades(data);
+      const [tradesRes, posRes] = await Promise.all([
+        supabase
+          .from('trades')
+          .select('realized_pl, pips, won, strategy, model, broker, asset_type, instrument, opened_at')
+          .eq('user_id', user.id),
+        supabase
+          .from('positions')
+          .select('strategy, asset_type, instrument, broker, model')
+          .eq('user_id', user.id),
+      ]);
+      if (tradesRes.data) setAllTrades(tradesRes.data);
+      if (posRes.data) setAllPositions(posRes.data);
     } catch (e) {
       console.error('Stats load error:', e);
     }
   };
 
-  useEffect(() => { loadTrades(); }, [user]);
+  useEffect(() => { loadData(); }, [user]);
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadTrades();
+    await loadData();
     setRefreshing(false);
   };
 
   const tab = TABS.find(t => t.key === activeTab)!;
   const filtered = allTrades.filter(tab.filter);
+  const filteredPositions = allPositions.filter(p =>
+    tab.filter({
+      asset_type: p.asset_type,
+      instrument: p.instrument,
+      broker: p.broker,
+    } as Trade));
   const stats = calcStats(filtered);
-  const strategies = calcStrategies(filtered);
+  const strategies = calcStrategiesByModel(filtered, filteredPositions);
   const pairs = calcPairs(filtered);
   const plColor = (val: number) => val >= 0 ? Colors.green : Colors.red;
+  const hasModelData = (m: ModelStats) => m.open > 0 || m.closed > 0;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -208,34 +349,80 @@ export default function Dashboard() {
           </View>
         </View>
 
-        {/* Strategy Breakdown */}
+        {/* Strategy Breakdown — per-strategy section, per-model card.
+            Mirrors saas/templates/trades.html futStrategyBreakdown. */}
         {strategies.length > 0 && (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Strategy Performance</Text>
             {strategies.map(s => (
-              <View key={s.name} style={styles.strategyCard}>
+              <View key={s.key} style={styles.strategyCard}>
                 <View style={styles.strategyHeader}>
                   <View style={styles.strategyBadge}>
                     <Text style={styles.strategyBadgeText}>STRATEGY</Text>
                   </View>
                   <Text style={styles.strategyName}>{s.name}</Text>
                 </View>
-                <View style={styles.strategyStats}>
-                  <View style={styles.strategyStat}>
-                    <Text style={styles.strategyStatValue}>{s.wins}</Text>
-                    <Text style={styles.strategyStatLabel}>Wins</Text>
-                  </View>
-                  <View style={styles.strategyStat}>
-                    <Text style={styles.strategyStatValue}>{s.losses}</Text>
-                    <Text style={styles.strategyStatLabel}>Losses</Text>
-                  </View>
-                  <View style={styles.strategyStat}>
-                    <Text style={[styles.strategyStatValue, { color: plColor(s.pl) }]}>
-                      {s.pl >= 0 ? '' : '-'}${fmt(s.pl)}
-                    </Text>
-                    <Text style={styles.strategyStatLabel}>P&L</Text>
-                  </View>
-                </View>
+                {!!s.dateRange && (
+                  <Text style={styles.strategyDateRange}>{s.dateRange}</Text>
+                )}
+                {(['scalp', 'intraday', 'swing'] as ModelKey[]).map(mk => {
+                  const ms = s.byModel[mk];
+                  if (!hasModelData(ms)) {
+                    // Render a faded "Coming soon" placeholder, matching the website
+                    return (
+                      <View key={mk} style={[styles.modelCard, styles.modelCardEmpty]}>
+                        <Text style={[styles.modelCardTitle, { color: MODEL_COLORS[mk] }]}>
+                          {MODEL_LABELS[mk]}
+                        </Text>
+                        <Text style={styles.modelCardEmptyText}>Coming soon</Text>
+                      </View>
+                    );
+                  }
+                  return (
+                    <View key={mk} style={styles.modelCard}>
+                      <Text style={[styles.modelCardTitle, { color: MODEL_COLORS[mk] }]}>
+                        {MODEL_LABELS[mk]}
+                      </Text>
+                      <View style={styles.modelStatsGrid}>
+                        <View style={styles.modelStat}>
+                          <Text style={styles.modelStatValue}>{ms.open}</Text>
+                          <Text style={styles.modelStatLabel}>OPEN</Text>
+                        </View>
+                        <View style={styles.modelStat}>
+                          <Text style={styles.modelStatValue}>{ms.closed}</Text>
+                          <Text style={styles.modelStatLabel}>CLOSED</Text>
+                        </View>
+                        <View style={styles.modelStat}>
+                          <Text style={[
+                            styles.modelStatValue,
+                            { color: ms.closed > 0 ? (ms.winRate >= 50 ? Colors.green : Colors.red) : Colors.dark },
+                          ]}>
+                            {ms.closed > 0 ? `${ms.winRate}%` : '—'}
+                          </Text>
+                          <Text style={styles.modelStatLabel}>WIN RATE</Text>
+                        </View>
+                        <View style={styles.modelStat}>
+                          <Text style={[styles.modelStatValue, { color: plColor(ms.realizedPl) }]}>
+                            {ms.realizedPl >= 0 ? '+' : '-'}${fmt(Math.abs(ms.realizedPl))}
+                          </Text>
+                          <Text style={styles.modelStatLabel}>REALIZED P&L</Text>
+                        </View>
+                        <View style={styles.modelStat}>
+                          <Text style={[styles.modelStatValue, { color: Colors.green }]}>
+                            ${fmt(ms.avgWin)}
+                          </Text>
+                          <Text style={styles.modelStatLabel}>AVG WIN</Text>
+                        </View>
+                        <View style={styles.modelStat}>
+                          <Text style={[styles.modelStatValue, { color: Colors.red }]}>
+                            ${fmt(Math.abs(ms.avgLoss))}
+                          </Text>
+                          <Text style={styles.modelStatLabel}>AVG LOSS</Text>
+                        </View>
+                      </View>
+                    </View>
+                  );
+                })}
               </View>
             ))}
           </View>
@@ -323,15 +510,40 @@ const styles = StyleSheet.create({
   section: { paddingHorizontal: 16, marginTop: 20 },
   sectionTitle: { fontSize: 16, fontWeight: '500', color: Colors.dark, marginBottom: 12 },
   // Strategy cards
-  strategyCard: { backgroundColor: Colors.white, borderRadius: 12, padding: 16, marginBottom: 8 },
-  strategyHeader: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 14 },
+  strategyCard: { backgroundColor: Colors.white, borderRadius: 12, padding: 16, marginBottom: 12 },
+  strategyHeader: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 4 },
   strategyBadge: { backgroundColor: Colors.olive, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 50 },
   strategyBadgeText: { color: Colors.gold, fontSize: 10, fontWeight: '600', letterSpacing: 0.3 },
-  strategyName: { fontSize: 15, fontWeight: '500', color: Colors.dark },
-  strategyStats: { flexDirection: 'row', justifyContent: 'space-around' },
-  strategyStat: { alignItems: 'center' },
-  strategyStatValue: { fontSize: 20, fontWeight: '300', color: Colors.dark },
-  strategyStatLabel: { fontSize: 10, color: Colors.textLight, marginTop: 2 },
+  strategyName: { fontSize: 18, fontWeight: '500', color: Colors.dark, flexShrink: 1 },
+  strategyDateRange: { fontSize: 11, color: Colors.textLight, marginTop: 2, marginBottom: 12 },
+  // Per-model card under each strategy header
+  modelCard: {
+    backgroundColor: Colors.cream,
+    borderRadius: 10,
+    padding: 14,
+    marginTop: 10,
+  },
+  modelCardEmpty: { opacity: 0.4 },
+  modelCardTitle: {
+    fontSize: 12,
+    fontWeight: '600',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+    paddingBottom: 8,
+    marginBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e8e2d8',
+  },
+  modelCardEmptyText: {
+    textAlign: 'center',
+    color: Colors.textLight,
+    fontSize: 12,
+    paddingVertical: 12,
+  },
+  modelStatsGrid: { flexDirection: 'row', flexWrap: 'wrap' },
+  modelStat: { width: '50%', alignItems: 'center', paddingVertical: 8 },
+  modelStatValue: { fontSize: 22, fontWeight: '300', color: Colors.dark },
+  modelStatLabel: { fontSize: 10, color: Colors.textLight, letterSpacing: 0.5, marginTop: 2 },
   // Pair table
   pairTable: { backgroundColor: Colors.white, borderRadius: 12, padding: 12 },
   pairHeaderRow: { flexDirection: 'row', paddingBottom: 8, borderBottomWidth: 1, borderBottomColor: '#f0f0f0' },
