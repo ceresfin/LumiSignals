@@ -110,7 +110,14 @@ class LumiSignalsBot:
             }
             if extra_meta:
                 log_entry.update(extra_meta)
-            get_signal_log().record(result.order_id, log_entry)
+            # Record under order_id (existing key) AND trade_id when the order
+            # filled immediately. Direct trade_id lookups (mobile sync,
+            # trade_tracker enrichment) used to miss because only order_id
+            # was stored — leading to fuzzy fallback matching.
+            sig_log = get_signal_log()
+            sig_log.record(result.order_id, log_entry)
+            if result.trade_id:
+                sig_log.record(result.trade_id, log_entry)
         else:
             logger.warning("Order failed — %s", result.error)
 

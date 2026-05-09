@@ -44,6 +44,25 @@ function getChartTimeframe(model?: string, strategy?: string): string {
   return '15m';
 }
 
+// Compose a short two-part label like "SCALP HTF", "INTRADAY HTF", or
+// "SCALP 2N20" so the badge conveys both the timeframe (model) and the
+// underlying strategy. Mirrors how the website Trades page splits these.
+function strategyBadgeText(strategy?: string, model?: string): string {
+  const s = (strategy || '').toLowerCase();
+  const m = (model || '').toUpperCase();
+  // Strip the 2n20 suffix from model so we don't double-print it.
+  const baseModel = m.replace(/_2N20$/, '');
+  let suffix = '';
+  if (m.includes('2N20') || s === 'vwap_2n20' || s === '2n20') suffix = '2N20';
+  else if (s === 'htf_levels' || s === 'htf_supply_demand') suffix = 'HTF';
+  else if (s === 'orb_breakout') suffix = 'ORB';
+  else if (s === 'manual' || s === 'manual_close' || s === 'manual_test') suffix = 'MANUAL';
+  if (!baseModel && !suffix) return s.toUpperCase();
+  if (!suffix) return baseModel;
+  if (!baseModel) return suffix;
+  return `${baseModel} ${suffix}`;
+}
+
 function PositionRow({ position, onChartPress }: { position: Position; onChartPress: (instrument: string, tf: string) => void }) {
   const dir = position.direction === 'LONG' || position.direction === 'BUY' ? 'BUY' : 'SELL';
   const pl = position.unrealized_pl || 0;
@@ -134,7 +153,7 @@ function PositionRow({ position, onChartPress }: { position: Position; onChartPr
         <Text style={[styles.modelBadge, {
           color: position.model?.includes('2n20') ? Colors.amber : Colors.scalp,
         }]}>
-          {position.model?.toUpperCase() || position.strategy?.toUpperCase() || ''}
+          {strategyBadgeText(position.strategy, position.model)}
         </Text>
       </View>
     </View>

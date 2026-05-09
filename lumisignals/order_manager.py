@@ -227,7 +227,19 @@ class OrderManager:
 
         if "orderCreateTransaction" in result:
             order_id = result["orderCreateTransaction"]["id"]
-            logger.info("Order %s created: %s %s %s units @ %s", order_id, signal.action, instrument, abs(units), signal.entry)
-            return OrderResult(success=True, order_id=order_id, details=details)
+            # If the market order filled immediately (typical), Oanda returns
+            # an orderFillTransaction whose tradeOpened.tradeID is the new
+            # open position's trade_id. Pluck it so the caller can key
+            # signal_log under both order_id AND trade_id.
+            trade_id = None
+            try:
+                fill = result.get("orderFillTransaction") or {}
+                opened = fill.get("tradeOpened") or {}
+                trade_id = opened.get("tradeID")
+            except Exception:
+                pass
+            logger.info("Order %s created (trade %s): %s %s %s units @ %s",
+                        order_id, trade_id or "—", signal.action, instrument, abs(units), signal.entry)
+            return OrderResult(success=True, order_id=order_id, trade_id=trade_id, details=details)
 
         return OrderResult(success=False, error="Order may not have been created", details={"response": result})

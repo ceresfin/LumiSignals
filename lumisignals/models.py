@@ -44,5 +44,11 @@ class OrderResult:
     """Result of an order placement attempt."""
     success: bool
     order_id: Optional[str] = None
+    # When a market order fills immediately, Oanda also returns a trade_id
+    # distinct from the order_id (the trade is the resulting open position).
+    # Capturing it here lets us key the signal_log under both IDs so later
+    # lookups (mobile sync, /api/oanda/trades enrichment) can resolve a
+    # trade back to its strategy without fuzzy matching.
+    trade_id: Optional[str] = None
     details: dict = field(default_factory=dict)
     error: Optional[str] = None

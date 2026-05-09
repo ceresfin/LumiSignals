@@ -29,6 +29,199 @@ CPAPI_URL = os.environ.get("CPAPI_BASE_URL", "https://localhost:5000/v1/api")
 SYNC_INTERVAL = 10
 
 
+def _lookup_signal_metadata(signal_log: dict, trade_id: str, instrument: str,
+                             entry_price: float, stop_price: float) -> dict:
+    """Return the signal_log entry for an Oanda trade. Mirrors trade_tracker:
+    direct lookup by trade_id first, then fuzzy match by instrument + entry
+    price (within 0.1%) + stop loss.
+
+    Why: Oanda's API doesn't carry the bot's strategy/model tag. The bot
+    writes those into a local signal log (the "metadata sidecar" Sonia
+    described, ported from the old Airtable trade-journal pattern) keyed
+    by Oanda trade_id and order_id. We join on read.
+    """
+    if not signal_log:
+        return {}
+    direct = signal_log.get(str(trade_id))
+    if isinstance(direct, dict):
+        return direct
+    # Fallback: fuzzy match
+    symbol_clean = instrument.replace("_", "").upper()
+    best, best_score = None, float("inf")
+    for sig in signal_log.values():
+        if not isinstance(sig, dict):
+            continue
+        sig_symbol = (sig.get("symbol") or sig.get("instrument") or "").replace("_", "").upper()
+        if sig_symbol != symbol_clean:
+            continue
+        sig_entry = sig.get("entry") or sig.get("entry_price") or 0
+        if not (sig_entry and entry_price):
+            continue
+        entry_dist = abs(sig_entry - entry_price)
+        if entry_dist >= entry_price * 0.001:
+            continue
+        score = entry_dist
+        sig_stop = sig.get("stop") or sig.get("stop_price") or 0
+        if stop_price and sig_stop:
+            score += abs(sig_stop - stop_price)
+        if score < best_score:
+            best_score = score
+            best = sig
+    return best or {}
+
+
+def sync_oanda_positions_to_supabase():
+    """Refresh unrealized_pl on Oanda position rows in Supabase, full sync
+    of currently-open Oanda trades, with strategy/model joined from the
+    local signal log (Oanda's API doesn't carry that metadata).
+    """
+    try:
+        from .supabase_client import get_client
+        from .oanda_client import OandaClient
+        import psycopg2
+    except Exception as e:
+        logger.debug("oanda sync deps unavailable: %s", e)
+        return
+    sb = get_client()
+    if not sb:
+        return
+    user_id = os.environ.get("SUPABASE_USER_ID", "")
+    if not user_id:
+        return
+
+    # Pull Oanda creds from Postgres for the active bot user (single-user setup).
+    db_url = os.environ.get(
+        "DATABASE_URL",
+        "postgresql://lumisignals:LumiBot2026@localhost/lumisignals_db",
+    )
+    try:
+        conn = psycopg2.connect(db_url)
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, oanda_api_key, oanda_account_id, oanda_environment "
+            "FROM users WHERE bot_active = true AND oanda_api_key IS NOT NULL "
+            "ORDER BY id LIMIT 1"
+        )
+        row = cur.fetchone()
+        conn.close()
+    except Exception as e:
+        logger.debug("oanda creds lookup failed: %s", e)
+        return
+    if not row:
+        return
+    pg_user_id, api_key, acct_id, env = row
+
+    # Load that user's signal log (per-user file, written at fill time by
+    # fx_scalp_2n20.SignalLog.record).
+    signal_log = {}
+    sig_path = f"/opt/lumisignals/signal_log_user_{pg_user_id}.json"
+    try:
+        import json as _json
+        with open(sig_path) as f:
+            signal_log = _json.load(f)
+    except Exception as e:
+        logger.debug("signal log load failed (%s): %s", sig_path, e)
+
+    try:
+        oc = OandaClient(account_id=acct_id, api_key=api_key, environment=env or "practice")
+        resp = oc.get_trades(state="OPEN") or {}
+        trades = resp.get("trades", [])
+    except Exception as e:
+        logger.debug("oanda fetch failed: %s", e)
+        return
+
+    now_iso = time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime())
+    open_ids = {str(t.get("id") or "") for t in trades if t.get("id")}
+
+    # Pull the existing oanda rows so we know which to UPDATE vs INSERT, and
+    # which to DELETE because the trade closed on Oanda's side.
+    try:
+        existing = sb.table("positions").select("id, broker_trade_id") \
+            .eq("user_id", user_id).eq("broker", "oanda").execute().data or []
+    except Exception as e:
+        logger.debug("oanda existing fetch failed: %s", e)
+        existing = []
+    existing_by_tid = {str(r.get("broker_trade_id") or ""): r["id"] for r in existing}
+
+    # Insert / update each currently-open trade.
+    for t in trades:
+        tid = str(t.get("id") or "")
+        if not tid:
+            continue
+        try:
+            unreal = float(t.get("unrealizedPL") or 0)
+            entry = float(t.get("price") or 0)
+            units = int(float(t.get("currentUnits") or 0))
+        except (TypeError, ValueError):
+            continue
+        sl = (t.get("stopLossOrder") or {}).get("price")
+        tp = (t.get("takeProfitOrder") or {}).get("price")
+        live_fields = {
+            "unrealized_pl": round(unreal, 2),
+            "entry_price": entry,
+            "units": abs(units),
+            "stop_loss": float(sl) if sl else None,
+            "take_profit": float(tp) if tp else None,
+            "updated_at": now_iso,
+        }
+        try:
+            if tid in existing_by_tid:
+                # Existing row — refresh live fields, preserve strategy/model.
+                sb.table("positions").update(live_fields) \
+                    .eq("user_id", user_id) \
+                    .eq("broker", "oanda") \
+                    .eq("broker_trade_id", tid).execute()
+            else:
+                # New row — insert minimal record. strategy/model stay empty
+                # for trades the bot didn't originate; mobile shows them anyway
+                # so the view matches the website (which lists all open trades).
+                # Oanda returns openTime as a Unix epoch string ("1778268763.531408926"),
+                # not an ISO timestamp. Convert before inserting.
+                opened_at = now_iso
+                ot = t.get("openTime")
+                if ot:
+                    try:
+                        from datetime import datetime as _dt, timezone as _tz
+                        opened_at = _dt.fromtimestamp(float(ot), tz=_tz.utc).isoformat()
+                    except (TypeError, ValueError):
+                        pass
+                # Join strategy/model from the signal log sidecar — accurate
+                # attribution per trade (manual trades stay tagless).
+                sig = _lookup_signal_metadata(
+                    signal_log, tid,
+                    t.get("instrument", ""),
+                    entry,
+                    float(sl) if sl else 0,
+                )
+                strategy = sig.get("strategy_id") or sig.get("strategy") or ""
+                model = sig.get("model") or ""
+                row = {
+                    "user_id": user_id,
+                    "broker": "oanda",
+                    "broker_trade_id": tid,
+                    "instrument": t.get("instrument", ""),
+                    "asset_type": "forex",
+                    "direction": "BUY" if units > 0 else "SELL",
+                    "contracts": 1,
+                    "strategy": strategy,
+                    "model": model,
+                    "opened_at": opened_at,
+                    **live_fields,
+                }
+                sb.table("positions").insert(row).execute()
+        except Exception as e:
+            logger.debug("oanda position write failed for trade %s: %s", tid, e)
+
+    # Delete any oanda rows whose trade is no longer open (closed by SL/TP/manual).
+    for tid, rid in existing_by_tid.items():
+        if tid and tid in open_ids:
+            continue
+        try:
+            sb.table("positions").delete().eq("id", rid).execute()
+        except Exception as e:
+            logger.debug("oanda position delete failed for id %s: %s", rid, e)
+
+
 def sync_positions_to_supabase(positions: list):
     """Refresh entry_price + unrealized_pl on existing Supabase position rows
     for each open IB position. Matches by (user_id, broker='ib', instrument).
@@ -1247,6 +1440,7 @@ def main():
             # reads Supabase directly, so the rows would otherwise stay frozen
             # at order-placement-time values).
             sync_positions_to_supabase(data.get("positions", []))
+            sync_oanda_positions_to_supabase()
 
             # Check for options analyze requests
             check_analyze_requests(client)
