@@ -29,6 +29,57 @@ CPAPI_URL = os.environ.get("CPAPI_BASE_URL", "https://localhost:5000/v1/api")
 SYNC_INTERVAL = 10
 
 
+def sync_positions_to_supabase(positions: list):
+    """Refresh entry_price + unrealized_pl on existing Supabase position rows
+    for each open IB position. Matches by (user_id, broker='ib', instrument).
+
+    The mobile app reads from the Supabase positions table directly, so without
+    this update it sees only the snapshot taken when the order originally filled.
+    The web app reads from Redis (via push_to_server), so it doesn't need this.
+    """
+    if not positions:
+        return
+    try:
+        from .supabase_client import get_client
+    except Exception as e:
+        logger.debug("supabase_client unavailable: %s", e)
+        return
+    sb = get_client()
+    if not sb:
+        return
+    user_id = os.environ.get("SUPABASE_USER_ID", "")
+    if not user_id:
+        return
+
+    for pos in positions:
+        symbol = pos.get("symbol")
+        if not symbol:
+            continue
+        sec_type = pos.get("sec_type", "")
+        # Only refresh STK / FUT here; OPT positions are part of spreads,
+        # which have their own sync path.
+        if sec_type not in ("STK", "FUT"):
+            continue
+        multiplier = pos.get("multiplier") or 1
+        avg_cost = pos.get("avg_cost") or 0
+        # avg_cost is total ($/contract * multiplier); divide for per-unit price.
+        entry_price = (avg_cost / multiplier) if multiplier else avg_cost
+        update = {
+            "entry_price": round(float(entry_price), 4),
+            "unrealized_pl": round(float(pos.get("unrealized_pnl") or 0), 2),
+            "contracts": int(abs(pos.get("quantity") or 0)),
+            "updated_at": time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime()),
+        }
+        try:
+            sb.table("positions").update(update) \
+                .eq("user_id", user_id) \
+                .eq("broker", "ib") \
+                .eq("instrument", symbol) \
+                .execute()
+        except Exception as e:
+            logger.debug("supabase position refresh failed for %s: %s", symbol, e)
+
+
 def collect_ib_data(client) -> dict:
     """Collect all relevant data from IB via Client Portal API."""
 
@@ -118,7 +169,9 @@ def collect_ib_data(client) -> dict:
             "action": order.get("side", ""),
             "quantity": float(order.get("totalSize", order.get("remainingQuantity", 0))),
             "order_type": order.get("orderType", ""),
-            "limit_price": float(order.get("price", 0)),
+            # CPAPI returns "" (empty string) for the price of a market order, so
+            # the default kwarg doesn't help — `or 0` covers both None and "".
+            "limit_price": float(order.get("price") or 0),
             "status": order.get("status", ""),
             "time": order.get("lastExecutionTime_r", ""),
         }
@@ -151,7 +204,7 @@ def collect_ib_data(client) -> dict:
                 legs.append(leg_info)
             # If leg resolution failed, look up stored order details from server
             if not right:
-                for lookup_id in [o.orderId, o.permId]:
+                for lookup_id in [order.get("orderId"), order.get("permId")]:
                     if not lookup_id:
                         continue
                     try:
@@ -185,11 +238,11 @@ def collect_ib_data(client) -> dict:
                     except Exception:
                         pass
                 # Try searching by symbol + strikes
-                if not order_entry.get("model") and c.symbol:
+                if not order_entry.get("model") and order.get("ticker"):
                     try:
                         resp = requests.get(
                             f"{SERVER_URL}/api/ibkr/order/search",
-                            params={"ticker": c.symbol, "sell_strike": sell_strike or 0, "buy_strike": buy_strike or 0},
+                            params={"ticker": order.get("ticker"), "sell_strike": sell_strike or 0, "buy_strike": buy_strike or 0},
                             headers={"X-Sync-Key": SYNC_KEY},
                             timeout=5,
                         )
@@ -223,11 +276,11 @@ def collect_ib_data(client) -> dict:
                         pass
             order_entry["legs"] = legs
             # Try to enrich with stored order data by searching ticker + strikes
-            if c.symbol and sell_strike and buy_strike:
+            if order.get("ticker") and sell_strike and buy_strike:
                 try:
                     resp = requests.get(
                         f"{SERVER_URL}/api/ibkr/order/search",
-                        params={"ticker": c.symbol, "sell_strike": sell_strike, "buy_strike": buy_strike},
+                        params={"ticker": order.get("ticker"), "sell_strike": sell_strike, "buy_strike": buy_strike},
                         headers={"X-Sync-Key": SYNC_KEY},
                         timeout=5,
                     )
@@ -256,10 +309,10 @@ def collect_ib_data(client) -> dict:
                 except Exception:
                     pass
             # Fallback to signal log if model still missing
-            if not order_entry.get("model") and c.symbol:
+            if not order_entry.get("model") and order.get("ticker"):
                 try:
                     resp = requests.get(
-                        f"{SERVER_URL}/api/ibkr/signal-lookup/{c.symbol}",
+                        f"{SERVER_URL}/api/ibkr/signal-lookup/{order.get("ticker")}",
                         headers={"X-Sync-Key": SYNC_KEY},
                         timeout=5,
                     )
@@ -285,7 +338,7 @@ def collect_ib_data(client) -> dict:
             # For calls: sell lower strike = bear call credit
             # For puts: sell higher strike = bull put credit
             width = abs(sell_strike - buy_strike) if sell_strike and buy_strike else 0
-            premium = abs(o.lmtPrice)
+            premium = abs(order_entry.get("limit_price") or 0)
             if right == "C":
                 if sell_strike < buy_strike:
                     order_entry["spread_type"] = "Bear Call Credit"
@@ -314,10 +367,11 @@ def collect_ib_data(client) -> dict:
                 order_entry["max_risk"] = round(premium * 100, 2)
                 order_entry["max_profit"] = round((width - premium) * 100, 2) if width else 0
             order_entry["risk_reward"] = round(order_entry["max_profit"] / order_entry["max_risk"], 2) if order_entry["max_risk"] > 0 else 0
-        elif c.secType == "OPT":
-            order_entry["expiration"] = c.lastTradeDateOrContractMonth
-            order_entry["strike"] = c.strike
-            order_entry["right"] = c.right
+        elif order.get("secType") == "OPT":
+            # Single-leg option order — strike/right/expiration would need a
+            # /iserver/contract/{conid}/info call. Skip enrichment for now;
+            # the combo branch above handles the multi-leg spreads we care about.
+            pass
         open_orders.append(order_entry)
 
     # Completed (filled) orders — recent trades from CPAPI
@@ -1187,6 +1241,12 @@ def main():
             )
 
             push_to_server(data)
+
+            # Refresh open IB positions in Supabase so the mobile app sees
+            # live mark price and unrealized P&L (web app reads Redis; mobile
+            # reads Supabase directly, so the rows would otherwise stay frozen
+            # at order-placement-time values).
+            sync_positions_to_supabase(data.get("positions", []))
 
             # Check for options analyze requests
             check_analyze_requests(client)
