@@ -405,8 +405,12 @@ class LevelsStrategy:
     def _get_trade_builder_data(self, ticker: str, market: str = "forex") -> dict:
         """Get ATR and trend direction using built-in ADX calculation from Polygon data.
 
-        Replaces LumiTrade Trade Builder API. Uses the same ADX algorithm as
-        the TradingView HTF Strategy Scanner for consistent results.
+        Trends are read on 1d/1w/1mo (global market structure, model-agnostic).
+        ATR is scoped to the model's trigger timeframe so stop_distance matches
+        the trade's natural holding window:
+            SCALP    -> 5m ATR
+            INTRADAY -> 1h ATR
+            SWING    -> 1d ATR
         """
         result = {"atr": None, "trends": {}}
 
@@ -418,25 +422,29 @@ class LevelsStrategy:
         if market == "forex" and not ticker.startswith("C:"):
             poly_ticker = f"C:{ticker.replace('_', '')}"
 
+        # Trends on macro TFs regardless of model
         tf_map = {"1d": "Daily", "1w": "Weekly", "1mo": "Monthly"}
-
         for tf, label in tf_map.items():
             try:
                 count = 30 if tf in ("1mo", "1w") else 50
                 candles = self.massive.get_candles(poly_ticker, tf, count)
                 if not candles or len(candles) < 16:
                     continue
-
-                direction, adx_val = calculate_adx_direction(candles, period=14)
+                direction, _ = calculate_adx_direction(candles, period=14)
                 result["trends"][label] = "bullish" if direction == "UP" else ("bearish" if direction == "DOWN" else "neutral")
-
-                # ATR from daily candles
-                if tf == "1d":
-                    ranges = [c.high - c.low for c in candles[-14:]]
-                    if ranges:
-                        result["atr"] = sum(ranges) / len(ranges)
             except Exception as e:
                 logger.debug("Built-in trend error for %s %s: %s", ticker, tf, e)
+
+        # ATR scoped to model trigger TF (e.g. 5m for scalp, 1h for intraday, 1d for swing)
+        atr_tf = self.trading_timeframe
+        try:
+            atr_count = 30 if atr_tf in ("5m", "15m", "30m", "1h") else 50
+            atr_candles = self.massive.get_candles(poly_ticker, atr_tf, atr_count)
+            if atr_candles and len(atr_candles) >= 14:
+                ranges = [c.high - c.low for c in atr_candles[-14:]]
+                result["atr"] = sum(ranges) / len(ranges)
+        except Exception as e:
+            logger.debug("ATR fetch error for %s %s: %s", ticker, atr_tf, e)
 
         return result
 
@@ -774,10 +782,12 @@ class LevelsStrategy:
         trends = tb_data["trends"]
 
         if atr is None or atr == 0:
-            # Estimate ATR from daily candles if Trade Builder doesn't have it
-            daily = self.massive.get_candles(ticker, timespan="1d", count=14)
-            if daily and len(daily) >= 2:
-                ranges = [c.high - c.low for c in daily[-14:]]
+            # Estimate ATR from the model's trigger-TF candles as fallback
+            fb_tf = self.trading_timeframe
+            fb_count = 30 if fb_tf in ("5m", "15m", "30m", "1h") else 14
+            fb = self.massive.get_candles(ticker, timespan=fb_tf, count=fb_count)
+            if fb and len(fb) >= 2:
+                ranges = [c.high - c.low for c in fb[-14:]]
                 atr = sum(ranges) / len(ranges)
             else:
                 logger.debug("No ATR for %s — skipping", ticker)
