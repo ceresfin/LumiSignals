@@ -1108,11 +1108,25 @@ class LevelsStrategy:
         self._fire_trigger(trigger)
 
     def _find_target(self, zone: ZoneEntry, entry: float, stop_distance: float) -> float:
-        """Find the next S/R level in trade direction for the target."""
+        """Find the next S/R level in trade direction for the target.
+
+        Target timeframes match the model's intended holding window so the TP
+        is reachable within the trade's natural duration:
+          - scalp:    5m / 15m / 1h levels   (move enclosed by one 1H bar)
+          - intraday: 1h / 1d / 1w levels    (move enclosed by one 1W bar)
+          - swing:    1d / 1w / 1mo levels   (move enclosed by one 1M bar)
+        """
+        if self.model_name == "scalp":
+            target_tfs = ["5m", "15m", "1h"]
+        elif self.model_name == "intraday":
+            target_tfs = ["1h", "1d", "1w"]
+        else:
+            target_tfs = ["1d", "1w", "1mo"]
+
         ticker = zone.instrument.replace("_", "")
         try:
             snr_data = get_builtin_snr_levels(
-                self.massive, ticker, ["1mo", "1w", "1d"], market_type="forex",
+                self.massive, ticker, target_tfs, market_type="forex",
             )
         except Exception:
             snr_data = {}
@@ -1120,7 +1134,7 @@ class LevelsStrategy:
         if zone.trade_direction == "BUY":
             # Look for supply (resistance) above entry
             candidates = []
-            for tf in ["1d", "1w", "1mo"]:
+            for tf in target_tfs:
                 r = (snr_data or {}).get(tf, {}).get("resistance_price")
                 if r and r > entry + stop_distance:
                     candidates.append(r)
@@ -1130,7 +1144,7 @@ class LevelsStrategy:
         else:
             # Look for demand (support) below entry
             candidates = []
-            for tf in ["1d", "1w", "1mo"]:
+            for tf in target_tfs:
                 s = (snr_data or {}).get(tf, {}).get("support_price")
                 if s and s < entry - stop_distance:
                     candidates.append(s)

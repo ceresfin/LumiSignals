@@ -40,11 +40,15 @@ type Position = {
   } | null;
 };
 
+// Default chart timeframe = the model's execution bar.
+// - scalp:    5m bars (trend on 15m, move fits in 1H)
+// - intraday: 1h bars (trend on 1d, move fits in 1W)
+// - swing:    1d bars (trend on 1w, move fits in 1M)
 const STRATEGY_TIMEFRAMES: Record<string, string> = {
   'scalp_2n20': '2m',
   'vwap_2n20': '2m',
   '2n20': '2m',
-  'scalp': '15m',
+  'scalp': '5m',
   'intraday': '1h',
   'swing': '1d',
   'orb_breakout': '15m',
