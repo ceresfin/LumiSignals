@@ -485,6 +485,7 @@ export default function Positions() {
             interval: tf,
             entry: item.entry_price?.toString(),
             stop: item.stop_loss?.toString(),
+            exit: item.take_profit?.toString(),
             direction: item.direction,
             strategy: item.strategy || item.model || '',
           }
