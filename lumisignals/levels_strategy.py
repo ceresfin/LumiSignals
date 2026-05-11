@@ -101,6 +101,7 @@ SCALP_MODEL = ModelConfig(
     zone_tolerance_pct={"15m": 0.0015, "1h": 0.002},
     min_score=50,
     min_risk_reward=1.5,
+    atr_stop_multiplier=3.0,   # stop = 3 x 5m ATR
     watchlist_interval=300,
     monitor_interval=30,
     options_dte_range=(3, 7),
@@ -116,6 +117,7 @@ INTRADAY_MODEL = ModelConfig(
     zone_tolerance_pct={"1d": 0.005, "1w": 0.007},
     min_score=50,
     min_risk_reward=1.5,
+    atr_stop_multiplier=3.0,   # stop = 3 x 1h ATR
     watchlist_interval=300,
     monitor_interval=30,
     options_dte_range=(7, 14),
@@ -131,6 +133,7 @@ SWING_MODEL = ModelConfig(
     zone_tolerance_pct={"1w": 0.006, "1mo": 0.009},
     min_score=50,
     min_risk_reward=1.5,
+    atr_stop_multiplier=3.0,   # stop = 3 x 1d ATR
     watchlist_interval=7200,   # 2 hours — swing zones don't change fast
     monitor_interval=30,
     options_dte_range=(25, 40),
