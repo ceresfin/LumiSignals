@@ -30,6 +30,14 @@ type Position = {
   take_profit: number | null;
   opened_at: string;
   updated_at: string;
+  metadata?: {
+    zone_type?: string;
+    zone_timeframe?: string;
+    zone_price?: number;
+    bias_score?: number;
+    trigger_pattern?: string;
+    trends?: Record<string, string>;
+  } | null;
 };
 
 const STRATEGY_TIMEFRAMES: Record<string, string> = {
@@ -177,6 +185,51 @@ function PositionRow({ position, onChartPress, onClose }: {
           </View>
         ) : null}
       </View>
+
+      {position.metadata ? (() => {
+        const meta = position.metadata;
+        const isSupply = (meta.zone_type || '').toLowerCase() === 'supply';
+        const tfColors: Record<string, string> = { '1mo': '#ff9800', '1w': '#ffeb3b', '1d': '#2196f3', '4h': '#ce93d8', '1h': '#66bb6a' };
+        const tfLabels: Record<string, string> = { '1mo': 'M', '1w': 'W', '1d': 'D', '4h': '4H', '1h': '1H' };
+        const tf = (meta.zone_timeframe || '').toLowerCase();
+        const tfColor = tfColors[tf] || '#888';
+        const trends = meta.trends || {};
+        const showZone = meta.zone_type || meta.zone_timeframe;
+        if (!showZone) return null;
+        return (
+          <View style={styles.zoneInfoRow}>
+            {meta.zone_type ? (
+              <View style={[styles.zoneBadge, { backgroundColor: isSupply ? '#fdecea' : '#e8f5e9' }]}>
+                <Text style={[styles.zoneBadgeText, { color: isSupply ? Colors.red : Colors.green }]}>
+                  {isSupply ? 'SUPPLY' : 'DEMAND'}
+                </Text>
+              </View>
+            ) : null}
+            {meta.zone_timeframe ? (
+              <View style={[styles.tfBadge, { backgroundColor: tfColor + '22', borderColor: tfColor }]}>
+                <Text style={[styles.tfBadgeText, { color: tfColor }]}>
+                  {tfLabels[tf] || meta.zone_timeframe.toUpperCase()}
+                </Text>
+              </View>
+            ) : null}
+            {Object.keys(trends).length > 0 ? (
+              <View style={styles.trendRow}>
+                {Object.entries(trends).map(([tfk, dir]) => (
+                  <Text key={tfk} style={[styles.trendBadge, {
+                    color: dir === 'bullish' ? Colors.green : dir === 'bearish' ? Colors.red : Colors.textLight,
+                  }]}>
+                    {tfk[0].toUpperCase()}{dir === 'bullish' ? '↑' : dir === 'bearish' ? '↓' : '→'}
+                  </Text>
+                ))}
+              </View>
+            ) : null}
+            <View style={{ flex: 1 }} />
+            {meta.bias_score ? (
+              <Text style={styles.zoneScore}>{meta.bias_score}</Text>
+            ) : null}
+          </View>
+        );
+      })() : null}
 
       {(risk > 0 || reward > 0) ? (
         <View style={styles.rrRow}>
@@ -584,6 +637,15 @@ const styles = StyleSheet.create({
   },
   posTime: { fontSize: 11, color: Colors.textLight },
   modelBadge: { fontSize: 10, fontWeight: '700', letterSpacing: 0.3 },
+  zoneInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 10,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#f0ebe2',
+    gap: 8,
+  },
   rrRow: {
     flexDirection: 'row',
     marginTop: 10,

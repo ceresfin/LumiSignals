@@ -502,15 +502,30 @@ def run_bot_for_user(user_data, stop_check):
                         except (ValueError, TypeError):
                             pass
 
-                        # Pre-save HTF position to Supabase with entry/stop/target so
-                        # the mobile app shows risk + reward immediately. Only writes
-                        # if the LIMIT order filled at submit time (trade_id present).
+                        # Pre-save HTF position to Supabase with entry/stop/target +
+                        # zone metadata (zone type, timeframe, score, trends) so the
+                        # mobile app can show Risk/Reward AND the originating zone
+                        # context on every active position card.
                         if result.trade_id:
                             try:
                                 from lumisignals.supabase_client import upsert_position
                                 supabase_uid = os.environ.get("SUPABASE_USER_ID", "")
                                 if supabase_uid:
                                     from datetime import datetime as _dt, timezone as _tz
+                                    # Zone metadata comes from extra_meta — same shape
+                                    # the signal_log records.
+                                    meta = {}
+                                    if extra_meta:
+                                        meta = {
+                                            "zone_type": extra_meta.get("zone_type") or extra_meta.get("level_type", ""),
+                                            "zone_timeframe": extra_meta.get("zone_timeframe") or extra_meta.get("level_timeframe", ""),
+                                            "zone_price": extra_meta.get("zone_price") or extra_meta.get("level_price", 0),
+                                            "bias_score": extra_meta.get("bias_score") or extra_meta.get("final_score", 0),
+                                            "trigger_pattern": extra_meta.get("trigger_pattern", ""),
+                                            "trends": extra_meta.get("trends", {}),
+                                        }
+                                        # Drop empty values so the JSONB stays compact.
+                                        meta = {k: v for k, v in meta.items() if v not in (None, "", 0, {})}
                                     upsert_position(supabase_uid, {
                                         "id": result.trade_id,
                                         "broker": "oanda",
@@ -524,6 +539,7 @@ def run_bot_for_user(user_data, stop_check):
                                         "strategy": "htf_levels",
                                         "model": model_name,
                                         "opened_at": _dt.now(_tz.utc).isoformat(),
+                                        "metadata": meta or None,
                                     })
                             except Exception as e:
                                 log(f"[{model_name.upper()}] Supabase position pre-save failed: {e}")

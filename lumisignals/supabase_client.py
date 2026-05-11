@@ -108,6 +108,7 @@ def upsert_position(user_id: str, position: dict):
             "pips": position.get("pips", 0),
             "strategy": position.get("strategy", ""),
             "model": position.get("model", ""),
+            "metadata": position.get("metadata", None),
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
         opened = position.get("time_opened", position.get("opened_at", ""))
