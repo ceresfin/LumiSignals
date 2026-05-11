@@ -1,0 +1,174 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2822
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
+{\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
+\margl1440\margr1440\vieww11520\viewh8400\viewkind0
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
+
+\f0\fs24 \cf0 declare lower;\
+\
+\
+input avgType = AverageType.EXPONENTIAL;\
+input avgLength1 = 20;\
+input avgLength2 = 45;\
+input avgOffset = 0;\
+\
+input timeFrame = \{default DAY, WEEK, MONTH\};\
+\
+def cap = GetAggregationPeriod();\
+def errorInAggregation =\
+    timeFrame == timeFrame.DAY and cap >= AggregationPeriod.WEEK or\
+    timeFrame == timeFrame.WEEK and cap >= AggregationPeriod.MONTH;\
+Assert(!errorInAggregation, "timeFrame should be not less than current chart aggregation period");\
+\
+def yyyyMmDd = GetYYYYMMDD();\
+def periodIndx;\
+switch (timeFrame) \{\
+case DAY:\
+    periodIndx = yyyyMmDd;\
+case WEEK:\
+    periodIndx = Floor((DaysFromDate(First(yyyyMmDd)) + GetDayOfWeek(First(yyyyMmDd))) / 7);\
+case MONTH:\
+    periodIndx = RoundDown(yyyyMmDd / 100, 0);\
+\}\
+def isPeriodRolled = CompoundValue(1, periodIndx != periodIndx[1], yes);\
+\
+def volumeSum;\
+def volumeVwapSum;\
+def volumeVwap2Sum;\
+\
+if (isPeriodRolled) \{\
+    volumeSum = volume;\
+    volumeVwapSum = volume * vwap;\
+    volumeVwap2Sum = volume * Sqr(vwap);\
+\} else \{\
+    volumeSum = CompoundValue(1, volumeSum[1] + volume, volume);\
+    volumeVwapSum = CompoundValue(1, volumeVwapSum[1] + volume * vwap, volume * vwap);\
+    volumeVwap2Sum = CompoundValue(1, volumeVwap2Sum[1] + volume * Sqr(vwap), volume * Sqr(vwap));\
+\}\
+def price = volumeVwapSum / volumeSum;\
+def deviation = Sqrt(Max(volumeVwap2Sum / volumeSum - Sqr(price), 0));\
+\
+def VWAP1 = price;\
+\
+\
+\
+\
+def avg1 = MovingAverage(avgType, close, avgLength1)[avgOffset];\
+def avg2 = MovingAverage(avgType, close, avgLength2)[avgOffset];\
+\
+#def today = GetYYYYMMDD();\
+def data = GetYYYYMMDD();\
+AddLabel(1, AsPrice(data) , Color.WHITE);\
+\
+\
+#defining engulfing bars\
+def BodyMax = Max(open, close);\
+def BodyMin = Min(open, close);\
+def PrevGreen = close[1] > open[1];\
+def PrevRed = close[1] < open[1];\
+\
+def GreenIsEngulfing = (BodyMax > BodyMax[1]) and PrevRed;\
+def RedIsEngulfing = (BodyMin < BodyMin[1]) and PrevGreen;\
+\
+#defining the bullish / bearish signals\
+def bullish_signal = \
+close > VWAP1 \
+and close > avg1  \
+and close > avg2  \
+and GreenIsEngulfing;\
+\
+\
+def bearish_signal = \
+close < VWAP1 \
+and close < avg1  \
+and close < avg2  \
+and RedIsEngulfing;\
+\
+\
+###################################################################\
+def A = close(\'93$ADVN\'94);\
+def D = close (\'93$DECN\'94);\
+def C = close ("$VOLD");\
+def ADR = if A > D then Round(A / D) else Round (-D / A);\
+\
+def VOLDAVG = MovingAverage(avgType, C, avgLength1)[avgOffset];\
+def VOLD_Down = IsDescending( VOLDAVG) and VOLDAVG < 0;\
+def VOLD_Up = IsAscending( VOLDAVG) and VOLDAVG > 0;\
+def ADR_N = ADR < -3 or VOLD_Down;\
+def ADR_P = ADR > 3 or VOLD_Up;\
+\
+##################################################################\
+#Cumulative Tick is consistently positive or negative.\
+def tickData = hlc3(symbol = "$TICK");\
+def cumulativeTickValue = if SecondsTillTime(930) < 0 and SecondsTillTime(1600) > 0 then tickData + cumulativeTickValue[1] else 0;\
+\
+\
+def strongCum = cumulativeTickValue > 0 and IsAscending(cumulativeTickValue);\
+def strongNegCum = cumulativeTickValue < 0 and IsDescending(cumulativeTickValue);\
+\
+################################################################\
+#Moving average of $ADD is rising or falling\
+\
+def AdvDec = close(\'93$ADD\'94);\
+def AdvDecAVG = MovingAverage(avgType, AdvDec, avgLength1)[avgOffset];\
+def ADDown = IsDescending( AdvDecAVG) and AdvDecAVG < 0;\
+def ADUp = IsAscending( AdvDecAVG) and AdvDecAVG > 0;\
+###################################################################################\
+\
+\
+\
+\
+###################################################################################\
+\
+input price2 = close;\
+input length = 10;\
+\
+def tmp1 = if price2 > price2[1] then price2 - price2[1] else 0;\
+def tmp2 = if price2[1] > price2 then price2[1] - price2 else 0;\
+def d2 = Sum(tmp1, length);\
+def d4 = Sum(tmp2, length);\
+def cond = d2 + d4 == 0;\
+def ad3 = if cond then 0 else (d2 - d4) / (d2 + d4) * 100;\
+def coeff = 2 / (length + 1) * AbsValue(ad3) / 100;\
+def asd = CompoundValue("visible data" = coeff * price2 + (if IsNaN(asd[1]) then 0 else asd[1]) * (1 - coeff), "historical data" = price2\
+);\
+def VMA = asd;\
+#VMA.SetDefaultColor(GetColor(0));\
+\
+def vwma8 = Sum(volume * close, 8) / Sum(volume, 8);\
+def vwma21 = Sum(volume * close, 21) / Sum(volume, 21);\
+def vwma34 = Sum(volume * close, 34) / Sum(volume, 34);\
+\
+def bullish = if vwma8 > vwma21 and vwma21 > vwma34 then 1 else 0;\
+def bearish = if vwma8 < vwma21 and vwma21 < vwma34 then 1 else 0;\
+def distribution = if !bullish and !bearish then 1 else 0;\
+\
+#plot accumulationToAcceleration = if (bullish and close >= VMA) then 1 else 0;\
+\
+\
+plot distributionToDeceleration = if (bearish and close <= VMA) then 1 else 0;\
+distributionToDeceleration.SetDefaultColor(Color.DARK_RED);\
+\
+\
+\
+\
+\
+##################################################################################\
+\
+#plot signal = bearish_signal;\
+plot verybearishsignal = bearish_signal \
+and strongNegCum is true  \
+and ADR_N is true \
+and ADDown is true\
+AND distributionToDeceleration is true;\
+\
+#plot signal = bullish_signal;\
+#plot verybullishsignal = bullish_signal \
+#and strongCum is true  \
+#and ADR_P is true \
+#and ADUp is true;\
+\
+\
+\
+#plot exit = MovAvgExponential("length" = 5)."AvgExp" crosses above MovAvgExponential("length" #= 8)."AvgExp";}
