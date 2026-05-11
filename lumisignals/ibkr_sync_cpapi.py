@@ -80,7 +80,13 @@ def get_strat_pos(ticker: str, strategy: str) -> dict:
 
 
 def save_strat_pos(ticker: str, strategy: str, direction: str,
-                    contracts: int, entry_price: float, perm_id: str):
+                    contracts: int, entry_price: float, perm_id: str,
+                    stop_order_id: str = "", stop_price: float = 0,
+                    multiplier: float = 1):
+    """Persist per-strategy position state. stop_order_id lets the
+    stop-fill watcher know which IB order belongs to this strategy's
+    SL — when that order leaves IB's open-orders list, the strategy
+    has been stopped out and we can clear the state and book the trade."""
     rdb = _rdb()
     if rdb is None:
         return
@@ -94,11 +100,110 @@ def save_strat_pos(ticker: str, strategy: str, direction: str,
                 "direction": direction, "contracts": int(contracts),
                 "entry_price": float(entry_price or 0),
                 "perm_id": str(perm_id or ""),
+                "stop_order_id": str(stop_order_id or ""),
+                "stop_price": float(stop_price or 0),
+                "multiplier": float(multiplier or 1),
                 "opened_at": _dt.now(_tz.utc).isoformat(),
             }),
         )
     except Exception as e:
         logger.warning("strat_pos save failed for %s/%s: %s", ticker, strategy, e)
+
+
+def check_stop_fills(client):
+    """Detect stop-loss order fills and close the matching strat_pos.
+
+    Each entry stores the IB order ID of its protective stop. We poll IB's
+    open orders each cycle; if a tracked stop_order_id is no longer open,
+    the stop has filled (or was cancelled). Filled stops mean the strategy
+    is out — book the closed trade with reason "Stop Loss" and clear the
+    strat_pos so the next entry signal can fire cleanly.
+
+    Cancelled (but not filled) stops are rare (only via manual cancel in
+    the IB UI). We treat them the same as filled for state purposes —
+    strat_pos gets cleared. P&L attribution may be 0 in that case, which
+    just means no closed-trade record gets posted."""
+    rdb = _rdb()
+    if rdb is None:
+        return
+    try:
+        open_orders = client.get_open_orders() or []
+    except Exception as e:
+        logger.debug("check_stop_fills: get_open_orders failed: %s", e)
+        return
+    open_ids = set()
+    for o in open_orders:
+        oid = o.get("orderId") or o.get("order_id")
+        if oid:
+            open_ids.add(str(oid))
+
+    try:
+        keys = list(rdb.scan_iter("ibkr:strat_pos:*"))
+    except Exception:
+        return
+
+    for key in keys:
+        try:
+            raw = rdb.get(key)
+            if not raw:
+                continue
+            sp = json.loads(raw)
+            stop_id = str(sp.get("stop_order_id") or "")
+            if not stop_id or stop_id == "0":
+                continue  # no SL captured (e.g. seeded positions) — reconcile handles those
+            if stop_id in open_ids:
+                continue  # stop still active
+
+            # Stop is gone from open orders — it filled (or was cancelled).
+            ticker = sp.get("ticker", "")
+            strategy = sp.get("strategy", "")
+            direction = sp.get("direction", "")
+            contracts = int(sp.get("contracts", 0))
+            entry_price = float(sp.get("entry_price", 0))
+            stop_price = float(sp.get("stop_price", 0))
+            multiplier = float(sp.get("multiplier", 1))
+
+            logger.info("Stop fill detected: %s [%s] stop_order_id=%s — clearing strat_pos",
+                        ticker, strategy, stop_id)
+
+            # Compute realized P&L assuming stop price was the exit.
+            # (Real fill may differ slightly due to slippage, but using
+            # stop_price gives a defensible approximation.)
+            exit_price = stop_price
+            pnl = 0
+            if entry_price and exit_price:
+                if direction == "BUY":
+                    pnl = (exit_price - entry_price) * contracts * multiplier
+                else:
+                    pnl = (entry_price - exit_price) * contracts * multiplier
+
+            # Post closed-trade record so it lands in trades.html / mobile.
+            try:
+                from datetime import datetime as _dt, timezone as _tz
+                requests.post(
+                    f"{SERVER_URL}/api/ibkr/closed-trade",
+                    json={
+                        "symbol": ticker, "type": "futures",
+                        "direction": "LONG" if direction == "BUY" else "SHORT",
+                        "contracts": contracts,
+                        "entry_price": round(entry_price, 2),
+                        "exit_price": round(exit_price, 2),
+                        "realized_pnl": round(pnl, 2),
+                        "strategy": strategy,
+                        "close_reason": "Stop Loss",
+                        "opened_at": sp.get("opened_at", ""),
+                        "closed_at": _dt.now(_tz.utc).isoformat(),
+                    },
+                    headers={"X-Sync-Key": SYNC_KEY},
+                    timeout=10,
+                )
+            except Exception as e:
+                logger.warning("Failed to record stop-fill closed trade for %s/%s: %s",
+                                ticker, strategy, e)
+
+            rdb.delete(key)
+        except Exception as e:
+            logger.debug("check_stop_fills entry error: %s", e)
 
 
 def clear_strat_pos(ticker: str, strategy: str):
@@ -1112,30 +1217,47 @@ def check_order_requests(client):
                         order_payload = client.build_futures_order(fut_conid, "BUY", contracts, "MKT", tif="GTC")
                         trade_result = client.place_order(order_payload)
                         time.sleep(2)
-                        # Place stop loss
+                        # Place stop loss and capture its IB order ID so the
+                        # stop-fill watcher can attribute fills to this strategy.
+                        sl_order_id = ""
+                        sl_price = 0
                         try:
                             fills = client.get_trades()
                             fill_price = float(fills[-1].get("price", 0)) if fills else 0
                             if fill_price > 0:
                                 sl_price = fill_price - sl_points
                                 sl_payload = client.build_futures_order(fut_conid, "SELL", contracts, "STP", sl_price, tif="GTC")
-                                client.place_order(sl_payload)
-                                logger.info("Stop loss: SELL %s @ %.2f (entry %.2f, risk $%.0f)", ticker, sl_price, fill_price, sl_dollars)
+                                sl_result = client.place_order(sl_payload)
+                                if isinstance(sl_result, list) and sl_result:
+                                    first = sl_result[0] if isinstance(sl_result[0], dict) else {}
+                                    sl_order_id = str(first.get("order_id", "") or "")
+                                elif isinstance(sl_result, dict):
+                                    sl_order_id = str(sl_result.get("order_id", "") or "")
+                                logger.info("Stop loss: SELL %s @ %.2f (entry %.2f, risk $%.0f) sl_id=%s",
+                                            ticker, sl_price, fill_price, sl_dollars, sl_order_id)
                         except Exception as e:
                             logger.error("Failed to place stop loss: %s", e)
                     elif direction == "SELL":
                         order_payload = client.build_futures_order(fut_conid, "SELL", contracts, "MKT", tif="GTC")
                         trade_result = client.place_order(order_payload)
                         time.sleep(2)
-                        # Place stop loss
+                        # Place stop loss and capture its IB order ID.
+                        sl_order_id = ""
+                        sl_price = 0
                         try:
                             fills = client.get_trades()
                             fill_price = float(fills[-1].get("price", 0)) if fills else 0
                             if fill_price > 0:
                                 sl_price = fill_price + sl_points
                                 sl_payload = client.build_futures_order(fut_conid, "BUY", contracts, "STP", sl_price, tif="GTC")
-                                client.place_order(sl_payload)
-                                logger.info("Stop loss: BUY %s @ %.2f (entry %.2f, risk $%.0f)", ticker, sl_price, fill_price, sl_dollars)
+                                sl_result = client.place_order(sl_payload)
+                                if isinstance(sl_result, list) and sl_result:
+                                    first = sl_result[0] if isinstance(sl_result[0], dict) else {}
+                                    sl_order_id = str(first.get("order_id", "") or "")
+                                elif isinstance(sl_result, dict):
+                                    sl_order_id = str(sl_result.get("order_id", "") or "")
+                                logger.info("Stop loss: BUY %s @ %.2f (entry %.2f, risk $%.0f) sl_id=%s",
+                                            ticker, sl_price, fill_price, sl_dollars, sl_order_id)
                         except Exception as e:
                             logger.error("Failed to place stop loss: %s", e)
                     else:
@@ -1182,9 +1304,14 @@ def check_order_requests(client):
                             pass
                         # Per-strategy position state — lets independent
                         # strategies (e.g. 2n20 + ORB) coexist on the same
-                        # contract; each closes only its own leg.
+                        # contract; each closes only its own leg. Stop info
+                        # included so check_stop_fills() can detect when
+                        # this strategy's SL hits and book the close.
                         save_strat_pos(ticker, strategy_name, direction,
-                                       contracts, entry_fill_price, perm_id)
+                                       contracts, entry_fill_price, perm_id,
+                                       stop_order_id=sl_order_id,
+                                       stop_price=sl_price,
+                                       multiplier=multiplier)
                         try:
                             requests.post(f"{SERVER_URL}/api/ibkr/order/update",
                                 json={
@@ -1588,6 +1715,12 @@ def main():
             # at order-placement-time values).
             sync_positions_to_supabase(data.get("positions", []))
             sync_oanda_positions_to_supabase()
+
+            # Watch for stop-loss fills. When a strategy's SL fires, its
+            # tracked stop_order_id disappears from open orders — clear the
+            # strat_pos and record the closed trade so we don't wait for
+            # the next signal to reconcile drift.
+            check_stop_fills(client)
 
             # Check for options analyze requests
             check_analyze_requests(client)
