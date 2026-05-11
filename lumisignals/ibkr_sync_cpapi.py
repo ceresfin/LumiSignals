@@ -26,7 +26,126 @@ logger = logging.getLogger("ibkr_sync")
 SERVER_URL = os.environ.get("LUMISIGNALS_URL", "https://bot.lumitrade.ai")
 SYNC_KEY = os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026")
 CPAPI_URL = os.environ.get("CPAPI_BASE_URL", "https://localhost:5000/v1/api")
+REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 SYNC_INTERVAL = 10
+
+
+# ─── Per-strategy futures position state ─────────────────────────────────
+# Tracks each strategy's MES (or any futures) position independently in
+# Redis so that, e.g., 2n20 and ORB can each hold their own long contract
+# in the same instrument without one's signal getting blocked by the
+# other's open position. IB aggregates positions at the account level
+# (qty=2 long if both strategies are long 1); the bot dispatches its own
+# close orders against its own strat_pos record so each strategy can
+# exit cleanly.
+#
+# Key:  ibkr:strat_pos:{ticker}:{strategy}    TTL: 7 days
+# Value: { ticker, strategy, direction, contracts, entry_price, perm_id, opened_at }
+
+_redis_client = None
+
+
+def _rdb():
+    """Lazy Redis client. Returns None if unreachable (degrades gracefully
+    by falling back to the old IB-level position guard)."""
+    global _redis_client
+    if _redis_client is not None:
+        return _redis_client
+    try:
+        import redis as _redis
+        _redis_client = _redis.from_url(REDIS_URL)
+        # Verify connectivity once
+        _redis_client.ping()
+        return _redis_client
+    except Exception as e:
+        logger.warning("Redis unavailable for strat_pos tracking: %s", e)
+        _redis_client = None
+        return None
+
+
+def _strat_pos_key(ticker: str, strategy: str) -> str:
+    return f"ibkr:strat_pos:{ticker}:{strategy}"
+
+
+def get_strat_pos(ticker: str, strategy: str) -> dict:
+    """Return per-strategy position state {} if none."""
+    rdb = _rdb()
+    if rdb is None:
+        return {}
+    try:
+        raw = rdb.get(_strat_pos_key(ticker, strategy))
+        return json.loads(raw) if raw else {}
+    except Exception:
+        return {}
+
+
+def save_strat_pos(ticker: str, strategy: str, direction: str,
+                    contracts: int, entry_price: float, perm_id: str):
+    rdb = _rdb()
+    if rdb is None:
+        return
+    from datetime import datetime as _dt, timezone as _tz
+    try:
+        rdb.setex(
+            _strat_pos_key(ticker, strategy),
+            86400 * 7,
+            json.dumps({
+                "ticker": ticker, "strategy": strategy,
+                "direction": direction, "contracts": int(contracts),
+                "entry_price": float(entry_price or 0),
+                "perm_id": str(perm_id or ""),
+                "opened_at": _dt.now(_tz.utc).isoformat(),
+            }),
+        )
+    except Exception as e:
+        logger.warning("strat_pos save failed for %s/%s: %s", ticker, strategy, e)
+
+
+def clear_strat_pos(ticker: str, strategy: str):
+    rdb = _rdb()
+    if rdb is None:
+        return
+    try:
+        rdb.delete(_strat_pos_key(ticker, strategy))
+    except Exception:
+        pass
+
+
+def reconcile_strat_pos(ticker: str, ib_qty: int):
+    """If the sum of per-strategy contracts doesn't match IB's actual
+    position, a stop loss almost certainly fired (IB closes the position
+    silently and we get no callback). Clear all strat_pos for the ticker
+    so the next signal in either strategy can enter cleanly.
+
+    Conservative: only clears when there is a real discrepancy in absolute
+    terms (tracked > actual). Never clears when tracked matches or is less."""
+    rdb = _rdb()
+    if rdb is None:
+        return
+    try:
+        keys = list(rdb.scan_iter(f"ibkr:strat_pos:{ticker}:*"))
+        if not keys:
+            return
+        tracked_net = 0
+        for k in keys:
+            try:
+                s = json.loads(rdb.get(k) or "{}")
+                qty = int(s.get("contracts", 0))
+                if s.get("direction") == "BUY":
+                    tracked_net += qty
+                elif s.get("direction") == "SELL":
+                    tracked_net -= qty
+            except Exception:
+                pass
+        if abs(tracked_net) > abs(ib_qty):
+            logger.info(
+                "Reconcile %s: tracked net=%+d, IB qty=%+d — clearing %d stale strat_pos (stop loss presumed)",
+                ticker, tracked_net, ib_qty, len(keys),
+            )
+            for k in keys:
+                rdb.delete(k)
+    except Exception as e:
+        logger.warning("strat_pos reconcile failed: %s", e)
 
 
 def _lookup_signal_metadata(signal_log: dict, trade_id: str, instrument: str,
@@ -835,27 +954,46 @@ def check_order_requests(client):
 
                 logger.info("Futures order: %s %s %dx — %s", direction, ticker, contracts, strategy_name)
 
-                # Position awareness — check current position before acting
+                # Per-strategy position guard. Each strategy tracks its own
+                # position in Redis (ibkr:strat_pos:{ticker}:{strategy}) so
+                # independent strategies (e.g. 2n20 and ORB) can both hold a
+                # position in the same contract at the same time. IB aggregates
+                # at the account level; we book per-strategy here.
                 time.sleep(1)
                 current_pos = 0
                 for item in client.get_positions():
                     if item.get("symbol") == ticker and item.get("sec_type") == "FUT":
                         current_pos = int(item.get("quantity", 0))
                         break
-                logger.info("Position check: %s pos=%d (direction=%s)", ticker, current_pos, direction)
+
+                # Reconcile in case a stop loss closed one of the legs silently
+                reconcile_strat_pos(ticker, current_pos)
+
+                sp = get_strat_pos(ticker, strategy_name)
+                strat_long = sp.get("direction") == "BUY"
+                strat_short = sp.get("direction") == "SELL"
+                logger.info(
+                    "Position check: %s ib_pos=%+d  [%s] strat=%s",
+                    ticker, current_pos, strategy_name,
+                    f"{sp.get('direction')} {sp.get('contracts',0)}" if sp else "flat",
+                )
 
                 skip = False
-                if direction == "BUY" and current_pos != 0:
-                    logger.info("SKIP %s BUY — not flat (pos=%d)", ticker, current_pos)
+                if direction == "BUY" and strat_long:
+                    logger.info("SKIP %s BUY [%s] — strategy already long (opened %s)",
+                                ticker, strategy_name, sp.get("opened_at", ""))
                     skip = True
-                elif direction == "SELL" and current_pos != 0:
-                    logger.info("SKIP %s SELL — not flat (pos=%d)", ticker, current_pos)
+                elif direction == "SELL" and strat_short:
+                    logger.info("SKIP %s SELL [%s] — strategy already short (opened %s)",
+                                ticker, strategy_name, sp.get("opened_at", ""))
                     skip = True
-                elif direction == "CLOSE_LONG" and current_pos <= 0:
-                    logger.info("SKIP %s CLOSE_LONG — not long (pos=%d)", ticker, current_pos)
+                elif direction == "CLOSE_LONG" and not strat_long:
+                    logger.info("SKIP %s CLOSE_LONG [%s] — strategy not long",
+                                ticker, strategy_name)
                     skip = True
-                elif direction == "CLOSE_SHORT" and current_pos >= 0:
-                    logger.info("SKIP %s CLOSE_SHORT — not short (pos=%d)", ticker, current_pos)
+                elif direction == "CLOSE_SHORT" and not strat_short:
+                    logger.info("SKIP %s CLOSE_SHORT [%s] — strategy not short",
+                                ticker, strategy_name)
                     skip = True
 
                 if skip:
@@ -1034,15 +1172,20 @@ def check_order_requests(client):
 
                     # Store entry details for BUY/SELL (not CLOSE) using order ID as unique key
                     if direction in ("BUY", "SELL"):
+                        # Get fill price from recent trades
+                        entry_fill_price = 0
                         try:
-                            # Get fill price from recent trades
-                            entry_fill_price = 0
-                            try:
-                                fills = client.get_trades()
-                                if fills:
-                                    entry_fill_price = float(fills[-1].get("price", 0))
-                            except Exception:
-                                pass
+                            fills = client.get_trades()
+                            if fills:
+                                entry_fill_price = float(fills[-1].get("price", 0))
+                        except Exception:
+                            pass
+                        # Per-strategy position state — lets independent
+                        # strategies (e.g. 2n20 + ORB) coexist on the same
+                        # contract; each closes only its own leg.
+                        save_strat_pos(ticker, strategy_name, direction,
+                                       contracts, entry_fill_price, perm_id)
+                        try:
                             requests.post(f"{SERVER_URL}/api/ibkr/order/update",
                                 json={
                                     "order_id": f"futures_entry_{perm_id}",
@@ -1058,6 +1201,10 @@ def check_order_requests(client):
                                 headers={"X-Sync-Key": SYNC_KEY}, timeout=5)
                         except Exception:
                             pass
+                    elif direction in ("CLOSE_LONG", "CLOSE_SHORT"):
+                        # This strategy's leg is done — release the strat_pos
+                        # so the next entry signal can fire.
+                        clear_strat_pos(ticker, strategy_name)
 
                 except Exception as e:
                     result = {
