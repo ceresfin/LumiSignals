@@ -1249,14 +1249,20 @@ def check_order_requests(client):
 
                         order_payload = client.build_futures_order(fut_conid, close_action, contracts, "MKT", tif="GTC")
                         trade_result = client.place_order(order_payload)
-                        time.sleep(3)
 
-                        # Record closed trade — get fill price from trades
+                        # Extract close-order ID and read its specific fill
+                        # price (avoids the get_trades()[-1] cross-contract
+                        # contamination bug that mis-priced stops on entries).
+                        close_order_id = ""
+                        if isinstance(trade_result, list) and trade_result:
+                            first = trade_result[0] if isinstance(trade_result[0], dict) else {}
+                            close_order_id = str(first.get("order_id", "") or "")
+                        elif isinstance(trade_result, dict):
+                            close_order_id = str(trade_result.get("order_id", "") or "")
                         exit_price = 0
                         try:
-                            fills = client.get_trades()
-                            if fills:
-                                exit_price = float(fills[-1].get("price", 0))
+                            fill_info = client.get_order_fill(close_order_id)
+                            exit_price = float(fill_info.get("avg_price") or 0)
                         except Exception:
                             pass
                         if entry_price and exit_price:
@@ -1318,14 +1324,21 @@ def check_order_requests(client):
                     elif direction == "BUY":
                         order_payload = client.build_futures_order(fut_conid, "BUY", contracts, "MKT", tif="GTC")
                         trade_result = client.place_order(order_payload)
-                        time.sleep(2)
-                        # Place stop loss and capture its IB order ID so the
-                        # stop-fill watcher can attribute fills to this strategy.
+                        # Extract our specific entry order ID from the place_order
+                        # response so we can read THIS order's fill price (not
+                        # any other contract's fill that happened nearby).
+                        entry_order_id = ""
+                        if isinstance(trade_result, list) and trade_result:
+                            first = trade_result[0] if isinstance(trade_result[0], dict) else {}
+                            entry_order_id = str(first.get("order_id", "") or "")
+                        elif isinstance(trade_result, dict):
+                            entry_order_id = str(trade_result.get("order_id", "") or "")
+                        # Place stop loss using the actual MES fill price.
                         sl_order_id = ""
                         sl_price = 0
                         try:
-                            fills = client.get_trades()
-                            fill_price = float(fills[-1].get("price", 0)) if fills else 0
+                            fill_info = client.get_order_fill(entry_order_id)
+                            fill_price = float(fill_info.get("avg_price") or 0)
                             if fill_price > 0:
                                 sl_price = fill_price - sl_points
                                 sl_payload = client.build_futures_order(fut_conid, "SELL", contracts, "STP", sl_price, tif="GTC")
@@ -1337,18 +1350,26 @@ def check_order_requests(client):
                                     sl_order_id = str(sl_result.get("order_id", "") or "")
                                 logger.info("Stop loss: SELL %s @ %.2f (entry %.2f, risk $%.0f) sl_id=%s",
                                             ticker, sl_price, fill_price, sl_dollars, sl_order_id)
+                            else:
+                                logger.error("Cannot place SL for %s: entry order %s not filled (status=%s)",
+                                              ticker, entry_order_id, fill_info.get("status", ""))
                         except Exception as e:
                             logger.error("Failed to place stop loss: %s", e)
                     elif direction == "SELL":
                         order_payload = client.build_futures_order(fut_conid, "SELL", contracts, "MKT", tif="GTC")
                         trade_result = client.place_order(order_payload)
-                        time.sleep(2)
-                        # Place stop loss and capture its IB order ID.
+                        # Same fill-attribution pattern as BUY above.
+                        entry_order_id = ""
+                        if isinstance(trade_result, list) and trade_result:
+                            first = trade_result[0] if isinstance(trade_result[0], dict) else {}
+                            entry_order_id = str(first.get("order_id", "") or "")
+                        elif isinstance(trade_result, dict):
+                            entry_order_id = str(trade_result.get("order_id", "") or "")
                         sl_order_id = ""
                         sl_price = 0
                         try:
-                            fills = client.get_trades()
-                            fill_price = float(fills[-1].get("price", 0)) if fills else 0
+                            fill_info = client.get_order_fill(entry_order_id)
+                            fill_price = float(fill_info.get("avg_price") or 0)
                             if fill_price > 0:
                                 sl_price = fill_price + sl_points
                                 sl_payload = client.build_futures_order(fut_conid, "BUY", contracts, "STP", sl_price, tif="GTC")
@@ -1360,6 +1381,9 @@ def check_order_requests(client):
                                     sl_order_id = str(sl_result.get("order_id", "") or "")
                                 logger.info("Stop loss: BUY %s @ %.2f (entry %.2f, risk $%.0f) sl_id=%s",
                                             ticker, sl_price, fill_price, sl_dollars, sl_order_id)
+                            else:
+                                logger.error("Cannot place SL for %s: entry order %s not filled (status=%s)",
+                                              ticker, entry_order_id, fill_info.get("status", ""))
                         except Exception as e:
                             logger.error("Failed to place stop loss: %s", e)
                     else:

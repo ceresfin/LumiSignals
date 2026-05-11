@@ -342,6 +342,42 @@ class CPAPIClient:
 
     # ─── MARKET DATA ────────────────────────────────────────────────────
 
+    def get_order_fill(self, order_id: str, max_wait: int = 6) -> dict:
+        """Wait for a specific order to fill and return its avg fill price.
+
+        Returns {"filled": bool, "avg_price": float, "status": str}.
+
+        Use this after place_order(...) to read the actual fill price for
+        THIS specific order — avoids the trap of reading the last entry
+        from client.get_trades(), which returns ALL recent fills across
+        the account (so an options spread fill on TGT can be mistaken for
+        a MES futures fill and produce a stop loss at the wrong price).
+        """
+        if not order_id:
+            return {"filled": False, "avg_price": 0.0, "status": ""}
+        oid = str(order_id)
+        last_status = ""
+        import time as _t
+        for _ in range(max_wait):
+            try:
+                orders_resp = self._request("GET", "/iserver/account/orders")
+                orders = (orders_resp or {}).get("orders", []) if isinstance(orders_resp, dict) else orders_resp
+                for o in orders or []:
+                    if str(o.get("orderId") or "") != oid:
+                        continue
+                    last_status = o.get("status", "")
+                    if last_status == "Filled":
+                        try:
+                            avg = float(o.get("avgPrice") or 0)
+                        except (TypeError, ValueError):
+                            avg = 0.0
+                        return {"filled": True, "avg_price": avg, "status": "Filled"}
+                    break
+            except Exception:
+                pass
+            _t.sleep(1)
+        return {"filled": False, "avg_price": 0.0, "status": last_status}
+
     def get_historical_bars(self, conid: int, period: str = "1d",
                              bar: str = "2min", outside_rth: bool = True) -> list:
         """Fetch historical OHLCV bars for a contract.
