@@ -1420,12 +1420,14 @@ def check_order_requests(client):
 
                     # Store entry details for BUY/SELL (not CLOSE) using order ID as unique key
                     if direction in ("BUY", "SELL"):
-                        # Get fill price from recent trades
+                        # Read THIS order's fill price by order ID — not the
+                        # last entry from client.get_trades(), which can be
+                        # an options spread fill from a different contract.
+                        # Same bug class fixed for SL placement in fa0e9e3.
                         entry_fill_price = 0
                         try:
-                            fills = client.get_trades()
-                            if fills:
-                                entry_fill_price = float(fills[-1].get("price", 0))
+                            fill_info = client.get_order_fill(perm_id)
+                            entry_fill_price = float(fill_info.get("avg_price") or 0)
                         except Exception:
                             pass
                         # Per-strategy position state — lets independent
