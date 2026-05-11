@@ -489,13 +489,12 @@ def sync_oanda_positions_to_supabase():
 def sync_positions_to_supabase(positions: list):
     """Refresh entry_price + unrealized_pl on existing Supabase position rows
     for each open IB position. Matches by (user_id, broker='ib', instrument).
+    Also DELETES Supabase rows for IB futures/stock instruments that are no
+    longer in the open position list — otherwise a fully-closed position
+    leaves a stale "ghost" row in the mobile app.
 
-    The mobile app reads from the Supabase positions table directly, so without
-    this update it sees only the snapshot taken when the order originally filled.
-    The web app reads from Redis (via push_to_server), so it doesn't need this.
+    Options (OPT) are managed by the spread close path and not touched here.
     """
-    if not positions:
-        return
     try:
         from .supabase_client import get_client
     except Exception as e:
@@ -508,6 +507,7 @@ def sync_positions_to_supabase(positions: list):
     if not user_id:
         return
 
+    seen_symbols = set()
     for pos in positions:
         symbol = pos.get("symbol")
         if not symbol:
@@ -517,6 +517,7 @@ def sync_positions_to_supabase(positions: list):
         # which have their own sync path.
         if sec_type not in ("STK", "FUT"):
             continue
+        seen_symbols.add(symbol)
         multiplier = pos.get("multiplier") or 1
         avg_cost = pos.get("avg_cost") or 0
         # avg_cost is total ($/contract * multiplier); divide for per-unit price.
@@ -535,6 +536,25 @@ def sync_positions_to_supabase(positions: list):
                 .execute()
         except Exception as e:
             logger.debug("supabase position refresh failed for %s: %s", symbol, e)
+
+    # Sweep stale rows: anything in Supabase for broker='ib' with
+    # asset_type futures/stock that isn't in IB's current position list.
+    try:
+        existing = sb.table("positions").select("id, instrument") \
+            .eq("user_id", user_id).eq("broker", "ib") \
+            .in_("asset_type", ["futures", "stock"]) \
+            .execute().data or []
+        for row in existing:
+            inst = row.get("instrument") or ""
+            if inst and inst not in seen_symbols:
+                try:
+                    sb.table("positions").delete().eq("id", row["id"]).execute()
+                    logger.info("Cleared stale IB position row: %s (id=%s) — no longer in IB",
+                                inst, row["id"])
+                except Exception as e:
+                    logger.debug("stale row delete failed (id=%s): %s", row.get("id"), e)
+    except Exception as e:
+        logger.debug("stale-row sweep failed: %s", e)
 
 
 def collect_ib_data(client) -> dict:
