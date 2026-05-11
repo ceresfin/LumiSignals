@@ -83,14 +83,22 @@ class ModelConfig:
     options_dte_range: tuple = None    # (min_dte, max_dte) for options expiration
 
 
+# Each model aligns 3 timeframes:
+#   trigger_tf      = execution bar (entry candle)
+#   bias_tf         = trend frame
+#   containment     = TF the whole move should fit inside (drives target search)
+#
+# SCALP:    5m execute / 15m trend / 1H containment      → zones from 15m + 1h
+# INTRADAY: 1h execute / 1d trend  / 1W containment      → zones from 1d + 1w
+# SWING:    1d execute / 1w trend  / 1M containment      → zones from 1w + 1mo
 SCALP_MODEL = ModelConfig(
     name="scalp",
-    trigger_tf="15m",
-    zone_tfs=["1h", "4h"],
-    bias_tf="4h",
-    bias_candle_tfs=["1h", "4h"],
+    trigger_tf="5m",
+    zone_tfs=["15m", "1h"],
+    bias_tf="15m",
+    bias_candle_tfs=["15m", "1h"],
     risk_percent=0.25,
-    zone_tolerance_pct={"1h": 0.002, "4h": 0.004},
+    zone_tolerance_pct={"15m": 0.0015, "1h": 0.002},
     min_score=50,
     min_risk_reward=1.5,
     watchlist_interval=300,
@@ -101,11 +109,11 @@ SCALP_MODEL = ModelConfig(
 INTRADAY_MODEL = ModelConfig(
     name="intraday",
     trigger_tf="1h",
-    zone_tfs=["4h", "1d"],
+    zone_tfs=["1d", "1w"],
     bias_tf="1d",
-    bias_candle_tfs=["4h", "1d"],
+    bias_candle_tfs=["1d", "1w"],
     risk_percent=0.5,
-    zone_tolerance_pct={"4h": 0.003, "1d": 0.005},
+    zone_tolerance_pct={"1d": 0.005, "1w": 0.007},
     min_score=50,
     min_risk_reward=1.5,
     watchlist_interval=300,
@@ -117,7 +125,7 @@ SWING_MODEL = ModelConfig(
     name="swing",
     trigger_tf="1d",
     zone_tfs=["1w", "1mo"],
-    bias_tf="1mo",
+    bias_tf="1w",
     bias_candle_tfs=["1w", "1mo"],
     risk_percent=1.0,
     zone_tolerance_pct={"1w": 0.006, "1mo": 0.009},
@@ -624,7 +632,7 @@ class LevelsStrategy:
 
         # Build candle details for this model's bias timeframes
         all_candle_tfs = list(set(self.zone_tfs + self.bias_candle_tfs))
-        tf_to_gran = {"1mo": "M", "1w": "W", "1d": "D", "4h": "H4", "1h": "H1", "30m": "M30", "15m": "M15"}
+        tf_to_gran = {"1mo": "M", "1w": "W", "1d": "D", "4h": "H4", "1h": "H1", "30m": "M30", "15m": "M15", "5m": "M5"}
 
         for tf in all_candle_tfs:
             gran = tf_to_gran.get(tf, "D")
@@ -777,7 +785,7 @@ class LevelsStrategy:
 
         # 4. Get candle series from Massive for the model's zone timeframes
         candle_series = {}
-        tf_counts = {"1mo": 24, "1w": 20, "1d": 30, "4h": 40, "1h": 50}
+        tf_counts = {"1mo": 24, "1w": 20, "1d": 30, "4h": 40, "1h": 50, "15m": 60, "5m": 60}
         for tf in stock_intervals:
             candles = self.massive.get_candles(ticker, timespan=tf, count=tf_counts.get(tf, 30))
             if candles:
