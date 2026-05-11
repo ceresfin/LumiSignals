@@ -32,22 +32,26 @@ export async function registerForPushNotifications(userId: string): Promise<stri
     return null;
   }
 
-  // Get the Expo push token
+  // SDK 53+ requires projectId. Resolve once, then ask Expo for the token.
+  const Constants = require('expo-constants').default;
+  const projectId =
+    Constants.expoConfig?.extra?.eas?.projectId ??
+    Constants.easConfig?.projectId;
+  if (!projectId) {
+    console.log(
+      'No EAS projectId — push tokens unavailable. Run `eas init` and rebuild ' +
+        'as a dev client (Expo Go cannot receive remote pushes since SDK 53).'
+    );
+    return null;
+  }
+
   let token: string;
   try {
-    const tokenData = await Notifications.getExpoPushTokenAsync();
-    token = tokenData.data;
-  } catch {
-    // Fallback: try with explicit project ID from Constants
-    const Constants = require('expo-constants').default;
-    const projectId = Constants.expoConfig?.extra?.eas?.projectId ??
-                      Constants.easConfig?.projectId;
-    if (!projectId) {
-      console.log('No project ID for push tokens — skipping (expected in Expo Go)');
-      return null;
-    }
     const tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
     token = tokenData.data;
+  } catch (e) {
+    console.error('getExpoPushTokenAsync failed:', e);
+    return null;
   }
 
   // Store the token in Supabase for the bot to use
