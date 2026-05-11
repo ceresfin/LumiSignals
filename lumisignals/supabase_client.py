@@ -220,24 +220,65 @@ def send_push_notification(user_id: str, title: str, body: str, data: dict = Non
         logger.debug("Push notification error: %s", e)
 
 
+def send_telegram_message(text: str):
+    """Send a Telegram message to TELEGRAM_CHAT_ID via TELEGRAM_BOT_TOKEN.
+
+    Both must be set in the environment. No-op otherwise so we don't
+    crash when Telegram isn't configured. Markdown formatting supported.
+    """
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+    if not token or not chat_id:
+        return
+    try:
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        payload = {
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": "Markdown",
+            "disable_web_page_preview": True,
+        }
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        urllib.request.urlopen(req, timeout=10)
+        logger.debug("Telegram sent: %s", text[:60])
+    except Exception as e:
+        logger.debug("Telegram send error: %s", e)
+
+
 def notify_trade_opened(user_id: str, instrument: str, direction: str, entry_price: float, strategy: str = ""):
-    """Send push when a trade opens."""
+    """Send push + Telegram when a trade opens."""
     dir_label = "BUY" if direction in ("BUY", "LONG") else "SELL"
+    emoji = "🟢" if dir_label == "BUY" else "🔴"
     send_push_notification(
         user_id,
         f"{dir_label} {instrument}",
         f"Entry @ {entry_price:.5f} | {strategy}",
         {"type": "trade_opened", "instrument": instrument},
     )
+    send_telegram_message(
+        f"{emoji} *{dir_label} {instrument}*\n"
+        f"Entry: `{entry_price:.5f}`\n"
+        f"Strategy: {strategy}"
+    )
 
 
 def notify_trade_closed(user_id: str, instrument: str, direction: str, pl: float, pips: float, reason: str = ""):
-    """Send push when a trade closes."""
+    """Send push + Telegram when a trade closes."""
     dir_label = "LONG" if direction in ("BUY", "LONG") else "SHORT"
     result = "WIN" if pl > 0 else "LOSS"
+    emoji = "✅" if pl > 0 else "❌"
     send_push_notification(
         user_id,
         f"Closed {instrument} {dir_label} — {result}",
         f"P&L: ${pl:+.2f} | {pips:+.1f} pips | {reason}",
         {"type": "trade_closed", "instrument": instrument, "pl": pl},
+    )
+    send_telegram_message(
+        f"{emoji} *Closed {instrument} {dir_label} — {result}*\n"
+        f"P&L: `${pl:+.2f}` ({pips:+.1f} pips)\n"
+        f"Reason: {reason}"
     )
