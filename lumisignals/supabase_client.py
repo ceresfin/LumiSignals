@@ -103,6 +103,7 @@ def upsert_position(user_id: str, position: dict):
             "units": position.get("units", 0),
             "entry_price": position.get("entry", position.get("entry_price", 0)),
             "stop_loss": position.get("stop_loss", None),
+            "take_profit": position.get("take_profit", position.get("target", None)),
             "unrealized_pl": position.get("unrealized_pl", 0),
             "pips": position.get("pips", 0),
             "strategy": position.get("strategy", ""),

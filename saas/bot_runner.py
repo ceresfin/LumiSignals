@@ -501,6 +501,32 @@ def run_bot_for_user(user_data, stop_check):
                             signal_log.record(str(int(result.order_id) + 1), log_entry)
                         except (ValueError, TypeError):
                             pass
+
+                        # Pre-save HTF position to Supabase with entry/stop/target so
+                        # the mobile app shows risk + reward immediately. Only writes
+                        # if the LIMIT order filled at submit time (trade_id present).
+                        if result.trade_id:
+                            try:
+                                from lumisignals.supabase_client import upsert_position
+                                supabase_uid = os.environ.get("SUPABASE_USER_ID", "")
+                                if supabase_uid:
+                                    from datetime import datetime as _dt, timezone as _tz
+                                    upsert_position(supabase_uid, {
+                                        "id": result.trade_id,
+                                        "broker": "oanda",
+                                        "instrument": signal.symbol,
+                                        "asset_type": "forex",
+                                        "direction": signal.action,
+                                        "units": (result.details or {}).get("units", 0),
+                                        "entry_price": signal.entry,
+                                        "stop_loss": signal.stop,
+                                        "take_profit": signal.target,
+                                        "strategy": "htf_levels",
+                                        "model": model_name,
+                                        "opened_at": _dt.now(_tz.utc).isoformat(),
+                                    })
+                            except Exception as e:
+                                log(f"[{model_name.upper()}] Supabase position pre-save failed: {e}")
                     else:
                         log(f"[{model_name.upper()}] ORDER FAILED: {result.error}")
             return handler

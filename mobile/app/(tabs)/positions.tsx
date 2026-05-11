@@ -27,6 +27,7 @@ type Position = {
   buy_strike: number;
   right: string;
   expiration: string;
+  take_profit: number | null;
   opened_at: string;
   updated_at: string;
 };
@@ -47,6 +48,46 @@ function getChartTimeframe(model?: string, strategy?: string): string {
   return '15m';
 }
 
+// Approximate USD value of a price move on a position. Handles the three
+// pair shapes correctly; falls back to the quote-currency-divided-by-entry
+// approximation for crosses (matches trade_tracker.py's logic).
+function priceToUsd(instrument: string, units: number, entry: number, distance: number): number {
+  if (!units || !distance) return 0;
+  const dist = Math.abs(distance);
+  // X_USD pairs (EUR_USD, GBP_USD, AUD_USD, NZD_USD): pip value is in USD.
+  if (instrument.endsWith('_USD')) return units * dist;
+  // USD_X pairs (USD_JPY, USD_CAD, USD_CHF): pip in quote currency,
+  // approximate USD via entry price.
+  if (instrument.startsWith('USD_')) return entry ? units * dist / entry : 0;
+  // Cross pairs (EUR_GBP, AUD_NZD, ...): rough approximation.
+  return entry ? units * dist / entry : 0;
+}
+
+// Risk / reward for a position in dollars. Reward returns 0 if no take_profit
+// is set. Futures use multiplier × contracts; forex uses the pip math above.
+function positionRiskReward(p: Position): { risk: number; reward: number } {
+  const entry = p.entry_price || 0;
+  const stop = p.stop_loss || 0;
+  const tp = p.take_profit || 0;
+  if (p.asset_type === 'futures') {
+    // MES is $5/pt, ES is $50/pt, NQ is $20/pt.
+    const mult = p.instrument === 'ES' ? 50 : p.instrument === 'NQ' ? 20 : 5;
+    const contracts = p.contracts || 1;
+    return {
+      risk: stop ? Math.abs(entry - stop) * mult * contracts : 0,
+      reward: tp ? Math.abs(tp - entry) * mult * contracts : 0,
+    };
+  }
+  if (p.asset_type === 'forex') {
+    const units = p.units || 0;
+    return {
+      risk: stop ? priceToUsd(p.instrument, units, entry, entry - stop) : 0,
+      reward: tp ? priceToUsd(p.instrument, units, entry, tp - entry) : 0,
+    };
+  }
+  return { risk: 0, reward: 0 };
+}
+
 function PositionRow({ position, onChartPress, onClose }: {
   position: Position;
   onChartPress: (instrument: string, tf: string) => void;
@@ -55,6 +96,8 @@ function PositionRow({ position, onChartPress, onClose }: {
   const dir = position.direction === 'LONG' || position.direction === 'BUY' ? 'BUY' : 'SELL';
   const pl = position.unrealized_pl || 0;
   const isOptions = position.asset_type === 'options';
+  const { risk, reward } = positionRiskReward(position);
+  const rr = risk > 0 && reward > 0 ? (reward / risk).toFixed(1) : '';
 
   return (
     <View style={styles.posRow}>
@@ -134,6 +177,33 @@ function PositionRow({ position, onChartPress, onClose }: {
           </View>
         ) : null}
       </View>
+
+      {(risk > 0 || reward > 0) ? (
+        <View style={styles.rrRow}>
+          {risk > 0 ? (
+            <View style={styles.rrItem}>
+              <Text style={styles.rrLabel}>RISK</Text>
+              <Text style={[styles.rrValue, { color: Colors.red }]}>
+                ${risk.toFixed(2)}
+              </Text>
+            </View>
+          ) : null}
+          {reward > 0 ? (
+            <View style={styles.rrItem}>
+              <Text style={styles.rrLabel}>REWARD</Text>
+              <Text style={[styles.rrValue, { color: Colors.green }]}>
+                ${reward.toFixed(2)}
+              </Text>
+            </View>
+          ) : null}
+          {rr ? (
+            <View style={styles.rrItem}>
+              <Text style={styles.rrLabel}>R:R</Text>
+              <Text style={styles.rrValue}>{rr}</Text>
+            </View>
+          ) : null}
+        </View>
+      ) : null}
 
       <View style={styles.posFooter}>
         <Text style={styles.posTime}>
@@ -514,6 +584,27 @@ const styles = StyleSheet.create({
   },
   posTime: { fontSize: 11, color: Colors.textLight },
   modelBadge: { fontSize: 10, fontWeight: '700', letterSpacing: 0.3 },
+  rrRow: {
+    flexDirection: 'row',
+    marginTop: 10,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#f0ebe2',
+    gap: 18,
+  },
+  rrItem: { flexDirection: 'column' },
+  rrLabel: {
+    fontSize: 9,
+    fontWeight: '600',
+    color: Colors.textLight,
+    letterSpacing: 0.6,
+  },
+  rrValue: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: Colors.dark,
+    marginTop: 2,
+  },
   qtyText: {
     fontSize: 13,
     fontWeight: '600',

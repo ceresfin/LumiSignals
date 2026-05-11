@@ -118,6 +118,37 @@ class LumiSignalsBot:
             sig_log.record(result.order_id, log_entry)
             if result.trade_id:
                 sig_log.record(result.trade_id, log_entry)
+
+            # Pre-save the position to Supabase with entry/stop/target so the
+            # mobile app shows risk + reward immediately, even before the
+            # IBKR sync's next cycle reads back from Oanda. Only writes when
+            # the order filled immediately (LIMIT orders that fill at price
+            # touch — by far the common case for HTF entries). Pending LIMITs
+            # without a trade_id stay invisible until they fill, which is
+            # correct — they're not yet positions.
+            if result.trade_id:
+                try:
+                    from .supabase_client import upsert_position
+                    import os as _os
+                    supabase_uid = _os.environ.get("SUPABASE_USER_ID", "")
+                    if supabase_uid:
+                        from datetime import datetime as _dt, timezone as _tz
+                        upsert_position(supabase_uid, {
+                            "id": result.trade_id,
+                            "broker": "oanda",
+                            "instrument": sig.symbol,
+                            "asset_type": "forex",
+                            "direction": sig.action,
+                            "units": (result.details or {}).get("units", 0),
+                            "entry_price": sig.entry,
+                            "stop_loss": sig.stop,
+                            "take_profit": sig.target,
+                            "strategy": "htf_levels",
+                            "model": (extra_meta or {}).get("model", self.strategy),
+                            "opened_at": _dt.now(_tz.utc).isoformat(),
+                        })
+                except Exception as e:
+                    logger.debug("HTF position pre-save failed: %s", e)
         else:
             logger.warning("Order failed — %s", result.error)
 
