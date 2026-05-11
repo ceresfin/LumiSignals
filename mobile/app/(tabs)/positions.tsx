@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { View, Text, FlatList, StyleSheet, RefreshControl, TouchableOpacity } from 'react-native';
+import { Alert, View, Text, FlatList, StyleSheet, RefreshControl, TouchableOpacity } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '@/lib/supabase';
@@ -25,6 +25,8 @@ type Position = {
   spread_type: string;
   sell_strike: number;
   buy_strike: number;
+  right: string;
+  expiration: string;
   opened_at: string;
   updated_at: string;
 };
@@ -45,7 +47,11 @@ function getChartTimeframe(model?: string, strategy?: string): string {
   return '15m';
 }
 
-function PositionRow({ position, onChartPress }: { position: Position; onChartPress: (instrument: string, tf: string) => void }) {
+function PositionRow({ position, onChartPress, onClose }: {
+  position: Position;
+  onChartPress: (instrument: string, tf: string) => void;
+  onClose: (p: Position) => void;
+}) {
   const dir = position.direction === 'LONG' || position.direction === 'BUY' ? 'BUY' : 'SELL';
   const pl = position.unrealized_pl || 0;
   const isOptions = position.asset_type === 'options';
@@ -59,6 +65,9 @@ function PositionRow({ position, onChartPress }: { position: Position; onChartPr
         <View style={[styles.dirBadge, { backgroundColor: dir === 'BUY' ? '#e8f5e9' : '#fdecea' }]}>
           <Text style={[styles.dirText, { color: dir === 'BUY' ? Colors.green : Colors.red }]}>{dir}</Text>
         </View>
+        {position.contracts > 1 ? (
+          <Text style={styles.qtyText}>×{position.contracts}</Text>
+        ) : null}
         <View style={[styles.brokerBadge, {
           backgroundColor: position.broker === 'oanda' ? '#e3f2fd' : '#f3e5f5',
         }]}>
@@ -137,6 +146,13 @@ function PositionRow({ position, onChartPress }: { position: Position; onChartPr
         }]}>
           {strategyBadgeText(position.strategy, position.model)}
         </Text>
+        <TouchableOpacity
+          style={styles.closeBtn}
+          onPress={() => onClose(position)}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Text style={styles.closeBtnText}>Close</Text>
+        </TouchableOpacity>
       </View>
     </View>
   );
@@ -212,6 +228,82 @@ export default function Positions() {
   const positions = allPositions.filter(tab.filter);
   const totalPl = positions.reduce((s, p) => s + (p.unrealized_pl || 0), 0);
 
+  // Total exposure summary in the header. Futures/options trade in contracts;
+  // forex in units (often 25k+). We surface whichever is relevant so when the
+  // bot accumulates (e.g. several BUYs not yet closed) the header makes the
+  // real exposure obvious instead of just saying "1 position".
+  const totalContracts = positions.reduce((s, p) => s + (p.contracts || 0), 0);
+  const totalUnits = positions.reduce((s, p) => s + (p.units || 0), 0);
+  const exposureLabel = (() => {
+    if (activeTab === 'forex') {
+      if (totalUnits >= 1000) return `${Math.round(totalUnits / 1000)}k units`;
+      if (totalUnits > 0) return `${totalUnits} units`;
+      return '';
+    }
+    if (activeTab === 'options') {
+      return totalContracts > 0 ? `${totalContracts} spread${totalContracts !== 1 ? 's' : ''}` : '';
+    }
+    // Futures / Stocks / Indices
+    return totalContracts > 0 ? `${totalContracts} contract${totalContracts !== 1 ? 's' : ''}` : '';
+  })();
+
+  // Manual close button — confirms via native Alert, posts to the server's
+  // /api/positions/close endpoint, which routes per broker/asset_type.
+  const handleClose = (p: Position) => {
+    const pl = p.unrealized_pl || 0;
+    const plStr = (pl >= 0 ? '+' : '') + '$' + pl.toFixed(2);
+    const dir = p.direction === 'LONG' || p.direction === 'BUY' ? 'BUY' : 'SELL';
+    Alert.alert(
+      'Close trade?',
+      `${p.instrument} ${dir} — unrealized ${plStr}`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Close',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const syncKey = process.env.EXPO_PUBLIC_LUMI_SYNC_KEY || '';
+              const resp = await fetch('https://bot.lumitrade.ai/api/positions/close', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'X-Sync-Key': syncKey,
+                },
+                body: JSON.stringify({
+                  broker: p.broker,
+                  asset_type: p.asset_type,
+                  instrument: p.instrument,
+                  broker_trade_id: p.broker_trade_id,
+                  direction: p.direction,
+                  strategy: p.strategy,
+                  contracts: p.contracts || 1,
+                  // Options-only fields (no-op for forex/futures)
+                  spread_type: p.spread_type,
+                  right: p.right,
+                  expiration: p.expiration,
+                  sell_strike: p.sell_strike,
+                  buy_strike: p.buy_strike,
+                }),
+              });
+              const result = await resp.json();
+              if (!resp.ok) {
+                Alert.alert('Close failed', result.error || `HTTP ${resp.status}`);
+                return;
+              }
+              // Optimistic UI: remove the row immediately (sync will confirm in ~10s)
+              setAllPositions(prev => prev.filter(row => row.id !== p.id));
+              // Backstop refresh in case the server already wrote a state update.
+              setTimeout(() => loadPositions(), 1500);
+            } catch (e: any) {
+              Alert.alert('Close failed', e?.message || String(e));
+            }
+          },
+        },
+      ],
+    );
+  };
+
   // Filter zones by active tab
   const isForexZone = (z: any) => z.instrument?.includes('_');
   const isIndexZone = (z: any) => z.instrument?.startsWith('I:');
@@ -234,6 +326,7 @@ export default function Positions() {
           <Text style={styles.headerTitle}>Open Positions</Text>
           <Text style={styles.headerSubtitle}>
             {positions.length} position{positions.length !== 1 ? 's' : ''}
+            {exposureLabel ? ` · ${exposureLabel}` : ''}
           </Text>
         </View>
         <View style={styles.plSummary}>
@@ -262,7 +355,7 @@ export default function Positions() {
       <FlatList
         data={positions}
         keyExtractor={(item) => item.id.toString()}
-        renderItem={({ item }) => <PositionRow position={item} onChartPress={(sym, tf) => router.push({
+        renderItem={({ item }) => <PositionRow position={item} onClose={handleClose} onChartPress={(sym, tf) => router.push({
           pathname: '/chart',
           params: {
             symbol: sym,
@@ -421,6 +514,26 @@ const styles = StyleSheet.create({
   },
   posTime: { fontSize: 11, color: Colors.textLight },
   modelBadge: { fontSize: 10, fontWeight: '700', letterSpacing: 0.3 },
+  qtyText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: Colors.dark,
+    marginLeft: -4,
+  },
+  closeBtn: {
+    marginLeft: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: Colors.red,
+  },
+  closeBtnText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: Colors.red,
+    letterSpacing: 0.5,
+  },
   watchlistSection: { marginTop: 24, paddingBottom: 20 },
   watchlistTitle: { fontSize: 16, fontWeight: '500', color: Colors.dark, marginBottom: 12 },
   zoneCard: {

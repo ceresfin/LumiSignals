@@ -1510,6 +1510,128 @@ def create_app():
             logger.error("Oanda CSV error: %s", e)
             return jsonify({"error": str(e)}), 500
 
+    @app.route("/api/positions/close", methods=["POST"])
+    def api_positions_close():
+        """Manually close a single open position from the mobile app.
+
+        Auth: X-Sync-Key header (same key the IB sync uses).
+        Body:
+          {
+            "broker": "oanda" | "ib",
+            "asset_type": "forex" | "futures" | "options",
+            "instrument": "EUR_USD" | "MES" | ...,
+            "broker_trade_id": "<oanda trade id or IB perm id>",
+            "direction": "BUY" | "SELL" | "LONG" | "SHORT",
+            "strategy": "<original strategy tag, e.g. vwap_2n20>",
+            // Options-only:
+            "contracts": int, "spread_type": str, "right": str,
+            "expiration": "YYYYMMDD", "sell_strike": float, "buy_strike": float
+          }
+
+        Behavior per broker/asset:
+          oanda/forex   — closes the specific Oanda trade ID directly via REST.
+          ib/futures    — queues a CLOSE_LONG/CLOSE_SHORT order that the
+                          sync's check_order_requests picks up (~10s lag).
+          ib/options    — queues a manual options close on the same Redis
+                          pending-order shape; sync handles it next cycle.
+        """
+        sync_key = request.headers.get("X-Sync-Key", "")
+        if sync_key != os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026"):
+            return jsonify({"error": "Invalid sync key"}), 403
+
+        data = request.get_json(silent=True) or {}
+        broker = (data.get("broker") or "").lower()
+        asset_type = (data.get("asset_type") or "").lower()
+        instrument = data.get("instrument") or ""
+        trade_id = data.get("broker_trade_id") or ""
+        direction = (data.get("direction") or "").upper()
+        strategy = data.get("strategy") or "manual_close"
+
+        if not instrument:
+            return jsonify({"error": "missing instrument"}), 400
+
+        # ─── OANDA FOREX: close trade by ID directly ───
+        if broker == "oanda" and asset_type == "forex":
+            if not trade_id:
+                return jsonify({"error": "missing broker_trade_id"}), 400
+            try:
+                import psycopg2 as _pg
+                conn = _pg.connect(os.environ.get(
+                    "DATABASE_URL",
+                    "postgresql://lumisignals:LumiBot2026@localhost/lumisignals_db"))
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT oanda_api_key, oanda_account_id, oanda_environment "
+                    "FROM users WHERE bot_active = true AND oanda_api_key IS NOT NULL "
+                    "ORDER BY id LIMIT 1")
+                row = cur.fetchone()
+                conn.close()
+                if not row:
+                    return jsonify({"error": "no oanda creds configured"}), 500
+                api_key, acct_id, env = row
+                from lumisignals.oanda_client import OandaClient
+                oc = OandaClient(account_id=acct_id, api_key=api_key,
+                                 environment=env or "practice")
+                resp = oc.close_trade(trade_id)
+                return jsonify({"status": "closed", "broker": "oanda",
+                                "trade_id": trade_id, "response": resp})
+            except Exception as e:
+                logger.error("Oanda close failed for %s: %s", trade_id, e)
+                return jsonify({"error": f"Oanda close failed: {e}"}), 500
+
+        # ─── IB FUTURES: enqueue CLOSE_LONG/CLOSE_SHORT ───
+        if broker == "ib" and asset_type == "futures":
+            close_dir = "CLOSE_LONG" if direction in ("BUY", "LONG") else "CLOSE_SHORT"
+            import redis as _redis
+            import uuid as _uuid
+            rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+            order_id = str(_uuid.uuid4())[:8]
+            order = {
+                "order_id": order_id,
+                "queued_at": datetime.now(timezone.utc).isoformat(),
+                "user_id": 1,
+                "ticker": instrument,
+                "type": "futures",
+                "direction": close_dir,
+                "strategy": strategy,
+                "reason": "Manual close (mobile)",
+                "contracts": int(data.get("contracts", 1)),
+                "status": "queued",
+            }
+            rdb.setex(f"ibkr:order:pending:{order_id}", 86400, json.dumps(order))
+            return jsonify({"status": "queued", "broker": "ib",
+                            "action": close_dir, "ticker": instrument,
+                            "order_id": order_id})
+
+        # ─── IB OPTIONS: enqueue manual spread close ───
+        if broker == "ib" and asset_type == "options":
+            import redis as _redis
+            import uuid as _uuid
+            rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+            order_id = str(_uuid.uuid4())[:8]
+            order = {
+                "order_id": order_id,
+                "queued_at": datetime.now(timezone.utc).isoformat(),
+                "user_id": 1,
+                "ticker": instrument,
+                "type": "options_close",
+                "strategy": strategy,
+                "reason": "Manual close (mobile)",
+                "contracts": int(data.get("contracts", 1)),
+                "spread_type": data.get("spread_type", ""),
+                "right": data.get("right", ""),
+                "expiration": data.get("expiration", ""),
+                "sell_strike": float(data.get("sell_strike") or 0),
+                "buy_strike": float(data.get("buy_strike") or 0),
+                "status": "queued",
+            }
+            rdb.setex(f"ibkr:order:pending:{order_id}", 86400, json.dumps(order))
+            return jsonify({"status": "queued", "broker": "ib",
+                            "action": "options_close", "ticker": instrument,
+                            "order_id": order_id})
+
+        return jsonify({"error": f"unsupported broker/asset: {broker}/{asset_type}"}), 400
+
     @app.route("/api/ibkr/sync", methods=["POST"])
     def api_ibkr_sync():
         """Receive IB data from local sync script and store in Redis."""

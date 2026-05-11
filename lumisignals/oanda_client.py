@@ -190,3 +190,15 @@ class OandaClient:
             f"/v3/accounts/{self.account_id}/positions/{instrument}/close",
             {"longUnits": "ALL", "shortUnits": "ALL"},
         )
+
+    def close_trade(self, trade_id: str, units: str = "ALL") -> dict:
+        """Close a single open trade by its Oanda trade ID. Use this when
+        multiple trades exist on the same instrument and only one should be
+        flattened (close_position would close all of them).
+
+        units defaults to "ALL"; pass a numeric string for partial close."""
+        return self._request(
+            "PUT",
+            f"/v3/accounts/{self.account_id}/trades/{trade_id}/close",
+            {"units": str(units)},
+        )

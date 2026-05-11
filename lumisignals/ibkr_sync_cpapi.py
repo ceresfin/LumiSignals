@@ -1184,7 +1184,49 @@ def check_order_requests(client):
                                 entry_qty = abs(int(item.get("quantity", 0)))
                                 break
 
+                        # Cancel matching protective stop(s) before placing the
+                        # close. Without this, IB sees pending SELL STPs + new
+                        # SELL MKT and rejects the close as overselling — which
+                        # is what caused the runaway accumulation seen May 11.
                         close_action = "SELL" if direction == "CLOSE_LONG" else "BUY"
+                        cancelled_stops = 0
+                        # Prefer cancelling THIS strategy's specific stop (tracked
+                        # in strat_pos when the position was opened).
+                        sp_for_close = get_strat_pos(ticker, strategy_name)
+                        targeted_stop = sp_for_close.get("stop_order_id") if sp_for_close else ""
+                        if targeted_stop:
+                            try:
+                                client.cancel_order(targeted_stop)
+                                cancelled_stops = 1
+                                logger.info("Cancelled SL %s for [%s] before close",
+                                            targeted_stop, strategy_name)
+                            except Exception as e:
+                                logger.warning("Cancel SL %s failed (may be already filled): %s",
+                                                targeted_stop, e)
+                        else:
+                            # Fall back: cancel up to `contracts` matching stops
+                            # (orphan / unattributed protection from older entries).
+                            try:
+                                open_orders_now = client.get_open_orders() or []
+                                matching = [o for o in open_orders_now
+                                            if o.get("ticker") == ticker
+                                            and o.get("side") == close_action
+                                            and o.get("orderType") in ("Stop", "STP")
+                                            and o.get("status") not in ("Filled", "Cancelled")][:contracts]
+                                for o in matching:
+                                    try:
+                                        client.cancel_order(str(o.get("orderId")))
+                                        cancelled_stops += 1
+                                    except Exception:
+                                        pass
+                                if cancelled_stops:
+                                    logger.info("Cancelled %d orphan %s stop(s) on %s before close",
+                                                cancelled_stops, close_action, ticker)
+                            except Exception as e:
+                                logger.debug("orphan stop cancel scan failed: %s", e)
+                        if cancelled_stops:
+                            time.sleep(1)  # give IB a beat to process cancels
+
                         order_payload = client.build_futures_order(fut_conid, close_action, contracts, "MKT", tif="GTC")
                         trade_result = client.place_order(order_payload)
                         time.sleep(3)
@@ -1384,6 +1426,39 @@ def check_order_requests(client):
 
                 try:
                     requests.post(f"{SERVER_URL}/api/ibkr/order/update", json=result,
+                                  headers={"X-Sync-Key": SYNC_KEY}, timeout=10)
+                except Exception:
+                    pass
+                continue
+
+            # ─── MANUAL OPTIONS CLOSE (from mobile) ───
+            if order.get("type") == "options_close":
+                ticker = order.get("ticker", "")
+                logger.info("Manual options close: %s %s %s / %s exp %s x%d",
+                            ticker, order.get("right", ""),
+                            order.get("sell_strike", 0), order.get("buy_strike", 0),
+                            order.get("expiration", ""), int(order.get("contracts", 1)))
+                spread = {
+                    "symbol": ticker,
+                    "expiration": order.get("expiration", ""),
+                    "right": order.get("right", ""),
+                    "long_strike": float(order.get("buy_strike", 0)),
+                    "short_strike": float(order.get("sell_strike", 0)),
+                    "quantity": int(order.get("contracts", 1)),
+                    "spread_type": order.get("spread_type", ""),
+                    "strategy": order.get("strategy", "manual_close"),
+                }
+                try:
+                    _close_spread(client, spread, "Manual close (mobile)")
+                    status_result = {"order_id": order["order_id"], "status": "closed",
+                                      "ticker": ticker, "type": "options_close"}
+                except Exception as e:
+                    logger.error("Manual options close failed for %s: %s", ticker, e)
+                    status_result = {"order_id": order["order_id"], "status": "failed",
+                                      "ticker": ticker, "error": str(e),
+                                      "type": "options_close"}
+                try:
+                    requests.post(f"{SERVER_URL}/api/ibkr/order/update", json=status_result,
                                   headers={"X-Sync-Key": SYNC_KEY}, timeout=10)
                 except Exception:
                     pass
