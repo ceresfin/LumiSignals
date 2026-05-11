@@ -294,6 +294,46 @@ def _lookup_signal_metadata(signal_log: dict, trade_id: str, instrument: str,
     return best or {}
 
 
+_last_mes_bars_push = 0
+MES_BARS_PUSH_INTERVAL = 60  # seconds
+
+
+def push_mes_bars_to_server(client):
+    """Pull 2-min MES bars from IB via CPAPI and POST them to the server's
+    Redis cache. The /api/candles/MES endpoint (used by mobile_chart.html)
+    reads from this cache; without the push, the mobile chart shows
+    "No candle data". Throttled to one push per minute since the bars
+    themselves close every 2 min and a 60s lag is fine."""
+    global _last_mes_bars_push
+    now = time.time()
+    if now - _last_mes_bars_push < MES_BARS_PUSH_INTERVAL:
+        return
+    _last_mes_bars_push = now
+
+    try:
+        fut = client.search_futures("MES")
+        if not fut or not fut.get("conid"):
+            return
+        bars = client.get_historical_bars(
+            fut["conid"], period="1d", bar="2min", outside_rth=True,
+        )
+        if not bars:
+            return
+        front_month = fut.get("localSymbol") or "MES"
+        try:
+            requests.post(
+                f"{SERVER_URL}/api/ibkr/futures-bars/MES",
+                json={"bars": bars, "front_month": front_month},
+                headers={"X-Sync-Key": SYNC_KEY},
+                timeout=10,
+            )
+            logger.debug("Pushed %d MES bars to server (%s)", len(bars), front_month)
+        except Exception as e:
+            logger.warning("MES bar push failed: %s", e)
+    except Exception as e:
+        logger.debug("MES bar fetch failed: %s", e)
+
+
 def sync_oanda_positions_to_supabase():
     """Refresh unrealized_pl on Oanda position rows in Supabase, full sync
     of currently-open Oanda trades, with strategy/model joined from the
@@ -1721,6 +1761,11 @@ def main():
             # strat_pos and record the closed trade so we don't wait for
             # the next signal to reconcile drift.
             check_stop_fills(client)
+
+            # Push 2-min MES bars to the server's Redis cache so the mobile
+            # /chart page (and the 2n20 strategy bar reader) has data. Bars
+            # close every 2 min; we publish at most once per minute.
+            push_mes_bars_to_server(client)
 
             # Check for options analyze requests
             check_analyze_requests(client)

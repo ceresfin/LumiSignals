@@ -342,6 +342,53 @@ class CPAPIClient:
 
     # ─── MARKET DATA ────────────────────────────────────────────────────
 
+    def get_historical_bars(self, conid: int, period: str = "1d",
+                             bar: str = "2min", outside_rth: bool = True) -> list:
+        """Fetch historical OHLCV bars for a contract.
+
+        Returns a list of {time (unix seconds), open, high, low, close, volume}.
+
+        Args:
+            conid: Contract ID
+            period: How far back. e.g. "1d", "8h", "1w"
+            bar: Bar size. e.g. "1min", "2min", "5min", "1h", "1d"
+            outside_rth: Include extended hours
+        """
+        params = {
+            "conid": conid,
+            "period": period,
+            "bar": bar,
+            "outsideRth": "true" if outside_rth else "false",
+        }
+        result = self._request("GET", "/iserver/marketdata/history", params=params)
+        # CPAPI sometimes returns 202 with empty data on first call; the next
+        # call usually works. The _request layer doesn't expose status, so we
+        # detect empty + retry once.
+        data = (result or {}).get("data") if isinstance(result, dict) else None
+        if not data:
+            import time as _t
+            _t.sleep(1)
+            result = self._request("GET", "/iserver/marketdata/history", params=params)
+            data = (result or {}).get("data") if isinstance(result, dict) else None
+        if not data:
+            return []
+        bars = []
+        for d in data:
+            try:
+                # CPAPI timestamps are ms since epoch.
+                ts = int(d.get("t", 0)) // 1000
+                bars.append({
+                    "time": ts,
+                    "open": float(d.get("o", 0)),
+                    "high": float(d.get("h", 0)),
+                    "low": float(d.get("l", 0)),
+                    "close": float(d.get("c", 0)),
+                    "volume": int(d.get("v", 0)) if d.get("v") is not None else 0,
+                })
+            except (TypeError, ValueError):
+                continue
+        return bars
+
     def get_market_snapshot(self, conids: list, fields: list = None) -> dict:
         """Get market data snapshot for one or more contracts.
 

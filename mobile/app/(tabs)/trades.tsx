@@ -5,6 +5,7 @@ import { useRouter } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/auth';
 import { Colors } from '@/constants/theme';
+import { strategyBadgeText } from '@/lib/strategyLabel';
 
 type Trade = {
   id: number;
@@ -98,7 +99,7 @@ function TradeRow({ trade, onChartPress }: { trade: Trade; onChartPress: (instru
         <Text style={[styles.modelBadge, {
           color: trade.model?.includes('2n20') ? Colors.amber : Colors.scalp,
         }]}>
-          {trade.model?.toUpperCase() || trade.strategy?.toUpperCase()}
+          {strategyBadgeText(trade.strategy, trade.model)}
         </Text>
       </View>
     </View>

@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, RefreshControl, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { WebView } from 'react-native-webview';
 import { useRouter } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/auth';
@@ -24,6 +25,13 @@ type Position = {
   instrument: string;
   broker: string;
   model?: string;
+  // Trade-level fields used by the intraday HTF chart picker.
+  broker_trade_id?: string;
+  direction?: string;
+  entry_price?: number;
+  stop_loss?: number;
+  take_profit?: number;
+  opened_at?: string;
 };
 
 type BrokerStats = {
@@ -241,6 +249,24 @@ function fmt(val: number, decimals: number = 2): string {
   });
 }
 
+// Builds the URL the dashboard chart WebView loads. The /chart endpoint on
+// bot.lumitrade.ai is the same Lightweight Charts page used by the existing
+// chart route; it draws entry/stop/target lines from URL params.
+const CHART_API_BASE = 'https://bot.lumitrade.ai';
+function buildIntradayChartUrl(p: Position): string {
+  const params: string[] = [
+    `ticker=${encodeURIComponent(p.instrument)}`,
+    `timespan=1h`,
+    `count=300`,
+    `strategy=htf_levels`,
+  ];
+  if (p.direction) params.push(`direction=${encodeURIComponent(p.direction)}`);
+  if (p.entry_price) params.push(`entry=${p.entry_price}`);
+  if (p.stop_loss) params.push(`stop=${p.stop_loss}`);
+  if (p.take_profit) params.push(`exit=${p.take_profit}`);
+  return `${CHART_API_BASE}/chart?${params.join('&')}`;
+}
+
 const TABS = [
   { key: 'forex', label: 'Forex', filter: (t: Trade) => t.broker === 'oanda' || t.asset_type === 'forex' },
   { key: 'stocks', label: 'Stocks', filter: (t: Trade) => t.asset_type === 'stock' && !t.instrument?.startsWith('I:') },
@@ -267,7 +293,7 @@ export default function Dashboard() {
           .eq('user_id', user.id),
         supabase
           .from('positions')
-          .select('strategy, asset_type, instrument, broker, model')
+          .select('strategy, asset_type, instrument, broker, model, broker_trade_id, direction, entry_price, stop_loss, take_profit, opened_at')
           .eq('user_id', user.id),
       ]);
       if (tradesRes.data) setAllTrades(tradesRes.data);
@@ -298,6 +324,26 @@ export default function Dashboard() {
   const pairs = calcPairs(filtered);
   const plColor = (val: number) => val >= 0 ? Colors.green : Colors.red;
   const hasModelData = (m: ModelStats) => m.open > 0 || m.closed > 0;
+
+  // Intraday HTF chart picker — sorted newest first.
+  const intradayHtfCandidates = useMemo(() =>
+    allPositions
+      .filter(p => p.strategy === 'htf_levels' && p.model === 'intraday'
+                && p.entry_price && p.broker_trade_id)
+      .sort((a, b) => (b.opened_at || '').localeCompare(a.opened_at || '')),
+    [allPositions]);
+
+  const [selectedChartTradeId, setSelectedChartTradeId] = useState<string | null>(null);
+  useEffect(() => {
+    if (intradayHtfCandidates.length === 0) {
+      setSelectedChartTradeId(null);
+    } else if (!selectedChartTradeId
+        || !intradayHtfCandidates.find(p => p.broker_trade_id === selectedChartTradeId)) {
+      setSelectedChartTradeId(intradayHtfCandidates[0].broker_trade_id || null);
+    }
+  }, [intradayHtfCandidates, selectedChartTradeId]);
+  const selectedChartPosition = intradayHtfCandidates.find(p => p.broker_trade_id === selectedChartTradeId);
+  const intradayChartUrl = selectedChartPosition ? buildIntradayChartUrl(selectedChartPosition) : null;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -467,6 +513,73 @@ export default function Dashboard() {
           </View>
         )}
 
+        {/* HTF Intraday Chart — picker + Lightweight Charts WebView with
+            entry / stop / target lines drawn via /chart URL params. */}
+        {intradayHtfCandidates.length > 0 && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>HTF Intraday Chart</Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.chartPickerRow}
+            >
+              {intradayHtfCandidates.map(p => {
+                const active = p.broker_trade_id === selectedChartTradeId;
+                return (
+                  <TouchableOpacity
+                    key={p.broker_trade_id}
+                    onPress={() => setSelectedChartTradeId(p.broker_trade_id || null)}
+                    style={[styles.chartChip, active && styles.chartChipActive]}
+                  >
+                    <Text style={[styles.chartChipText, active && styles.chartChipTextActive]}>
+                      {p.instrument}
+                    </Text>
+                    <Text style={[styles.chartChipSide, active && styles.chartChipTextActive]}>
+                      {p.direction === 'BUY' || p.direction === 'LONG' ? '↑' : '↓'}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+            {selectedChartPosition && (
+              <TouchableOpacity
+                style={styles.chartMeta}
+                onPress={() => router.push({
+                  pathname: '/chart',
+                  params: {
+                    symbol: selectedChartPosition.instrument,
+                    interval: '1h',
+                    entry: String(selectedChartPosition.entry_price || ''),
+                    stop: String(selectedChartPosition.stop_loss || ''),
+                    exit: String(selectedChartPosition.take_profit || ''),
+                    direction: selectedChartPosition.direction || '',
+                    strategy: 'htf_levels',
+                  },
+                })}
+              >
+                <Text style={styles.chartMetaText}>
+                  Entry {selectedChartPosition.entry_price?.toFixed(5) || '—'}
+                  {'  ·  '}Stop {selectedChartPosition.stop_loss?.toFixed(5) || '—'}
+                  {selectedChartPosition.take_profit
+                    ? `  ·  Target ${selectedChartPosition.take_profit.toFixed(5)}`
+                    : ''}
+                </Text>
+                <Text style={styles.chartExpandHint}>Tap to expand ›</Text>
+              </TouchableOpacity>
+            )}
+            {intradayChartUrl && (
+              <View style={styles.chartContainer}>
+                <WebView
+                  source={{ uri: intradayChartUrl }}
+                  style={{ flex: 1, backgroundColor: 'transparent' }}
+                  scrollEnabled={false}
+                  originWhitelist={['*']}
+                />
+              </View>
+            )}
+          </View>
+        )}
+
         <View style={{ height: 40 }} />
       </ScrollView>
     </SafeAreaView>
@@ -553,4 +666,38 @@ const styles = StyleSheet.create({
   // Empty
   empty: { alignItems: 'center', paddingTop: 40 },
   emptyText: { fontSize: 15, color: Colors.textLight },
+  // HTF intraday chart picker + WebView
+  chartPickerRow: {
+    paddingVertical: 4,
+    gap: 8,
+  },
+  chartChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.white,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 50,
+    marginRight: 8,
+    gap: 6,
+  },
+  chartChipActive: { backgroundColor: Colors.olive },
+  chartChipText: { fontSize: 13, fontWeight: '600', color: Colors.dark },
+  chartChipTextActive: { color: Colors.gold },
+  chartChipSide: { fontSize: 13, fontWeight: '600', color: Colors.textLight },
+  chartMeta: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 4,
+  },
+  chartMetaText: { fontSize: 12, color: Colors.textMedium, flex: 1 },
+  chartExpandHint: { fontSize: 11, color: Colors.olive, fontWeight: '600' },
+  chartContainer: {
+    height: 380,
+    backgroundColor: Colors.white,
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
 });
