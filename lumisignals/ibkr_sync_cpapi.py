@@ -201,6 +201,23 @@ def check_stop_fills(client):
                 logger.warning("Failed to record stop-fill closed trade for %s/%s: %s",
                                 ticker, strategy, e)
 
+            # Push notification: stop hit.
+            try:
+                from .supabase_client import notify_trade_closed
+                supabase_uid = os.environ.get("SUPABASE_USER_ID", "")
+                if supabase_uid:
+                    points = round(exit_price - entry_price, 2) if direction == "BUY" else round(entry_price - exit_price, 2)
+                    notify_trade_closed(
+                        user_id=supabase_uid,
+                        instrument=ticker,
+                        direction=direction,
+                        pl=pnl,
+                        pips=points,
+                        reason="Stop Loss",
+                    )
+            except Exception as e:
+                logger.debug("notify (stop fill) failed: %s", e)
+
             rdb.delete(key)
         except Exception as e:
             logger.debug("check_stop_fills entry error: %s", e)
@@ -522,18 +539,77 @@ def sync_positions_to_supabase(positions: list):
         avg_cost = pos.get("avg_cost") or 0
         # avg_cost is total ($/contract * multiplier); divide for per-unit price.
         entry_price = (avg_cost / multiplier) if multiplier else avg_cost
-        update = {
+        qty = int(pos.get("quantity") or 0)
+        live_fields = {
             "entry_price": round(float(entry_price), 4),
             "unrealized_pl": round(float(pos.get("unrealized_pnl") or 0), 2),
-            "contracts": int(abs(pos.get("quantity") or 0)),
+            "contracts": int(abs(qty)),
             "updated_at": time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime()),
         }
         try:
-            sb.table("positions").update(update) \
-                .eq("user_id", user_id) \
-                .eq("broker", "ib") \
-                .eq("instrument", symbol) \
-                .execute()
+            # Check if a row exists; UPDATE if yes, INSERT if not.
+            # IB futures positions opened via the new sync path don't
+            # auto-create Supabase rows (unlike fx_scalp_2n20 which calls
+            # upsert_position at fill time). Without this insert, mobile
+            # shows "0 positions" even when IB is actually long.
+            existing = sb.table("positions").select("id, strategy, model") \
+                .eq("user_id", user_id).eq("broker", "ib") \
+                .eq("instrument", symbol).execute().data or []
+            if existing:
+                sb.table("positions").update(live_fields) \
+                    .eq("user_id", user_id) \
+                    .eq("broker", "ib") \
+                    .eq("instrument", symbol) \
+                    .execute()
+            else:
+                # Insert new row. Strategy/model pulled from any tracked
+                # strat_pos entry for this ticker (we may have multiple
+                # strategies; pick the first one found — single-strategy
+                # MES setup right now so this works).
+                strategy = ""
+                model = ""
+                try:
+                    rdb = _rdb()
+                    if rdb:
+                        for k in rdb.scan_iter(f"ibkr:strat_pos:{symbol}:*"):
+                            sp_raw = rdb.get(k)
+                            if sp_raw:
+                                sp = json.loads(sp_raw)
+                                strategy = sp.get("strategy", "") or strategy
+                                model = sp.get("strategy", "") or model  # match existing convention
+                                break
+                except Exception:
+                    pass
+                asset_type = "futures" if sec_type == "FUT" else "stock"
+                broker_trade_id = ""  # will be left empty for IB futures
+                # broker_trade_id can be the perm_id from strat_pos if available
+                try:
+                    rdb = _rdb()
+                    if rdb:
+                        for k in rdb.scan_iter(f"ibkr:strat_pos:{symbol}:*"):
+                            sp_raw = rdb.get(k)
+                            if sp_raw:
+                                sp = json.loads(sp_raw)
+                                broker_trade_id = sp.get("perm_id", "") or broker_trade_id
+                                break
+                except Exception:
+                    pass
+                from datetime import datetime as _dt, timezone as _tz
+                row = {
+                    "user_id": user_id,
+                    "broker": "ib",
+                    "broker_trade_id": broker_trade_id,
+                    "instrument": symbol,
+                    "asset_type": asset_type,
+                    "direction": "BUY" if qty > 0 else "SELL",
+                    "strategy": strategy,
+                    "model": model,
+                    "opened_at": _dt.now(_tz.utc).isoformat(),
+                    **live_fields,
+                }
+                sb.table("positions").insert(row).execute()
+                logger.info("Inserted new IB %s position row: %s qty=%d strategy=%s",
+                            asset_type, symbol, qty, strategy or "(unknown)")
         except Exception as e:
             logger.debug("supabase position refresh failed for %s: %s", symbol, e)
 
@@ -1321,6 +1397,22 @@ def check_order_requests(client):
                             except Exception:
                                 pass
                             logger.info("Closed %s %s: entry=%.2f exit=%.2f P&L=$%.2f", ticker, direction, entry_price, exit_price, pnl)
+                            # Push notification: trade closed.
+                            try:
+                                from .supabase_client import notify_trade_closed
+                                supabase_uid = os.environ.get("SUPABASE_USER_ID", "")
+                                if supabase_uid:
+                                    points = round(exit_price - entry_price, 2) if direction == "CLOSE_LONG" else round(entry_price - exit_price, 2)
+                                    notify_trade_closed(
+                                        user_id=supabase_uid,
+                                        instrument=ticker,
+                                        direction=("BUY" if direction == "CLOSE_LONG" else "SELL"),
+                                        pl=pnl,
+                                        pips=points,  # MES points (not pips), repurposing the field
+                                        reason=close_reason or strategy_name.upper(),
+                                    )
+                            except Exception as e:
+                                logger.debug("notify_trade_closed failed: %s", e)
                     elif direction == "BUY":
                         order_payload = client.build_futures_order(fut_conid, "BUY", contracts, "MKT", tif="GTC")
                         trade_result = client.place_order(order_payload)
@@ -1440,6 +1532,21 @@ def check_order_requests(client):
                                        stop_order_id=sl_order_id,
                                        stop_price=sl_price,
                                        multiplier=multiplier)
+
+                        # Push notification: trade opened.
+                        try:
+                            from .supabase_client import notify_trade_opened
+                            supabase_uid = os.environ.get("SUPABASE_USER_ID", "")
+                            if supabase_uid and entry_fill_price:
+                                notify_trade_opened(
+                                    user_id=supabase_uid,
+                                    instrument=ticker,
+                                    direction=direction,
+                                    entry_price=entry_fill_price,
+                                    strategy=f"{strategy_name.upper()} {direction}",
+                                )
+                        except Exception as e:
+                            logger.debug("notify_trade_opened failed: %s", e)
                         try:
                             requests.post(f"{SERVER_URL}/api/ibkr/order/update",
                                 json={
