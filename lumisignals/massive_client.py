@@ -370,9 +370,12 @@ class MassiveClient:
         start_str = start.strftime("%Y-%m-%d")
         end_str = now.strftime("%Y-%m-%d")
 
+        # Fetch newest-first with sort=desc so a small `limit` keeps the
+        # MOST RECENT bars. Previously sort=asc + limit=count+10 returned the
+        # oldest bars in the date window — a 5m chart could be hours stale.
         data = self._request(
             f"/v2/aggs/ticker/{ticker}/range/{multiplier}/{span}/{start_str}/{end_str}",
-            params={"adjusted": "true", "sort": "asc", "limit": min(count + 10, 50000)},
+            params={"adjusted": "true", "sort": "desc", "limit": min(count + 10, 50000)},
         )
 
         results = data.get("results", [])
@@ -385,6 +388,8 @@ class MassiveClient:
                 close=float(bar["c"]),
                 timestamp=str(bar.get("t", 0) / 1000),  # ms → seconds
             ))
+        # Polygon returned newest→oldest; flip so charts get oldest→newest.
+        candles.reverse()
 
         return candles
 
