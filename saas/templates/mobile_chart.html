@@ -273,13 +273,14 @@
           });
         }
 
-        // Target: solid line + one-sided shaded "meat" band extending past
-        // the target toward where the absolute S/R wall sits. Width is 1 ATR
-        // and opacity is high so the zone is obvious on mobile.
+        // Target: solid line + one-sided shaded "meat" band on the ENTRY
+        // side of the target — the territory the trade has to traverse to
+        // be profitable. Same lean as the entry band so both visually point
+        // the same way.
         if (HAS_TRADE && EXIT_PRICE && ATR > 0) {
           const w = 1.0 * ATR;
-          const low  = isLong ? EXIT_PRICE : EXIT_PRICE - w;
-          const high = isLong ? EXIT_PRICE + w : EXIT_PRICE;
+          const low  = isLong ? EXIT_PRICE - w : EXIT_PRICE;
+          const high = isLong ? EXIT_PRICE : EXIT_PRICE + w;
           drawBand(low, high, 'rgba(255,152,0,0.45)', null);
         }
         if (HAS_TRADE && EXIT_PRICE) {
