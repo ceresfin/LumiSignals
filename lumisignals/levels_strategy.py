@@ -910,10 +910,12 @@ class LevelsStrategy:
                 detail["candle1_shape"] = _candle_shape_stock(series[-1])
             tf_details[tf_label] = detail
 
-        # 5. Check monthly and weekly levels only (daily is noise for stocks)
+        # 5. Check this model's zone timeframes (was hardcoded to [1mo, 1w],
+        #    which silently dropped every stock for SCALP since SCALP fetches
+        #    15m/1h/1d SNR data — those keys never appeared in the matcher).
         # Tolerance = ATR × configurable multiplier (default 0.5)
         stock_tolerance = atr * self.stock_atr_multiplier
-        for tf in ["1mo", "1w"]:
+        for tf in self.zone_tfs:
             levels = snr_data.get(tf, {})
             tolerance = stock_tolerance
 
