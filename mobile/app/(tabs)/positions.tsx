@@ -534,16 +534,23 @@ export default function Positions() {
         ListFooterComponent={
           <>
           {/* IB-vs-Bot Reconciliation — independent audit pulled directly
-              from IB's position snapshot. Reveals orphans, phantoms,
-              direction mismatches. Tap header to expand the per-row detail. */}
-          {audit && audit.rows && audit.rows.length > 0 && (
+              from IB's position snapshot. Always visible so you can
+              verify FLAT means actually flat, plus catch orphans /
+              phantoms / direction mismatches. */}
+          {audit && (
             <View style={styles.auditSection}>
               <TouchableOpacity onPress={() => setAuditExpanded(v => !v)}>
                 <View style={styles.auditHeader}>
                   <Text style={styles.auditTitle}>
-                    🔍 IB vs Bot Audit{(() => {
-                      const mm = audit.rows.filter((r: any) => r.status !== 'matched' && r.status !== 'flat').length;
-                      return mm > 0 ? `  ⚠️ ${mm} mismatch${mm > 1 ? 'es' : ''}` : '  ✓ All matched';
+                    🔍 IB Direct{(() => {
+                      const s = audit.summary || {};
+                      if (s.is_flat) return '  ✓ FLAT (no positions at IB)';
+                      const mm = (audit.rows || []).filter((r: any) =>
+                        r.status !== 'matched' && r.status !== 'flat').length;
+                      const counts = `${s.long_count || 0}L / ${s.short_count || 0}S`;
+                      return mm > 0
+                        ? `  ⚠️ ${counts} · ${mm} mismatch${mm > 1 ? 'es' : ''}`
+                        : `  ✓ ${counts} · all matched`;
                     })()}
                   </Text>
                   <Text style={styles.auditChevron}>{auditExpanded ? '▼' : '▶'}</Text>
@@ -551,13 +558,27 @@ export default function Positions() {
               </TouchableOpacity>
               {auditExpanded && (
                 <View style={{ marginTop: 8 }}>
-                  {audit.rows.map((row: any) => (
-                    <View key={row.instrument} style={[
+                  {(!audit.rows || audit.rows.length === 0) && (
+                    <View style={styles.auditRow}>
+                      <Text style={[styles.auditInst, { textAlign: 'center', color: Colors.green }]}>
+                        ✓ No open positions at IB
+                      </Text>
+                      <Text style={[styles.auditDetail, { textAlign: 'center' }]}>
+                        Account is truly flat across all asset classes
+                      </Text>
+                    </View>
+                  )}
+                  {(audit.rows || []).map((row: any) => (
+                    <View key={row.display_key || row.instrument} style={[
                       styles.auditRow,
                       row.status !== 'matched' && row.status !== 'flat' && styles.auditRowMismatch,
                     ]}>
                       <View style={styles.auditRowTop}>
-                        <Text style={styles.auditInst}>{row.instrument}</Text>
+                        <Text style={styles.auditInst}>
+                          {row.instrument}
+                          {row.asset_type ? ` · ${row.asset_type}` : ''}
+                          {row.ib_qty > 0 ? ' · LONG' : row.ib_qty < 0 ? ' · SHORT' : ''}
+                        </Text>
                         <Text style={[
                           styles.auditStatus,
                           { color: (row.status === 'matched' || row.status === 'flat') ? Colors.green : '#c0392b' },

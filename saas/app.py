@@ -1768,22 +1768,31 @@ def create_app():
             return jsonify({"ok": False, "error": "no IB snapshot", "last_synced": None})
         ib = json.loads(ib_raw)
 
-        # Build per-instrument summary
+        # Build per-instrument summary — include ALL asset classes
+        # (FUT, STK, OPT, etc.) so the user can verify the full IB
+        # state at a glance, not just the strategies the bot tracks.
         rows = []
-        ib_positions = {}  # symbol → {qty, avg_cost, sec_type}
+        ib_positions = {}  # key → {qty, avg_cost, sec_type, label, ...}
         for p in ib.get("positions", []):
             sym = p.get("symbol")
+            sec_type = p.get("sec_type", "?")
             if not sym:
                 continue
-            if p.get("sec_type") not in ("FUT", "STK"):
-                continue  # options/spreads handled elsewhere
-            ib_positions[sym] = {
+            # Options get conid-keyed (separate legs) since one symbol
+            # can have many option contracts. Other types key by symbol.
+            if sec_type == "OPT":
+                key = f"{sym} {p.get('description', '')[:30]}"
+            else:
+                key = sym
+            ib_positions[key] = {
+                "symbol": sym,
                 "qty": int(p.get("quantity", 0)),
                 "avg_cost": float(p.get("avg_cost", 0)) / float(p.get("multiplier", 1) or 1),
                 "market_price": float(p.get("market_price", 0)),
                 "unrealized_pl": float(p.get("unrealized_pnl", 0)),
-                "sec_type": p.get("sec_type"),
+                "sec_type": sec_type,
                 "multiplier": float(p.get("multiplier", 1)),
+                "description": p.get("description", ""),
             }
 
         # Gather strat_pos coverage per symbol
@@ -1808,11 +1817,17 @@ def create_app():
         except Exception as e:
             logger.warning("audit strat_pos read failed: %s", e)
 
-        # Build the audit rows
-        all_syms = set(ib_positions.keys()) | set(strat_by_symbol.keys())
-        for sym in sorted(all_syms):
-            ib_data = ib_positions.get(sym)
-            strats = strat_by_symbol.get(sym, [])
+        # Build the audit rows.
+        # IB positions key on symbol (OPT keys differently); strat_pos
+        # keys on ticker symbol. Join by symbol so OPT legs and tracked
+        # futures positions both show up.
+        all_keys = set(ib_positions.keys()) | set(strat_by_symbol.keys())
+        for key in sorted(all_keys):
+            ib_data = ib_positions.get(key)
+            # strats lookup uses the IB symbol field (or the key itself
+            # if no IB data — e.g. phantom strat_pos with no IB row)
+            lookup_sym = ib_data["symbol"] if ib_data else key
+            strats = strat_by_symbol.get(lookup_sym, [])
             ib_qty = ib_data["qty"] if ib_data else 0
             # Signed tracked qty (BUY contributes +, SELL contributes -)
             tracked_signed = sum(
@@ -1840,7 +1855,10 @@ def create_app():
                 status = "matched"; status_label = "MATCHED"
 
             rows.append({
-                "instrument": sym,
+                "instrument": lookup_sym,
+                "display_key": key,
+                "asset_type": ib_data["sec_type"] if ib_data else "?",
+                "description": ib_data["description"] if ib_data else "",
                 "ib_qty": ib_qty,
                 "ib_avg": round(ib_data["avg_cost"], 4) if ib_data else None,
                 "ib_market_price": round(ib_data["market_price"], 4) if ib_data else None,
@@ -1853,10 +1871,20 @@ def create_app():
                 "status_label": status_label,
             })
 
+        # Total exposure summary for the "you are flat" confirmation
+        net_long_count = sum(1 for r in rows if r["ib_qty"] > 0)
+        net_short_count = sum(1 for r in rows if r["ib_qty"] < 0)
+
         return jsonify({
             "ok": True,
             "last_synced": ib.get("last_synced", ""),
             "rows": rows,
+            "summary": {
+                "total_positions": len(rows),
+                "long_count": net_long_count,
+                "short_count": net_short_count,
+                "is_flat": (net_long_count == 0 and net_short_count == 0),
+            },
         })
 
     @app.route("/api/ibkr/sync", methods=["POST"])
