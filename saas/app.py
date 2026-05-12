@@ -2237,6 +2237,17 @@ def create_app():
                 "model": "0dte",
                 "signal_action": direction,
             }
+            # Pine's full trade plan (ORB sends all of these; 2n20 sends none).
+            # Sync uses stop_price/target_price to place bracket children
+            # instead of computing its own stop from config. The rest gets
+            # stored on the position metadata for the dashboard/journal.
+            for fld in (
+                "entry_price", "stop_price", "target_price",
+                "vix", "or_high", "or_low", "or_range",
+                "stop_size", "stop_reason", "reversal",
+            ):
+                if fld in data:
+                    order[fld] = data[fld]
             rdb.setex(f"ibkr:order:pending:{order_id}", 86400, json.dumps(order))
             # 30s dedup — only protects against accidental webhook retries from TV
             # itself. Pine's `alert.freq_once_per_bar_close` already ensures one

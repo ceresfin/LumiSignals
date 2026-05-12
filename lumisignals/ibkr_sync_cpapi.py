@@ -82,11 +82,15 @@ def get_strat_pos(ticker: str, strategy: str) -> dict:
 def save_strat_pos(ticker: str, strategy: str, direction: str,
                     contracts: int, entry_price: float, perm_id: str,
                     stop_order_id: str = "", stop_price: float = 0,
-                    multiplier: float = 1):
+                    target_order_id: str = "", target_price: float = 0,
+                    multiplier: float = 1, metadata: dict = None):
     """Persist per-strategy position state. stop_order_id lets the
     stop-fill watcher know which IB order belongs to this strategy's
     SL — when that order leaves IB's open-orders list, the strategy
-    has been stopped out and we can clear the state and book the trade."""
+    has been stopped out and we can clear the state and book the trade.
+    target_order_id tracks the matching TP child so we can cancel it
+    when SL fills (or vice versa). metadata holds Pine-supplied context
+    (VIX, OR range, stop_reason, reversal) that we want on the trade row."""
     rdb = _rdb()
     if rdb is None:
         return
@@ -102,7 +106,10 @@ def save_strat_pos(ticker: str, strategy: str, direction: str,
                 "perm_id": str(perm_id or ""),
                 "stop_order_id": str(stop_order_id or ""),
                 "stop_price": float(stop_price or 0),
+                "target_order_id": str(target_order_id or ""),
+                "target_price": float(target_price or 0),
                 "multiplier": float(multiplier or 1),
+                "metadata": metadata or {},
                 "opened_at": _dt.now(_tz.utc).isoformat(),
             }),
         )
@@ -149,27 +156,41 @@ def check_stop_fills(client):
                 continue
             sp = json.loads(raw)
             stop_id = str(sp.get("stop_order_id") or "")
-            if not stop_id or stop_id == "0":
-                continue  # no SL captured (e.g. seeded positions) — reconcile handles those
-            if stop_id in open_ids:
-                continue  # stop still active
+            target_id = str(sp.get("target_order_id") or "")
+            stop_gone   = bool(stop_id   and stop_id   != "0" and stop_id   not in open_ids)
+            target_gone = bool(target_id and target_id != "0" and target_id not in open_ids)
+            if not stop_gone and not target_gone:
+                continue  # both children still active (or neither tracked)
 
-            # Stop is gone from open orders — it filled (or was cancelled).
+            # Decide which child fired — whichever is gone wins. If BOTH are
+            # gone in the same poll, prefer the target (rare race; target
+            # tends to be a LMT that fills cleanly).
+            fired = "target" if target_gone else "stop"
+            survivor_id = stop_id if fired == "target" else target_id
+
             ticker = sp.get("ticker", "")
             strategy = sp.get("strategy", "")
             direction = sp.get("direction", "")
             contracts = int(sp.get("contracts", 0))
             entry_price = float(sp.get("entry_price", 0))
             stop_price = float(sp.get("stop_price", 0))
+            target_price = float(sp.get("target_price", 0))
             multiplier = float(sp.get("multiplier", 1))
 
-            logger.info("Stop fill detected: %s [%s] stop_order_id=%s — clearing strat_pos",
-                        ticker, strategy, stop_id)
+            # Cancel the surviving sibling so we don't get filled twice
+            if survivor_id and survivor_id != "0":
+                try:
+                    client.cancel_order(survivor_id)
+                    logger.info("Cancelled survivor %s child %s after %s fill",
+                                ticker, "TP" if fired == "stop" else "SL", survivor_id)
+                except Exception as e:
+                    logger.warning("Failed to cancel survivor %s: %s", survivor_id, e)
 
-            # Compute realized P&L assuming stop price was the exit.
-            # (Real fill may differ slightly due to slippage, but using
-            # stop_price gives a defensible approximation.)
-            exit_price = stop_price
+            close_reason = "Take Profit" if fired == "target" else "Stop Loss"
+            exit_price = target_price if fired == "target" else stop_price
+            logger.info("%s fill detected: %s [%s] — clearing strat_pos",
+                        close_reason, ticker, strategy)
+
             pnl = 0
             if entry_price and exit_price:
                 if direction == "BUY":
@@ -177,7 +198,6 @@ def check_stop_fills(client):
                 else:
                     pnl = (entry_price - exit_price) * contracts * multiplier
 
-            # Post closed-trade record so it lands in trades.html / mobile.
             try:
                 from datetime import datetime as _dt, timezone as _tz
                 requests.post(
@@ -190,18 +210,18 @@ def check_stop_fills(client):
                         "exit_price": round(exit_price, 2),
                         "realized_pnl": round(pnl, 2),
                         "strategy": strategy,
-                        "close_reason": "Stop Loss",
+                        "close_reason": close_reason,
                         "opened_at": sp.get("opened_at", ""),
                         "closed_at": _dt.now(_tz.utc).isoformat(),
+                        "metadata": sp.get("metadata", {}),
                     },
                     headers={"X-Sync-Key": SYNC_KEY},
                     timeout=10,
                 )
             except Exception as e:
-                logger.warning("Failed to record stop-fill closed trade for %s/%s: %s",
-                                ticker, strategy, e)
+                logger.warning("Failed to record %s closed trade for %s/%s: %s",
+                                close_reason, ticker, strategy, e)
 
-            # Push notification: stop hit.
             try:
                 from .supabase_client import notify_trade_closed
                 supabase_uid = os.environ.get("SUPABASE_USER_ID", "")
@@ -213,10 +233,10 @@ def check_stop_fills(client):
                         direction=direction,
                         pl=pnl,
                         pips=points,
-                        reason="Stop Loss",
+                        reason=close_reason,
                     )
             except Exception as e:
-                logger.debug("notify (stop fill) failed: %s", e)
+                logger.debug("notify (child fill) failed: %s", e)
 
             rdb.delete(key)
         except Exception as e:
@@ -1270,6 +1290,17 @@ def check_order_requests(client):
 
                     sl_points = sl_dollars / multiplier
 
+                    # Pine's calculated plan (ORB sends; 2n20 doesn't). If
+                    # present, use Pine's stop/target verbatim instead of
+                    # deriving from sl_dollars. ORB's VIX-aware stop sizing
+                    # only matters if we actually honor it.
+                    pine_stop = float(order.get("stop_price") or 0)
+                    pine_target = float(order.get("target_price") or 0)
+                    pine_meta = {k: order[k] for k in (
+                        "vix", "or_high", "or_low", "or_range",
+                        "stop_size", "stop_reason", "reversal",
+                    ) if order.get(k) is not None}
+
                     if direction in ("CLOSE_LONG", "CLOSE_SHORT"):
                         # Record entry price before closing
                         entry_price = 0
@@ -1428,11 +1459,13 @@ def check_order_requests(client):
                         # Place stop loss using the actual MES fill price.
                         sl_order_id = ""
                         sl_price = 0
+                        tp_order_id = ""
+                        tp_price = 0
                         try:
                             fill_info = client.get_order_fill(entry_order_id)
                             fill_price = float(fill_info.get("avg_price") or 0)
                             if fill_price > 0:
-                                sl_price = fill_price - sl_points
+                                sl_price = pine_stop if pine_stop > 0 else (fill_price - sl_points)
                                 sl_payload = client.build_futures_order(fut_conid, "SELL", contracts, "STP", sl_price, tif="GTC")
                                 sl_result = client.place_order(sl_payload)
                                 if isinstance(sl_result, list) and sl_result:
@@ -1440,13 +1473,25 @@ def check_order_requests(client):
                                     sl_order_id = str(first.get("order_id", "") or "")
                                 elif isinstance(sl_result, dict):
                                     sl_order_id = str(sl_result.get("order_id", "") or "")
-                                logger.info("Stop loss: SELL %s @ %.2f (entry %.2f, risk $%.0f) sl_id=%s",
-                                            ticker, sl_price, fill_price, sl_dollars, sl_order_id)
+                                logger.info("Stop loss: SELL %s @ %.2f (entry %.2f, source=%s) sl_id=%s",
+                                            ticker, sl_price, fill_price,
+                                            "pine" if pine_stop else "config", sl_order_id)
+                                # Take-profit child if Pine sent a target
+                                if pine_target > 0:
+                                    tp_price = pine_target
+                                    tp_payload = client.build_futures_order(fut_conid, "SELL", contracts, "LMT", tp_price, tif="GTC")
+                                    tp_result = client.place_order(tp_payload)
+                                    if isinstance(tp_result, list) and tp_result:
+                                        first = tp_result[0] if isinstance(tp_result[0], dict) else {}
+                                        tp_order_id = str(first.get("order_id", "") or "")
+                                    elif isinstance(tp_result, dict):
+                                        tp_order_id = str(tp_result.get("order_id", "") or "")
+                                    logger.info("Take profit: SELL %s @ %.2f tp_id=%s", ticker, tp_price, tp_order_id)
                             else:
                                 logger.error("Cannot place SL for %s: entry order %s not filled (status=%s)",
                                               ticker, entry_order_id, fill_info.get("status", ""))
                         except Exception as e:
-                            logger.error("Failed to place stop loss: %s", e)
+                            logger.error("Failed to place stop loss/target: %s", e)
                     elif direction == "SELL":
                         order_payload = client.build_futures_order(fut_conid, "SELL", contracts, "MKT", tif="GTC")
                         trade_result = client.place_order(order_payload)
@@ -1459,11 +1504,13 @@ def check_order_requests(client):
                             entry_order_id = str(trade_result.get("order_id", "") or "")
                         sl_order_id = ""
                         sl_price = 0
+                        tp_order_id = ""
+                        tp_price = 0
                         try:
                             fill_info = client.get_order_fill(entry_order_id)
                             fill_price = float(fill_info.get("avg_price") or 0)
                             if fill_price > 0:
-                                sl_price = fill_price + sl_points
+                                sl_price = pine_stop if pine_stop > 0 else (fill_price + sl_points)
                                 sl_payload = client.build_futures_order(fut_conid, "BUY", contracts, "STP", sl_price, tif="GTC")
                                 sl_result = client.place_order(sl_payload)
                                 if isinstance(sl_result, list) and sl_result:
@@ -1471,13 +1518,25 @@ def check_order_requests(client):
                                     sl_order_id = str(first.get("order_id", "") or "")
                                 elif isinstance(sl_result, dict):
                                     sl_order_id = str(sl_result.get("order_id", "") or "")
-                                logger.info("Stop loss: BUY %s @ %.2f (entry %.2f, risk $%.0f) sl_id=%s",
-                                            ticker, sl_price, fill_price, sl_dollars, sl_order_id)
+                                logger.info("Stop loss: BUY %s @ %.2f (entry %.2f, source=%s) sl_id=%s",
+                                            ticker, sl_price, fill_price,
+                                            "pine" if pine_stop else "config", sl_order_id)
+                                # Take-profit child if Pine sent a target
+                                if pine_target > 0:
+                                    tp_price = pine_target
+                                    tp_payload = client.build_futures_order(fut_conid, "BUY", contracts, "LMT", tp_price, tif="GTC")
+                                    tp_result = client.place_order(tp_payload)
+                                    if isinstance(tp_result, list) and tp_result:
+                                        first = tp_result[0] if isinstance(tp_result[0], dict) else {}
+                                        tp_order_id = str(first.get("order_id", "") or "")
+                                    elif isinstance(tp_result, dict):
+                                        tp_order_id = str(tp_result.get("order_id", "") or "")
+                                    logger.info("Take profit: BUY %s @ %.2f tp_id=%s", ticker, tp_price, tp_order_id)
                             else:
                                 logger.error("Cannot place SL for %s: entry order %s not filled (status=%s)",
                                               ticker, entry_order_id, fill_info.get("status", ""))
                         except Exception as e:
-                            logger.error("Failed to place stop loss: %s", e)
+                            logger.error("Failed to place stop loss/target: %s", e)
                     else:
                         logger.error("Unknown futures direction: %s", direction)
                         continue
@@ -1531,19 +1590,38 @@ def check_order_requests(client):
                                        contracts, entry_fill_price, perm_id,
                                        stop_order_id=sl_order_id,
                                        stop_price=sl_price,
-                                       multiplier=multiplier)
+                                       target_order_id=tp_order_id,
+                                       target_price=tp_price,
+                                       multiplier=multiplier,
+                                       metadata=pine_meta)
 
-                        # Push notification: trade opened.
+                        # Push + Telegram notification with the full plan
+                        # (entry/target/stop/risk/reward) when Pine supplied it.
                         try:
                             from .supabase_client import notify_trade_opened
                             supabase_uid = os.environ.get("SUPABASE_USER_ID", "")
                             if supabase_uid and entry_fill_price:
+                                # Compute risk/reward in dollars when stop+target known
+                                risk_d = None
+                                reward_d = None
+                                rr = None
+                                if sl_price and entry_fill_price:
+                                    risk_d = abs(entry_fill_price - sl_price) * multiplier * contracts
+                                if tp_price and entry_fill_price:
+                                    reward_d = abs(tp_price - entry_fill_price) * multiplier * contracts
+                                if risk_d and reward_d:
+                                    rr = round(reward_d / risk_d, 2)
                                 notify_trade_opened(
                                     user_id=supabase_uid,
                                     instrument=ticker,
                                     direction=direction,
                                     entry_price=entry_fill_price,
                                     strategy=f"{strategy_name.upper()} {direction}",
+                                    stop=sl_price or None,
+                                    target=tp_price or None,
+                                    risk_dollars=risk_d,
+                                    reward_dollars=reward_d,
+                                    rr_ratio=rr,
                                 )
                         except Exception as e:
                             logger.debug("notify_trade_opened failed: %s", e)
