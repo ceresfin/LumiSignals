@@ -30,6 +30,16 @@ def create_app():
         "postgresql://lumisignals:LumiBot2026@localhost/lumisignals_db",
     )
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+    # Preserve dict insertion order in JSON responses. By default Flask
+    # sorts keys alphabetically, which reorders trend timeframe keys
+    # from natural order (5M, 15M, 1H) to alphabetical (15M, 1H, 5M).
+    app.config["JSON_SORT_KEYS"] = False
+    # Flask 2.2+ moved to provider-based JSON; configure that too so
+    # the setting takes effect across versions.
+    try:
+        app.json.sort_keys = False
+    except AttributeError:
+        pass
 
     db.init_app(app)
     login_manager.init_app(app)
