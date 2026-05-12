@@ -616,6 +616,43 @@ def sync_positions_to_supabase(positions: list):
 
         # Per-strategy rows — one Supabase position per strat_pos entry
         symbols_with_strat.add(symbol)
+        # If strat_pos coverage doesn't equal the IB quantity (because some
+        # contracts were opened before strat tracking, or a strat_pos got
+        # cleared by reconcile while the IB position stayed open), surface
+        # the untracked remainder as an "orphan" row so the mobile total
+        # matches IB. Otherwise the user would see fewer contracts than IB.
+        tracked_qty = sum(int(sp.get("contracts") or 0) for sp in strat_positions)
+        orphan_qty = abs(qty) - tracked_qty
+        if orphan_qty > 0:
+            avg_cost = pos.get("avg_cost") or 0
+            orphan_entry = (avg_cost / multiplier) if multiplier else avg_cost
+            orphan_unreal = 0.0
+            orphan_dir = "BUY" if qty > 0 else "SELL"
+            if market_price and orphan_entry:
+                if orphan_dir == "BUY":
+                    orphan_unreal = (market_price - orphan_entry) * orphan_qty * multiplier
+                else:
+                    orphan_unreal = (orphan_entry - market_price) * orphan_qty * multiplier
+            orphan_tid = f"orphan:{symbol}"
+            seen_perm_ids.add(orphan_tid)
+            try:
+                sb.table("positions").upsert({
+                    "user_id": user_id,
+                    "broker": "ib",
+                    "broker_trade_id": orphan_tid,
+                    "instrument": symbol,
+                    "asset_type": asset_type,
+                    "direction": orphan_dir,
+                    "contracts": orphan_qty,
+                    "entry_price": round(orphan_entry, 4),
+                    "unrealized_pl": round(orphan_unreal, 2),
+                    "strategy": "untracked",
+                    "model": "untracked",
+                    "updated_at": time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime()),
+                }, on_conflict="user_id,broker,broker_trade_id").execute()
+            except Exception as e:
+                logger.debug("orphan upsert failed for %s: %s", symbol, e)
+
         for sp in strat_positions:
             perm_id = str(sp.get("perm_id") or "")
             if not perm_id:
