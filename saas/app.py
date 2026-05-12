@@ -370,12 +370,21 @@ def create_app():
                 # entry = zone_price, stop = entry ± 3 × trigger-TF ATR.
                 # Target is left empty here; the chart computes it from
                 # the S/R levels endpoint it already fetches.
+                # Direction fallback: some bot paths leave trade_direction
+                # blank; derive it from zone_type (supply → SELL, demand → BUY)
+                # so projection still works for all three durations.
+                effective_dir = trade_dir
+                if not effective_dir:
+                    if zone_type == "supply":
+                        effective_dir = "SELL"
+                    elif zone_type == "demand":
+                        effective_dir = "BUY"
                 projected_entry = round(zone_price, 5) if zone_price else None
                 projected_stop = None
                 if atr and zone_price:
-                    if trade_dir == "BUY":
+                    if effective_dir == "BUY":
                         projected_stop = round(zone_price - 3 * atr, 5)
-                    elif trade_dir == "SELL":
+                    elif effective_dir == "SELL":
                         projected_stop = round(zone_price + 3 * atr, 5)
 
                 result.append({
@@ -386,7 +395,7 @@ def create_app():
                     "zone_price": round(zone_price, 5),
                     "status": status,
                     "bias_score": bias_score,
-                    "trade_direction": trade_dir,
+                    "trade_direction": effective_dir,
                     "trends": trends,
                     "atr": round(atr, 5) if atr else 0,
                     "projected_entry": projected_entry,
