@@ -423,15 +423,19 @@ class MassiveClient:
         now = datetime.now(timezone.utc)
         start = now - timedelta(days=days_needed * 1.5)
 
-        # Fetch 5m bars
+        # Fetch 5m bars — sort=desc so newest come back first. Polygon caps
+        # responses well below limit=50000 in practice (~14k bars), so asc
+        # would truncate the LATEST month of data instead of the oldest.
         data = self._request(
             f"/v2/aggs/ticker/{ticker}/range/5/minute/{start.strftime('%Y-%m-%d')}/{now.strftime('%Y-%m-%d')}",
-            params={"adjusted": "true", "sort": "asc", "limit": 50000},
+            params={"adjusted": "true", "sort": "desc", "limit": 50000},
         )
 
         bars_5m = data.get("results", [])
         if not bars_5m:
             return []
+        # Aggregation code below expects oldest-first
+        bars_5m.reverse()
 
         if is_forex:
             # Forex trades 24h — use all bars, no market hours filter
