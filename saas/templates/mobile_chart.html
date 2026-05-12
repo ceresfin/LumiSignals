@@ -104,14 +104,14 @@
         const isJpy = TICKER.includes('JPY');
         const priceDecimals = isJpy ? 3 : (TICKER.includes('_') ? 5 : 2);
 
-        // Candlestick series
+        // Candlestick series — Alpine Growth Green (demand) / Deep Pulse Red (supply)
         const candleSeries = chart.addCandlestickSeries({
-          upColor: '#27ae60',
-          downColor: '#c0392b',
-          borderDownColor: '#c0392b',
-          borderUpColor: '#27ae60',
-          wickDownColor: '#c0392b',
-          wickUpColor: '#27ae60',
+          upColor: '#3E7F6B',
+          downColor: '#C26A6A',
+          borderUpColor: '#3E7F6B',
+          borderDownColor: '#C26A6A',
+          wickUpColor: '#3E7F6B',
+          wickDownColor: '#C26A6A',
           priceFormat: { type: 'price', precision: priceDecimals, minMove: Math.pow(10, -priceDecimals) },
         });
 
@@ -259,13 +259,13 @@
           const w = 0.5 * ATR;
           const low  = isLong ? ENTRY_PRICE : ENTRY_PRICE - w;
           const high = isLong ? ENTRY_PRICE + w : ENTRY_PRICE;
-          const fill = isLong ? 'rgba(39,174,96,0.40)' : 'rgba(192,57,43,0.40)';
+          const fill = isLong ? 'rgba(62,127,107,0.40)' : 'rgba(194,106,106,0.40)';
           drawBand(low, high, fill, null);
         }
         if (HAS_TRADE && ENTRY_PRICE) {
           candleSeries.createPriceLine({
             price: ENTRY_PRICE,
-            color: isLong ? '#27ae60' : '#c0392b',
+            color: isLong ? '#3E7F6B' : '#C26A6A',
             lineWidth: 2,
             lineStyle: LightweightCharts.LineStyle.Solid,
             axisLabelVisible: true,
