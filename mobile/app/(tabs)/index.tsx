@@ -106,7 +106,35 @@ function modelKey(raw: string): ModelKey {
   return 'scalp'; // sensible default
 }
 
-function calcStrategiesByModel(trades: Trade[], positions: Position[]): StrategyStats[] {
+// Build the subtitle label from the SELECTED date range, not the
+// min/max of trade timestamps. That way "Today" always says "Today",
+// "MTD" always says "MTD: May 1 — May 12", etc.
+function rangeLabel(range: 'today'|'wtd'|'mtd'|'qtd'|'ytd'|'all'): string {
+  const fmt = (d: Date) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (range === 'today') return `Today (${fmt(today)})`;
+  if (range === 'all')   return 'All time';
+  const labelMap: Record<typeof range, string> = {
+    today: 'Today', wtd: 'WTD', mtd: 'MTD', qtd: 'QTD', ytd: 'YTD', all: 'All',
+  };
+  const start = new Date(today);
+  if (range === 'wtd') {
+    const day = today.getDay();
+    const back = day === 0 ? 6 : day - 1;
+    start.setDate(today.getDate() - back);
+  } else if (range === 'mtd') {
+    start.setDate(1);
+  } else if (range === 'qtd') {
+    start.setMonth(Math.floor(today.getMonth() / 3) * 3, 1);
+  } else if (range === 'ytd') {
+    start.setMonth(0, 1);
+  }
+  return `${labelMap[range]}: ${fmt(start)} — ${fmt(today)}`;
+}
+
+function calcStrategiesByModel(trades: Trade[], positions: Position[],
+                                 dateRange?: 'today'|'wtd'|'mtd'|'qtd'|'ytd'|'all'): StrategyStats[] {
   const map: Record<string, StrategyStats> = {};
 
   // Closed trade aggregation — won/lost determined by realized_pl > 0 (matches website)
@@ -147,16 +175,22 @@ function calcStrategiesByModel(trades: Trade[], positions: Position[]): Strategy
     map[sid].byModel[mk].open++;
   });
 
-  // Date range subtitle + averages — done after all trades counted
+  // Subtitle = SELECTED date range label + trade count.
+  // Falls back to data-derived min/max only when no range is supplied
+  // (covers the future case where this helper is reused without filter).
   Object.values(map).forEach(s => {
     const stratTrades = trades.filter(t => strategyKey(t.strategy || '') === s.key);
-    const times = stratTrades.map(t => t.opened_at || '').filter(Boolean).sort();
-    if (times.length) {
-      const fmtD = (iso: string) => {
-        const d = new Date(iso);
-        return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-      };
-      s.dateRange = `${fmtD(times[0])} — ${fmtD(times[times.length - 1])} (${stratTrades.length} trades)`;
+    if (dateRange) {
+      s.dateRange = `${rangeLabel(dateRange)} (${stratTrades.length} trades)`;
+    } else {
+      const times = stratTrades.map(t => t.opened_at || '').filter(Boolean).sort();
+      if (times.length) {
+        const fmtD = (iso: string) => {
+          const d = new Date(iso);
+          return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        };
+        s.dateRange = `${fmtD(times[0])} — ${fmtD(times[times.length - 1])} (${stratTrades.length} trades)`;
+      }
     }
 
     (Object.keys(s.byModel) as ModelKey[]).forEach(mk => {
@@ -362,7 +396,7 @@ export default function Dashboard() {
       broker: p.broker,
     } as Trade));
   const stats = calcStats(filtered);
-  const strategies = calcStrategiesByModel(filtered, filteredPositions);
+  const strategies = calcStrategiesByModel(filtered, filteredPositions, dateRange);
   const pairs = calcPairs(filtered);
   const plColor = (val: number) => val >= 0 ? Colors.green : Colors.red;
   const hasModelData = (m: ModelStats) => m.open > 0 || m.closed > 0;
