@@ -1753,6 +1753,112 @@ def create_app():
 
         return jsonify({"error": f"unsupported broker/asset: {broker}/{asset_type}"}), 400
 
+    @app.route("/api/positions/audit")
+    def api_positions_audit():
+        """IB vs Bot reconciliation. For each open IB position, compare
+        IB's actual quantity against the sum of per-strategy strat_pos
+        coverage. Surface mismatches (orphan / phantom / matched).
+        """
+        import redis as _redis
+        rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+
+        # Read latest IB snapshot from the sync's Redis cache
+        ib_raw = rdb.get("ibkr:data:1")
+        if not ib_raw:
+            return jsonify({"ok": False, "error": "no IB snapshot", "last_synced": None})
+        ib = json.loads(ib_raw)
+
+        # Build per-instrument summary
+        rows = []
+        ib_positions = {}  # symbol → {qty, avg_cost, sec_type}
+        for p in ib.get("positions", []):
+            sym = p.get("symbol")
+            if not sym:
+                continue
+            if p.get("sec_type") not in ("FUT", "STK"):
+                continue  # options/spreads handled elsewhere
+            ib_positions[sym] = {
+                "qty": int(p.get("quantity", 0)),
+                "avg_cost": float(p.get("avg_cost", 0)) / float(p.get("multiplier", 1) or 1),
+                "market_price": float(p.get("market_price", 0)),
+                "unrealized_pl": float(p.get("unrealized_pnl", 0)),
+                "sec_type": p.get("sec_type"),
+                "multiplier": float(p.get("multiplier", 1)),
+            }
+
+        # Gather strat_pos coverage per symbol
+        strat_by_symbol = {}  # symbol → [strat_pos dicts]
+        try:
+            for k in rdb.scan_iter("ibkr:strat_pos:*"):
+                raw = rdb.get(k)
+                if not raw:
+                    continue
+                sp = json.loads(raw)
+                sym = sp.get("ticker", "")
+                if not sym:
+                    continue
+                strat_by_symbol.setdefault(sym, []).append({
+                    "strategy": sp.get("strategy", ""),
+                    "direction": sp.get("direction", ""),
+                    "contracts": int(sp.get("contracts", 0)),
+                    "entry_price": float(sp.get("entry_price", 0)),
+                    "perm_id": str(sp.get("perm_id", "")),
+                    "opened_at": sp.get("opened_at", ""),
+                })
+        except Exception as e:
+            logger.warning("audit strat_pos read failed: %s", e)
+
+        # Build the audit rows
+        all_syms = set(ib_positions.keys()) | set(strat_by_symbol.keys())
+        for sym in sorted(all_syms):
+            ib_data = ib_positions.get(sym)
+            strats = strat_by_symbol.get(sym, [])
+            ib_qty = ib_data["qty"] if ib_data else 0
+            # Signed tracked qty (BUY contributes +, SELL contributes -)
+            tracked_signed = sum(
+                sp["contracts"] if sp["direction"] == "BUY" else -sp["contracts"]
+                for sp in strats
+            )
+            tracked_abs = sum(sp["contracts"] for sp in strats)
+            orphan_qty = abs(ib_qty) - tracked_abs
+
+            # Classify
+            if ib_qty == 0 and tracked_abs == 0:
+                status = "flat"; status_label = "FLAT"
+            elif ib_qty == 0 and tracked_abs > 0:
+                status = "phantom"; status_label = "PHANTOM (bot thinks open, IB shows flat)"
+            elif ib_qty != 0 and tracked_abs == 0:
+                status = "all_orphan"; status_label = "ALL ORPHAN (IB open, no strat_pos)"
+            elif tracked_signed * (1 if ib_qty > 0 else -1) <= 0 and ib_qty != 0:
+                # Tracked direction opposite to IB direction
+                status = "direction_mismatch"; status_label = "DIRECTION MISMATCH"
+            elif orphan_qty > 0:
+                status = "partial_orphan"; status_label = f"PARTIAL ORPHAN ({orphan_qty} of {abs(ib_qty)} untracked)"
+            elif orphan_qty < 0:
+                status = "over_tracked"; status_label = f"OVER-TRACKED (bot has {tracked_abs}, IB only {abs(ib_qty)})"
+            else:
+                status = "matched"; status_label = "MATCHED"
+
+            rows.append({
+                "instrument": sym,
+                "ib_qty": ib_qty,
+                "ib_avg": round(ib_data["avg_cost"], 4) if ib_data else None,
+                "ib_market_price": round(ib_data["market_price"], 4) if ib_data else None,
+                "ib_unrealized_pl": round(ib_data["unrealized_pl"], 2) if ib_data else None,
+                "tracked_signed": tracked_signed,
+                "tracked_abs": tracked_abs,
+                "orphan_qty": orphan_qty,
+                "strats": strats,
+                "status": status,
+                "status_label": status_label,
+            })
+
+        return jsonify({
+            "ok": True,
+            "last_synced": ib.get("last_synced", ""),
+            "rows": rows,
+        })
+
     @app.route("/api/ibkr/sync", methods=["POST"])
     def api_ibkr_sync():
         """Receive IB data from local sync script and store in Redis."""

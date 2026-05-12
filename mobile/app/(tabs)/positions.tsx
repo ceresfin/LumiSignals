@@ -294,6 +294,8 @@ export default function Positions() {
   const [activeTab, setActiveTab] = useState('forex');
   const [refreshing, setRefreshing] = useState(false);
   const [zones, setZones] = useState<any[]>([]);
+  const [audit, setAudit] = useState<any | null>(null);
+  const [auditExpanded, setAuditExpanded] = useState(false);
   // Per-position "closing" lock so a Close tap is honored exactly once
   // until either the row disappears from the next sync OR 30 s pass.
   const [closingIds, setClosingIds] = useState<Set<string | number>>(new Set());
@@ -329,9 +331,20 @@ export default function Positions() {
     } catch { }
   };
 
-  useEffect(() => { loadPositions(); loadZones(); }, [user]);
+  // Independent IB-vs-Bot reconciliation. Pulled fresh from server which
+  // reads IB's latest position snapshot and compares to the bot's
+  // strat_pos coverage. Mismatches surface as orphan/phantom/etc.
+  const loadAudit = async () => {
+    try {
+      const resp = await fetch('https://bot.lumitrade.ai/api/positions/audit');
+      const data = await resp.json();
+      if (data.ok) setAudit(data);
+    } catch { }
+  };
+
+  useEffect(() => { loadPositions(); loadZones(); loadAudit(); }, [user]);
   useEffect(() => {
-    const interval = setInterval(loadZones, 30000);
+    const interval = setInterval(() => { loadZones(); loadAudit(); }, 30000);
     return () => clearInterval(interval);
   }, []);
 
@@ -352,7 +365,7 @@ export default function Positions() {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await Promise.all([loadPositions(), loadZones()]);
+    await Promise.all([loadPositions(), loadZones(), loadAudit()]);
     setRefreshing(false);
   };
 
@@ -519,6 +532,62 @@ export default function Positions() {
           </View>
         }
         ListFooterComponent={
+          <>
+          {/* IB-vs-Bot Reconciliation — independent audit pulled directly
+              from IB's position snapshot. Reveals orphans, phantoms,
+              direction mismatches. Tap header to expand the per-row detail. */}
+          {audit && audit.rows && audit.rows.length > 0 && (
+            <View style={styles.auditSection}>
+              <TouchableOpacity onPress={() => setAuditExpanded(v => !v)}>
+                <View style={styles.auditHeader}>
+                  <Text style={styles.auditTitle}>
+                    🔍 IB vs Bot Audit{(() => {
+                      const mm = audit.rows.filter((r: any) => r.status !== 'matched' && r.status !== 'flat').length;
+                      return mm > 0 ? `  ⚠️ ${mm} mismatch${mm > 1 ? 'es' : ''}` : '  ✓ All matched';
+                    })()}
+                  </Text>
+                  <Text style={styles.auditChevron}>{auditExpanded ? '▼' : '▶'}</Text>
+                </View>
+              </TouchableOpacity>
+              {auditExpanded && (
+                <View style={{ marginTop: 8 }}>
+                  {audit.rows.map((row: any) => (
+                    <View key={row.instrument} style={[
+                      styles.auditRow,
+                      row.status !== 'matched' && row.status !== 'flat' && styles.auditRowMismatch,
+                    ]}>
+                      <View style={styles.auditRowTop}>
+                        <Text style={styles.auditInst}>{row.instrument}</Text>
+                        <Text style={[
+                          styles.auditStatus,
+                          { color: (row.status === 'matched' || row.status === 'flat') ? Colors.green : '#c0392b' },
+                        ]}>
+                          {row.status_label}
+                        </Text>
+                      </View>
+                      <Text style={styles.auditDetail}>
+                        IB: {row.ib_qty > 0 ? '+' : ''}{row.ib_qty}
+                        {row.ib_avg ? ` @ ${row.ib_avg.toFixed(2)}` : ''}
+                        {row.ib_unrealized_pl !== null && row.ib_unrealized_pl !== undefined
+                          ? `   uPL ${row.ib_unrealized_pl >= 0 ? '+' : ''}$${row.ib_unrealized_pl.toFixed(2)}` : ''}
+                      </Text>
+                      <Text style={styles.auditDetail}>
+                        Bot: {row.tracked_signed > 0 ? '+' : ''}{row.tracked_signed}
+                        {row.strats.length > 0
+                          ? `   [${row.strats.map((s: any) => `${s.strategy}=${s.direction}${s.contracts}`).join(', ')}]`
+                          : '   (none)'}
+                      </Text>
+                    </View>
+                  ))}
+                  {audit.last_synced && (
+                    <Text style={styles.auditSynced}>
+                      IB snapshot age: {Math.floor((Date.now() - new Date(audit.last_synced).getTime()) / 1000)}s
+                    </Text>
+                  )}
+                </View>
+              )}
+            </View>
+          )}
           <View style={styles.watchlistSection}>
             <Text style={styles.watchlistTitle}>
               HTF Zones {filteredZones.length > 0 ? `(${filteredZones.filter(z => z.status === 'activated').length} activated)` : ''}
@@ -583,6 +652,7 @@ export default function Positions() {
               })
             )}
           </View>
+          </>
         }
       />
     </SafeAreaView>
@@ -709,6 +779,32 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   watchlistSection: { marginTop: 24, paddingBottom: 20 },
+
+  // IB-vs-Bot audit card
+  auditSection: {
+    marginTop: 16,
+    padding: 12,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E0E0DA',
+  },
+  auditHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  auditTitle: { fontSize: 14, fontWeight: '600', color: Colors.text },
+  auditChevron: { fontSize: 12, color: Colors.textLight },
+  auditRow: {
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    marginTop: 6,
+    borderRadius: 6,
+    backgroundColor: '#F8F8F4',
+  },
+  auditRowMismatch: { backgroundColor: '#fdecea' },
+  auditRowTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  auditInst: { fontSize: 14, fontWeight: '600', color: Colors.text },
+  auditStatus: { fontSize: 11, fontWeight: '600' },
+  auditDetail: { fontSize: 12, color: Colors.textLight, marginTop: 2 },
+  auditSynced: { fontSize: 11, color: Colors.textLight, marginTop: 6, fontStyle: 'italic', textAlign: 'right' },
   watchlistTitle: { fontSize: 16, fontWeight: '500', color: Colors.dark, marginBottom: 12 },
   zoneCard: {
     backgroundColor: Colors.white, borderRadius: 12, padding: 14,
