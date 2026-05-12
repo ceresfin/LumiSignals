@@ -370,15 +370,19 @@ class MassiveClient:
         start_str = start.strftime("%Y-%m-%d")
         end_str = now.strftime("%Y-%m-%d")
 
-        # Fetch newest-first with sort=desc so a small `limit` keeps the
-        # MOST RECENT bars. Previously sort=asc + limit=count+10 returned the
-        # oldest bars in the date window — a 5m chart could be hours stale.
+        # Fetch newest-first with sort=desc. Polygon's `limit` parameter
+        # behaves quirkily: limit=90 returns ~6 bars even when 85 are
+        # available in the date window, while limit=50000 returns all of
+        # them. So we always ask for the wide limit and slice in code.
         data = self._request(
             f"/v2/aggs/ticker/{ticker}/range/{multiplier}/{span}/{start_str}/{end_str}",
-            params={"adjusted": "true", "sort": "desc", "limit": min(count + 10, 50000)},
+            params={"adjusted": "true", "sort": "desc", "limit": 50000},
         )
 
         results = data.get("results", [])
+        # Polygon returned newest-first; take the `count` newest, then flip
+        # to oldest-first so callers get chronological order.
+        results = results[:count]
         candles = []
         for bar in results:
             candles.append(CandleData(
@@ -388,7 +392,6 @@ class MassiveClient:
                 close=float(bar["c"]),
                 timestamp=str(bar.get("t", 0) / 1000),  # ms → seconds
             ))
-        # Polygon returned newest→oldest; flip so charts get oldest→newest.
         candles.reverse()
 
         return candles
