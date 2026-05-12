@@ -1,337 +1,259 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// ORB Legged Iron Butterfly (ES options)
-//
-// Same opening-range-breakout core as opening_range_breakout.pine, but instead
-// of trading the futures contract directly the alerts route to ES options:
-//
-//   Step 1 (on breakout)              "debit"   — pay $X to enter directional
-//                                                 debit spread (CALL spread on
-//                                                 BUY signal, PUT spread on
-//                                                 SELL signal). Strike pillar
-//                                                 is the breakout level
-//                                                 rounded to the nearest 5.
-//
-//   Step 2 (after favorable move)     "credit"  — sell the OPPOSITE side
-//                                                 credit spread at the same
-//                                                 pillar for $Y, completing an
-//                                                 iron butterfly. The
-//                                                 webhook handler refuses to
-//                                                 send if Y < X (so the
-//                                                 butterfly always has net
-//                                                 credit > the debit paid).
-//
-// Net result if both legs fire and Y >= X: an iron butterfly at the pillar
-// with negative cost basis — guaranteed positive payoff at expiry if held.
-//
-// Entry window is 9:45-11:00 ET (after OR closes). Credit-leg window stays
-// open until 11:30 ET so a slow move still has time to leg in. After 11:30
-// without the credit leg, the debit spread stays naked (single-directional).
-//
-// Stop logic mirrors the futures ORB script: VIX < 25 → fixed 4pt; >= 25 →
-// OR range (or range/2 if OR > 20). Stop applies to the UNDERLYING price.
-// When the underlying hits stop before the credit leg fires, the debit
-// spread is closed manually (alert reason="orb_butterfly_stop").
-// ─────────────────────────────────────────────────────────────────────────────
+// SPX 0DTE Leg-In Butterfly — Opening Range Breakout
+// Apply to: SPX (any timeframe; 1m or 5m recommended)
+// Signal:   ES futures breakout of its first 15-min bar (9:30-9:45 ET) +/- offset
+// Strikes:  Computed from SPX's own first 15-min bar high/low
+//             Long-side  (calls): K1 = SPX_OR_high + 10,  K2 = +15,  K3 = +20
+//             Short-side (puts):  K1 = SPX_OR_low  - 10,  K2 = -15,  K3 = -20
+//           Rounded to nearest $5 strike. Final = 10-pt butterfly (long K1 / short 2xK2 / long K3).
+// Workflow: 1) Buy debit spread K1/K2 on signal  2) After fill, sell credit spread K2/K3
+//           Target: debit ~$1.50, credit ~$2.30, net profit ~$70-$90 per fly.
 //@version=6
-indicator("ORB Legged Butterfly (ES options)", overlay=true,
-          max_lines_count=20, max_labels_count=20)
+indicator("ORB SPX 0DTE Butterfly", overlay=true, max_lines_count=30, max_labels_count=30)
 
 // ─── INPUTS ───
-orbOffset      = input.float(0.50,  "Breakout Offset (pts)",        step=0.25,  group="Entry")
-wingWidth      = input.int  (10,    "Butterfly Wing Width (pts)",   minval=5,   step=5,     group="Butterfly", tooltip="Distance from pillar to long wings. ES options grid is 5pt — use multiples of 5.")
-legInTrigger   = input.float(5.0,   "Credit Leg-In Threshold (pts)",step=0.5,   group="Butterfly", tooltip="How many points underlying must move past entry before firing the credit-leg alert.")
-lowVolStop     = input.float(4.0,   "Stop (VIX < 25)",              step=0.5,   group="Risk")
-vixThreshold   = input.int  (25,    "VIX Threshold",                            group="Risk")
-maxRangeStop   = input.float(20.0,  "Max OR for Full Stop",         step=1.0,   group="Risk", tooltip="If OR range > this, stop = range / 2")
-dteTarget      = input.int  (0,     "Target DTE (0=same-day)",      minval=0,   group="Butterfly")
-showORB        = input.bool (true,  "Show Opening Range Box",                   group="Display")
-showLevels     = input.bool (true,  "Show Entry/Pillar/Stop Lines",             group="Display")
+esSymbol     = input.symbol("CME_MINI:ES1!", "ES Symbol", group="Signal")
+orbOffset    = input.float(0.50, "ES Breakout Offset (pts)", step=0.25, group="Signal")
+longOff      = input.float(10.0, "Long Strike Offset from SPX OR (pts)", step=1.0, group="Strikes")
+shortOff     = input.float(15.0, "Short Strike (body) Offset (pts)", step=1.0, group="Strikes")
+wingOff      = input.float(20.0, "Far Wing Strike Offset (pts)", step=1.0, group="Strikes")
+strikeStep   = input.float(5.0,  "Strike Grid Step ($)", step=1.0, group="Strikes")
+debitTgt     = input.float(1.50, "Target Debit Spread Cost ($)", step=0.05, group="Pricing")
+creditTgt    = input.float(2.30, "Target Credit Spread Sale ($)", step=0.05, group="Pricing")
+profitTgt    = input.float(80.0, "Target Net Profit ($)", step=5.0, group="Pricing")
+lowVolStop   = input.float(4.0,  "ES Stop (VIX < 25, pts)", step=0.5, group="ES Reversal")
+vixThreshold = input.int(25,     "VIX Threshold", group="ES Reversal")
+maxRangeStop = input.float(20.0, "ES Max Range for Full Stop", step=1.0, group="ES Reversal")
+showORB      = input.bool(true,  "Show SPX OR Box", group="Display")
+showLevels   = input.bool(true,  "Show Butterfly Strike Lines", group="Display")
 
 // ─── TIME ───
 etHour   = hour(time, "America/New_York")
 etMinute = minute(time, "America/New_York")
 etTime   = etHour * 100 + etMinute
 
-isORPeriod       = etTime >= 930 and etTime < 945
-isEntryWindow    = etTime >= 945 and etTime <= 1100   // debit leg can fire
-isCreditWindow   = etTime >= 945 and etTime <= 1130   // credit leg can fire until 11:30
-isNewSession     = ta.change(time("D")) != 0
+isORPeriod      = etTime >= 930 and etTime < 945
+isEntryWindow   = etTime >= 945 and etTime <= 1100
+isReversalWindow= etTime >= 945 and etTime <= 1115
+isNewSession    = ta.change(time("D")) != 0
 
-// ─── VIX ───
+// ─── EXTERNAL DATA ───
+[esHigh, esLow, esClose] = request.security(esSymbol, timeframe.period, [high, low, close])
 vixClose = request.security("TVC:VIX", "D", close)
 
-// ─── OPENING RANGE ───
-var float orHigh = na
-var float orLow  = na
-var bool  orSet  = false
+// ─── OR TRACKING (ES for trigger, SPX for strikes) ───
+var float esOrHigh  = na
+var float esOrLow   = na
+var float spxOrHigh = na
+var float spxOrLow  = na
+var bool  orSet     = false
 
 if isNewSession
-    orHigh := na
-    orLow  := na
-    orSet  := false
+    esOrHigh  := na
+    esOrLow   := na
+    spxOrHigh := na
+    spxOrLow  := na
+    orSet     := false
 
 if isORPeriod
-    if na(orHigh)
-        orHigh := high
-        orLow  := low
+    if na(esOrHigh)
+        esOrHigh  := esHigh
+        esOrLow   := esLow
+        spxOrHigh := high
+        spxOrLow  := low
     else
-        orHigh := math.max(orHigh, high)
-        orLow  := math.min(orLow, low)
+        esOrHigh  := math.max(esOrHigh,  esHigh)
+        esOrLow   := math.min(esOrLow,   esLow)
+        spxOrHigh := math.max(spxOrHigh, high)
+        spxOrLow  := math.min(spxOrLow,  low)
 
-if etTime == 945 and not na(orHigh) and not orSet
+if etTime == 945 and not na(esOrHigh) and not orSet
     orSet := true
 
-// ─── ENTRY / STOP / PILLAR ───
-float buyEntry  = orSet ? orHigh + orbOffset : na
-float sellEntry = orSet ? orLow  - orbOffset : na
-float orRange   = orSet ? orHigh - orLow     : na
+// ─── ES BREAKOUT LEVELS ───
+float esBuyEntry  = orSet ? esOrHigh + orbOffset : na
+float esSellEntry = orSet ? esOrLow  - orbOffset : na
+float esOrRange   = orSet ? esOrHigh - esOrLow   : na
 
-// Round breakout level to nearest 5 for option strike pillar
-roundToStrike(price) =>
-    math.round(price / 5) * 5
-
-float buyPillar  = not na(buyEntry)  ? roundToStrike(buyEntry)  : na
-float sellPillar = not na(sellEntry) ? roundToStrike(sellEntry) : na
-
-float stopSize = na
+// ES stop sizing (only used to flag "stopped out" for reversal eligibility)
+float esStopSize = na
 if orSet
-    stopSize := vixClose < vixThreshold ? lowVolStop :
-                (orRange > maxRangeStop ? orRange / 2 : orRange)
+    if vixClose < vixThreshold
+        esStopSize := lowVolStop
+    else
+        esStopSize := esOrRange > maxRangeStop ? esOrRange / 2 : esOrRange
 
-float buyStop   = not na(buyEntry)  and not na(stopSize) ? buyEntry  - stopSize : na
-float sellStop  = not na(sellEntry) and not na(stopSize) ? sellEntry + stopSize : na
+float esBuyStop  = not na(esBuyEntry)  and not na(esStopSize) ? esBuyEntry  - esStopSize : na
+float esSellStop = not na(esSellEntry) and not na(esStopSize) ? esSellEntry + esStopSize : na
+
+// ─── SPX BUTTERFLY STRIKES (rounded to nearest grid step) ───
+roundStrike(price) =>
+    math.round(price / strikeStep) * strikeStep
+
+// Long signal → call butterfly above SPX OR high
+float callK1 = orSet ? roundStrike(spxOrHigh + longOff)  : na  // long lower call (debit)
+float callK2 = orSet ? roundStrike(spxOrHigh + shortOff) : na  // short body 2x  (debit short + credit short)
+float callK3 = orSet ? roundStrike(spxOrHigh + wingOff)  : na  // long upper call (credit)
+
+// Short signal → put butterfly below SPX OR low
+float putK1  = orSet ? roundStrike(spxOrLow  - longOff)  : na  // long upper put  (debit)
+float putK2  = orSet ? roundStrike(spxOrLow  - shortOff) : na  // short body 2x
+float putK3  = orSet ? roundStrike(spxOrLow  - wingOff)  : na  // long lower put  (credit)
 
 // ─── TRADE STATE ───
-var bool   debitOpen     = false
-var bool   creditFilled  = false
-var bool   stoppedOut    = false
-var string firstDir      = ""        // "BUY" or "SELL"
-var float  entryPrice    = na
-var float  strikePillar  = na
-var float  slPrice       = na
+var bool   inLong     = false
+var bool   inShort    = false
+var bool   triggered  = false
+var bool   reversed   = false
+var bool   stoppedOut = false
+var string firstDir   = ""
 
 if isNewSession
-    debitOpen    := false
-    creditFilled := false
-    stoppedOut   := false
-    firstDir     := ""
-    entryPrice   := na
-    strikePillar := na
-    slPrice      := na
+    inLong     := false
+    inShort    := false
+    triggered  := false
+    reversed   := false
+    stoppedOut := false
+    firstDir   := ""
 
-// ─── DEBIT-LEG SIGNALS (breakout entry) ───
-buyDebitSignal  = orSet and isEntryWindow and not debitOpen and not stoppedOut and close > buyEntry
-sellDebitSignal = orSet and isEntryWindow and not debitOpen and not stoppedOut and close < sellEntry
+// ─── SIGNALS (ES close vs ES breakout levels) ───
+buySignal  = orSet and isEntryWindow and not triggered and not inLong and not inShort and esClose > esBuyEntry
+sellSignal = orSet and isEntryWindow and not triggered and not inLong and not inShort and esClose < esSellEntry
 
-if buyDebitSignal
-    debitOpen    := true
-    firstDir     := "BUY"
-    entryPrice   := buyEntry
-    strikePillar := buyPillar
-    slPrice      := buyStop
+reverseBuySignal  = orSet and isReversalWindow and stoppedOut and not reversed and not inLong and not inShort and firstDir == "SELL" and esClose > esBuyEntry
+reverseSellSignal = orSet and isReversalWindow and stoppedOut and not reversed and not inLong and not inShort and firstDir == "BUY"  and esClose < esSellEntry
 
-if sellDebitSignal
-    debitOpen    := true
-    firstDir     := "SELL"
-    entryPrice   := sellEntry
-    strikePillar := sellPillar
-    slPrice      := sellStop
+if buySignal
+    inLong    := true
+    triggered := true
+    firstDir  := "BUY"
+if sellSignal
+    inShort   := true
+    triggered := true
+    firstDir  := "SELL"
+if reverseBuySignal
+    inLong   := true
+    reversed := true
+if reverseSellSignal
+    inShort  := true
+    reversed := true
 
-// ─── CREDIT-LEG SIGNAL (favorable continuation) ───
-// Fire when the underlying has moved `legInTrigger` points beyond the entry
-// in the trade's favored direction. By then the OPPOSITE side credit spread
-// has typically appreciated past the debit's cost, but the webhook handler
-// is the final arbiter: it won't send the order unless credit >= debit.
-buyCreditSignal  = debitOpen and not creditFilled and isCreditWindow
-                   and firstDir == "BUY"
-                   and close >= entryPrice + legInTrigger
-sellCreditSignal = debitOpen and not creditFilled and isCreditWindow
-                   and firstDir == "SELL"
-                   and close <= entryPrice - legInTrigger
+// ─── ES-LEVEL EXIT TRACKING (for reversal eligibility only) ───
+if inLong
+    if esClose >= esBuyEntry + 20.0
+        inLong := false
+    if esClose <= esBuyStop
+        inLong := false
+        if not reversed
+            stoppedOut := true
 
-if buyCreditSignal
-    creditFilled := true
+if inShort
+    if esClose <= esSellEntry - 20.0
+        inShort := false
+    if esClose >= esSellStop
+        inShort := false
+        if not reversed
+            stoppedOut := true
 
-if sellCreditSignal
-    creditFilled := true
+// ─── PLOT SPX OR BOX ───
+var line spxHiLine = na
+var line spxLoLine = na
+var label spxLbl   = na
 
-// ─── STOP-OUT (underlying hits SL before credit leg fired) ───
-buyStopSignal  = debitOpen and not creditFilled and not stoppedOut
-                  and firstDir == "BUY"  and low  <= slPrice
-sellStopSignal = debitOpen and not creditFilled and not stoppedOut
-                  and firstDir == "SELL" and high >= slPrice
+line.delete(spxHiLine)
+line.delete(spxLoLine)
+label.delete(spxLbl)
 
-if buyStopSignal or sellStopSignal
-    stoppedOut := true
-    debitOpen  := false
-
-// ─── PLOTS ───
-plotshape(buyDebitSignal,  "Debit BUY",   shape.triangleup,   location.belowbar, color.lime,    size=size.normal, text="DEBIT BUY")
-plotshape(sellDebitSignal, "Debit SELL",  shape.triangledown, location.abovebar, color.red,     size=size.normal, text="DEBIT SELL")
-plotshape(buyCreditSignal, "Credit Leg",  shape.diamond,      location.abovebar, color.aqua,    size=size.small,  text="CREDIT")
-plotshape(sellCreditSignal,"Credit Leg",  shape.diamond,      location.belowbar, color.fuchsia, size=size.small,  text="CREDIT")
-plotshape(buyStopSignal or sellStopSignal, "Stopped", shape.xcross, location.absolute, color.orange, size=size.small, text="STOP")
-
-bgcolor(isORPeriod ? color.new(color.blue, 95) : na, title="OR Period")
-bgcolor(debitOpen and not creditFilled ? color.new(color.yellow, 92) : na, title="Debit Open")
-bgcolor(debitOpen and creditFilled ? color.new(color.green, 92) : na,  title="Butterfly Complete")
-
-// ─── ORB BOX ───
-var line orHighLine = na
-var line orLowLine  = na
-line.delete(orHighLine)
-line.delete(orLowLine)
 if showORB and orSet
-    orHighLine := line.new(time, orHigh, time + (time - time[1]) * 30, orHigh,
-                           xloc.bar_time, extend.none, color.new(color.blue, 30), line.style_solid, 2)
-    orLowLine  := line.new(time, orLow,  time + (time - time[1]) * 30, orLow,
-                           xloc.bar_time, extend.none, color.new(color.blue, 30), line.style_solid, 2)
+    spxHiLine := line.new(time, spxOrHigh, time + (time - time[1]) * 30, spxOrHigh, xloc.bar_time, extend.none, color.new(color.blue, 30), line.style_solid, 2)
+    spxLoLine := line.new(time, spxOrLow,  time + (time - time[1]) * 30, spxOrLow,  xloc.bar_time, extend.none, color.new(color.blue, 30), line.style_solid, 2)
+    spxLbl    := label.new(time + (time - time[1]) * 15, spxOrHigh, "SPX OR: " + str.tostring(spxOrHigh - spxOrLow, "#.##") + " pts\nES OR: " + str.tostring(esOrRange, "#.##") + "\nVIX: " + str.tostring(vixClose, "#.#"), xloc.bar_time, yloc.price, color.new(color.blue, 80), label.style_label_left, color.blue, size.small)
 
-// ─── ENTRY / PILLAR / STOP LINES ───
-var line buyLine     = na, var line sellLine     = na
-var line buyPillarLn = na, var line sellPillarLn = na
-var line buySlLine   = na, var line sellSlLine   = na
+// ─── PLOT BUTTERFLY STRIKE LINES ───
+var line cK1Ln = na, var line cK2Ln = na, var line cK3Ln = na
+var line pK1Ln = na, var line pK2Ln = na, var line pK3Ln = na
+var label cK1Lb = na, var label cK2Lb = na, var label cK3Lb = na
+var label pK1Lb = na, var label pK2Lb = na, var label pK3Lb = na
 
-line.delete(buyLine), line.delete(sellLine)
-line.delete(buyPillarLn), line.delete(sellPillarLn)
-line.delete(buySlLine), line.delete(sellSlLine)
+line.delete(cK1Ln), line.delete(cK2Ln), line.delete(cK3Ln)
+line.delete(pK1Ln), line.delete(pK2Ln), line.delete(pK3Ln)
+label.delete(cK1Lb), label.delete(cK2Lb), label.delete(cK3Lb)
+label.delete(pK1Lb), label.delete(pK2Lb), label.delete(pK3Lb)
 
-int futTime = time + (time - time[1]) * 50
+int ft = time + (time - time[1]) * 50
 
 if showLevels and orSet
-    buyLine      := line.new(time, buyEntry,  futTime, buyEntry,  xloc.bar_time, extend.none, color.green,  line.style_dashed, 1)
-    sellLine     := line.new(time, sellEntry, futTime, sellEntry, xloc.bar_time, extend.none, color.red,    line.style_dashed, 1)
-    buyPillarLn  := line.new(time, buyPillar, futTime, buyPillar, xloc.bar_time, extend.none, color.yellow, line.style_dotted, 2)
-    sellPillarLn := line.new(time, sellPillar,futTime, sellPillar,xloc.bar_time, extend.none, color.yellow, line.style_dotted, 2)
-    buySlLine    := line.new(time, buyStop,   futTime, buyStop,   xloc.bar_time, extend.none, color.orange, line.style_dotted, 1)
-    sellSlLine   := line.new(time, sellStop,  futTime, sellStop,  xloc.bar_time, extend.none, color.orange, line.style_dotted, 1)
+    // Call butterfly (long signal side)
+    cK1Ln := line.new(time, callK1, ft, callK1, xloc.bar_time, extend.none, color.green,  line.style_dashed, 1)
+    cK2Ln := line.new(time, callK2, ft, callK2, xloc.bar_time, extend.none, color.lime,   line.style_solid,  2)
+    cK3Ln := line.new(time, callK3, ft, callK3, xloc.bar_time, extend.none, color.green,  line.style_dashed, 1)
+    cK1Lb := label.new(ft, callK1, "LONG CALL " + str.tostring(callK1, "#"), xloc.bar_time, yloc.price, color.new(color.green, 80), label.style_label_left, color.green, size.small)
+    cK2Lb := label.new(ft, callK2, "BODY 2x "   + str.tostring(callK2, "#"), xloc.bar_time, yloc.price, color.new(color.lime,  80), label.style_label_left, color.lime,  size.small)
+    cK3Lb := label.new(ft, callK3, "LONG CALL " + str.tostring(callK3, "#"), xloc.bar_time, yloc.price, color.new(color.green, 80), label.style_label_left, color.green, size.small)
+
+    // Put butterfly (short signal side)
+    pK1Ln := line.new(time, putK1, ft, putK1, xloc.bar_time, extend.none, color.red,     line.style_dashed, 1)
+    pK2Ln := line.new(time, putK2, ft, putK2, xloc.bar_time, extend.none, color.fuchsia, line.style_solid,  2)
+    pK3Ln := line.new(time, putK3, ft, putK3, xloc.bar_time, extend.none, color.red,     line.style_dashed, 1)
+    pK1Lb := label.new(ft, putK1, "LONG PUT " + str.tostring(putK1, "#"), xloc.bar_time, yloc.price, color.new(color.red,     80), label.style_label_left, color.red,     size.small)
+    pK2Lb := label.new(ft, putK2, "BODY 2x "  + str.tostring(putK2, "#"), xloc.bar_time, yloc.price, color.new(color.fuchsia, 80), label.style_label_left, color.fuchsia, size.small)
+    pK3Lb := label.new(ft, putK3, "LONG PUT " + str.tostring(putK3, "#"), xloc.bar_time, yloc.price, color.new(color.red,     80), label.style_label_left, color.red,     size.small)
+
+// ─── SIGNAL MARKERS ───
+plotshape(buySignal,         "BUY",      shape.triangleup,   location.belowbar, color.lime,    size=size.normal, text="ES BUY → Call Fly")
+plotshape(sellSignal,        "SELL",     shape.triangledown, location.abovebar, color.red,     size=size.normal, text="ES SELL → Put Fly")
+plotshape(reverseBuySignal,  "REV BUY",  shape.triangleup,   location.belowbar, color.aqua,    size=size.normal, text="REV BUY → Call Fly")
+plotshape(reverseSellSignal, "REV SELL", shape.triangledown, location.abovebar, color.fuchsia, size=size.normal, text="REV SELL → Put Fly")
+
+bgcolor(inLong  ? color.new(color.green, 90) : inShort ? color.new(color.red, 90) : na, title="In Trade")
+bgcolor(isORPeriod ? color.new(color.blue, 95) : na, title="OR Period")
 
 // ─── DASHBOARD ───
-var table dash = table.new(position.top_right, 2, 12,
-                            bgcolor=color.rgb(20, 20, 30), border_width=1, border_color=color.gray)
+var table dash = table.new(position.top_right, 2, 14, bgcolor=color.rgb(20, 20, 30), border_width=1, border_color=color.gray)
 
 if barstate.islast
-    string state = stoppedOut       ? "STOPPED OUT" :
-                   creditFilled     ? "BUTTERFLY COMPLETE" :
-                   debitOpen        ? "DEBIT ONLY (legging)" :
-                   orSet            ? "WAITING FOR BREAKOUT" : "BUILDING OR"
-    table.cell(dash, 0, 0,  "State",        text_color=color.white,  text_size=size.small)
-    table.cell(dash, 1, 0,  state,          text_color=color.yellow, text_size=size.small)
-    table.cell(dash, 0, 1,  "OR High",      text_color=color.white,  text_size=size.small)
-    table.cell(dash, 1, 1,  orSet ? str.tostring(orHigh, format.mintick) : "—",
-                                            text_color=color.green,  text_size=size.small)
-    table.cell(dash, 0, 2,  "OR Low",       text_color=color.white,  text_size=size.small)
-    table.cell(dash, 1, 2,  orSet ? str.tostring(orLow, format.mintick) : "—",
-                                            text_color=color.red,    text_size=size.small)
-    table.cell(dash, 0, 3,  "OR Range",     text_color=color.white,  text_size=size.small)
-    table.cell(dash, 1, 3,  orSet ? str.tostring(orRange, "#.##") + " pts" : "—",
-                                            text_color=color.blue,   text_size=size.small)
-    table.cell(dash, 0, 4,  "VIX",          text_color=color.white,  text_size=size.small)
-    table.cell(dash, 1, 4,  str.tostring(vixClose, "#.#"),
-                                            text_color=vixClose >= vixThreshold ? color.red : color.green,
-                                            text_size=size.small)
-    table.cell(dash, 0, 5,  "Stop (pts)",   text_color=color.white,  text_size=size.small)
-    table.cell(dash, 1, 5,  not na(stopSize) ? str.tostring(stopSize, "#.##") : "—",
-                                            text_color=color.orange, text_size=size.small)
-    table.cell(dash, 0, 6,  "Wing Width",   text_color=color.white,  text_size=size.small)
-    table.cell(dash, 1, 6,  str.tostring(wingWidth),
-                                            text_color=color.aqua,   text_size=size.small)
-    table.cell(dash, 0, 7,  "Buy Pillar",   text_color=color.white,  text_size=size.small)
-    table.cell(dash, 1, 7,  not na(buyPillar)  ? str.tostring(buyPillar)  : "—",
-                                            text_color=color.green,  text_size=size.small)
-    table.cell(dash, 0, 8,  "Sell Pillar",  text_color=color.white,  text_size=size.small)
-    table.cell(dash, 1, 8,  not na(sellPillar) ? str.tostring(sellPillar) : "—",
-                                            text_color=color.red,    text_size=size.small)
-    table.cell(dash, 0, 9,  "Leg-In Trig",  text_color=color.white,  text_size=size.small)
-    table.cell(dash, 1, 9,  str.tostring(legInTrigger, "#.#") + " pts",
-                                            text_color=color.aqua,   text_size=size.small)
-    table.cell(dash, 0, 10, "Active Dir",   text_color=color.white,  text_size=size.small)
-    table.cell(dash, 1, 10, firstDir != "" ? firstDir : "—",
-                                            text_color=color.yellow, text_size=size.small)
-    table.cell(dash, 0, 11, "Active Pillar",text_color=color.white,  text_size=size.small)
-    table.cell(dash, 1, 11, not na(strikePillar) ? str.tostring(strikePillar) : "—",
-                                            text_color=color.yellow, text_size=size.small)
+    table.cell(dash, 0, 0,  "SPX OR Hi", text_color=color.white, text_size=size.small)
+    table.cell(dash, 1, 0,  orSet ? str.tostring(spxOrHigh, format.mintick) : "Building...", text_color=color.green, text_size=size.small)
+    table.cell(dash, 0, 1,  "SPX OR Lo", text_color=color.white, text_size=size.small)
+    table.cell(dash, 1, 1,  orSet ? str.tostring(spxOrLow,  format.mintick) : "Building...", text_color=color.red,   text_size=size.small)
+    table.cell(dash, 0, 2,  "ES OR Hi",  text_color=color.white, text_size=size.small)
+    table.cell(dash, 1, 2,  orSet ? str.tostring(esOrHigh,  format.mintick) : "—", text_color=color.green, text_size=size.small)
+    table.cell(dash, 0, 3,  "ES OR Lo",  text_color=color.white, text_size=size.small)
+    table.cell(dash, 1, 3,  orSet ? str.tostring(esOrLow,   format.mintick) : "—", text_color=color.red,   text_size=size.small)
+    table.cell(dash, 0, 4,  "VIX",       text_color=color.white, text_size=size.small)
+    table.cell(dash, 1, 4,  str.tostring(vixClose, "#.#"), text_color=vixClose >= vixThreshold ? color.red : color.green, text_size=size.small)
+    table.cell(dash, 0, 5,  "ES Buy @",  text_color=color.white, text_size=size.small)
+    table.cell(dash, 1, 5,  not na(esBuyEntry)  ? str.tostring(esBuyEntry,  format.mintick) : "—", text_color=color.green, text_size=size.small)
+    table.cell(dash, 0, 6,  "ES Sell @", text_color=color.white, text_size=size.small)
+    table.cell(dash, 1, 6,  not na(esSellEntry) ? str.tostring(esSellEntry, format.mintick) : "—", text_color=color.red,   text_size=size.small)
+    table.cell(dash, 0, 7,  "Call Fly",  text_color=color.white, text_size=size.small)
+    table.cell(dash, 1, 7,  orSet ? str.tostring(callK1, "#") + " / " + str.tostring(callK2, "#") + " / " + str.tostring(callK3, "#") : "—", text_color=color.lime, text_size=size.small)
+    table.cell(dash, 0, 8,  "Put Fly",   text_color=color.white, text_size=size.small)
+    table.cell(dash, 1, 8,  orSet ? str.tostring(putK1, "#") + " / " + str.tostring(putK2, "#") + " / " + str.tostring(putK3, "#") : "—", text_color=color.fuchsia, text_size=size.small)
+    table.cell(dash, 0, 9,  "Debit Tgt", text_color=color.white, text_size=size.small)
+    table.cell(dash, 1, 9,  "$" + str.tostring(debitTgt,  "#.##"), text_color=color.orange, text_size=size.small)
+    table.cell(dash, 0, 10, "Credit Tgt",text_color=color.white, text_size=size.small)
+    table.cell(dash, 1, 10, "$" + str.tostring(creditTgt, "#.##"), text_color=color.orange, text_size=size.small)
+    table.cell(dash, 0, 11, "Profit Tgt",text_color=color.white, text_size=size.small)
+    table.cell(dash, 1, 11, "$" + str.tostring(profitTgt, "#.##"), text_color=color.yellow, text_size=size.small)
+    table.cell(dash, 0, 12, "State",     text_color=color.white, text_size=size.small)
+    table.cell(dash, 1, 12, inLong ? "LONG (Call Fly)" : inShort ? "SHORT (Put Fly)" : triggered ? "Done" : orSet ? "Waiting" : "Pre-OR", text_color=color.aqua, text_size=size.small)
+    table.cell(dash, 0, 13, "Stopped?",  text_color=color.white, text_size=size.small)
+    table.cell(dash, 1, 13, stoppedOut ? "YES — rev armed" : "no", text_color=stoppedOut ? color.orange : color.gray, text_size=size.small)
 
-// ─── ALERTS (webhook JSON to bot.lumitrade.ai/api/webhook/tradingview) ───
-//
-// Bot routing:
-//   strategy="orb_butterfly", leg="debit"  → buy directional debit spread
-//   strategy="orb_butterfly", leg="credit" → sell opposing credit spread
-//                                            at SAME pillar (completes BF).
-//                                            Handler refuses if credit < debit.
-//   strategy="orb_butterfly", leg="stop"   → close debit spread manually
-//                                            when underlying hits SL before
-//                                            credit leg fired.
-//
-// Both legs share strike_pillar so the bot can match them as one trade.
+// ─── ALERTS (LumiSignals webhook payload) ───
+string base = '{"ticker":"SPX","strategy":"orb_butterfly","key":"lumisignals2026","type":"options","structure":"butterfly","expiry":"0DTE","contracts":1,'
+string ctx  = '"spx_or_high":' + str.tostring(spxOrHigh, format.mintick) + ',"spx_or_low":' + str.tostring(spxOrLow, format.mintick) + ',"es_or_high":' + str.tostring(esOrHigh, format.mintick) + ',"es_or_low":' + str.tostring(esOrLow, format.mintick) + ',"vix":' + str.tostring(vixClose, "#.#") + ','
 
-string baseHead = '{"ticker":"ES","strategy":"orb_butterfly","key":"lumisignals2026","type":"options","dte":' + str.tostring(dteTarget) + ','
+string callLegs = '"spread_type":"call","long_strike":' + str.tostring(callK1, "#") + ',"body_strike":' + str.tostring(callK2, "#") + ',"wing_strike":' + str.tostring(callK3, "#") + ','
+string putLegs  = '"spread_type":"put","long_strike":'  + str.tostring(putK1,  "#") + ',"body_strike":' + str.tostring(putK2,  "#") + ',"wing_strike":' + str.tostring(putK3,  "#") + ','
 
-// --- DEBIT LEG ---
-if buyDebitSignal
-    string msg = baseHead +
-                 '"leg":"debit","direction":"BUY","spread_type":"call_debit",' +
-                 '"strike_pillar":' + str.tostring(buyPillar) + ',' +
-                 '"long_strike":'   + str.tostring(buyPillar) + ',' +
-                 '"short_strike":'  + str.tostring(buyPillar + wingWidth) + ',' +
-                 '"wing":'          + str.tostring(wingWidth) + ',' +
-                 '"entry_price":'   + str.tostring(buyEntry, format.mintick) + ',' +
-                 '"stop_price":'    + str.tostring(buyStop, format.mintick) + ',' +
-                 '"or_high":'       + str.tostring(orHigh, format.mintick) + ',' +
-                 '"or_low":'        + str.tostring(orLow,  format.mintick) + ',' +
-                 '"or_range":'      + str.tostring(orRange, "#.#") + ',' +
-                 '"vix":'           + str.tostring(vixClose, "#.#") + '}'
-    alert(msg, alert.freq_once_per_bar_close)
+string targets = '"debit_target":' + str.tostring(debitTgt, "#.##") + ',"credit_target":' + str.tostring(creditTgt, "#.##") + ',"profit_target":' + str.tostring(profitTgt, "#.##") + '}'
 
-if sellDebitSignal
-    string msg = baseHead +
-                 '"leg":"debit","direction":"SELL","spread_type":"put_debit",' +
-                 '"strike_pillar":' + str.tostring(sellPillar) + ',' +
-                 '"long_strike":'   + str.tostring(sellPillar) + ',' +
-                 '"short_strike":'  + str.tostring(sellPillar - wingWidth) + ',' +
-                 '"wing":'          + str.tostring(wingWidth) + ',' +
-                 '"entry_price":'   + str.tostring(sellEntry, format.mintick) + ',' +
-                 '"stop_price":'    + str.tostring(sellStop, format.mintick) + ',' +
-                 '"or_high":'       + str.tostring(orHigh, format.mintick) + ',' +
-                 '"or_low":'        + str.tostring(orLow,  format.mintick) + ',' +
-                 '"or_range":'      + str.tostring(orRange, "#.#") + ',' +
-                 '"vix":'           + str.tostring(vixClose, "#.#") + '}'
-    alert(msg, alert.freq_once_per_bar_close)
-
-// --- CREDIT LEG ---
-if buyCreditSignal
-    string msg = baseHead +
-                 '"leg":"credit","direction":"BUY","spread_type":"put_credit",' +
-                 '"strike_pillar":' + str.tostring(strikePillar) + ',' +
-                 '"short_strike":'  + str.tostring(strikePillar) + ',' +
-                 '"long_strike":'   + str.tostring(strikePillar - wingWidth) + ',' +
-                 '"wing":'          + str.tostring(wingWidth) + ',' +
-                 '"underlying":'    + str.tostring(close, format.mintick) + ',' +
-                 '"move":'          + str.tostring(close - entryPrice, "#.#") + '}'
-    alert(msg, alert.freq_once_per_bar_close)
-
-if sellCreditSignal
-    string msg = baseHead +
-                 '"leg":"credit","direction":"SELL","spread_type":"call_credit",' +
-                 '"strike_pillar":' + str.tostring(strikePillar) + ',' +
-                 '"short_strike":'  + str.tostring(strikePillar) + ',' +
-                 '"long_strike":'   + str.tostring(strikePillar + wingWidth) + ',' +
-                 '"wing":'          + str.tostring(wingWidth) + ',' +
-                 '"underlying":'    + str.tostring(close, format.mintick) + ',' +
-                 '"move":'          + str.tostring(entryPrice - close, "#.#") + '}'
-    alert(msg, alert.freq_once_per_bar_close)
-
-// --- STOP-OUT (underlying hit SL before credit leg) ---
-if buyStopSignal
-    string msg = baseHead +
-                 '"leg":"stop","direction":"BUY","reason":"underlying_stop",' +
-                 '"strike_pillar":' + str.tostring(strikePillar) + ',' +
-                 '"underlying":'    + str.tostring(close, format.mintick) + '}'
-    alert(msg, alert.freq_once_per_bar_close)
-
-if sellStopSignal
-    string msg = baseHead +
-                 '"leg":"stop","direction":"SELL","reason":"underlying_stop",' +
-                 '"strike_pillar":' + str.tostring(strikePillar) + ',' +
-                 '"underlying":'    + str.tostring(close, format.mintick) + '}'
-    alert(msg, alert.freq_once_per_bar_close)
+if buySignal
+    alert(base + '"direction":"BUY","reversal":false,'  + ctx + callLegs + targets, alert.freq_once_per_bar_close)
+if sellSignal
+    alert(base + '"direction":"SELL","reversal":false,' + ctx + putLegs  + targets, alert.freq_once_per_bar_close)
+if reverseBuySignal
+    alert(base + '"direction":"BUY","reversal":true,'   + ctx + callLegs + targets, alert.freq_once_per_bar_close)
+if reverseSellSignal
+    alert(base + '"direction":"SELL","reversal":true,'  + ctx + putLegs  + targets, alert.freq_once_per_bar_close)
