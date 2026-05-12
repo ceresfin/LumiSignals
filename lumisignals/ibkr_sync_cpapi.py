@@ -1761,6 +1761,35 @@ def check_order_requests(client):
 
                     # Store entry details for BUY/SELL (not CLOSE) using order ID as unique key
                     if direction in ("BUY", "SELL"):
+                        # Guard: if IB returned id=0 or empty perm_id, the
+                        # order didn't actually reach the broker. Don't
+                        # create a phantom strat_pos that will confuse
+                        # reconcile and trigger spurious CLEAR_ALLs.
+                        if not perm_id or str(perm_id) in ("0", "", "None"):
+                            logger.error(
+                                "Order placement returned invalid id (%r) for %s %s [%s] "
+                                "— refusing to create strat_pos. Raw trade_result was: %r",
+                                perm_id, direction, ticker, strategy_name, trade_result
+                            )
+                            try:
+                                from .supabase_client import send_telegram_message
+                                send_telegram_message(
+                                    f"⚠️ *Order placement failed* — {direction} {ticker} "
+                                    f"[{strategy_name}]: IB returned invalid id `{perm_id}`. "
+                                    f"No position opened. Will retry on next signal."
+                                )
+                            except Exception:
+                                pass
+                            try:
+                                requests.post(f"{SERVER_URL}/api/ibkr/order/update",
+                                    json={"order_id": order_id, "status": "failed",
+                                          "ticker": ticker, "direction": direction,
+                                          "error": f"invalid perm_id {perm_id!r}"},
+                                    headers={"X-Sync-Key": SYNC_KEY}, timeout=5)
+                            except Exception:
+                                pass
+                            continue
+
                         # Read THIS order's fill price by order ID — not the
                         # last entry from client.get_trades(), which can be
                         # an options spread fill from a different contract.
@@ -1771,6 +1800,27 @@ def check_order_requests(client):
                             entry_fill_price = float(fill_info.get("avg_price") or 0)
                         except Exception:
                             pass
+
+                        # Guard #2: if we still couldn't get a fill price after
+                        # the entry order was supposedly placed, the order may
+                        # have been rejected silently. Don't create strat_pos
+                        # in that case either.
+                        if not entry_fill_price:
+                            logger.error(
+                                "Order %s [%s/%s/%s] has no fill price after place — "
+                                "refusing to create strat_pos",
+                                perm_id, direction, ticker, strategy_name
+                            )
+                            try:
+                                from .supabase_client import send_telegram_message
+                                send_telegram_message(
+                                    f"⚠️ *Order placed but never filled* — {direction} {ticker} "
+                                    f"[{strategy_name}] order {perm_id}. No position opened."
+                                )
+                            except Exception:
+                                pass
+                            continue
+
                         # Per-strategy position state — lets independent
                         # strategies (e.g. 2n20 + ORB) coexist on the same
                         # contract; each closes only its own leg. Stop info
