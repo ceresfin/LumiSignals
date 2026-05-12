@@ -1383,6 +1383,15 @@ def check_order_requests(client):
                     f"{sp.get('direction')} {sp.get('contracts',0)}" if sp else "flat",
                 )
 
+                # Manual close of an "untracked" orphan row (mobile Close
+                # button on a position whose strat_pos was already cleared).
+                # We don't have a matching strat_pos to gate on, so honor
+                # the close request as long as IB's net direction agrees.
+                is_untracked_close = (
+                    strategy_name == "untracked"
+                    and direction in ("CLOSE_LONG", "CLOSE_SHORT")
+                )
+
                 skip = False
                 if direction == "BUY" and strat_long:
                     logger.info("SKIP %s BUY [%s] — strategy already long (opened %s)",
@@ -1392,14 +1401,30 @@ def check_order_requests(client):
                     logger.info("SKIP %s SELL [%s] — strategy already short (opened %s)",
                                 ticker, strategy_name, sp.get("opened_at", ""))
                     skip = True
-                elif direction == "CLOSE_LONG" and not strat_long:
+                elif direction == "CLOSE_LONG" and not strat_long and not is_untracked_close:
                     logger.info("SKIP %s CLOSE_LONG [%s] — strategy not long",
                                 ticker, strategy_name)
                     skip = True
-                elif direction == "CLOSE_SHORT" and not strat_short:
+                elif direction == "CLOSE_SHORT" and not strat_short and not is_untracked_close:
                     logger.info("SKIP %s CLOSE_SHORT [%s] — strategy not short",
                                 ticker, strategy_name)
                     skip = True
+                elif is_untracked_close:
+                    # Validate against IB's net direction so we don't
+                    # accidentally flip a position rather than close it.
+                    ib_long  = current_pos > 0
+                    ib_short = current_pos < 0
+                    if direction == "CLOSE_LONG" and not ib_long:
+                        logger.info("SKIP %s CLOSE_LONG [untracked] — IB net is not long (qty=%+d)",
+                                    ticker, current_pos)
+                        skip = True
+                    elif direction == "CLOSE_SHORT" and not ib_short:
+                        logger.info("SKIP %s CLOSE_SHORT [untracked] — IB net is not short (qty=%+d)",
+                                    ticker, current_pos)
+                        skip = True
+                    else:
+                        logger.info("ALLOW %s %s [untracked] — IB qty=%+d, manual mobile close",
+                                    ticker, direction, current_pos)
 
                 if skip:
                     try:
