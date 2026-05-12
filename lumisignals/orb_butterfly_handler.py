@@ -112,9 +112,10 @@ def _lookup_option_conid(client, symbol: str, expiry: str, strike: float, right:
 
 
 def _fetch_quote(client, conid: int):
-    """Get (bid, ask) for a conid. CPAPI snapshot endpoint sometimes needs
-    a warm-up call — we poll twice with 250ms gap if first returns empty."""
-    for attempt in range(2):
+    """Get (bid, ask) for a conid. CPAPI snapshot needs warm-up polls —
+    first call to a non-subscribed conid returns empty fields. Up to 6
+    attempts with 500ms gap (3s max wait)."""
+    for attempt in range(6):
         try:
             r = client._request("GET", "/iserver/marketdata/snapshot",
                                 params={"conids": str(conid), "fields": "84,86"})
@@ -122,12 +123,28 @@ def _fetch_quote(client, conid: int):
             r = None
         if isinstance(r, list) and r:
             row = r[0]
-            bid = float(row.get("84", 0) or 0)
-            ask = float(row.get("86", 0) or 0)
+            bid_raw = row.get("84", 0)
+            ask_raw = row.get("86", 0)
+            try:
+                bid = float(bid_raw) if bid_raw else 0
+                ask = float(ask_raw) if ask_raw else 0
+            except (TypeError, ValueError):
+                bid = ask = 0
             if bid > 0 and ask > 0:
                 return bid, ask
-        time.sleep(0.25)
+        time.sleep(0.5)
     return None, None
+
+
+def _warm_quotes(client, conids: list):
+    """Single batched snapshot call to start IBeam data subscription on
+    multiple conids at once. Call before _fetch_quote per-conid."""
+    try:
+        client._request("GET", "/iserver/marketdata/snapshot",
+                        params={"conids": ",".join(str(c) for c in conids),
+                                "fields": "84,86"})
+    except Exception:
+        pass
 
 
 def _place_leg(client, conid: int, side: str, qty: int, price: float):
@@ -248,6 +265,9 @@ def _phase_queued(client, rdb, state):
         return
     state["debit_conids"] = {"long": long_conid, "short": short_conid}
 
+    # Warm both subscriptions in one call so the subsequent per-conid
+    # quotes are ready immediately
+    _warm_quotes(client, [long_conid, short_conid])
     long_bid, long_ask = _fetch_quote(client, long_conid)
     short_bid, short_ask = _fetch_quote(client, short_conid)
     if not all([long_bid, long_ask, short_bid, short_ask]):
@@ -456,6 +476,7 @@ def _phase_watching(client, rdb, state, spx_price):
         return
     state["credit_conids"] = {"short": short_conid, "long": long_conid}
 
+    _warm_quotes(client, [short_conid, long_conid])
     sb, sa = _fetch_quote(client, short_conid)
     lb, la = _fetch_quote(client, long_conid)
     if not all([sb, sa, lb, la]):
