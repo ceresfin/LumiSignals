@@ -282,15 +282,55 @@ export default function Dashboard() {
   const [allPositions, setAllPositions] = useState<Position[]>([]);
   const [activeTab, setActiveTab] = useState('forex');
   const [refreshing, setRefreshing] = useState(false);
+  const [dateRange, setDateRange] = useState<'today' | 'wtd' | 'mtd' | 'qtd' | 'ytd' | 'all'>('mtd');
 
-  const loadData = async () => {
+  // Compute the start-of-range ISO timestamp for the user's selection.
+  // All times are evaluated in user-local; the trades table stores UTC,
+  // so we convert to UTC for the .gte() filter.
+  const getRangeStartIso = (range: typeof dateRange): string | null => {
+    if (range === 'all') return null;
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());  // local midnight today
+    if (range === 'today') return start.toISOString();
+    if (range === 'wtd') {
+      // Week starts Monday
+      const day = start.getDay(); // 0=Sun ... 6=Sat
+      const daysBack = day === 0 ? 6 : day - 1;
+      start.setDate(start.getDate() - daysBack);
+      return start.toISOString();
+    }
+    if (range === 'mtd') {
+      start.setDate(1);
+      return start.toISOString();
+    }
+    if (range === 'qtd') {
+      const qMonth = Math.floor(now.getMonth() / 3) * 3;
+      start.setMonth(qMonth, 1);
+      return start.toISOString();
+    }
+    if (range === 'ytd') {
+      start.setMonth(0, 1);
+      return start.toISOString();
+    }
+    return null;
+  };
+
+  const loadData = async (range = dateRange) => {
     if (!user) return;
     try {
+      const startIso = getRangeStartIso(range);
+      // Trades query — filter by closed_at if a range is set, order desc so
+      // newest come first within the 1000-row Supabase default limit.
+      let tradesQ = supabase
+        .from('trades')
+        .select('realized_pl, pips, won, strategy, model, broker, asset_type, instrument, opened_at, closed_at')
+        .eq('user_id', user.id)
+        .order('closed_at', { ascending: false })
+        .limit(5000);
+      if (startIso) tradesQ = tradesQ.gte('closed_at', startIso);
+
       const [tradesRes, posRes] = await Promise.all([
-        supabase
-          .from('trades')
-          .select('realized_pl, pips, won, strategy, model, broker, asset_type, instrument, opened_at')
-          .eq('user_id', user.id),
+        tradesQ,
         supabase
           .from('positions')
           .select('strategy, asset_type, instrument, broker, model, broker_trade_id, direction, entry_price, stop_loss, take_profit, opened_at')
@@ -304,10 +344,12 @@ export default function Dashboard() {
   };
 
   useEffect(() => { loadData(); }, [user]);
+  // Reload when date range changes
+  useEffect(() => { if (user) loadData(dateRange); }, [dateRange]);
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadData();
+    await loadData(dateRange);
     setRefreshing(false);
   };
 
@@ -364,6 +406,28 @@ export default function Dashboard() {
             >
               <Text style={[styles.tabText, activeTab === t.key && styles.tabTextActive]}>
                 {t.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        {/* Date Range Selector — Today / WTD / MTD / QTD / YTD / All */}
+        <View style={dateRangeStyles.bar}>
+          {([
+            ['today', 'Today'],
+            ['wtd', 'WTD'],
+            ['mtd', 'MTD'],
+            ['qtd', 'QTD'],
+            ['ytd', 'YTD'],
+            ['all', 'All'],
+          ] as const).map(([k, label]) => (
+            <TouchableOpacity
+              key={k}
+              style={[dateRangeStyles.chip, dateRange === k && dateRangeStyles.chipActive]}
+              onPress={() => setDateRange(k)}
+            >
+              <Text style={[dateRangeStyles.chipText, dateRange === k && dateRangeStyles.chipTextActive]}>
+                {label}
               </Text>
             </TouchableOpacity>
           ))}
@@ -585,6 +649,39 @@ export default function Dashboard() {
     </SafeAreaView>
   );
 }
+
+const dateRangeStyles = StyleSheet.create({
+  bar: {
+    flexDirection: 'row',
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    paddingBottom: 4,
+    gap: 6,
+  },
+  chip: {
+    flex: 1,
+    paddingVertical: 6,
+    paddingHorizontal: 4,
+    borderRadius: 12,
+    backgroundColor: '#F5F5F0',
+    borderWidth: 1,
+    borderColor: '#E0E0DA',
+    alignItems: 'center',
+  },
+  chipActive: {
+    backgroundColor: '#7C8765',
+    borderColor: '#7C8765',
+  },
+  chipText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#555',
+  },
+  chipTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '600',
+  },
+});
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.cream },
