@@ -450,7 +450,8 @@ class CPAPIClient:
     @staticmethod
     def build_futures_order(conid: int, action: str, quantity: int,
                             order_type: str = "MKT", price: float = None,
-                            tif: str = "GTC") -> dict:
+                            tif: str = "GTC",
+                            parent_id: str = None) -> dict:
         """Build a futures order payload.
 
         Args:
@@ -460,6 +461,14 @@ class CPAPIClient:
             order_type: "MKT", "LMT", or "STP"
             price: Required for LMT and STP orders
             tif: Time in force ("GTC", "DAY")
+            parent_id: Optional IB order ID of the parent entry order.
+                       When set, this order becomes a bracket child:
+                         - status stays "PreSubmitted" until parent fills
+                         - if two children share the same parent, IB enforces
+                           OCO (one fills → IB cancels the other)
+                         - cancelling the parent cascade-cancels the children
+                       Use for SL/TP protection that should only activate
+                       after the entry actually fills.
         """
         order = {
             "conid": conid,
@@ -470,6 +479,8 @@ class CPAPIClient:
         }
         if price is not None and order_type in ("LMT", "STP"):
             order["price"] = price
+        if parent_id:
+            order["parentId"] = str(parent_id)
         return {"orders": [order]}
 
     @staticmethod

@@ -1683,27 +1683,38 @@ def check_order_requests(client):
                                         pass
                                 else:
                                     sl_price = pine_stop if pine_stop > 0 else (fill_price - sl_points)
-                                    sl_payload = client.build_futures_order(fut_conid, "SELL", contracts, "STP", sl_price, tif="GTC")
+                                    # Bracket: SL is a child of the entry order. IB
+                                    # enforces OCO when paired with the TP child.
+                                    sl_payload = client.build_futures_order(
+                                        fut_conid, "SELL", contracts, "STP", sl_price,
+                                        tif="GTC", parent_id=entry_order_id,
+                                    )
                                     sl_result = client.place_order(sl_payload)
                                     if isinstance(sl_result, list) and sl_result:
                                         first = sl_result[0] if isinstance(sl_result[0], dict) else {}
                                         sl_order_id = str(first.get("order_id", "") or "")
                                     elif isinstance(sl_result, dict):
                                         sl_order_id = str(sl_result.get("order_id", "") or "")
-                                    logger.info("Stop loss: SELL %s @ %.2f (entry %.2f, ib_qty=%+d, source=%s) sl_id=%s",
+                                    logger.info("Stop loss: SELL %s @ %.2f (entry %.2f, ib_qty=%+d, source=%s, parent=%s) sl_id=%s",
                                                 ticker, sl_price, fill_price, ib_qty,
-                                                "pine" if pine_stop else "config", sl_order_id)
-                                    # Take-profit child if Pine sent a target
+                                                "pine" if pine_stop else "config",
+                                                entry_order_id, sl_order_id)
+                                    # Take-profit child if Pine sent a target — also
+                                    # bracketed to the entry for OCO with the SL.
                                     if pine_target > 0:
                                         tp_price = pine_target
-                                        tp_payload = client.build_futures_order(fut_conid, "SELL", contracts, "LMT", tp_price, tif="GTC")
+                                        tp_payload = client.build_futures_order(
+                                            fut_conid, "SELL", contracts, "LMT", tp_price,
+                                            tif="GTC", parent_id=entry_order_id,
+                                        )
                                         tp_result = client.place_order(tp_payload)
                                         if isinstance(tp_result, list) and tp_result:
                                             first = tp_result[0] if isinstance(tp_result[0], dict) else {}
                                             tp_order_id = str(first.get("order_id", "") or "")
                                         elif isinstance(tp_result, dict):
                                             tp_order_id = str(tp_result.get("order_id", "") or "")
-                                        logger.info("Take profit: SELL %s @ %.2f tp_id=%s", ticker, tp_price, tp_order_id)
+                                        logger.info("Take profit: SELL %s @ %.2f (parent=%s) tp_id=%s",
+                                                    ticker, tp_price, entry_order_id, tp_order_id)
                             else:
                                 logger.error("Cannot place SL for %s: entry order %s not filled (status=%s)",
                                               ticker, entry_order_id, fill_info.get("status", ""))
@@ -1752,27 +1763,38 @@ def check_order_requests(client):
                                         pass
                                 else:
                                     sl_price = pine_stop if pine_stop > 0 else (fill_price + sl_points)
-                                    sl_payload = client.build_futures_order(fut_conid, "BUY", contracts, "STP", sl_price, tif="GTC")
+                                    # Bracket: SL is a child of the entry order. IB
+                                    # enforces OCO when paired with the TP child.
+                                    sl_payload = client.build_futures_order(
+                                        fut_conid, "BUY", contracts, "STP", sl_price,
+                                        tif="GTC", parent_id=entry_order_id,
+                                    )
                                     sl_result = client.place_order(sl_payload)
                                     if isinstance(sl_result, list) and sl_result:
                                         first = sl_result[0] if isinstance(sl_result[0], dict) else {}
                                         sl_order_id = str(first.get("order_id", "") or "")
                                     elif isinstance(sl_result, dict):
                                         sl_order_id = str(sl_result.get("order_id", "") or "")
-                                    logger.info("Stop loss: BUY %s @ %.2f (entry %.2f, ib_qty=%+d, source=%s) sl_id=%s",
+                                    logger.info("Stop loss: BUY %s @ %.2f (entry %.2f, ib_qty=%+d, source=%s, parent=%s) sl_id=%s",
                                                 ticker, sl_price, fill_price, ib_qty,
-                                                "pine" if pine_stop else "config", sl_order_id)
-                                    # Take-profit child if Pine sent a target
+                                                "pine" if pine_stop else "config",
+                                                entry_order_id, sl_order_id)
+                                    # Take-profit child if Pine sent a target — also
+                                    # bracketed to the entry for OCO with the SL.
                                     if pine_target > 0:
                                         tp_price = pine_target
-                                        tp_payload = client.build_futures_order(fut_conid, "BUY", contracts, "LMT", tp_price, tif="GTC")
+                                        tp_payload = client.build_futures_order(
+                                            fut_conid, "BUY", contracts, "LMT", tp_price,
+                                            tif="GTC", parent_id=entry_order_id,
+                                        )
                                         tp_result = client.place_order(tp_payload)
                                         if isinstance(tp_result, list) and tp_result:
                                             first = tp_result[0] if isinstance(tp_result[0], dict) else {}
                                             tp_order_id = str(first.get("order_id", "") or "")
                                         elif isinstance(tp_result, dict):
                                             tp_order_id = str(tp_result.get("order_id", "") or "")
-                                        logger.info("Take profit: BUY %s @ %.2f tp_id=%s", ticker, tp_price, tp_order_id)
+                                        logger.info("Take profit: BUY %s @ %.2f (parent=%s) tp_id=%s",
+                                                    ticker, tp_price, entry_order_id, tp_order_id)
                             else:
                                 logger.error("Cannot place SL for %s: entry order %s not filled (status=%s)",
                                               ticker, entry_order_id, fill_info.get("status", ""))
