@@ -253,26 +253,8 @@
           }
         }
 
-        if (HAS_TRADE && ENTRY_PRICE && ATR > 0) {
-          // Entry band: +/- 0.25 ATR around entry
-          const w = 0.25 * ATR;
-          drawBand(
-            ENTRY_PRICE - w,
-            ENTRY_PRICE + w,
-            isLong ? 'rgba(39,174,96,0.18)' : 'rgba(192,57,43,0.18)',
-            null
-          );
-          // Solid entry midline
-          candleSeries.createPriceLine({
-            price: ENTRY_PRICE,
-            color: isLong ? '#27ae60' : '#c0392b',
-            lineWidth: 2,
-            lineStyle: LightweightCharts.LineStyle.Solid,
-            axisLabelVisible: true,
-            title: 'Entry',
-          });
-        } else if (HAS_TRADE && ENTRY_PRICE) {
-          // Fallback to a plain line if ATR couldn't be computed
+        // Entry: solid midline only — no band
+        if (HAS_TRADE && ENTRY_PRICE) {
           candleSeries.createPriceLine({
             price: ENTRY_PRICE,
             color: isLong ? '#27ae60' : '#c0392b',
@@ -283,22 +265,16 @@
           });
         }
 
+        // Target: solid line + one-sided shaded "meat" band extending past
+        // the exit toward where the absolute S/R wall sits. Width is 1 ATR
+        // and opacity is high so the zone is obvious on mobile.
         if (HAS_TRADE && EXIT_PRICE && ATR > 0) {
-          // Target band = the "meat" zone: between the pulled-back target
-          // and the raw S/R level that's 0.5 ATR further out.
-          const w = 0.5 * ATR;
+          const w = 1.0 * ATR;
           const low  = isLong ? EXIT_PRICE : EXIT_PRICE - w;
           const high = isLong ? EXIT_PRICE + w : EXIT_PRICE;
-          drawBand(low, high, 'rgba(255,152,0,0.22)', null);
-          candleSeries.createPriceLine({
-            price: EXIT_PRICE,
-            color: '#ff9800',
-            lineWidth: 2,
-            lineStyle: LightweightCharts.LineStyle.Solid,
-            axisLabelVisible: true,
-            title: 'Exit',
-          });
-        } else if (HAS_TRADE && EXIT_PRICE) {
+          drawBand(low, high, 'rgba(255,152,0,0.45)', null);
+        }
+        if (HAS_TRADE && EXIT_PRICE) {
           candleSeries.createPriceLine({
             price: EXIT_PRICE,
             color: '#ff9800',
@@ -309,21 +285,8 @@
           });
         }
 
-        if (HAS_TRADE && STOP_PRICE && ATR > 0) {
-          // Stop band = wick-tolerance area just beyond the SL
-          const w = 0.25 * ATR;
-          const low  = isLong ? STOP_PRICE - w : STOP_PRICE;
-          const high = isLong ? STOP_PRICE : STOP_PRICE + w;
-          drawBand(low, high, 'rgba(255,23,68,0.20)', null);
-          candleSeries.createPriceLine({
-            price: STOP_PRICE,
-            color: '#ff1744',
-            lineWidth: 1,
-            lineStyle: LightweightCharts.LineStyle.Dotted,
-            axisLabelVisible: true,
-            title: 'SL',
-          });
-        } else if (HAS_TRADE && STOP_PRICE) {
+        // Stop: dotted line only — no band
+        if (HAS_TRADE && STOP_PRICE) {
           candleSeries.createPriceLine({
             price: STOP_PRICE,
             color: '#ff1744',
