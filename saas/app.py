@@ -368,7 +368,51 @@ def create_app():
                     "atr": round(atr, 5) if atr else 0,
                 })
 
-        # Add index/futures zones from server-calculated levels
+        # Supplemental always-on zones for key indices/commodities. Mirrors the
+        # bot's real scan structure (model-aware zone_tfs, trend_tfs, ATR) so
+        # the mobile cards look identical to forex zones — and stays visible
+        # outside market hours when the bot's stock scan is gated off.
+        MODEL_ZONE_TFS = {
+            "scalp":    ["15m", "1h"],
+            "intraday": ["1d", "1w"],
+            "swing":    ["1w", "1mo"],
+        }
+        MODEL_TREND_TFS = {
+            "scalp":    [("5m", "5M"), ("15m", "15M"), ("1h", "1H")],
+            "intraday": [("1h", "1H"), ("1d", "Daily"), ("1w", "Weekly")],
+            "swing":    [("1d", "Daily"), ("1w", "Weekly"), ("1mo", "Monthly")],
+        }
+        MODEL_TRIGGER_TF = {"scalp": "5m", "intraday": "1h", "swing": "1d"}
+
+        def _compute_trends(massive, tkr, model):
+            """ADX direction on each of the model's trend TFs."""
+            trends = {}
+            for tf, label in MODEL_TREND_TFS[model]:
+                try:
+                    count = 30 if tf in ("1mo", "1w") else (50 if tf in ("1d", "1h") else 80)
+                    candles = massive.get_candles(tkr, tf, count)
+                    if not candles or len(candles) < 16:
+                        continue
+                    direction, _ = calculate_adx_direction(candles, period=14)
+                    trends[label] = "bullish" if direction == "UP" else ("bearish" if direction == "DOWN" else "neutral")
+                except Exception:
+                    continue
+            return trends
+
+        def _compute_atr(massive, tkr, trigger_tf):
+            try:
+                count = 30 if trigger_tf in ("5m", "15m", "30m", "1h") else 50
+                candles = massive.get_candles(tkr, trigger_tf, count)
+                if not candles or len(candles) < 14:
+                    return 0
+                ranges = [c.high - c.low for c in candles[-14:]]
+                return sum(ranges) / len(ranges)
+            except Exception:
+                return 0
+
+        # Dedup key for any zone we already have from the bot's real watchlist
+        seen = {(z["instrument"], z["zone_timeframe"], z["zone_type"]) for z in result}
+
         massive_key = os.environ.get("MASSIVE_API_KEY", "")
         if massive_key:
             try:
@@ -386,27 +430,57 @@ def create_app():
                         price = massive.get_price(idx_ticker)
                         if not price:
                             continue
-                        snr = get_builtin_snr_levels(massive, idx_ticker, ["1h", "4h", "1d"], market_type=mkt)
-                        for tf, data in snr.items():
-                            for zone_type, key in [("supply", "resistance_price"), ("demand", "support_price")]:
-                                level = data.get(key)
-                                if not level:
-                                    continue
-                                dist_pct = abs(price - level) / price * 100
-                                status = "activated" if dist_pct < 0.5 else "watching"
-                                result.append({
-                                    "instrument": display_name,
-                                    "model": "scalp" if tf in ("1h", "4h") else "intraday",
-                                    "zone_type": zone_type,
-                                    "zone_timeframe": tf,
-                                    "zone_price": round(level, 2),
-                                    "status": status,
-                                    "bias_score": 50,
-                                    "trade_direction": "BUY" if zone_type == "demand" else "SELL",
-                                    "trends": {},
-                                    "atr": 0,
-                                    "distance_pct": round(dist_pct, 2),
-                                })
+                        # Cache trends + ATR per model so we don't recompute per zone
+                        trends_cache = {}
+                        atr_cache = {}
+                        # Fetch SNR for the union of all models' zone TFs in one pass
+                        all_tfs = sorted({tf for tfs in MODEL_ZONE_TFS.values() for tf in tfs})
+                        snr = get_builtin_snr_levels(massive, idx_ticker, all_tfs, market_type=mkt)
+
+                        for model, zone_tfs in MODEL_ZONE_TFS.items():
+                            for tf in zone_tfs:
+                                data = snr.get(tf) or {}
+                                for zone_type, key in [("supply", "resistance_price"), ("demand", "support_price")]:
+                                    level = data.get(key)
+                                    if not level:
+                                        continue
+                                    if (display_name, tf, zone_type) in seen:
+                                        continue
+                                    seen.add((display_name, tf, zone_type))
+
+                                    if model not in trends_cache:
+                                        trends_cache[model] = _compute_trends(massive, idx_ticker, model)
+                                        atr_cache[model] = _compute_atr(massive, idx_ticker, MODEL_TRIGGER_TF[model])
+
+                                    trends = trends_cache[model]
+                                    atr = atr_cache[model]
+
+                                    # Score = % of trends aligning with zone direction
+                                    trade_dir = "BUY" if zone_type == "demand" else "SELL"
+                                    want = "bullish" if trade_dir == "BUY" else "bearish"
+                                    agree = sum(1 for d in trends.values() if d == want)
+                                    total = len(trends) or 1
+                                    bias_score = round((agree / total) * 100)
+
+                                    # Tolerance for "activated" = 0.5 ATR (matches bot)
+                                    if atr:
+                                        activated = abs(price - level) <= 0.5 * atr
+                                    else:
+                                        activated = (abs(price - level) / price * 100) < 0.5
+
+                                    result.append({
+                                        "instrument": display_name,
+                                        "model": model,
+                                        "zone_type": zone_type,
+                                        "zone_timeframe": tf,
+                                        "zone_price": round(level, 2),
+                                        "status": "activated" if activated else "watching",
+                                        "bias_score": bias_score,
+                                        "trade_direction": trade_dir,
+                                        "trends": trends,
+                                        "atr": round(atr, 5) if atr else 0,
+                                        "distance_pct": round(abs(price - level) / price * 100, 2),
+                                    })
                     except Exception:
                         pass
             except Exception:
