@@ -45,6 +45,11 @@ export default function ChartScreen() {
         { key: '2m', label: '2m' },
         { key: '5m', label: '5m' },
         { key: '15m', label: '15m' },
+        { key: '1h', label: '1H' },
+        { key: '4h', label: '4H' },
+        { key: '1d', label: '1D' },
+        { key: '1w', label: '1W' },
+        { key: '1mo', label: '1M' },
       ]
     : [
         { key: '2m', label: '2m' },
@@ -53,31 +58,35 @@ export default function ChartScreen() {
         { key: '1h', label: '1H' },
         { key: '4h', label: '4H' },
         { key: '1d', label: '1D' },
+        { key: '1w', label: '1W' },
+        { key: '1mo', label: '1M' },
       ];
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
+      {/* Top row: Back / ticker (gets the full row width) / TV link */}
+      <View style={styles.headerTop}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
           <Text style={styles.backText}>Back</Text>
         </TouchableOpacity>
-        <Text style={styles.title}>{ticker}</Text>
+        <Text style={styles.title} numberOfLines={1}>{ticker}</Text>
         <TouchableOpacity onPress={() => Linking.openURL(getTvUrl(ticker))} style={styles.tvBtn}>
           <Text style={styles.tvBtnText}>TV</Text>
         </TouchableOpacity>
-        <View style={styles.tfRow}>
-          {timespans.map(t => (
-            <TouchableOpacity
-              key={t.key}
-              style={[styles.tfBtn, tf === t.key && styles.tfBtnActive]}
-              onPress={() => router.setParams({ interval: t.key })}
-            >
-              <Text style={[styles.tfText, tf === t.key && styles.tfTextActive]}>
-                {t.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+      </View>
+      {/* Second row: timeframes (full row, room for 1W / 1M) */}
+      <View style={styles.tfRow}>
+        {timespans.map(t => (
+          <TouchableOpacity
+            key={t.key}
+            style={[styles.tfBtn, tf === t.key && styles.tfBtnActive]}
+            onPress={() => router.setParams({ interval: t.key })}
+          >
+            <Text style={[styles.tfText, tf === t.key && styles.tfTextActive]}>
+              {t.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
       </View>
       <WebView
         key={`${ticker}-${tf}`}
@@ -94,14 +103,14 @@ export default function ChartScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#1a1a2e' },
-  header: {
+  headerTop: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 20,
     paddingTop: 56,
-    paddingBottom: 10,
+    paddingBottom: 6,
     backgroundColor: '#1a1a2e',
-    gap: 8,
+    gap: 10,
   },
   backBtn: {
     paddingVertical: 6,
@@ -110,7 +119,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#333',
   },
   backText: { color: '#ccc', fontSize: 14 },
-  title: { color: '#fff', fontSize: 16, fontWeight: '600', flex: 1 },
+  // Ticker now gets its own row, so it can show full symbol without wrapping
+  title: { color: '#fff', fontSize: 18, fontWeight: '600', flex: 1 },
   tvBtn: {
     paddingVertical: 6,
     paddingHorizontal: 10,
@@ -118,12 +128,23 @@ const styles = StyleSheet.create({
     backgroundColor: '#1d4ed8',
   },
   tvBtnText: { color: '#fff', fontSize: 12, fontWeight: '700' },
-  tfRow: { flexDirection: 'row', gap: 4 },
+  // Timeframe row sits below the ticker so all 8 chips fit without
+  // cramping the ticker. Equal flex on each chip so they distribute
+  // evenly across the screen width.
+  tfRow: {
+    flexDirection: 'row',
+    gap: 4,
+    paddingHorizontal: 12,
+    paddingBottom: 10,
+    backgroundColor: '#1a1a2e',
+  },
   tfBtn: {
+    flex: 1,
     paddingVertical: 6,
-    paddingHorizontal: 10,
+    paddingHorizontal: 4,
     borderRadius: 6,
     backgroundColor: '#333',
+    alignItems: 'center',
   },
   tfBtnActive: { backgroundColor: Colors.olive },
   tfText: { color: '#999', fontSize: 12, fontWeight: '500' },
