@@ -365,6 +365,19 @@ def create_app():
                 # Calculate distance from current price (if available in zone data)
                 atr = z.get("atr", 0)
 
+                # Projected trade plan: what entry/stop the bot WOULD use
+                # if this zone fires. Matches levels_strategy.py logic —
+                # entry = zone_price, stop = entry ± 3 × trigger-TF ATR.
+                # Target is left empty here; the chart computes it from
+                # the S/R levels endpoint it already fetches.
+                projected_entry = round(zone_price, 5) if zone_price else None
+                projected_stop = None
+                if atr and zone_price:
+                    if trade_dir == "BUY":
+                        projected_stop = round(zone_price - 3 * atr, 5)
+                    elif trade_dir == "SELL":
+                        projected_stop = round(zone_price + 3 * atr, 5)
+
                 result.append({
                     "instrument": instrument,
                     "model": model,
@@ -376,6 +389,8 @@ def create_app():
                     "trade_direction": trade_dir,
                     "trends": trends,
                     "atr": round(atr, 5) if atr else 0,
+                    "projected_entry": projected_entry,
+                    "projected_stop": projected_stop,
                 })
 
         # Supplemental always-on zones for key indices/commodities. Mirrors the
@@ -478,6 +493,14 @@ def create_app():
                                     else:
                                         activated = (abs(price - level) / price * 100) < 0.5
 
+                                    # Projected entry/stop (matches forex branch)
+                                    proj_entry = round(level, 2)
+                                    proj_stop = None
+                                    if atr:
+                                        if trade_dir == "BUY":
+                                            proj_stop = round(level - 3 * atr, 2)
+                                        else:
+                                            proj_stop = round(level + 3 * atr, 2)
                                     result.append({
                                         "instrument": display_name,
                                         "model": model,
@@ -487,6 +510,8 @@ def create_app():
                                         "status": "activated" if activated else "watching",
                                         "bias_score": bias_score,
                                         "trade_direction": trade_dir,
+                                        "projected_entry": proj_entry,
+                                        "projected_stop": proj_stop,
                                         "trends": trends,
                                         "atr": round(atr, 5) if atr else 0,
                                         "distance_pct": round(abs(price - level) / price * 100, 2),

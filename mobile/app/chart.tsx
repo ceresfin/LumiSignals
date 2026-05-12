@@ -41,8 +41,11 @@ export default function ChartScreen() {
     'htf_supply_demand': 'HTF LEVELS',
     'orb_breakout': 'ORB',
     'orb_butterfly': 'ORB BFLY',
+    'scalp_htf':    'SCALP HTF',
+    'intraday_htf': 'INTRADAY HTF',
+    'swing_htf':    'SWING HTF',
   };
-  const stratLabel = strategy ? (STRATEGY_LABELS[strategy] || strategy.toUpperCase()) : null;
+  const stratLabel = strategy ? (STRATEGY_LABELS[strategy] || strategy.toUpperCase().replace('_', ' ')) : null;
 
   // Build chart URL with optional trade lines
   let chartUrl = `${API_BASE}/chart?ticker=${encodeURIComponent(ticker)}&timespan=${tf}&count=300`;

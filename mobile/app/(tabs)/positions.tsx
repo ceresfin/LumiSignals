@@ -628,10 +628,24 @@ export default function Positions() {
                   <TouchableOpacity
                     key={`${z.instrument}-${z.zone_type}-${z.zone_timeframe}-${i}`}
                     style={[styles.zoneCard, isActivated && styles.zoneCardActivated]}
-                    onPress={() => router.push({
-                      pathname: '/chart',
-                      params: { symbol: z.instrument, interval: z.zone_timeframe, strategy: 'htf_levels' }
-                    })}
+                    onPress={() => {
+                      // Compose the strategy label so the chart header
+                      // shows e.g. "SCALP HTF" instead of just "HTF LEVELS"
+                      const stratLabel = z.model
+                        ? `${z.model}_htf`
+                        : 'htf_levels';
+                      const params: any = {
+                        symbol: z.instrument,
+                        interval: z.zone_timeframe,
+                        strategy: stratLabel,
+                        direction: z.trade_direction,
+                      };
+                      // Projected entry/stop from the watched zone — let
+                      // the chart render them as the planned trade lines
+                      if (z.projected_entry != null) params.entry = String(z.projected_entry);
+                      if (z.projected_stop != null) params.stop = String(z.projected_stop);
+                      router.push({ pathname: '/chart', params });
+                    }}
                   >
                     <View style={styles.zoneTop}>
                       <Text style={styles.zoneTicker}>{z.instrument}</Text>
