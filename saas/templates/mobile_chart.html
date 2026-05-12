@@ -361,22 +361,15 @@
           }
         }
 
-        // Default view: show ~60 most-recent candles with 4 bars of
-        // padding on each side. Lets the user see recent price action
-        // clearly while still showing some context, with breathing room
-        // so candles don't crowd the price-axis edges.
-        const DEFAULT_VISIBLE_BARS = 60;
-        const SIDE_PADDING_BARS = 4;
-        if (unique.length > DEFAULT_VISIBLE_BARS) {
-            chart.timeScale().setVisibleLogicalRange({
-                from: unique.length - DEFAULT_VISIBLE_BARS - SIDE_PADDING_BARS,
-                to: unique.length + SIDE_PADDING_BARS,
-            });
-        } else {
-            // Few bars available — just fit them but reserve right padding
-            chart.timeScale().fitContent();
-            chart.applyOptions({ timeScale: { rightOffset: SIDE_PADDING_BARS } });
-        }
+        // Fit all bars but leave right-side padding so the most-recent
+        // candle isn't pinned against the price axis. Earlier attempt
+        // to restrict visible range to last 60 bars was hiding trade
+        // indicators (entry/SL/target lines) when their prices fell
+        // outside the auto-scaled price range of the visible window.
+        chart.applyOptions({
+            timeScale: { rightOffset: 4, barSpacing: 8 },
+        });
+        chart.timeScale().fitContent();
 
         // Resize handler
         new ResizeObserver(() => {
