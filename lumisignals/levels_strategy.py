@@ -1136,6 +1136,10 @@ class LevelsStrategy:
           - scalp:    5m / 15m / 1h levels   (move enclosed by one 1H bar)
           - intraday: 1h / 1d / 1w levels    (move enclosed by one 1W bar)
           - swing:    1d / 1w / 1mo levels   (move enclosed by one 1M bar)
+
+        Target is then pulled half a trigger-TF ATR back toward entry so we
+        capture the "meat" of the move rather than fighting for the absolute
+        high/low. zone.atr already reflects the trigger TF (5m/1h/1d).
         """
         if self.model_name == "scalp":
             target_tfs = ["5m", "15m", "1h"]
@@ -1152,25 +1156,28 @@ class LevelsStrategy:
         except Exception:
             snr_data = {}
 
+        # Half a trigger-TF ATR — pulled back so we exit before the wall
+        pullback = (zone.atr or 0) * 0.5
+
         if zone.trade_direction == "BUY":
-            # Look for supply (resistance) above entry
+            # Look for supply (resistance) above entry — exit half-ATR below it
             candidates = []
             for tf in target_tfs:
                 r = (snr_data or {}).get(tf, {}).get("resistance_price")
                 if r and r > entry + stop_distance:
                     candidates.append(r)
             if candidates:
-                return min(candidates)  # Nearest resistance above
+                return min(candidates) - pullback  # nearest resistance, pulled inward
             return entry + (stop_distance * 2)  # 2:1 R:R fallback
         else:
-            # Look for demand (support) below entry
+            # Look for demand (support) below entry — exit half-ATR above it
             candidates = []
             for tf in target_tfs:
                 s = (snr_data or {}).get(tf, {}).get("support_price")
                 if s and s < entry - stop_distance:
                     candidates.append(s)
             if candidates:
-                return max(candidates)  # Nearest support below
+                return max(candidates) + pullback  # nearest support, pulled inward
             return entry - (stop_distance * 2)
 
     def _fire_trigger(self, trigger: TriggerResult):
