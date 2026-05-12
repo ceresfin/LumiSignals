@@ -644,6 +644,7 @@ export default function Positions() {
                       // the chart render them as the planned trade lines
                       if (z.projected_entry != null) params.entry = String(z.projected_entry);
                       if (z.projected_stop != null) params.stop = String(z.projected_stop);
+                      if (z.projected_target != null) params.exit = String(z.projected_target);
                       router.push({ pathname: '/chart', params });
                     }}
                   >

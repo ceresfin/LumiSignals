@@ -346,6 +346,40 @@ def create_app():
         import redis as _redis
         rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
 
+        # Projected target reuses the bot's own target finder so the chart
+        # shows exactly the TP the strategy would aim for at trigger time.
+        from lumisignals.levels_strategy import compute_target_level
+
+        def _poly_ticker_for(instrument: str) -> tuple:
+            """Return (poly_ticker, market_type) for SNR lookup."""
+            inst = instrument.upper()
+            if "_" in inst:
+                return f"C:{inst.replace('_','')}", "forex"
+            if inst.startswith("I:") or inst.startswith("X:"):
+                return inst, "stock"
+            if inst.startswith("C:"):
+                return inst, "forex"
+            if len(inst) == 6 and inst.isalpha():
+                return f"C:{inst}", "forex"
+            return inst, "stock"
+
+        def _project_target(massive, instrument, model, direction, entry, stop_distance, atr):
+            poly_ticker, market_type = _poly_ticker_for(instrument)
+            return compute_target_level(
+                massive, model, poly_ticker, market_type,
+                direction, entry, stop_distance, atr,
+            )
+
+        # Pre-init Massive client once for the whole request
+        _massive = None
+        try:
+            massive_key = os.environ.get("MASSIVE_API_KEY", "")
+            if massive_key:
+                from lumisignals.massive_client import MassiveClient
+                _massive = MassiveClient(massive_key)
+        except Exception:
+            _massive = None
+
         result = []
         for model in ["scalp", "intraday", "swing"]:
             raw = rdb.get(f"watchlist:1:{model}")
@@ -381,11 +415,19 @@ def create_app():
                         effective_dir = "BUY"
                 projected_entry = round(zone_price, 5) if zone_price else None
                 projected_stop = None
+                projected_target = None
                 if atr and zone_price:
+                    stop_distance = 3 * atr
                     if effective_dir == "BUY":
-                        projected_stop = round(zone_price - 3 * atr, 5)
+                        projected_stop = round(zone_price - stop_distance, 5)
                     elif effective_dir == "SELL":
-                        projected_stop = round(zone_price + 3 * atr, 5)
+                        projected_stop = round(zone_price + stop_distance, 5)
+                    if _massive and effective_dir:
+                        tgt = _project_target(_massive, instrument, model,
+                                              effective_dir, zone_price,
+                                              stop_distance, atr)
+                        if tgt is not None:
+                            projected_target = round(tgt, 5)
 
                 result.append({
                     "instrument": instrument,
@@ -400,6 +442,7 @@ def create_app():
                     "atr": round(atr, 5) if atr else 0,
                     "projected_entry": projected_entry,
                     "projected_stop": projected_stop,
+                    "projected_target": projected_target,
                 })
 
         # Supplemental always-on zones for key indices/commodities. Mirrors the
@@ -502,14 +545,21 @@ def create_app():
                                     else:
                                         activated = (abs(price - level) / price * 100) < 0.5
 
-                                    # Projected entry/stop (matches forex branch)
+                                    # Projected entry/stop/target (matches forex branch)
                                     proj_entry = round(level, 2)
                                     proj_stop = None
+                                    proj_target = None
                                     if atr:
+                                        stop_dist = 3 * atr
                                         if trade_dir == "BUY":
-                                            proj_stop = round(level - 3 * atr, 2)
+                                            proj_stop = round(level - stop_dist, 2)
                                         else:
-                                            proj_stop = round(level + 3 * atr, 2)
+                                            proj_stop = round(level + stop_dist, 2)
+                                        if _massive:
+                                            tgt = _project_target(_massive, idx_ticker, model,
+                                                                  trade_dir, level, stop_dist, atr)
+                                            if tgt is not None:
+                                                proj_target = round(tgt, 2)
                                     result.append({
                                         "instrument": display_name,
                                         "model": model,
@@ -521,6 +571,7 @@ def create_app():
                                         "trade_direction": trade_dir,
                                         "projected_entry": proj_entry,
                                         "projected_stop": proj_stop,
+                                        "projected_target": proj_target,
                                         "trends": trends,
                                         "atr": round(atr, 5) if atr else 0,
                                         "distance_pct": round(abs(price - level) / price * 100, 2),

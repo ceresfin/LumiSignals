@@ -151,6 +151,51 @@ TF_LABELS = {
 }
 
 
+# Target-search TFs per model — picked so the TP is reachable inside the
+# trade's natural holding window. Shared by the live strategy and the
+# watchlist API (so projected targets on the chart match what the bot
+# will actually aim for at trigger time).
+TARGET_TFS_BY_MODEL = {
+    "scalp":    ["5m", "15m", "1h"],
+    "intraday": ["1h", "1d", "1w"],
+    "swing":    ["1d", "1w", "1mo"],
+}
+
+
+def compute_target_level(massive, model_name: str, ticker: str, market_type: str,
+                         direction: str, entry: float, stop_distance: float,
+                         atr: float):
+    """Find the next opposite-side S/R level, pulled back half an ATR.
+
+    Returns the target price, or None if no qualifying level exists
+    (caller decides on a fallback — strategy uses 2:1 R:R, watchlist
+    omits the line so the chart doesn't draw a phantom TP).
+    """
+    target_tfs = TARGET_TFS_BY_MODEL.get(model_name, ["1d", "1w", "1mo"])
+    try:
+        snr_data = get_builtin_snr_levels(massive, ticker, target_tfs, market_type=market_type)
+    except Exception:
+        snr_data = {}
+    pullback = (atr or 0) * 0.5
+    if direction == "BUY":
+        candidates = [
+            r for tf in target_tfs
+            for r in [(snr_data or {}).get(tf, {}).get("resistance_price")]
+            if r and r > entry + stop_distance
+        ]
+        if candidates:
+            return min(candidates) - pullback
+    else:
+        candidates = [
+            s for tf in target_tfs
+            for s in [(snr_data or {}).get(tf, {}).get("support_price")]
+            if s and s < entry - stop_distance
+        ]
+        if candidates:
+            return max(candidates) + pullback
+    return None
+
+
 def get_watchlist_snapshot(model_name: str = None) -> list:
     """Return current watchlist as serializable dicts for the web API.
 
@@ -1151,56 +1196,17 @@ class LevelsStrategy:
         self._fire_trigger(trigger)
 
     def _find_target(self, zone: ZoneEntry, entry: float, stop_distance: float) -> float:
-        """Find the next S/R level in trade direction for the target.
-
-        Target timeframes match the model's intended holding window so the TP
-        is reachable within the trade's natural duration:
-          - scalp:    5m / 15m / 1h levels   (move enclosed by one 1H bar)
-          - intraday: 1h / 1d / 1w levels    (move enclosed by one 1W bar)
-          - swing:    1d / 1w / 1mo levels   (move enclosed by one 1M bar)
-
-        Target is then pulled half a trigger-TF ATR back toward entry so we
-        capture the "meat" of the move rather than fighting for the absolute
-        high/low. zone.atr already reflects the trigger TF (5m/1h/1d).
-        """
-        if self.model_name == "scalp":
-            target_tfs = ["5m", "15m", "1h"]
-        elif self.model_name == "intraday":
-            target_tfs = ["1h", "1d", "1w"]
-        else:
-            target_tfs = ["1d", "1w", "1mo"]
-
         ticker = zone.instrument.replace("_", "")
-        try:
-            snr_data = get_builtin_snr_levels(
-                self.massive, ticker, target_tfs, market_type="forex",
-            )
-        except Exception:
-            snr_data = {}
-
-        # Half a trigger-TF ATR — pulled back so we exit before the wall
-        pullback = (zone.atr or 0) * 0.5
-
+        tgt = compute_target_level(
+            self.massive, self.model_name, ticker, "forex",
+            zone.trade_direction, entry, stop_distance, zone.atr or 0,
+        )
+        if tgt is not None:
+            return tgt
+        # 2:1 R:R fallback when no opposite-side level exists
         if zone.trade_direction == "BUY":
-            # Look for supply (resistance) above entry — exit half-ATR below it
-            candidates = []
-            for tf in target_tfs:
-                r = (snr_data or {}).get(tf, {}).get("resistance_price")
-                if r and r > entry + stop_distance:
-                    candidates.append(r)
-            if candidates:
-                return min(candidates) - pullback  # nearest resistance, pulled inward
-            return entry + (stop_distance * 2)  # 2:1 R:R fallback
-        else:
-            # Look for demand (support) below entry — exit half-ATR above it
-            candidates = []
-            for tf in target_tfs:
-                s = (snr_data or {}).get(tf, {}).get("support_price")
-                if s and s < entry - stop_distance:
-                    candidates.append(s)
-            if candidates:
-                return max(candidates) + pullback  # nearest support, pulled inward
-            return entry - (stop_distance * 2)
+            return entry + (stop_distance * 2)
+        return entry - (stop_distance * 2)
 
     def _fire_trigger(self, trigger: TriggerResult):
         """Process a trigger — log, build signal, call handler."""
