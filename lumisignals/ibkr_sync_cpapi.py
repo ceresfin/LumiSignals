@@ -545,6 +545,8 @@ def sync_positions_to_supabase(positions: list):
         return
 
     seen_symbols = set()
+    seen_perm_ids = set()  # broker_trade_ids we touched this cycle
+    symbols_with_strat = set()  # symbols that have per-strat rows now (drop their aggregates)
     for pos in positions:
         symbol = pos.get("symbol")
         if not symbol:
@@ -556,97 +558,135 @@ def sync_positions_to_supabase(positions: list):
             continue
         seen_symbols.add(symbol)
         multiplier = pos.get("multiplier") or 1
-        avg_cost = pos.get("avg_cost") or 0
-        # avg_cost is total ($/contract * multiplier); divide for per-unit price.
-        entry_price = (avg_cost / multiplier) if multiplier else avg_cost
+        market_price = float(pos.get("market_price") or 0)
         qty = int(pos.get("quantity") or 0)
-        live_fields = {
-            "entry_price": round(float(entry_price), 4),
-            "unrealized_pl": round(float(pos.get("unrealized_pnl") or 0), 2),
-            "contracts": int(abs(qty)),
-            "updated_at": time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime()),
-        }
-        try:
-            # Check if a row exists; UPDATE if yes, INSERT if not.
-            # IB futures positions opened via the new sync path don't
-            # auto-create Supabase rows (unlike fx_scalp_2n20 which calls
-            # upsert_position at fill time). Without this insert, mobile
-            # shows "0 positions" even when IB is actually long.
-            existing = sb.table("positions").select("id, strategy, model") \
-                .eq("user_id", user_id).eq("broker", "ib") \
-                .eq("instrument", symbol).execute().data or []
-            if existing:
-                sb.table("positions").update(live_fields) \
-                    .eq("user_id", user_id) \
-                    .eq("broker", "ib") \
-                    .eq("instrument", symbol) \
-                    .execute()
-            else:
-                # Insert new row. Strategy/model pulled from any tracked
-                # strat_pos entry for this ticker (we may have multiple
-                # strategies; pick the first one found — single-strategy
-                # MES setup right now so this works).
-                strategy = ""
-                model = ""
-                try:
-                    rdb = _rdb()
-                    if rdb:
-                        for k in rdb.scan_iter(f"ibkr:strat_pos:{symbol}:*"):
-                            sp_raw = rdb.get(k)
-                            if sp_raw:
-                                sp = json.loads(sp_raw)
-                                strategy = sp.get("strategy", "") or strategy
-                                model = sp.get("strategy", "") or model  # match existing convention
-                                break
-                except Exception:
-                    pass
-                asset_type = "futures" if sec_type == "FUT" else "stock"
-                broker_trade_id = ""  # will be left empty for IB futures
-                # broker_trade_id can be the perm_id from strat_pos if available
-                try:
-                    rdb = _rdb()
-                    if rdb:
-                        for k in rdb.scan_iter(f"ibkr:strat_pos:{symbol}:*"):
-                            sp_raw = rdb.get(k)
-                            if sp_raw:
-                                sp = json.loads(sp_raw)
-                                broker_trade_id = sp.get("perm_id", "") or broker_trade_id
-                                break
-                except Exception:
-                    pass
-                from datetime import datetime as _dt, timezone as _tz
-                row = {
-                    "user_id": user_id,
-                    "broker": "ib",
-                    "broker_trade_id": broker_trade_id,
-                    "instrument": symbol,
-                    "asset_type": asset_type,
-                    "direction": "BUY" if qty > 0 else "SELL",
-                    "strategy": strategy,
-                    "model": model,
-                    "opened_at": _dt.now(_tz.utc).isoformat(),
-                    **live_fields,
-                }
-                sb.table("positions").insert(row).execute()
-                logger.info("Inserted new IB %s position row: %s qty=%d strategy=%s",
-                            asset_type, symbol, qty, strategy or "(unknown)")
-        except Exception as e:
-            logger.debug("supabase position refresh failed for %s: %s", symbol, e)
+        asset_type = "futures" if sec_type == "FUT" else "stock"
 
-    # Sweep stale rows: anything in Supabase for broker='ib' with
-    # asset_type futures/stock that isn't in IB's current position list.
+        # Gather all per-strategy positions for this symbol so each strategy
+        # gets its own mobile card (entry, SL, TP, P&L). Without this,
+        # multi-strategy positions on the same instrument (e.g. 2n20 + ORB
+        # both short MES) collapse into a single aggregated row.
+        strat_positions = []
+        try:
+            rdb = _rdb()
+            if rdb:
+                for k in rdb.scan_iter(f"ibkr:strat_pos:{symbol}:*"):
+                    sp_raw = rdb.get(k)
+                    if sp_raw:
+                        try:
+                            strat_positions.append(json.loads(sp_raw))
+                        except Exception:
+                            continue
+        except Exception:
+            pass
+
+        # No strat_pos tracking for this symbol — fall back to a single
+        # aggregate row (legacy behavior for manually opened positions).
+        if not strat_positions:
+            avg_cost = pos.get("avg_cost") or 0
+            entry_price = (avg_cost / multiplier) if multiplier else avg_cost
+            live_fields = {
+                "entry_price": round(float(entry_price), 4),
+                "unrealized_pl": round(float(pos.get("unrealized_pnl") or 0), 2),
+                "contracts": int(abs(qty)),
+                "updated_at": time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime()),
+            }
+            try:
+                existing = sb.table("positions").select("id") \
+                    .eq("user_id", user_id).eq("broker", "ib") \
+                    .eq("instrument", symbol).is_("broker_trade_id", "null") \
+                    .execute().data or []
+                if existing:
+                    sb.table("positions").update(live_fields) \
+                        .eq("user_id", user_id).eq("broker", "ib") \
+                        .eq("instrument", symbol).is_("broker_trade_id", "null") \
+                        .execute()
+                else:
+                    from datetime import datetime as _dt, timezone as _tz
+                    sb.table("positions").insert({
+                        "user_id": user_id, "broker": "ib",
+                        "instrument": symbol, "asset_type": asset_type,
+                        "direction": "BUY" if qty > 0 else "SELL",
+                        "opened_at": _dt.now(_tz.utc).isoformat(),
+                        **live_fields,
+                    }).execute()
+            except Exception as e:
+                logger.debug("aggregate position refresh failed for %s: %s", symbol, e)
+            continue
+
+        # Per-strategy rows — one Supabase position per strat_pos entry
+        symbols_with_strat.add(symbol)
+        for sp in strat_positions:
+            perm_id = str(sp.get("perm_id") or "")
+            if not perm_id:
+                continue
+            seen_perm_ids.add(perm_id)
+            strat_dir = sp.get("direction", "BUY" if qty > 0 else "SELL")
+            strat_qty = int(sp.get("contracts") or 0) or 1
+            strat_entry = float(sp.get("entry_price") or 0)
+            # Per-strategy unrealized P&L from live mark vs. each strat's entry.
+            unreal = 0.0
+            if market_price and strat_entry:
+                if strat_dir == "BUY":
+                    unreal = (market_price - strat_entry) * strat_qty * multiplier
+                else:
+                    unreal = (strat_entry - market_price) * strat_qty * multiplier
+            row_fields = {
+                "user_id": user_id,
+                "broker": "ib",
+                "broker_trade_id": perm_id,
+                "instrument": symbol,
+                "asset_type": asset_type,
+                "direction": strat_dir,
+                "contracts": strat_qty,
+                "entry_price": round(strat_entry, 4),
+                "stop_loss": float(sp.get("stop_price") or 0) or None,
+                "take_profit": float(sp.get("target_price") or 0) or None,
+                "unrealized_pl": round(unreal, 2),
+                "strategy": sp.get("strategy", ""),
+                "model": sp.get("strategy", ""),
+                "opened_at": sp.get("opened_at", ""),
+                "metadata": sp.get("metadata") or None,
+                "updated_at": time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime()),
+            }
+            # Drop None values so the JSONB stays clean
+            row_fields = {k: v for k, v in row_fields.items() if v is not None}
+            try:
+                sb.table("positions").upsert(
+                    row_fields, on_conflict="user_id,broker,broker_trade_id"
+                ).execute()
+            except Exception as e:
+                logger.debug("per-strat upsert failed for %s/%s: %s",
+                              symbol, sp.get("strategy", ""), e)
+
+    # Sweep stale rows:
+    # 1) Symbol no longer in IB's position list at all → drop every row
+    # 2) Per-strategy row whose strat_pos has been cleared (TP/SL hit,
+    #    strategy closed via webhook) but the broker_trade_id wasn't
+    #    refreshed this cycle → drop just that row, the other strategies
+    #    on the same symbol keep their cards
     try:
-        existing = sb.table("positions").select("id, instrument") \
+        existing = sb.table("positions").select("id, instrument, broker_trade_id") \
             .eq("user_id", user_id).eq("broker", "ib") \
             .in_("asset_type", ["futures", "stock"]) \
             .execute().data or []
         for row in existing:
             inst = row.get("instrument") or ""
+            tid = str(row.get("broker_trade_id") or "")
+            drop = False
+            reason = ""
             if inst and inst not in seen_symbols:
+                drop, reason = True, "no longer in IB"
+            elif tid and tid not in seen_perm_ids:
+                drop, reason = True, "strat_pos cleared"
+            elif not tid and inst in symbols_with_strat:
+                # Legacy aggregate row that's now replaced by per-strat rows
+                drop, reason = True, "superseded by per-strategy rows"
+            if drop:
                 try:
                     sb.table("positions").delete().eq("id", row["id"]).execute()
-                    logger.info("Cleared stale IB position row: %s (id=%s) — no longer in IB",
-                                inst, row["id"])
+                    logger.info("Cleared stale IB position row: %s (id=%s, tid=%s) — %s",
+                                inst, row["id"], tid or "-", reason)
                 except Exception as e:
                     logger.debug("stale row delete failed (id=%s): %s", row.get("id"), e)
     except Exception as e:
