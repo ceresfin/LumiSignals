@@ -1471,14 +1471,22 @@ def check_order_requests(client):
                     ) if order.get(k) is not None}
 
                     if direction in ("CLOSE_LONG", "CLOSE_SHORT"):
-                        # Record entry price before closing
+                        # Per-strategy entry price — prefer strat_pos (the
+                        # specific entry this strategy made), fall back to
+                        # IB's aggregate avg_cost only if no strat_pos exists
+                        # (orphan/untracked, e.g. manually opened).
+                        sp_strat = get_strat_pos(ticker, strategy_name)
                         entry_price = 0
                         entry_qty = 0
-                        for item in client.get_positions():
-                            if item.get("symbol") == ticker and item.get("sec_type") == "FUT":
-                                entry_price = item.get("avg_cost", 0) / multiplier
-                                entry_qty = abs(int(item.get("quantity", 0)))
-                                break
+                        if sp_strat:
+                            entry_price = float(sp_strat.get("entry_price") or 0)
+                            entry_qty = int(sp_strat.get("contracts") or 0)
+                        if not entry_price:
+                            for item in client.get_positions():
+                                if item.get("symbol") == ticker and item.get("sec_type") == "FUT":
+                                    entry_price = item.get("avg_cost", 0) / multiplier
+                                    entry_qty = abs(int(item.get("quantity", 0)))
+                                    break
 
                         # Cancel matching protective stop(s) before placing the
                         # close. Without this, IB sees pending SELL STPs + new
@@ -1552,29 +1560,42 @@ def check_order_requests(client):
                             if not close_reason:
                                 close_reason = "Exit Long" if direction == "CLOSE_LONG" else "Exit Short"
 
-                            # Use entry strategy name (strip _exit suffix)
+                            # Entry strategy = THIS close's strategy. Each
+                            # strategy owns its own strat_pos; closing 2n20
+                            # should attribute to 2n20 even if ORB also has
+                            # a position on the same instrument.
                             entry_strategy = strategy_name.replace("_exit", "")
 
-                            # Find opened_at from stored entry order (most recent for this ticker + direction)
-                            entry_dir = "BUY" if direction == "CLOSE_LONG" else "SELL"
+                            # opened_at — prefer the per-strategy strat_pos
+                            # (most accurate, captures THIS strategy's entry
+                            # timestamp). Fall back to the legacy
+                            # /api/ibkr/futures-entry endpoint only when
+                            # there's no strat_pos.
                             opened_at = ""
-                            try:
-                                entry_resp = requests.get(
-                                    f"{SERVER_URL}/api/ibkr/futures-entry/{ticker}/{entry_dir}",
-                                    headers={"X-Sync-Key": SYNC_KEY},
-                                    timeout=5,
-                                )
-                                if entry_resp.status_code == 200:
-                                    entry_data = entry_resp.json()
-                                    opened_at = entry_data.get("opened_at", "")
-                                    entry_strategy = entry_data.get("strategy", entry_strategy)
-                                    # Mark this entry as closed so it's not reused
-                                    if entry_data.get("order_id"):
-                                        requests.post(f"{SERVER_URL}/api/ibkr/order/update",
-                                            json={"order_id": entry_data["order_id"], "status": "closed"},
-                                            headers={"X-Sync-Key": SYNC_KEY}, timeout=5)
-                            except Exception:
-                                pass
+                            if sp_strat:
+                                opened_at = sp_strat.get("opened_at", "")
+                            if not opened_at:
+                                entry_dir = "BUY" if direction == "CLOSE_LONG" else "SELL"
+                                try:
+                                    entry_resp = requests.get(
+                                        f"{SERVER_URL}/api/ibkr/futures-entry/{ticker}/{entry_dir}",
+                                        headers={"X-Sync-Key": SYNC_KEY},
+                                        timeout=5,
+                                    )
+                                    if entry_resp.status_code == 200:
+                                        entry_data = entry_resp.json()
+                                        opened_at = entry_data.get("opened_at", "")
+                                        # Mark this entry as closed so it's not reused,
+                                        # but do NOT overwrite entry_strategy — that
+                                        # endpoint returns "most recent entry for any
+                                        # strategy" which is exactly the bug we're
+                                        # fixing.
+                                        if entry_data.get("order_id"):
+                                            requests.post(f"{SERVER_URL}/api/ibkr/order/update",
+                                                json={"order_id": entry_data["order_id"], "status": "closed"},
+                                                headers={"X-Sync-Key": SYNC_KEY}, timeout=5)
+                                except Exception:
+                                    pass
                             if not opened_at:
                                 opened_at = order.get("queued_at", "")
 
