@@ -43,12 +43,13 @@ logger = logging.getLogger(__name__)
 
 # ─── CONFIG ───
 SPX_TICKER          = "SPX"
-DEBIT_MAX           = 1.40
+DEBIT_MAX           = 1.40          # absolute cap; will never pay more
+DEBIT_CHEAP_LIMIT   = 1.20          # below this, take marketable
 CREDIT_TARGET       = 2.30
 CREDIT_FLOOR        = 1.50
 CREDIT_STEP         = 0.05
 CREDIT_STEP_SEC     = 60
-LEG_FILL_TIMEOUT_S  = 10            # both legs should fill in this window
+LEG_FILL_TIMEOUT_S  = 30            # partial-fill timeout (per pair, any mode)
 DEBIT_RETRY_MAX     = 2
 DEBIT_CUTOFF_ET     = "11:00"
 CREDIT_WINDOW_END_ET= "15:30"
@@ -191,6 +192,7 @@ def queue_butterfly(rdb, payload: dict) -> str:
         "spx_or_high": float(payload.get("spx_or_high") or 0),
         "spx_or_low": float(payload.get("spx_or_low") or 0),
         "reversal": bool(payload.get("reversal", False)),
+        "force_test": bool(payload.get("force_test", False)),
         "queued_at": datetime.now(timezone.utc).isoformat(),
         "threshold_px": None,
         "debit_conids": {"long": None, "short": None},
@@ -225,7 +227,7 @@ def queue_butterfly(rdb, payload: dict) -> str:
 def _phase_queued(client, rdb, state):
     """Place K1 BUY + K2 SELL as two simultaneous marketable LMT orders."""
     bid = state["butterfly_id"]
-    if _now_et_hhmm() >= DEBIT_CUTOFF_ET:
+    if _now_et_hhmm() >= DEBIT_CUTOFF_ET and not state.get("force_test"):
         state["phase"] = "ABANDONED"
         state["abandon_reason"] = f"debit window closed ({DEBIT_CUTOFF_ET} ET)"
         _save(rdb, bid, state)
@@ -259,24 +261,46 @@ def _phase_queued(client, rdb, state):
         _save(rdb, bid, state)
         return
 
-    # Worst-case net debit if both legs filled at marketable prices
-    net_debit = long_ask - short_bid
-    if net_debit > state["debit_target"]:
-        state["phase"] = "ABANDONED"
-        state["abandon_reason"] = (
-            f"debit ${net_debit:.2f} > cap ${state['debit_target']:.2f} "
-            f"(longK1 ask={long_ask:.2f}, shortK2 bid={short_bid:.2f})"
-        )
-        _save(rdb, bid, state)
-        _telegram(
-            f"🦋 *Abandoned* — net debit `${net_debit:.2f}` exceeds cap `${state['debit_target']:.2f}`\n"
-            f"longK1 ask `${long_ask:.2f}` shortK2 bid `${short_bid:.2f}`"
-        )
-        return
+    # Three-tier entry pricing:
+    #   mid < $1.20      → take marketable (long@ask, short@bid). Fills fast.
+    #   $1.20 - $1.40    → limit at NET $1.20 (passive, wait for pullback).
+    #   > $1.40          → limit at NET $1.40 (passive, wait for pullback to cap).
+    # In all cases, sit until 11:00 ET if the patient limit never fills,
+    # then abandon. Per-leg prices derived by splitting the adjustment
+    # equally across both legs from their mids.
+    long_mid = (long_bid + long_ask) / 2.0
+    short_mid = (short_bid + short_ask) / 2.0
+    net_mid = long_mid - short_mid
+
+    if net_mid < DEBIT_CHEAP_LIMIT:
+        mode = "marketable"
+        long_price = long_ask
+        short_price = short_bid
+        target_net = round(long_ask - short_bid, 2)
+    elif net_mid <= state["debit_target"]:
+        mode = "patient_120"
+        target_net = DEBIT_CHEAP_LIMIT
+        delta = (net_mid - DEBIT_CHEAP_LIMIT) / 2.0
+        long_price = max(long_bid, long_mid - delta)
+        short_price = min(short_ask, short_mid + delta)
+    else:
+        mode = "patient_cap"
+        target_net = state["debit_target"]
+        delta = (net_mid - state["debit_target"]) / 2.0
+        long_price = max(long_bid, long_mid - delta)
+        short_price = min(short_ask, short_mid + delta)
+
+    state["debit_mode"] = mode
+    state["debit_target_net"] = round(target_net, 2)
+    state["debit_quote_at_signal"] = {
+        "long_bid": round(long_bid, 2), "long_ask": round(long_ask, 2),
+        "short_bid": round(short_bid, 2), "short_ask": round(short_ask, 2),
+        "net_mid": round(net_mid, 2),
+    }
 
     qty = state["contracts"]
-    long_oid = _place_leg(client, long_conid, "BUY", qty, long_ask)
-    short_oid = _place_leg(client, short_conid, "SELL", qty, short_bid)
+    long_oid = _place_leg(client, long_conid, "BUY", qty, long_price)
+    short_oid = _place_leg(client, short_conid, "SELL", qty, short_price)
     if not (long_oid and short_oid):
         # Cancel partial placement
         if long_oid:
@@ -295,21 +319,29 @@ def _phase_queued(client, rdb, state):
 
     state["debit_long_oid"] = long_oid
     state["debit_short_oid"] = short_oid
-    state["debit_long_price"] = round(long_ask, 2)
-    state["debit_short_price"] = round(short_bid, 2)
+    state["debit_long_price"] = round(long_price, 2)
+    state["debit_short_price"] = round(short_price, 2)
     state["debit_legged_at"] = datetime.now(timezone.utc).isoformat()
     state["phase"] = "DEBIT_LEGGED"
     _save(rdb, bid, state)
+    mode_label = {"marketable": "MARKETABLE (cheap)",
+                  "patient_120": "PATIENT @ $1.20 net",
+                  "patient_cap": f"PATIENT @ ${state['debit_target']:.2f} cap"}.get(mode, mode)
     _telegram(
-        f"🦋 *Debit legged in*\n"
-        f"BUY `{state['long_strike']:.0f}` @ `${long_ask:.2f}` (order {long_oid})\n"
-        f"SELL `{state['body_strike']:.0f}` @ `${short_bid:.2f}` (order {short_oid})\n"
-        f"Worst-case net: `${net_debit:.2f}` ≤ cap"
+        f"🦋 *Debit legged in* — {mode_label}\n"
+        f"Net mid was `${net_mid:.2f}`, targeting `${target_net:.2f}`\n"
+        f"BUY `{state['long_strike']:.0f}` @ `${long_price:.2f}` (order {long_oid})\n"
+        f"SELL `{state['body_strike']:.0f}` @ `${short_price:.2f}` (order {short_oid})"
     )
 
 
 def _phase_debit_legged(client, rdb, state):
-    """Poll both legs. Both filled -> WATCHING. Partial after timeout -> close survivor."""
+    """Poll both legs.
+       - Both filled → WATCHING
+       - Partial fill (after 30s) → cancel survivor + close orphan + ABANDON
+       - No fill, marketable mode → retry/abandon after 30s
+       - No fill, patient mode → keep waiting until DEBIT_CUTOFF_ET, then ABANDON
+    """
     bid = state["butterfly_id"]
     lf = client.get_order_fill(state["debit_long_oid"], max_wait=1)
     sf = client.get_order_fill(state["debit_short_oid"], max_wait=1)
@@ -332,48 +364,64 @@ def _phase_debit_legged(client, rdb, state):
 
     legged_at = datetime.fromisoformat(state["debit_legged_at"])
     elapsed = (datetime.now(timezone.utc) - legged_at).total_seconds()
-    if elapsed < LEG_FILL_TIMEOUT_S:
-        return  # keep waiting
-
-    # Timeout — handle partial / no fills
     long_conid = state["debit_conids"]["long"]
     short_conid = state["debit_conids"]["short"]
     qty = state["contracts"]
+    mode = state.get("debit_mode", "marketable")
 
-    if long_filled and not short_filled:
-        try: client.cancel_order(state["debit_short_oid"])
-        except Exception: pass
-        _close_leg_at_market(client, long_conid, "SELL", qty)
+    # Partial fill (one side picked off, the other won't): always handle after 30s
+    if (long_filled or short_filled) and elapsed > LEG_FILL_TIMEOUT_S:
+        if long_filled and not short_filled:
+            try: client.cancel_order(state["debit_short_oid"])
+            except Exception: pass
+            _close_leg_at_market(client, long_conid, "SELL", qty)
+            state["abandon_reason"] = "partial fill: only long filled, closed at market"
+            _telegram(f"🦋 *Partial fill* — only long filled, sold at market")
+        else:
+            try: client.cancel_order(state["debit_long_oid"])
+            except Exception: pass
+            _close_leg_at_market(client, short_conid, "BUY", qty)
+            state["abandon_reason"] = "partial fill: only short filled, closed at market"
+            _telegram(f"🦋 *Partial fill* — only short filled, bought back at market")
         state["phase"] = "ABANDONED"
-        state["abandon_reason"] = "partial fill: only long leg filled, closed at market"
         _save(rdb, bid, state)
-        _telegram(f"🦋 *Partial fill* — only long filled, sold at market")
         return
-    if short_filled and not long_filled:
+
+    # No fills yet
+    if mode == "marketable":
+        # Marketable should fill in <30s; if not, retry once then abandon
+        if elapsed > LEG_FILL_TIMEOUT_S:
+            try: client.cancel_order(state["debit_long_oid"])
+            except Exception: pass
+            try: client.cancel_order(state["debit_short_oid"])
+            except Exception: pass
+            state["debit_retries"] += 1
+            if state["debit_retries"] >= DEBIT_RETRY_MAX:
+                state["phase"] = "ABANDONED"
+                state["abandon_reason"] = "marketable order didn't fill (twice)"
+                _save(rdb, bid, state)
+                _telegram(f"🦋 *Abandoned* — marketable order didn't fill in {LEG_FILL_TIMEOUT_S}s, twice")
+            else:
+                state["phase"] = "QUEUED"
+                _save(rdb, bid, state)
+                _telegram(f"🦋 No fill in {LEG_FILL_TIMEOUT_S}s — retrying ({state['debit_retries']}/{DEBIT_RETRY_MAX})")
+        return
+
+    # Patient mode (patient_120 / patient_cap) — sit on the limit until cutoff
+    if _now_et_hhmm() >= DEBIT_CUTOFF_ET and not state.get("force_test"):
         try: client.cancel_order(state["debit_long_oid"])
         except Exception: pass
-        _close_leg_at_market(client, short_conid, "BUY", qty)
+        try: client.cancel_order(state["debit_short_oid"])
+        except Exception: pass
         state["phase"] = "ABANDONED"
-        state["abandon_reason"] = "partial fill: only short leg filled, closed at market"
+        state["abandon_reason"] = (
+            f"patient limit @ net ${state.get('debit_target_net', 0):.2f} never filled by {DEBIT_CUTOFF_ET} ET"
+        )
         _save(rdb, bid, state)
-        _telegram(f"🦋 *Partial fill* — only short filled, bought back at market")
-        return
-
-    # Neither filled after LEG_FILL_TIMEOUT_S
-    try: client.cancel_order(state["debit_long_oid"])
-    except Exception: pass
-    try: client.cancel_order(state["debit_short_oid"])
-    except Exception: pass
-    state["debit_retries"] += 1
-    if state["debit_retries"] >= DEBIT_RETRY_MAX:
-        state["phase"] = "ABANDONED"
-        state["abandon_reason"] = "neither debit leg filled within timeout"
-        _save(rdb, bid, state)
-        _telegram(f"🦋 *Abandoned* — neither leg filled in {LEG_FILL_TIMEOUT_S}s")
-    else:
-        state["phase"] = "QUEUED"
-        _save(rdb, bid, state)
-        _telegram(f"🦋 No fill in {LEG_FILL_TIMEOUT_S}s — retrying ({state['debit_retries']}/{DEBIT_RETRY_MAX})")
+        _telegram(
+            f"🦋 *Abandoned* — patient `${state.get('debit_target_net',0):.2f}` "
+            f"never filled by {DEBIT_CUTOFF_ET} ET"
+        )
 
 
 def _phase_watching(client, rdb, state, spx_price):
