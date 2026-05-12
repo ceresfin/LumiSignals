@@ -298,17 +298,22 @@ def _phase_queued(client, rdb, state):
         short_price = short_bid
         target_net = round(long_ask - short_bid, 2)
     elif net_mid <= state["debit_target"]:
+        # Bidding BELOW current mid (long) and ASKING ABOVE mid (short)
+        # so net comes out at $1.20. The orders sit as passive limits;
+        # IB doesn't fill them unless market moves to us. No bid/ask
+        # clipping — going below long_bid or above short_ask is the
+        # whole point of "patient".
         mode = "patient_120"
         target_net = DEBIT_CHEAP_LIMIT
         delta = (net_mid - DEBIT_CHEAP_LIMIT) / 2.0
-        long_price = max(long_bid, long_mid - delta)
-        short_price = min(short_ask, short_mid + delta)
+        long_price = max(0.01, long_mid - delta)
+        short_price = max(0.01, short_mid + delta)
     else:
         mode = "patient_cap"
         target_net = state["debit_target"]
         delta = (net_mid - state["debit_target"]) / 2.0
-        long_price = max(long_bid, long_mid - delta)
-        short_price = min(short_ask, short_mid + delta)
+        long_price = max(0.01, long_mid - delta)
+        short_price = max(0.01, short_mid + delta)
 
     state["debit_mode"] = mode
     state["debit_target_net"] = round(target_net, 2)
