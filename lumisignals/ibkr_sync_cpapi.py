@@ -83,7 +83,8 @@ def save_strat_pos(ticker: str, strategy: str, direction: str,
                     contracts: int, entry_price: float, perm_id: str,
                     stop_order_id: str = "", stop_price: float = 0,
                     target_order_id: str = "", target_price: float = 0,
-                    multiplier: float = 1, metadata: dict = None):
+                    multiplier: float = 1, metadata: dict = None,
+                    caller: str = ""):
     """Persist per-strategy position state. stop_order_id lets the
     stop-fill watcher know which IB order belongs to this strategy's
     SL — when that order leaves IB's open-orders list, the strategy
@@ -112,6 +113,11 @@ def save_strat_pos(ticker: str, strategy: str, direction: str,
                 "metadata": metadata or {},
                 "opened_at": _dt.now(_tz.utc).isoformat(),
             }),
+        )
+        logger.info(
+            "STRAT_POS create %s/%s: dir=%s qty=%d entry=%s sl=%s tp=%s perm=%s caller=%s",
+            ticker, strategy, direction, contracts, entry_price,
+            stop_price or "-", target_price or "-", perm_id, caller or "?",
         )
     except Exception as e:
         logger.warning("strat_pos save failed for %s/%s: %s", ticker, strategy, e)
@@ -238,54 +244,90 @@ def check_stop_fills(client):
             except Exception as e:
                 logger.debug("notify (child fill) failed: %s", e)
 
+            logger.info(
+                "STRAT_POS clear  %s/%s: reason=child-fill(%s) survivor=%s",
+                ticker, strategy, fired, survivor_id or "-",
+            )
             rdb.delete(key)
         except Exception as e:
             logger.debug("check_stop_fills entry error: %s", e)
 
 
-def clear_strat_pos(ticker: str, strategy: str):
+def clear_strat_pos(ticker: str, strategy: str, reason: str = ""):
+    """Delete the strat_pos for (ticker, strategy). Reason is logged so we
+    can later audit why a position state disappeared."""
     rdb = _rdb()
     if rdb is None:
         return
     try:
+        # Read first so we can log what we're erasing
+        raw = rdb.get(_strat_pos_key(ticker, strategy))
+        prev = json.loads(raw) if raw else None
         rdb.delete(_strat_pos_key(ticker, strategy))
-    except Exception:
-        pass
+        if prev:
+            logger.info(
+                "STRAT_POS clear  %s/%s: reason=%s prev_dir=%s prev_qty=%d perm=%s",
+                ticker, strategy, reason or "unspecified",
+                prev.get("direction", "?"), int(prev.get("contracts", 0)),
+                prev.get("perm_id", "-"),
+            )
+        else:
+            logger.info("STRAT_POS clear  %s/%s: reason=%s (was already empty)",
+                        ticker, strategy, reason or "unspecified")
+    except Exception as e:
+        logger.warning("clear_strat_pos failed for %s/%s: %s", ticker, strategy, e)
 
 
-def reconcile_strat_pos(ticker: str, ib_qty: int):
+def reconcile_strat_pos(ticker: str, ib_qty: int, caller: str = ""):
     """If the sum of per-strategy contracts doesn't match IB's actual
     position, a stop loss almost certainly fired (IB closes the position
     silently and we get no callback). Clear all strat_pos for the ticker
     so the next signal in either strategy can enter cleanly.
 
     Conservative: only clears when there is a real discrepancy in absolute
-    terms (tracked > actual). Never clears when tracked matches or is less."""
+    terms (tracked > actual). Never clears when tracked matches or is less.
+
+    Every call is logged so we can audit decisions later (which call
+    triggered the clear, what IB qty it saw vs tracked qty, whether the
+    decision was correct in hindsight)."""
     rdb = _rdb()
     if rdb is None:
         return
     try:
         keys = list(rdb.scan_iter(f"ibkr:strat_pos:{ticker}:*"))
         if not keys:
+            logger.info("RECONCILE %s: ib_qty=%+d tracked=none caller=%s decision=noop",
+                        ticker, ib_qty, caller or "?")
             return
         tracked_net = 0
+        strat_breakdown = []
         for k in keys:
             try:
                 s = json.loads(rdb.get(k) or "{}")
                 qty = int(s.get("contracts", 0))
-                if s.get("direction") == "BUY":
+                strat_name = s.get("strategy", "?")
+                strat_dir = s.get("direction", "?")
+                strat_breakdown.append(f"{strat_name}={strat_dir}{qty}")
+                if strat_dir == "BUY":
                     tracked_net += qty
-                elif s.get("direction") == "SELL":
+                elif strat_dir == "SELL":
                     tracked_net -= qty
             except Exception:
                 pass
         if abs(tracked_net) > abs(ib_qty):
             logger.info(
-                "Reconcile %s: tracked net=%+d, IB qty=%+d — clearing %d stale strat_pos (stop loss presumed)",
-                ticker, tracked_net, ib_qty, len(keys),
+                "RECONCILE %s: ib_qty=%+d tracked_net=%+d [%s] caller=%s decision=CLEAR_ALL (%d keys)",
+                ticker, ib_qty, tracked_net, ",".join(strat_breakdown),
+                caller or "?", len(keys),
             )
             for k in keys:
                 rdb.delete(k)
+        else:
+            logger.info(
+                "RECONCILE %s: ib_qty=%+d tracked_net=%+d [%s] caller=%s decision=keep",
+                ticker, ib_qty, tracked_net, ",".join(strat_breakdown),
+                caller or "?",
+            )
     except Exception as e:
         logger.warning("strat_pos reconcile failed: %s", e)
 
@@ -547,6 +589,14 @@ def sync_positions_to_supabase(positions: list):
     seen_symbols = set()
     seen_perm_ids = set()  # broker_trade_ids we touched this cycle
     symbols_with_strat = set()  # symbols that have per-strat rows now (drop their aggregates)
+
+    # Log every IB position-quantity change so we can correlate strat_pos
+    # disappearances with the exact moment IB's qty moved.
+    global _last_ib_qty
+    try:
+        _last_ib_qty
+    except NameError:
+        _last_ib_qty = {}
     for pos in positions:
         symbol = pos.get("symbol")
         if not symbol:
@@ -561,6 +611,15 @@ def sync_positions_to_supabase(positions: list):
         market_price = float(pos.get("market_price") or 0)
         qty = int(pos.get("quantity") or 0)
         asset_type = "futures" if sec_type == "FUT" else "stock"
+
+        # Log IB qty changes for forensics
+        prev_qty = _last_ib_qty.get(symbol)
+        if prev_qty is None:
+            logger.info("IB_QTY %s: first-seen qty=%+d", symbol, qty)
+        elif prev_qty != qty:
+            logger.info("IB_QTY %s: change %+d -> %+d (delta %+d)",
+                        symbol, prev_qty, qty, qty - prev_qty)
+        _last_ib_qty[symbol] = qty
 
         # Gather all per-strategy positions for this symbol so each strategy
         # gets its own mobile card (entry, SL, TP, P&L). Without this,
@@ -695,6 +754,14 @@ def sync_positions_to_supabase(positions: list):
             except Exception as e:
                 logger.debug("per-strat upsert failed for %s/%s: %s",
                               symbol, sp.get("strategy", ""), e)
+
+    # Log symbols that DISAPPEARED from IB this cycle (position fully closed
+    # by stop fill, manual close, etc.) so the audit trail captures it.
+    for sym in list(_last_ib_qty.keys()):
+        if sym not in seen_symbols and _last_ib_qty.get(sym):
+            logger.info("IB_QTY %s: disappeared (was %+d, now 0/missing)",
+                        sym, _last_ib_qty[sym])
+            _last_ib_qty[sym] = 0
 
     # Sweep stale rows:
     # 1) Symbol no longer in IB's position list at all → drop every row
@@ -1305,7 +1372,7 @@ def check_order_requests(client):
                         break
 
                 # Reconcile in case a stop loss closed one of the legs silently
-                reconcile_strat_pos(ticker, current_pos)
+                reconcile_strat_pos(ticker, current_pos, caller=f"order_proc:{direction}/{strategy_name}")
 
                 sp = get_strat_pos(ticker, strategy_name)
                 strat_long = sp.get("direction") == "BUY"
@@ -1670,7 +1737,8 @@ def check_order_requests(client):
                                        target_order_id=tp_order_id,
                                        target_price=tp_price,
                                        multiplier=multiplier,
-                                       metadata=pine_meta)
+                                       metadata=pine_meta,
+                                       caller=f"entry_fill:{strategy_name}")
 
                         # Push + Telegram notification with the full plan
                         # (entry/target/stop/risk/reward) when Pine supplied it.
@@ -1726,7 +1794,7 @@ def check_order_requests(client):
                     elif direction in ("CLOSE_LONG", "CLOSE_SHORT"):
                         # This strategy's leg is done — release the strat_pos
                         # so the next entry signal can fire.
-                        clear_strat_pos(ticker, strategy_name)
+                        clear_strat_pos(ticker, strategy_name, reason=f"webhook {direction}")
 
                 except Exception as e:
                     result = {
