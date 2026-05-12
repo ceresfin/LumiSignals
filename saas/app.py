@@ -2217,6 +2217,30 @@ def create_app():
         override_contracts = data.get("contracts", 1)
         dte = data.get("dte", 0)
 
+        # ─── ORB BUTTERFLY PATH (SPX 0DTE leg-in) ───
+        # Pine alert carries the full butterfly plan (K1/K2/K3, debit/credit
+        # targets, OR context, VIX, reversal flag). Hand off to the dedicated
+        # state machine in orb_butterfly_handler.
+        if strategy == "orb_butterfly":
+            rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+            # Verify required fields up front so we don't queue garbage
+            required = ("long_strike", "body_strike", "wing_strike", "direction")
+            missing = [f for f in required if f not in data]
+            if missing:
+                return jsonify({"error": "missing orb_butterfly fields: " + ",".join(missing)}), 400
+            try:
+                from lumisignals.orb_butterfly_handler import queue_butterfly
+                bid = queue_butterfly(rdb, data)
+                return jsonify({"status": "queued",
+                                "strategy": "orb_butterfly",
+                                "butterfly_id": bid,
+                                "direction": data.get("direction"),
+                                "spread_type": data.get("spread_type"),
+                                "K1_K2_K3": [data.get("long_strike"), data.get("body_strike"), data.get("wing_strike")]})
+            except Exception as e:
+                logger.error("orb_butterfly queue failed: %s", e)
+                return jsonify({"error": f"butterfly queue failed: {e}"}), 500
+
         # ─── FUTURES PATH ───
         if trade_type == "futures":
             rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))

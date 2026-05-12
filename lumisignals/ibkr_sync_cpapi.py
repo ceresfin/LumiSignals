@@ -2243,6 +2243,32 @@ def main():
             # the next signal to reconcile drift.
             check_stop_fills(client)
 
+            # Drive any active SPX 0DTE leg-in butterflies one tick forward.
+            # Each butterfly's state lives in ibkr:butterfly:* in Redis;
+            # the handler advances phases (QUEUED -> DEBIT_OPEN -> WATCHING
+            # -> CREDIT_OPEN -> COMPLETE / SALVAGE / ABANDONED).
+            try:
+                from .orb_butterfly_handler import process_butterflies
+                def _spx_price():
+                    try:
+                        import urllib.request as _ur, urllib.parse as _up, json as _j
+                        key = os.environ.get("MASSIVE_API_KEY", "")
+                        if not key:
+                            return None
+                        url = f"https://api.polygon.io/v3/snapshot/indices?ticker=I:SPX&apiKey={_up.quote(key)}"
+                        with _ur.urlopen(url, timeout=5) as r:
+                            d = _j.load(r)
+                        for row in d.get("results", []):
+                            v = row.get("value") or row.get("session", {}).get("close")
+                            if v:
+                                return float(v)
+                    except Exception:
+                        return None
+                    return None
+                process_butterflies(client, _rdb(), spx_price_fn=_spx_price)
+            except Exception as e:
+                logger.debug("butterfly processor error: %s", e)
+
             # Push 2-min MES bars to the server's Redis cache so the mobile
             # /chart page (and the 2n20 strategy bar reader) has data. Bars
             # close every 2 min; we publish at most once per minute.
