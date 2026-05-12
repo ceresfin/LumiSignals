@@ -643,7 +643,19 @@ def create_app():
                 from lumisignals.massive_client import MassiveClient
                 from lumisignals.levels_strategy import get_builtin_snr_levels
                 massive = MassiveClient(massive_key)
-                is_forex = "_" in ticker or poly_levels_ticker.startswith("C:")
+                # Detect forex: explicit underscore, C:-prefix, or a
+                # 6-letter all-alpha symbol like AUDUSD/EURUSD/GBPJPY.
+                # The chart strips the underscore before calling this
+                # endpoint, so we can't rely on "_" alone.
+                is_forex = (
+                    "_" in ticker
+                    or poly_levels_ticker.startswith("C:")
+                    or (len(ticker_upper) == 6 and ticker_upper.isalpha())
+                )
+                # When forex with no C: prefix yet, add it so Polygon
+                # routes to its forex aggregates endpoint
+                if is_forex and not poly_levels_ticker.startswith("C:"):
+                    poly_levels_ticker = "C:" + ticker_upper
                 market_type = "forex" if is_forex else "stock"
                 snr = get_builtin_snr_levels(massive, poly_levels_ticker, ["1mo", "1w", "1d", "4h", "1h"], market_type=market_type)
                 # Convert to chart format
