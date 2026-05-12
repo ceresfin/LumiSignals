@@ -212,7 +212,15 @@ def _phase_queued_to_debit(client, rdb, state: dict):
         elif isinstance(result, dict):
             order_id = str(result.get("order_id", ""))
         if not order_id:
-            logger.warning("Butterfly %s: debit place_order returned no order_id: %s", bid, result)
+            # Abandon after 3 failed attempts so we don't hammer IB forever
+            state["debit_retries"] = int(state.get("debit_retries", 0)) + 1
+            logger.warning("Butterfly %s: debit place_order failed (try %d/3): %s",
+                            bid, state["debit_retries"], result)
+            if state["debit_retries"] >= 3:
+                state["phase"] = "ABANDONED"
+                state["abandon_reason"] = f"debit place_order failed 3x: {result}"
+                _telegram(f"🦋 *Abandoned* — debit order rejected by IB ({result})")
+            _save(rdb, bid, state)
             return
         state["debit_order_id"] = order_id
         state["phase"] = "DEBIT_OPEN"
