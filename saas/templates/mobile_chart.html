@@ -196,9 +196,83 @@
           console.log('Levels error:', e);
         }
 
-        // Trade entry/exit/stop lines — only when viewing an actual trade
-        if (HAS_TRADE && ENTRY_PRICE) {
-          const isLong = DIRECTION === 'BUY' || DIRECTION === 'LONG';
+        // Trade entry/exit/stop — drawn as both a midline AND a shaded band.
+        // Band widths come from the chart's own ATR (14-period TR average) so
+        // they automatically scale with the model's trigger TF.
+        const isLong = DIRECTION === 'BUY' || DIRECTION === 'LONG';
+
+        function computeAtr(candles, period = 14) {
+          if (!candles || candles.length < 2) return 0;
+          const trs = [];
+          for (let i = 1; i < candles.length; i++) {
+            const c = candles[i], p = candles[i - 1];
+            const tr = Math.max(
+              c.high - c.low,
+              Math.abs(c.high - p.close),
+              Math.abs(c.low - p.close)
+            );
+            trs.push(tr);
+          }
+          const slice = trs.slice(-period);
+          return slice.reduce((a, b) => a + b, 0) / slice.length;
+        }
+        const ATR = computeAtr(unique, 14);
+
+        // Helper: draw a horizontal shaded band [low, high] over the chart's
+        // full time range using a Baseline series.
+        function drawBand(low, high, fillColor, label, labelColor) {
+          if (!unique.length || low >= high) return;
+          const tStart = unique[0].time;
+          const tEnd = unique[unique.length - 1].time;
+          const band = chart.addBaselineSeries({
+            baseValue: { type: 'price', price: low },
+            topLineColor: 'transparent',
+            topFillColor1: fillColor,
+            topFillColor2: fillColor,
+            bottomLineColor: 'transparent',
+            bottomFillColor1: 'rgba(0,0,0,0)',
+            bottomFillColor2: 'rgba(0,0,0,0)',
+            priceLineVisible: false,
+            lastValueVisible: false,
+            crosshairMarkerVisible: false,
+          });
+          band.setData([
+            { time: tStart, value: high },
+            { time: tEnd, value: high },
+          ]);
+          // Edge marker (price-axis label) at the band top
+          if (label) {
+            band.createPriceLine({
+              price: high,
+              color: labelColor,
+              lineWidth: 1,
+              lineStyle: LightweightCharts.LineStyle.Dotted,
+              axisLabelVisible: true,
+              title: label,
+            });
+          }
+        }
+
+        if (HAS_TRADE && ENTRY_PRICE && ATR > 0) {
+          // Entry band: +/- 0.25 ATR around entry
+          const w = 0.25 * ATR;
+          drawBand(
+            ENTRY_PRICE - w,
+            ENTRY_PRICE + w,
+            isLong ? 'rgba(39,174,96,0.18)' : 'rgba(192,57,43,0.18)',
+            null
+          );
+          // Solid entry midline
+          candleSeries.createPriceLine({
+            price: ENTRY_PRICE,
+            color: isLong ? '#27ae60' : '#c0392b',
+            lineWidth: 2,
+            lineStyle: LightweightCharts.LineStyle.Solid,
+            axisLabelVisible: true,
+            title: 'Entry',
+          });
+        } else if (HAS_TRADE && ENTRY_PRICE) {
+          // Fallback to a plain line if ATR couldn't be computed
           candleSeries.createPriceLine({
             price: ENTRY_PRICE,
             color: isLong ? '#27ae60' : '#c0392b',
@@ -208,7 +282,23 @@
             title: 'Entry',
           });
         }
-        if (HAS_TRADE && EXIT_PRICE) {
+
+        if (HAS_TRADE && EXIT_PRICE && ATR > 0) {
+          // Target band = the "meat" zone: between the pulled-back target
+          // and the raw S/R level that's 0.5 ATR further out.
+          const w = 0.5 * ATR;
+          const low  = isLong ? EXIT_PRICE : EXIT_PRICE - w;
+          const high = isLong ? EXIT_PRICE + w : EXIT_PRICE;
+          drawBand(low, high, 'rgba(255,152,0,0.22)', null);
+          candleSeries.createPriceLine({
+            price: EXIT_PRICE,
+            color: '#ff9800',
+            lineWidth: 2,
+            lineStyle: LightweightCharts.LineStyle.Solid,
+            axisLabelVisible: true,
+            title: 'Exit',
+          });
+        } else if (HAS_TRADE && EXIT_PRICE) {
           candleSeries.createPriceLine({
             price: EXIT_PRICE,
             color: '#ff9800',
@@ -218,7 +308,22 @@
             title: 'Exit',
           });
         }
-        if (HAS_TRADE && STOP_PRICE) {
+
+        if (HAS_TRADE && STOP_PRICE && ATR > 0) {
+          // Stop band = wick-tolerance area just beyond the SL
+          const w = 0.25 * ATR;
+          const low  = isLong ? STOP_PRICE - w : STOP_PRICE;
+          const high = isLong ? STOP_PRICE : STOP_PRICE + w;
+          drawBand(low, high, 'rgba(255,23,68,0.20)', null);
+          candleSeries.createPriceLine({
+            price: STOP_PRICE,
+            color: '#ff1744',
+            lineWidth: 1,
+            lineStyle: LightweightCharts.LineStyle.Dotted,
+            axisLabelVisible: true,
+            title: 'SL',
+          });
+        } else if (HAS_TRADE && STOP_PRICE) {
           candleSeries.createPriceLine({
             price: STOP_PRICE,
             color: '#ff1744',
