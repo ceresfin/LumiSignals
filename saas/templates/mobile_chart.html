@@ -253,7 +253,15 @@
           }
         }
 
-        // Entry: solid midline only — no band
+        // Entry: solid line + one-sided shaded band extending TOWARD the
+        // target so it visually leans the way the trade is meant to go.
+        if (HAS_TRADE && ENTRY_PRICE && ATR > 0) {
+          const w = 0.5 * ATR;
+          const low  = isLong ? ENTRY_PRICE : ENTRY_PRICE - w;
+          const high = isLong ? ENTRY_PRICE + w : ENTRY_PRICE;
+          const fill = isLong ? 'rgba(39,174,96,0.40)' : 'rgba(192,57,43,0.40)';
+          drawBand(low, high, fill, null);
+        }
         if (HAS_TRADE && ENTRY_PRICE) {
           candleSeries.createPriceLine({
             price: ENTRY_PRICE,
@@ -266,7 +274,7 @@
         }
 
         // Target: solid line + one-sided shaded "meat" band extending past
-        // the exit toward where the absolute S/R wall sits. Width is 1 ATR
+        // the target toward where the absolute S/R wall sits. Width is 1 ATR
         // and opacity is high so the zone is obvious on mobile.
         if (HAS_TRADE && EXIT_PRICE && ATR > 0) {
           const w = 1.0 * ATR;
@@ -281,7 +289,7 @@
             lineWidth: 2,
             lineStyle: LightweightCharts.LineStyle.Solid,
             axisLabelVisible: true,
-            title: 'Exit',
+            title: 'Target',
           });
         }
 
