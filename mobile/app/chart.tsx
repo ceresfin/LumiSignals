@@ -32,6 +32,18 @@ export default function ChartScreen() {
   const tf = interval || '15m';
   const ticker = symbol || 'EUR_USD';
 
+  // Pretty strategy label for the header
+  const STRATEGY_LABELS: Record<string, string> = {
+    '2n20': '2N20',
+    'vwap_2n20': '2N20',
+    '2n20_exit': '2N20',
+    'htf_levels': 'HTF LEVELS',
+    'htf_supply_demand': 'HTF LEVELS',
+    'orb_breakout': 'ORB',
+    'orb_butterfly': 'ORB BFLY',
+  };
+  const stratLabel = strategy ? (STRATEGY_LABELS[strategy] || strategy.toUpperCase()) : null;
+
   // Build chart URL with optional trade lines
   let chartUrl = `${API_BASE}/chart?ticker=${encodeURIComponent(ticker)}&timespan=${tf}&count=300`;
   if (entry) chartUrl += `&entry=${entry}`;
@@ -64,12 +76,17 @@ export default function ChartScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* Top row: Back / ticker (gets the full row width) / TV link */}
+      {/* Top row: Back / ticker + strategy / TV link */}
       <View style={styles.headerTop}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
           <Text style={styles.backText}>Back</Text>
         </TouchableOpacity>
-        <Text style={styles.title} numberOfLines={1}>{ticker}</Text>
+        <View style={styles.titleBlock}>
+          <Text style={styles.title} numberOfLines={1}>{ticker}</Text>
+          {stratLabel && (
+            <Text style={styles.subtitle} numberOfLines={1}>{stratLabel}</Text>
+          )}
+        </View>
         <TouchableOpacity onPress={() => Linking.openURL(getTvUrl(ticker))} style={styles.tvBtn}>
           <Text style={styles.tvBtnText}>TV</Text>
         </TouchableOpacity>
@@ -119,8 +136,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#333',
   },
   backText: { color: '#ccc', fontSize: 14 },
-  // Ticker now gets its own row, so it can show full symbol without wrapping
-  title: { color: '#fff', fontSize: 18, fontWeight: '600', flex: 1 },
+  // Title block stacks ticker on top, strategy label underneath
+  titleBlock: { flex: 1 },
+  title: { color: '#fff', fontSize: 18, fontWeight: '600' },
+  subtitle: { color: Colors.gold, fontSize: 11, fontWeight: '600', marginTop: 2, letterSpacing: 0.5 },
   tvBtn: {
     paddingVertical: 6,
     paddingHorizontal: 10,
