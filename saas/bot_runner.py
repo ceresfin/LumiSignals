@@ -502,6 +502,30 @@ def run_bot_for_user(user_data, stop_check):
                         except (ValueError, TypeError):
                             pass
 
+                        # Telegram + push alert with the full HTF plan
+                        try:
+                            from lumisignals.supabase_client import notify_trade_opened
+                            supabase_uid_n = os.environ.get("SUPABASE_USER_ID", "")
+                            if supabase_uid_n:
+                                bal = (result.details or {}).get("balance", 0)
+                                risk_amt_n = risk_cfg.get("risk_dollar") or (bal * (risk_cfg.get("risk_percent", 0) / 100))
+                                rr_n = signal.risk_reward or 0
+                                reward_amt_n = risk_amt_n * rr_n if (risk_amt_n and rr_n) else None
+                                notify_trade_opened(
+                                    user_id=supabase_uid_n,
+                                    instrument=signal.symbol,
+                                    direction=signal.action,
+                                    entry_price=signal.entry,
+                                    strategy=f"{model_name.upper()} HTF",
+                                    stop=signal.stop,
+                                    target=signal.target,
+                                    risk_dollars=risk_amt_n or None,
+                                    reward_dollars=reward_amt_n,
+                                    rr_ratio=rr_n or None,
+                                )
+                        except Exception as e:
+                            logger.debug("HTF Telegram alert error: %s", e)
+
                         # Pre-save HTF position to Supabase with entry/stop/target +
                         # zone metadata (zone type, timeframe, score, trends) so the
                         # mobile app can show Risk/Reward AND the originating zone

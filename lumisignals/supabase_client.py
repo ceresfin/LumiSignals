@@ -249,21 +249,51 @@ def send_telegram_message(text: str):
         logger.debug("Telegram send error: %s", e)
 
 
-def notify_trade_opened(user_id: str, instrument: str, direction: str, entry_price: float, strategy: str = ""):
-    """Send push + Telegram when a trade opens."""
+def notify_trade_opened(
+    user_id: str,
+    instrument: str,
+    direction: str,
+    entry_price: float,
+    strategy: str = "",
+    stop: float = None,
+    target: float = None,
+    risk_dollars: float = None,
+    reward_dollars: float = None,
+    rr_ratio: float = None,
+):
+    """Send push + Telegram when a trade opens.
+
+    Pass stop/target/risk/reward when available (HTF trades) and the message
+    will include the full plan. Bare entries (2n20 scalps without pre-known
+    targets) still work — those fields just stay out of the message.
+    """
     dir_label = "BUY" if direction in ("BUY", "LONG") else "SELL"
     emoji = "🟢" if dir_label == "BUY" else "🔴"
+
     send_push_notification(
         user_id,
         f"{dir_label} {instrument}",
         f"Entry @ {entry_price:.5f} | {strategy}",
         {"type": "trade_opened", "instrument": instrument},
     )
-    send_telegram_message(
-        f"{emoji} *{dir_label} {instrument}*\n"
-        f"Entry: `{entry_price:.5f}`\n"
-        f"Strategy: {strategy}"
-    )
+
+    lines = [
+        f"{emoji} *{dir_label} {instrument}*",
+        f"Entry: `{entry_price:.5f}`",
+    ]
+    if target is not None:
+        lines.append(f"Target: `{target:.5f}`")
+    if stop is not None:
+        lines.append(f"Stop: `{stop:.5f}`")
+    if risk_dollars is not None:
+        lines.append(f"Risk: `${risk_dollars:.2f}`")
+    if reward_dollars is not None:
+        lines.append(f"Reward: `${reward_dollars:.2f}`")
+    if rr_ratio is not None:
+        lines.append(f"R:R: `{rr_ratio:.2f}`")
+    if strategy:
+        lines.append(f"Strategy: {strategy}")
+    send_telegram_message("\n".join(lines))
 
 
 def notify_trade_closed(user_id: str, instrument: str, direction: str, pl: float, pips: float, reason: str = ""):
