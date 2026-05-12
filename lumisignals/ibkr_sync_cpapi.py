@@ -1655,28 +1655,55 @@ def check_order_requests(client):
                             fill_info = client.get_order_fill(entry_order_id)
                             fill_price = float(fill_info.get("avg_price") or 0)
                             if fill_price > 0:
-                                sl_price = pine_stop if pine_stop > 0 else (fill_price - sl_points)
-                                sl_payload = client.build_futures_order(fut_conid, "SELL", contracts, "STP", sl_price, tif="GTC")
-                                sl_result = client.place_order(sl_payload)
-                                if isinstance(sl_result, list) and sl_result:
-                                    first = sl_result[0] if isinstance(sl_result[0], dict) else {}
-                                    sl_order_id = str(first.get("order_id", "") or "")
-                                elif isinstance(sl_result, dict):
-                                    sl_order_id = str(sl_result.get("order_id", "") or "")
-                                logger.info("Stop loss: SELL %s @ %.2f (entry %.2f, source=%s) sl_id=%s",
-                                            ticker, sl_price, fill_price,
-                                            "pine" if pine_stop else "config", sl_order_id)
-                                # Take-profit child if Pine sent a target
-                                if pine_target > 0:
-                                    tp_price = pine_target
-                                    tp_payload = client.build_futures_order(fut_conid, "SELL", contracts, "LMT", tp_price, tif="GTC")
-                                    tp_result = client.place_order(tp_payload)
-                                    if isinstance(tp_result, list) and tp_result:
-                                        first = tp_result[0] if isinstance(tp_result[0], dict) else {}
-                                        tp_order_id = str(first.get("order_id", "") or "")
-                                    elif isinstance(tp_result, dict):
-                                        tp_order_id = str(tp_result.get("order_id", "") or "")
-                                    logger.info("Take profit: SELL %s @ %.2f tp_id=%s", ticker, tp_price, tp_order_id)
+                                # SECOND DEFENSE: verify IB actually shows the expected
+                                # direction (LONG for a BUY entry) before placing the
+                                # protective SELL STP. Without this check, a strat_pos
+                                # that doesn't reflect reality (cascade from an earlier
+                                # phantom) gets a STOP placed that can fire and CREATE
+                                # an unwanted position rather than close one.
+                                time.sleep(1)  # let IB position update propagate
+                                ib_qty = 0
+                                for item in client.get_positions():
+                                    if item.get("symbol") == ticker and item.get("sec_type") == "FUT":
+                                        ib_qty = int(item.get("quantity", 0))
+                                        break
+                                if ib_qty <= 0:
+                                    logger.error(
+                                        "PROTECTIVE STOP SKIPPED for %s [%s] BUY: expected LONG but IB qty=%+d",
+                                        ticker, strategy_name, ib_qty
+                                    )
+                                    try:
+                                        from .supabase_client import send_telegram_message
+                                        send_telegram_message(
+                                            f"⚠️ *Stop not placed* — {ticker} [{strategy_name}] BUY entry filled "
+                                            f"but IB shows qty `{ib_qty:+d}` (expected LONG). Skipping protective "
+                                            f"stop to avoid creating a phantom position."
+                                        )
+                                    except Exception:
+                                        pass
+                                else:
+                                    sl_price = pine_stop if pine_stop > 0 else (fill_price - sl_points)
+                                    sl_payload = client.build_futures_order(fut_conid, "SELL", contracts, "STP", sl_price, tif="GTC")
+                                    sl_result = client.place_order(sl_payload)
+                                    if isinstance(sl_result, list) and sl_result:
+                                        first = sl_result[0] if isinstance(sl_result[0], dict) else {}
+                                        sl_order_id = str(first.get("order_id", "") or "")
+                                    elif isinstance(sl_result, dict):
+                                        sl_order_id = str(sl_result.get("order_id", "") or "")
+                                    logger.info("Stop loss: SELL %s @ %.2f (entry %.2f, ib_qty=%+d, source=%s) sl_id=%s",
+                                                ticker, sl_price, fill_price, ib_qty,
+                                                "pine" if pine_stop else "config", sl_order_id)
+                                    # Take-profit child if Pine sent a target
+                                    if pine_target > 0:
+                                        tp_price = pine_target
+                                        tp_payload = client.build_futures_order(fut_conid, "SELL", contracts, "LMT", tp_price, tif="GTC")
+                                        tp_result = client.place_order(tp_payload)
+                                        if isinstance(tp_result, list) and tp_result:
+                                            first = tp_result[0] if isinstance(tp_result[0], dict) else {}
+                                            tp_order_id = str(first.get("order_id", "") or "")
+                                        elif isinstance(tp_result, dict):
+                                            tp_order_id = str(tp_result.get("order_id", "") or "")
+                                        logger.info("Take profit: SELL %s @ %.2f tp_id=%s", ticker, tp_price, tp_order_id)
                             else:
                                 logger.error("Cannot place SL for %s: entry order %s not filled (status=%s)",
                                               ticker, entry_order_id, fill_info.get("status", ""))
@@ -1700,28 +1727,52 @@ def check_order_requests(client):
                             fill_info = client.get_order_fill(entry_order_id)
                             fill_price = float(fill_info.get("avg_price") or 0)
                             if fill_price > 0:
-                                sl_price = pine_stop if pine_stop > 0 else (fill_price + sl_points)
-                                sl_payload = client.build_futures_order(fut_conid, "BUY", contracts, "STP", sl_price, tif="GTC")
-                                sl_result = client.place_order(sl_payload)
-                                if isinstance(sl_result, list) and sl_result:
-                                    first = sl_result[0] if isinstance(sl_result[0], dict) else {}
-                                    sl_order_id = str(first.get("order_id", "") or "")
-                                elif isinstance(sl_result, dict):
-                                    sl_order_id = str(sl_result.get("order_id", "") or "")
-                                logger.info("Stop loss: BUY %s @ %.2f (entry %.2f, source=%s) sl_id=%s",
-                                            ticker, sl_price, fill_price,
-                                            "pine" if pine_stop else "config", sl_order_id)
-                                # Take-profit child if Pine sent a target
-                                if pine_target > 0:
-                                    tp_price = pine_target
-                                    tp_payload = client.build_futures_order(fut_conid, "BUY", contracts, "LMT", tp_price, tif="GTC")
-                                    tp_result = client.place_order(tp_payload)
-                                    if isinstance(tp_result, list) and tp_result:
-                                        first = tp_result[0] if isinstance(tp_result[0], dict) else {}
-                                        tp_order_id = str(first.get("order_id", "") or "")
-                                    elif isinstance(tp_result, dict):
-                                        tp_order_id = str(tp_result.get("order_id", "") or "")
-                                    logger.info("Take profit: BUY %s @ %.2f tp_id=%s", ticker, tp_price, tp_order_id)
+                                # SECOND DEFENSE: verify IB actually shows the expected
+                                # direction (SHORT for a SELL entry) before placing the
+                                # protective BUY STP. See BUY-path comment for context.
+                                time.sleep(1)
+                                ib_qty = 0
+                                for item in client.get_positions():
+                                    if item.get("symbol") == ticker and item.get("sec_type") == "FUT":
+                                        ib_qty = int(item.get("quantity", 0))
+                                        break
+                                if ib_qty >= 0:
+                                    logger.error(
+                                        "PROTECTIVE STOP SKIPPED for %s [%s] SELL: expected SHORT but IB qty=%+d",
+                                        ticker, strategy_name, ib_qty
+                                    )
+                                    try:
+                                        from .supabase_client import send_telegram_message
+                                        send_telegram_message(
+                                            f"⚠️ *Stop not placed* — {ticker} [{strategy_name}] SELL entry filled "
+                                            f"but IB shows qty `{ib_qty:+d}` (expected SHORT). Skipping protective "
+                                            f"stop to avoid creating a phantom position."
+                                        )
+                                    except Exception:
+                                        pass
+                                else:
+                                    sl_price = pine_stop if pine_stop > 0 else (fill_price + sl_points)
+                                    sl_payload = client.build_futures_order(fut_conid, "BUY", contracts, "STP", sl_price, tif="GTC")
+                                    sl_result = client.place_order(sl_payload)
+                                    if isinstance(sl_result, list) and sl_result:
+                                        first = sl_result[0] if isinstance(sl_result[0], dict) else {}
+                                        sl_order_id = str(first.get("order_id", "") or "")
+                                    elif isinstance(sl_result, dict):
+                                        sl_order_id = str(sl_result.get("order_id", "") or "")
+                                    logger.info("Stop loss: BUY %s @ %.2f (entry %.2f, ib_qty=%+d, source=%s) sl_id=%s",
+                                                ticker, sl_price, fill_price, ib_qty,
+                                                "pine" if pine_stop else "config", sl_order_id)
+                                    # Take-profit child if Pine sent a target
+                                    if pine_target > 0:
+                                        tp_price = pine_target
+                                        tp_payload = client.build_futures_order(fut_conid, "BUY", contracts, "LMT", tp_price, tif="GTC")
+                                        tp_result = client.place_order(tp_payload)
+                                        if isinstance(tp_result, list) and tp_result:
+                                            first = tp_result[0] if isinstance(tp_result[0], dict) else {}
+                                            tp_order_id = str(first.get("order_id", "") or "")
+                                        elif isinstance(tp_result, dict):
+                                            tp_order_id = str(tp_result.get("order_id", "") or "")
+                                        logger.info("Take profit: BUY %s @ %.2f tp_id=%s", ticker, tp_price, tp_order_id)
                             else:
                                 logger.error("Cannot place SL for %s: entry order %s not filled (status=%s)",
                                               ticker, entry_order_id, fill_info.get("status", ""))
