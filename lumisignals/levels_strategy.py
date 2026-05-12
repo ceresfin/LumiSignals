@@ -408,9 +408,15 @@ class LevelsStrategy:
     def _get_trade_builder_data(self, ticker: str, market: str = "forex") -> dict:
         """Get ATR and trend direction using built-in ADX calculation from Polygon data.
 
-        Trends are read on 1d/1w/1mo (global market structure, model-agnostic).
-        ATR is scoped to the model's trigger timeframe so stop_distance matches
-        the trade's natural holding window:
+        Trend timeframes match the model's natural duration so the trend
+        arrows on each zone card reflect what the strategy actually cares
+        about:
+            SCALP    -> 5m / 15m / 1h trends
+            INTRADAY -> 1h / 1d / 1w trends
+            SWING    -> 1d / 1w / 1mo trends
+
+        ATR is scoped to the model's trigger timeframe so stop_distance
+        matches the trade's natural holding window:
             SCALP    -> 5m ATR
             INTRADAY -> 1h ATR
             SWING    -> 1d ATR
@@ -425,11 +431,22 @@ class LevelsStrategy:
         if market == "forex" and not ticker.startswith("C:"):
             poly_ticker = f"C:{ticker.replace('_', '')}"
 
-        # Trends on macro TFs regardless of model
-        tf_map = {"1d": "Daily", "1w": "Weekly", "1mo": "Monthly"}
-        for tf, label in tf_map.items():
+        # Trend timeframes per model (tf_code, display_label) — display label is
+        # what shows up on the mobile zone card's trend arrows.
+        TREND_TFS_BY_MODEL = {
+            "scalp":    [("5m", "5M"), ("15m", "15M"), ("1h", "1H")],
+            "intraday": [("1h", "1H"), ("1d", "Daily"), ("1w", "Weekly")],
+            "swing":    [("1d", "Daily"), ("1w", "Weekly"), ("1mo", "Monthly")],
+        }
+        trend_tfs = TREND_TFS_BY_MODEL.get(
+            self.model_name,
+            [("1d", "Daily"), ("1w", "Weekly"), ("1mo", "Monthly")],
+        )
+
+        for tf, label in trend_tfs:
             try:
-                count = 30 if tf in ("1mo", "1w") else 50
+                # Sub-hour TFs need more bars (need at least 16 for ADX-14)
+                count = 30 if tf in ("1mo", "1w") else (50 if tf in ("1d", "1h") else 80)
                 candles = self.massive.get_candles(poly_ticker, tf, count)
                 if not candles or len(candles) < 16:
                     continue
@@ -452,7 +469,10 @@ class LevelsStrategy:
         return result
 
     def _tf_label(self, tf: str) -> str:
-        return {"1mo": "Monthly", "1w": "Weekly", "1d": "Daily"}.get(tf, tf)
+        return {
+            "1mo": "Monthly", "1w": "Weekly", "1d": "Daily",
+            "4h": "4H", "1h": "1H", "30m": "30M", "15m": "15M", "5m": "5M",
+        }.get(tf, tf)
 
     # ------------------------------------------------------------------
     # Phase 1: Zone Watchlist

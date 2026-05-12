@@ -222,7 +222,7 @@ function PositionRow({ position, onChartPress, onClose }: {
                   <Text key={tfk} style={[styles.trendBadge, {
                     color: dir === 'bullish' ? Colors.green : dir === 'bearish' ? Colors.red : Colors.textLight,
                   }]}>
-                    {tfk[0].toUpperCase()}{dir === 'bullish' ? '↑' : dir === 'bearish' ? '↓' : '→'}
+                    {tfk}{dir === 'bullish' ? '↑' : dir === 'bearish' ? '↓' : '→'}
                   </Text>
                 ))}
               </View>
@@ -557,7 +557,7 @@ export default function Positions() {
                           <Text key={tf} style={[styles.trendBadge, {
                             color: dir === 'bullish' ? Colors.green : dir === 'bearish' ? Colors.red : Colors.textLight
                           }]}>
-                            {tf[0]}{dir === 'bullish' ? '↑' : dir === 'bearish' ? '↓' : '→'}
+                            {tf}{dir === 'bullish' ? '↑' : dir === 'bearish' ? '↓' : '→'}
                           </Text>
                         ))}
                       </View>
