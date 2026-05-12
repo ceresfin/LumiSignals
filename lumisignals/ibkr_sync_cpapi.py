@@ -1498,6 +1498,7 @@ def check_order_requests(client):
                         # in strat_pos when the position was opened).
                         sp_for_close = get_strat_pos(ticker, strategy_name)
                         targeted_stop = sp_for_close.get("stop_order_id") if sp_for_close else ""
+                        targeted_target = sp_for_close.get("target_order_id") if sp_for_close else ""
                         if targeted_stop:
                             try:
                                 client.cancel_order(targeted_stop)
@@ -1507,6 +1508,18 @@ def check_order_requests(client):
                             except Exception as e:
                                 logger.warning("Cancel SL %s failed (may be already filled): %s",
                                                 targeted_stop, e)
+                        # Also cancel the bracketed TP child (ORB has both;
+                        # 2n20 has none, so this is a no-op there). Without
+                        # this, a manual close on an ORB position leaves the
+                        # TP limit dangling at IB until session end.
+                        if targeted_target and targeted_target != "0":
+                            try:
+                                client.cancel_order(targeted_target)
+                                logger.info("Cancelled TP %s for [%s] before close",
+                                            targeted_target, strategy_name)
+                            except Exception as e:
+                                logger.warning("Cancel TP %s failed (may be already filled): %s",
+                                                targeted_target, e)
                         else:
                             # Fall back: cancel up to `contracts` matching stops
                             # (orphan / unattributed protection from older entries).
