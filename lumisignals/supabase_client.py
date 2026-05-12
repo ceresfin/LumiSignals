@@ -224,29 +224,51 @@ def send_telegram_message(text: str):
     """Send a Telegram message to TELEGRAM_CHAT_ID via TELEGRAM_BOT_TOKEN.
 
     Both must be set in the environment. No-op otherwise so we don't
-    crash when Telegram isn't configured. Markdown formatting supported.
+    crash when Telegram isn't configured.
+
+    Tries Markdown first for nice formatting; if Telegram rejects it
+    (typically a 400 from an unescaped _ or * in user-supplied text),
+    retries the same body without parse_mode so the alert still lands.
     """
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
     if not token or not chat_id:
         return
-    try:
-        url = f"https://api.telegram.org/bot{token}/sendMessage"
-        payload = {
-            "chat_id": chat_id,
-            "text": text,
-            "parse_mode": "Markdown",
-            "disable_web_page_preview": True,
-        }
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+
+    def _post(payload: dict):
         req = urllib.request.Request(
             url,
             data=json.dumps(payload).encode("utf-8"),
             headers={"Content-Type": "application/json"},
         )
         urllib.request.urlopen(req, timeout=10)
+
+    try:
+        _post({
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": "Markdown",
+            "disable_web_page_preview": True,
+        })
         logger.debug("Telegram sent: %s", text[:60])
+    except urllib.error.HTTPError as e:
+        if e.code == 400:
+            # Markdown parse failed (likely a stray _ or * in user content).
+            # Retry as plain text so the alert is never silently dropped.
+            try:
+                _post({
+                    "chat_id": chat_id,
+                    "text": text,
+                    "disable_web_page_preview": True,
+                })
+                logger.info("Telegram sent (plain-text fallback): %s", text[:60])
+            except Exception as e2:
+                logger.warning("Telegram plain-text fallback failed: %s", e2)
+        else:
+            logger.warning("Telegram send error: HTTP %s", e.code)
     except Exception as e:
-        logger.debug("Telegram send error: %s", e)
+        logger.warning("Telegram send error: %s", e)
 
 
 def notify_trade_opened(

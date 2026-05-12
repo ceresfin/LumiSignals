@@ -1611,12 +1611,17 @@ def check_order_requests(client):
                                     reward_d = abs(tp_price - entry_fill_price) * multiplier * contracts
                                 if risk_d and reward_d:
                                     rr = round(reward_d / risk_d, 2)
+                                # Strategy string for the alert — Telegram's Markdown
+                                # parser breaks on bare underscores (e.g. ORB_BREAKOUT
+                                # gets read as italic-start with no close → 400), so
+                                # we soften them to spaces here.
+                                strat_label = f"{strategy_name.upper().replace('_', ' ')} {direction}"
                                 notify_trade_opened(
                                     user_id=supabase_uid,
                                     instrument=ticker,
                                     direction=direction,
                                     entry_price=entry_fill_price,
-                                    strategy=f"{strategy_name.upper()} {direction}",
+                                    strategy=strat_label,
                                     stop=sl_price or None,
                                     target=tp_price or None,
                                     risk_dollars=risk_d,
