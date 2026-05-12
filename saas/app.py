@@ -1659,6 +1659,51 @@ def create_app():
             import redis as _redis
             import uuid as _uuid
             rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+
+            # Safety net: validate against the live IB position so rapid
+            # taps can't compound into flipping the position. We read the
+            # latest IB snapshot from ibkr:data:1 (refreshed every ~10s).
+            requested_qty = int(data.get("contracts", 1))
+            ib_qty = None
+            try:
+                snap = rdb.get("ibkr:data:1")
+                if snap:
+                    snap_data = json.loads(snap)
+                    for p in snap_data.get("positions", []):
+                        if p.get("symbol") == instrument and p.get("sec_type") == "FUT":
+                            ib_qty = int(p.get("quantity") or 0)
+                            break
+            except Exception:
+                pass
+            if ib_qty is not None:
+                # Direction must match IB's net side; never let a "close"
+                # accidentally flip the position the other way.
+                if close_dir == "CLOSE_LONG" and ib_qty <= 0:
+                    return jsonify({"status": "rejected",
+                                    "reason": f"IB is not long {instrument} (qty={ib_qty})"}), 200
+                if close_dir == "CLOSE_SHORT" and ib_qty >= 0:
+                    return jsonify({"status": "rejected",
+                                    "reason": f"IB is not short {instrument} (qty={ib_qty})"}), 200
+                # Cap to what's actually open so the close can't over-trade
+                capped = min(requested_qty, abs(ib_qty))
+                if capped <= 0:
+                    return jsonify({"status": "rejected",
+                                    "reason": "Already flat"}), 200
+                if capped < requested_qty:
+                    logger.info("Manual close capped: requested %d, IB has %d → %d",
+                                requested_qty, abs(ib_qty), capped)
+                requested_qty = capped
+
+            # 30s dedup per (instrument, direction) so multiple taps coalesce.
+            # Pine close signals come through the webhook path; manual closes
+            # come through here. Independent dedup keys avoid cross-blocking.
+            dedup_key = f"manual_close:{instrument}:{close_dir}"
+            existing = rdb.get(dedup_key)
+            if existing:
+                return jsonify({"status": "skipped",
+                                "reason": "An identical close was just queued",
+                                "order_id": existing.decode() if isinstance(existing, bytes) else existing}), 200
+
             order_id = str(_uuid.uuid4())[:8]
             order = {
                 "order_id": order_id,
@@ -1669,12 +1714,14 @@ def create_app():
                 "direction": close_dir,
                 "strategy": strategy,
                 "reason": "Manual close (mobile)",
-                "contracts": int(data.get("contracts", 1)),
+                "contracts": requested_qty,
                 "status": "queued",
             }
             rdb.setex(f"ibkr:order:pending:{order_id}", 86400, json.dumps(order))
+            rdb.setex(dedup_key, 30, order_id)
             return jsonify({"status": "queued", "broker": "ib",
                             "action": close_dir, "ticker": instrument,
+                            "contracts": requested_qty,
                             "order_id": order_id})
 
         # ─── IB OPTIONS: enqueue manual spread close ───

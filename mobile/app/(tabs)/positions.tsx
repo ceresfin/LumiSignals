@@ -100,10 +100,11 @@ function positionRiskReward(p: Position): { risk: number; reward: number } {
   return { risk: 0, reward: 0 };
 }
 
-function PositionRow({ position, onChartPress, onClose }: {
+function PositionRow({ position, onChartPress, onClose, closing }: {
   position: Position;
   onChartPress: (instrument: string, tf: string) => void;
   onClose: (p: Position) => void;
+  closing: boolean;
 }) {
   const dir = position.direction === 'LONG' || position.direction === 'BUY' ? 'BUY' : 'SELL';
   const pl = position.unrealized_pl || 0;
@@ -274,11 +275,12 @@ function PositionRow({ position, onChartPress, onClose }: {
           {strategyBadgeText(position.strategy, position.model)}
         </Text>
         <TouchableOpacity
-          style={styles.closeBtn}
-          onPress={() => onClose(position)}
+          style={[styles.closeBtn, closing && { opacity: 0.4 }]}
+          onPress={() => !closing && onClose(position)}
+          disabled={closing}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
-          <Text style={styles.closeBtnText}>Close</Text>
+          <Text style={styles.closeBtnText}>{closing ? 'Closing…' : 'Close'}</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -292,6 +294,9 @@ export default function Positions() {
   const [activeTab, setActiveTab] = useState('forex');
   const [refreshing, setRefreshing] = useState(false);
   const [zones, setZones] = useState<any[]>([]);
+  // Per-position "closing" lock so a Close tap is honored exactly once
+  // until either the row disappears from the next sync OR 30 s pass.
+  const [closingIds, setClosingIds] = useState<Set<string | number>>(new Set());
 
   const TABS = [
     { key: 'forex', label: 'Forex', filter: (p: Position) => p.broker === 'oanda' || p.asset_type === 'forex' },
@@ -377,6 +382,8 @@ export default function Positions() {
   // Manual close button — confirms via native Alert, posts to the server's
   // /api/positions/close endpoint, which routes per broker/asset_type.
   const handleClose = (p: Position) => {
+    // Refuse if we're already closing this row
+    if (closingIds.has(p.id)) return;
     const pl = p.unrealized_pl || 0;
     const plStr = (pl >= 0 ? '+' : '') + '$' + pl.toFixed(2);
     const dir = p.direction === 'LONG' || p.direction === 'BUY' ? 'BUY' : 'SELL';
@@ -389,6 +396,15 @@ export default function Positions() {
           text: 'Close',
           style: 'destructive',
           onPress: async () => {
+            // Lock the button until next sync removes the row OR 30s pass
+            setClosingIds(prev => new Set(prev).add(p.id));
+            setTimeout(() => {
+              setClosingIds(prev => {
+                const next = new Set(prev);
+                next.delete(p.id);
+                return next;
+              });
+            }, 30000);
             try {
               const syncKey = process.env.EXPO_PUBLIC_LUMI_SYNC_KEY || '';
               const resp = await fetch('https://bot.lumitrade.ai/api/positions/close', {
@@ -482,7 +498,7 @@ export default function Positions() {
       <FlatList
         data={positions}
         keyExtractor={(item) => item.id.toString()}
-        renderItem={({ item }) => <PositionRow position={item} onClose={handleClose} onChartPress={(sym, tf) => router.push({
+        renderItem={({ item }) => <PositionRow position={item} onClose={handleClose} closing={closingIds.has(item.id)} onChartPress={(sym, tf) => router.push({
           pathname: '/chart',
           params: {
             symbol: sym,
