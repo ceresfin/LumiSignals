@@ -1387,9 +1387,30 @@ def check_order_requests(client):
                 # button on a position whose strat_pos was already cleared).
                 # We don't have a matching strat_pos to gate on, so honor
                 # the close request as long as IB's net direction agrees.
+                #
+                # Treat as untracked when EITHER:
+                #   - strategy is the explicit "untracked" tag, or
+                #   - no strat_pos exists for this ticker at all (every
+                #     strategy has been cleared — the position is a pure
+                #     orphan and we can't tell which strategy "owns" it).
+                # The second case is what catches the audit-card Close path
+                # since the mobile sends p.strategy (often null → defaults
+                # to "manual_close") rather than the literal "untracked".
+                # If some OTHER strategy still tracks this ticker, we don't
+                # treat as untracked — that would let one strategy close
+                # another's position by accident.
+                rdb_check = _rdb()
+                no_strat_pos_at_all = False
+                if rdb_check is not None:
+                    try:
+                        no_strat_pos_at_all = not any(
+                            True for _ in rdb_check.scan_iter(f"ibkr:strat_pos:{ticker}:*")
+                        )
+                    except Exception:
+                        pass
                 is_untracked_close = (
-                    strategy_name == "untracked"
-                    and direction in ("CLOSE_LONG", "CLOSE_SHORT")
+                    direction in ("CLOSE_LONG", "CLOSE_SHORT")
+                    and (strategy_name == "untracked" or no_strat_pos_at_all)
                 )
 
                 skip = False
