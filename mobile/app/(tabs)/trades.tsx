@@ -15,8 +15,11 @@ type Trade = {
   direction: string;
   entry_price: number;
   exit_price: number;
+  stop_loss: number | null;
   realized_pl: number;
-  pips: number;
+  pips: number | null;
+  contracts: number | null;
+  units: number | null;
   achieved_rr: number;
   close_reason: string;
   strategy: string;
@@ -26,6 +29,41 @@ type Trade = {
   closed_at: string;
   duration_mins: number;
 };
+
+// Asset-class-aware size+move label for the trade card. Pips only makes
+// sense for forex; futures move in points and trade in contracts; stocks
+// trade in shares; options in contracts. Each branch returns the bit of
+// text rendered next to the entry → exit prices.
+function sizeMoveLabel(trade: Trade): string {
+  const direction = trade.direction === 'LONG' || trade.direction === 'BUY' ? 1 : -1;
+  const delta = ((trade.exit_price ?? 0) - (trade.entry_price ?? 0)) * direction;
+  const isForex = trade.broker === 'oanda' || trade.asset_type === 'forex';
+  if (isForex) {
+    if (trade.pips == null) return '';
+    return `${trade.pips >= 0 ? '+' : ''}${trade.pips.toFixed(1)} pips`;
+  }
+  if (trade.asset_type === 'futures') {
+    const ct = trade.contracts ?? 1;
+    return `${ct} ct · ${delta >= 0 ? '+' : ''}${delta.toFixed(2)} pts`;
+  }
+  if (trade.asset_type === 'options') {
+    const ct = trade.contracts ?? 1;
+    return `${ct} ct · ${delta >= 0 ? '+' : ''}$${Math.abs(delta).toFixed(2)}`;
+  }
+  // Stocks / indices
+  const sh = trade.units ?? trade.contracts ?? null;
+  const moveText = `${delta >= 0 ? '+' : ''}${delta.toFixed(2)}`;
+  return sh ? `${sh} sh · ${moveText}` : moveText;
+}
+
+// JPY pairs and futures want fewer decimals than the default forex 5;
+// stocks/options trade in cents.
+function priceDecimals(trade: Trade): number {
+  const isForex = trade.broker === 'oanda' || trade.asset_type === 'forex';
+  if (isForex) return trade.instrument?.includes('JPY') ? 3 : 5;
+  if (trade.asset_type === 'futures') return 2;
+  return 2;
+}
 
 const STRATEGY_TIMEFRAMES: Record<string, string> = {
   'scalp_2n20': '2m',
@@ -68,10 +106,10 @@ function TradeRow({ trade, onChartPress }: { trade: Trade; onChartPress: (instru
       </View>
       <View style={styles.tradeBottom}>
         <Text style={styles.tradeDetail}>
-          {trade.entry_price?.toFixed(5)} → {trade.exit_price?.toFixed(5)}
+          {trade.entry_price?.toFixed(priceDecimals(trade))} → {trade.exit_price?.toFixed(priceDecimals(trade))}
         </Text>
         <Text style={styles.tradeDetail}>
-          {trade.pips?.toFixed(1)} pips
+          {sizeMoveLabel(trade)}
         </Text>
         {trade.achieved_rr ? (
           <Text style={[styles.tradeDetail, { color: trade.achieved_rr > 0 ? Colors.green : Colors.red }]}>
