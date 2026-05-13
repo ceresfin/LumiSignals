@@ -1932,13 +1932,42 @@ def create_app():
         # (FUT, STK, OPT, etc.) so the user can verify the full IB
         # state at a glance, not just the strategies the bot tracks.
         rows = []
+
+        # Detected spreads from the sync's _detect_spreads — pair option
+        # legs into single rows so a 2-spread account shows as 2 rows,
+        # not 4 confusing single-leg rows that look like phantom orphans.
+        # Build a set of leg signatures that are part of a detected
+        # spread so we can skip those legs when iterating positions.
+        spreads_in = ib.get("spreads", []) or []
+        legs_in_spreads = set()
+        for sp in spreads_in:
+            for strike_field in ("long_strike", "short_strike"):
+                strike = sp.get(strike_field)
+                if strike:
+                    legs_in_spreads.add((
+                        sp.get("symbol", ""),
+                        sp.get("expiration", ""),
+                        sp.get("right", ""),
+                        float(strike),
+                    ))
+
         ib_positions = {}  # key → {qty, avg_cost, sec_type, label, ...}
         for p in ib.get("positions", []):
             sym = p.get("symbol")
             sec_type = p.get("sec_type", "?")
             if not sym:
                 continue
-            # Options get conid-keyed (separate legs) since one symbol
+            # Skip option legs that are already counted in a detected spread.
+            if sec_type == "OPT":
+                leg_key = (
+                    sym,
+                    p.get("expiration", ""),
+                    p.get("right", ""),
+                    float(p.get("strike", 0)),
+                )
+                if leg_key in legs_in_spreads:
+                    continue
+            # Options get description-keyed (separate legs) since one symbol
             # can have many option contracts. Other types key by symbol.
             if sec_type == "OPT":
                 key = f"{sym} {p.get('description', '')[:30]}"
@@ -1953,6 +1982,32 @@ def create_app():
                 "sec_type": sec_type,
                 "multiplier": float(p.get("multiplier", 1)),
                 "description": p.get("description", ""),
+            }
+
+        # Emit one synthetic row per detected spread. Spreads aren't
+        # tracked in strat_pos today, so they'll classify as ALL ORPHAN
+        # until a future change registers them. ib_qty uses contract
+        # count (always positive), avg uses per-spread net cost (debit
+        # paid or credit received).
+        for sp in spreads_in:
+            sym = sp.get("symbol", "")
+            spread_type = sp.get("spread_type", "Spread")
+            long_strike = sp.get("long_strike", 0)
+            short_strike = sp.get("short_strike", 0)
+            qty = int(sp.get("quantity", 0) or 0)
+            if not sym or qty <= 0:
+                continue
+            label = f"{spread_type} {long_strike:g}/{short_strike:g}"
+            key = f"{sym} OPT {label}"
+            ib_positions[key] = {
+                "symbol": sym,
+                "qty": qty,
+                "avg_cost": float(sp.get("net_cost", 0)),
+                "market_price": float(sp.get("current_value", 0)) / max(qty, 1),
+                "unrealized_pl": float(sp.get("unrealized_pnl", 0)),
+                "sec_type": "OPT",
+                "multiplier": 100.0,
+                "description": label,
             }
 
         # Gather strat_pos coverage per symbol
