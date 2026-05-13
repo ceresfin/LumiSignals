@@ -1446,6 +1446,26 @@ def check_order_requests(client):
                     else:
                         logger.info("ALLOW %s %s [untracked] — IB qty=%+d, manual mobile close",
                                     ticker, direction, current_pos)
+                elif (
+                    direction in ("BUY", "SELL")
+                    and not strat_long and not strat_short
+                    and ((direction == "BUY" and current_pos < 0)
+                         or (direction == "SELL" and current_pos > 0))
+                ):
+                    # Fresh entry blocked by an opposing IB-side orphan.
+                    # If we let this SELL through with IB already +1, the
+                    # SELL closes the orphan instead of opening a short.
+                    # We'd write strat_pos=SELL1 but IB ends FLAT — phantom.
+                    # User must clear the orphan first (mobile Close button
+                    # now works for pure orphans), then the next signal
+                    # can fire cleanly.
+                    logger.info(
+                        "SKIP %s %s [%s] — IB has opposing orphan (qty=%+d). "
+                        "Fresh entry would close the orphan rather than open a "
+                        "new position; manual-flat the orphan first.",
+                        ticker, direction, strategy_name, current_pos,
+                    )
+                    skip = True
 
                 if skip:
                     try:
