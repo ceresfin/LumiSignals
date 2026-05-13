@@ -39,15 +39,31 @@ def get_client():
 
 
 def record_closed_trade(user_id: str, trade: dict):
-    """Write a closed trade to the trades table."""
+    """Upsert a closed trade row in the trades table.
+
+    Idempotent on (user_id, broker, broker_trade_id) — calling twice for
+    the same close updates the existing row instead of inserting a new
+    one. This prevents the "zombie close" failure mode we hit with the
+    SPX vertical spreads, where a silently-failing broker close was
+    retried thousands of times and each retry wrote a fresh row.
+
+    Callers MUST supply a stable broker_trade_id (the original entry's
+    broker order/perm/trade id). When the id is missing or empty we fall
+    back to plain INSERT to avoid masking the bug — but those rows can't
+    be deduped on retry, so the proper fix at the call site is to wire
+    in the entry id.
+    """
     sb = get_client()
     if not sb:
         return
     try:
+        broker = trade.get("broker", "oanda")
+        broker_trade_id = str(trade.get("id", trade.get("broker_trade_id", "")))
+
         row = {
             "user_id": user_id,
-            "broker": trade.get("broker", "oanda"),
-            "broker_trade_id": str(trade.get("id", trade.get("broker_trade_id", ""))),
+            "broker": broker,
+            "broker_trade_id": broker_trade_id,
             "instrument": trade.get("instrument", ""),
             "asset_type": trade.get("asset_type", "forex"),
             "direction": trade.get("direction", ""),
@@ -70,21 +86,45 @@ def record_closed_trade(user_id: str, trade: dict):
             "buy_strike": trade.get("buy_strike", None),
             "duration_mins": trade.get("duration_mins", None),
         }
-        # Parse timestamps
         opened = trade.get("time_opened", trade.get("opened_at", ""))
         closed = trade.get("time_closed", trade.get("closed_at", ""))
         if opened:
             row["opened_at"] = opened
         if closed:
             row["closed_at"] = closed
-
-        # Remove None values
         row = {k: v for k, v in row.items() if v is not None}
 
+        if broker_trade_id:
+            # Idempotent path: look up the existing row by the natural
+            # business key. UPDATE if present, INSERT if not. Two close
+            # writes for the same trade converge on one row.
+            existing = (sb.table("trades")
+                          .select("id")
+                          .eq("user_id", user_id)
+                          .eq("broker", broker)
+                          .eq("broker_trade_id", broker_trade_id)
+                          .limit(1)
+                          .execute())
+            rows_found = existing.data or []
+            if rows_found:
+                trade_pk = rows_found[0]["id"]
+                # Don't overwrite user_id/broker/broker_trade_id since
+                # they're the lookup key — the rest of the columns get
+                # the latest close-time values.
+                update_payload = {k: v for k, v in row.items()
+                                  if k not in ("user_id", "broker", "broker_trade_id")}
+                sb.table("trades").update(update_payload).eq("id", trade_pk).execute()
+                logger.info("Supabase: updated trade %s/%s/%s (id=%s)",
+                            broker, trade.get("instrument"), broker_trade_id, trade_pk)
+                return
+        # Fallback: no broker_trade_id supplied OR no existing row → INSERT.
         sb.table("trades").insert(row).execute()
-        logger.debug("Supabase: recorded trade %s %s", trade.get("instrument"), trade.get("direction"))
+        logger.info("Supabase: recorded trade %s/%s/%s",
+                    broker, trade.get("instrument"), broker_trade_id or "<no-id>")
     except Exception as e:
-        logger.debug("Supabase trade write error: %s", e)
+        # Surface as warning, not debug — silent failure here cost us a
+        # day of debugging the SPX zombie flood.
+        logger.warning("Supabase trade write error: %s", e)
 
 
 def upsert_position(user_id: str, position: dict):
