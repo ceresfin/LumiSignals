@@ -346,6 +346,22 @@ def create_app():
         import redis as _redis
         rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
 
+        # Response is the same for every viewer (uses the master watchlist
+        # at watchlist:1:{model}), so serve a 60s Redis-cached copy when
+        # available. Building the response touches ~200 Polygon calls
+        # across 19 supplemental tickers — ~25s cold, ~50ms warm.
+        CACHE_KEY = "api:watchlist:zones:v2"
+        CACHE_TTL = 60
+        try:
+            cached = rdb.get(CACHE_KEY)
+            if cached:
+                resp = make_response(cached)
+                resp.headers["Content-Type"] = "application/json"
+                resp.headers["X-Cache"] = "HIT"
+                return resp
+        except Exception:
+            pass
+
         # Projected target reuses the bot's own target finder so the chart
         # shows exactly the TP the strategy would aim for at trigger time.
         from lumisignals.levels_strategy import compute_target_level
@@ -497,12 +513,41 @@ def create_app():
                 from lumisignals.levels_strategy import get_builtin_snr_levels
                 from lumisignals.untouched_levels import calculate_adx_direction
                 massive = MassiveClient(massive_key)
-                for idx_ticker, display_name, mkt in [
+                # Always-on watchlist for the mobile UI. Lives alongside the
+                # bot's market-hours-gated scan so high-interest names are
+                # visible 24/7 (pre/post-market the bot writes 0 stock zones).
+                # Curated for: index/commodity benchmarks, the Mag-7 you
+                # actually trade, and high-options-volume single names where
+                # SNR-zone setups tend to fire (MU/AMD/SMCI/COIN/MSTR/PLTR).
+                # Adding tickers here scales endpoint cost roughly linearly —
+                # keep the list focused.
+                SUPPLEMENTAL_TICKERS = [
+                    # Benchmarks
                     ("I:SPX", "I:SPX", "stock"),
                     ("SPY", "SPY", "stock"),
+                    ("QQQ", "QQQ", "stock"),
+                    ("IWM", "IWM", "stock"),
                     ("C:XAUUSD", "GOLD", "forex"),
                     ("C:WTICOUSD", "OIL", "forex"),
-                ]:
+                    # Mag-7
+                    ("AAPL", "AAPL", "stock"),
+                    ("MSFT", "MSFT", "stock"),
+                    ("NVDA", "NVDA", "stock"),
+                    ("GOOGL", "GOOGL", "stock"),
+                    ("AMZN", "AMZN", "stock"),
+                    ("META", "META", "stock"),
+                    ("TSLA", "TSLA", "stock"),
+                    # High-options-volume single names
+                    ("AMD", "AMD", "stock"),
+                    ("MU", "MU", "stock"),
+                    ("SMCI", "SMCI", "stock"),
+                    ("AVGO", "AVGO", "stock"),
+                    ("COIN", "COIN", "stock"),
+                    ("MSTR", "MSTR", "stock"),
+                    ("PLTR", "PLTR", "stock"),
+                    ("NFLX", "NFLX", "stock"),
+                ]
+                for idx_ticker, display_name, mkt in SUPPLEMENTAL_TICKERS:
                     try:
                         price = massive.get_price(idx_ticker)
                         if not price:
@@ -583,7 +628,15 @@ def create_app():
 
         # Sort: activated first, then by score
         result.sort(key=lambda z: (0 if z["status"] == "activated" else 1, -z["bias_score"]))
-        return jsonify({"zones": result})
+        payload = json.dumps({"zones": result})
+        try:
+            rdb.setex(CACHE_KEY, CACHE_TTL, payload)
+        except Exception:
+            pass
+        resp = make_response(payload)
+        resp.headers["Content-Type"] = "application/json"
+        resp.headers["X-Cache"] = "MISS"
+        return resp
 
     @app.route("/api/ib/status")
     def api_ib_status_public():
