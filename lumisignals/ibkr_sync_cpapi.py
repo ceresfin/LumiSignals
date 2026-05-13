@@ -2457,9 +2457,17 @@ def main():
             # Check for pending orders to place
             check_order_requests(client)
 
-            # Monitor open spreads for TP/SL/time stop
-            if data.get("spreads"):
-                monitor_spreads(client, data["spreads"])
+            # Monitor open spreads for TP/SL/time stop — DISABLED.
+            # The close path (build_close_spread_order) uses CPAPI combo
+            # orders which fail silently: IB returns "Submitted" but never
+            # executes. With monitor_spreads running, every sync tick re-
+            # fired the close attempt, generating a notification each
+            # time and accumulating zombie orders at IB (saw 54 stale
+            # MES Markets + 4 SPX legs in one inventory). Re-enable only
+            # after rewriting _close_spread to use two-leg singles like
+            # orb_butterfly_handler does.
+            # if data.get("spreads"):
+            #     monitor_spreads(client, data["spreads"])
 
         except Exception as e:
             logger.exception("Sync error: %s", e)  # include traceback — past silent failures wasted hours
