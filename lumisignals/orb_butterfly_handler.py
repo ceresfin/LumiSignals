@@ -74,11 +74,22 @@ def _save(rdb, bid: str, state: dict):
 
 
 def _telegram(text: str):
+    """Send to Telegram + log. Used for the user-facing milestones we
+    actually want a phone ping for: entry filled and final close."""
     try:
         from .supabase_client import send_telegram_message
         send_telegram_message(text)
     except Exception as e:
         logger.debug("butterfly telegram error: %s", e)
+    logger.info("[butterfly] %s", text.replace("\n", " | "))
+
+
+def _quiet(text: str):
+    """Log-only notification — captures every state-machine transition for
+    debugging without pinging the user's phone. Used for intermediate
+    steps (queued, retries, partial fills, salvage stages, pre-entry
+    abandons) that aren't worth a Telegram message on their own."""
+    logger.info("[butterfly] %s", text.replace("\n", " | "))
 
 
 def _0dte_expiry() -> str:
@@ -228,7 +239,7 @@ def queue_butterfly(rdb, payload: dict) -> str:
         "credit_current_step": 0,
     }
     _save(rdb, bid, state)
-    _telegram(
+    _quiet(
         f"🦋 *Butterfly queued* {state['ticker']} {direction}\n"
         f"K1/K2/K3: `{state['long_strike']:.0f}/{state['body_strike']:.0f}/{state['wing_strike']:.0f}`\n"
         f"Debit cap: `${state['debit_target']:.2f}` Credit tgt: `${state['credit_target']:.2f}`"
@@ -248,7 +259,7 @@ def _phase_queued(client, rdb, state):
         state["phase"] = "ABANDONED"
         state["abandon_reason"] = f"debit window closed ({DEBIT_CUTOFF_ET} ET)"
         _save(rdb, bid, state)
-        _telegram(f"🦋 *Abandoned* — debit window closed before placement")
+        _quiet(f"🦋 *Abandoned* — debit window closed before placement")
         return
 
     expiry = _0dte_expiry() if state["expiry"] == "0DTE" else state["expiry"]
@@ -260,7 +271,7 @@ def _phase_queued(client, rdb, state):
         if state["debit_retries"] >= DEBIT_RETRY_MAX:
             state["phase"] = "ABANDONED"
             state["abandon_reason"] = "could not resolve option conids"
-            _telegram(f"🦋 *Abandoned* — option conid lookup failed")
+            _quiet(f"🦋 *Abandoned* — option conid lookup failed")
         _save(rdb, bid, state)
         return
     state["debit_conids"] = {"long": long_conid, "short": short_conid}
@@ -277,7 +288,7 @@ def _phase_queued(client, rdb, state):
         if state["debit_retries"] >= DEBIT_RETRY_MAX:
             state["phase"] = "ABANDONED"
             state["abandon_reason"] = "no live quotes for option legs"
-            _telegram(f"🦋 *Abandoned* — couldn't fetch live quotes")
+            _quiet(f"🦋 *Abandoned* — couldn't fetch live quotes")
         _save(rdb, bid, state)
         return
 
@@ -338,7 +349,7 @@ def _phase_queued(client, rdb, state):
         if state["debit_retries"] >= DEBIT_RETRY_MAX:
             state["phase"] = "ABANDONED"
             state["abandon_reason"] = "place_order failed for one or both legs"
-            _telegram(f"🦋 *Abandoned* — leg placement failed")
+            _quiet(f"🦋 *Abandoned* — leg placement failed")
         _save(rdb, bid, state)
         return
 
@@ -352,7 +363,7 @@ def _phase_queued(client, rdb, state):
     mode_label = {"marketable": "MARKETABLE (cheap)",
                   "patient_120": "PATIENT @ $1.20 net",
                   "patient_cap": f"PATIENT @ ${state['debit_target']:.2f} cap"}.get(mode, mode)
-    _telegram(
+    _quiet(
         f"🦋 *Debit legged in* — {mode_label}\n"
         f"Net mid was `${net_mid:.2f}`, targeting `${target_net:.2f}`\n"
         f"BUY `{state['long_strike']:.0f}` @ `${long_price:.2f}` (order {long_oid})\n"
@@ -401,13 +412,13 @@ def _phase_debit_legged(client, rdb, state):
             except Exception: pass
             _close_leg_at_market(client, long_conid, "SELL", qty)
             state["abandon_reason"] = "partial fill: only long filled, closed at market"
-            _telegram(f"🦋 *Partial fill* — only long filled, sold at market")
+            _quiet(f"🦋 *Partial fill* — only long filled, sold at market")
         else:
             try: client.cancel_order(state["debit_long_oid"])
             except Exception: pass
             _close_leg_at_market(client, short_conid, "BUY", qty)
             state["abandon_reason"] = "partial fill: only short filled, closed at market"
-            _telegram(f"🦋 *Partial fill* — only short filled, bought back at market")
+            _quiet(f"🦋 *Partial fill* — only short filled, bought back at market")
         state["phase"] = "ABANDONED"
         _save(rdb, bid, state)
         return
@@ -425,11 +436,11 @@ def _phase_debit_legged(client, rdb, state):
                 state["phase"] = "ABANDONED"
                 state["abandon_reason"] = "marketable order didn't fill (twice)"
                 _save(rdb, bid, state)
-                _telegram(f"🦋 *Abandoned* — marketable order didn't fill in {LEG_FILL_TIMEOUT_S}s, twice")
+                _quiet(f"🦋 *Abandoned* — marketable order didn't fill in {LEG_FILL_TIMEOUT_S}s, twice")
             else:
                 state["phase"] = "QUEUED"
                 _save(rdb, bid, state)
-                _telegram(f"🦋 No fill in {LEG_FILL_TIMEOUT_S}s — retrying ({state['debit_retries']}/{DEBIT_RETRY_MAX})")
+                _quiet(f"🦋 No fill in {LEG_FILL_TIMEOUT_S}s — retrying ({state['debit_retries']}/{DEBIT_RETRY_MAX})")
         return
 
     # Patient mode (patient_120 / patient_cap) — sit on the limit until cutoff
@@ -443,7 +454,7 @@ def _phase_debit_legged(client, rdb, state):
             f"patient limit @ net ${state.get('debit_target_net', 0):.2f} never filled by {DEBIT_CUTOFF_ET} ET"
         )
         _save(rdb, bid, state)
-        _telegram(
+        _quiet(
             f"🦋 *Abandoned* — patient `${state.get('debit_target_net',0):.2f}` "
             f"never filled by {DEBIT_CUTOFF_ET} ET"
         )
@@ -512,7 +523,7 @@ def _phase_watching(client, rdb, state, spx_price):
     state["credit_legged_at"] = datetime.now(timezone.utc).isoformat()
     state["phase"] = "CREDIT_LEGGED"
     _save(rdb, bid, state)
-    _telegram(
+    _quiet(
         f"🦋 *Credit legged in* (SPX={spx_price:.2f} ≥ {state['threshold_px']:.2f})\n"
         f"SELL `{state['body_strike']:.0f}` @ `${sb:.2f}` (order {short_oid})\n"
         f"BUY `{state['wing_strike']:.0f}` @ `${la:.2f}` (order {long_oid})\n"
@@ -560,7 +571,7 @@ def _phase_credit_legged(client, rdb, state):
         _close_leg_at_market(client, short_conid, "BUY", qty)
         state["phase"] = "SALVAGE"
         _save(rdb, bid, state)
-        _telegram(f"🦋 *Partial credit fill* — bought back orphan short at market, moving to salvage")
+        _quiet(f"🦋 *Partial credit fill* — bought back orphan short at market, moving to salvage")
         return
     if long_filled and not short_filled:
         try: client.cancel_order(state["credit_short_oid"])
@@ -568,7 +579,7 @@ def _phase_credit_legged(client, rdb, state):
         _close_leg_at_market(client, long_conid, "SELL", qty)
         state["phase"] = "SALVAGE"
         _save(rdb, bid, state)
-        _telegram(f"🦋 *Partial credit fill* — sold orphan long at market, moving to salvage")
+        _quiet(f"🦋 *Partial credit fill* — sold orphan long at market, moving to salvage")
         return
 
     # Neither filled
@@ -580,18 +591,18 @@ def _phase_credit_legged(client, rdb, state):
     if _now_et_hhmm() >= CREDIT_WINDOW_END_ET:
         state["phase"] = "SALVAGE"
         _save(rdb, bid, state)
-        _telegram(f"🦋 *Credit unfilled by {CREDIT_WINDOW_END_ET}* — moving to salvage")
+        _quiet(f"🦋 *Credit unfilled by {CREDIT_WINDOW_END_ET}* — moving to salvage")
     else:
         # Walk down the credit limit by $0.05 and retry
         state["credit_current_step"] += 1
         if state["credit_current_step"] * CREDIT_STEP >= (state["credit_target"] - CREDIT_FLOOR):
             state["phase"] = "SALVAGE"
             _save(rdb, bid, state)
-            _telegram(f"🦋 *Credit floor hit* (after {state['credit_current_step']} steps) — salvage")
+            _quiet(f"🦋 *Credit floor hit* (after {state['credit_current_step']} steps) — salvage")
         else:
             state["phase"] = "WATCHING"
             _save(rdb, bid, state)
-            _telegram(f"🦋 Credit no-fill, re-evaluating ({state['credit_current_step']}/$.05 steps)")
+            _quiet(f"🦋 Credit no-fill, re-evaluating ({state['credit_current_step']}/$.05 steps)")
 
 
 def _phase_salvage(client, rdb, state):
