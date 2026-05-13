@@ -28,7 +28,10 @@ SERVER_URL = os.environ.get("LUMISIGNALS_URL", "https://bot.lumitrade.ai")
 SYNC_KEY = os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026")
 CPAPI_URL = os.environ.get("CPAPI_BASE_URL", "https://localhost:5000/v1/api")
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
-SYNC_INTERVAL = 10
+SYNC_INTERVAL = 2  # was 10 — bookkeeping race window shrinks 5x.
+                   # Brackets at IB handle risk regardless of poll interval,
+                   # so we only need polling fast enough to keep the bot's
+                   # view of fills/positions current.
 
 
 # ─── Per-strategy futures position state ─────────────────────────────────
@@ -1717,172 +1720,91 @@ def check_order_requests(client):
                                     )
                             except Exception as e:
                                 logger.debug("notify_trade_closed failed: %s", e)
-                    elif direction == "BUY":
-                        order_payload = client.build_futures_order(fut_conid, "BUY", contracts, "MKT", tif="GTC")
-                        trade_result = client.place_order(order_payload)
-                        # Extract our specific entry order ID from the place_order
-                        # response so we can read THIS order's fill price (not
-                        # any other contract's fill that happened nearby).
+                    elif direction in ("BUY", "SELL"):
+                        # Atomic 3-order bracket: parent entry + SL child +
+                        # optional TP child, all wired by cOID/parentId in
+                        # ONE POST. IB holds children as PreSubmitted until
+                        # the parent fills, then activates them as OCA.
+                        # Position is never unprotected — eliminates the
+                        # ~2-3s window between entry fill and SL placement
+                        # that the previous sequential approach left open.
+                        #
+                        # Pre-trade SL pricing: Pine-supplied stop wins;
+                        # otherwise we pull a fresh quote and anchor on the
+                        # last price ± sl_points. Slippage of a tick or two
+                        # between this estimate and the actual fill costs
+                        # us at most a few dollars on the $25 stop budget —
+                        # immaterial against the risk of an unprotected
+                        # window during fast markets.
+                        if pine_stop > 0:
+                            sl_price = pine_stop
+                            quote_source = "pine"
+                        else:
+                            # Warm the IBeam subscription, then read a
+                            # fresh snapshot. Field 31=last, 84=bid, 86=ask.
+                            try:
+                                client._request("GET", "/iserver/marketdata/snapshot",
+                                                params={"conids": str(fut_conid),
+                                                        "fields": "31,84,86"})
+                                time.sleep(0.4)
+                                snap = client._request("GET", "/iserver/marketdata/snapshot",
+                                                       params={"conids": str(fut_conid),
+                                                               "fields": "31,84,86"})
+                            except Exception:
+                                snap = None
+                            last_price = 0.0
+                            if isinstance(snap, list) and snap:
+                                row = snap[0]
+                                for key in ("31", "84", "86"):
+                                    try:
+                                        v = float(row.get(key) or 0)
+                                        if v > 0:
+                                            last_price = v
+                                            break
+                                    except (TypeError, ValueError):
+                                        continue
+                            if not last_price:
+                                logger.error(
+                                    "Cannot price SL for %s %s [%s] — no quote from IBeam, "
+                                    "refusing to place unprotected entry",
+                                    direction, ticker, strategy_name,
+                                )
+                                continue
+                            sl_price = ((last_price - sl_points) if direction == "BUY"
+                                        else (last_price + sl_points))
+                            quote_source = f"config (anchor={last_price:.2f})"
+                        tp_price = pine_target if pine_target > 0 else 0
+
+                        bracket_payload = client.build_futures_bracket(
+                            fut_conid, direction, contracts,
+                            stop_price=sl_price,
+                            entry_type="MKT",
+                            target_price=tp_price if tp_price > 0 else None,
+                            tif="GTC",
+                        )
+                        trade_result = client.place_order(bracket_payload)
+
+                        # Response is an array of result objects in the same
+                        # order as the orders we posted: [entry, sl, tp?].
                         entry_order_id = ""
-                        if isinstance(trade_result, list) and trade_result:
-                            first = trade_result[0] if isinstance(trade_result[0], dict) else {}
-                            entry_order_id = str(first.get("order_id", "") or "")
+                        sl_order_id = ""
+                        tp_order_id = ""
+                        if isinstance(trade_result, list):
+                            if len(trade_result) >= 1 and isinstance(trade_result[0], dict):
+                                entry_order_id = str(trade_result[0].get("order_id", "") or "")
+                            if len(trade_result) >= 2 and isinstance(trade_result[1], dict):
+                                sl_order_id = str(trade_result[1].get("order_id", "") or "")
+                            if len(trade_result) >= 3 and isinstance(trade_result[2], dict):
+                                tp_order_id = str(trade_result[2].get("order_id", "") or "")
                         elif isinstance(trade_result, dict):
                             entry_order_id = str(trade_result.get("order_id", "") or "")
-                        # Place stop loss using the actual MES fill price.
-                        sl_order_id = ""
-                        sl_price = 0
-                        tp_order_id = ""
-                        tp_price = 0
-                        try:
-                            fill_info = client.get_order_fill(entry_order_id)
-                            fill_price = float(fill_info.get("avg_price") or 0)
-                            if fill_price > 0:
-                                # SECOND DEFENSE: verify IB actually shows the expected
-                                # direction (LONG for a BUY entry) before placing the
-                                # protective SELL STP. Without this check, a strat_pos
-                                # that doesn't reflect reality (cascade from an earlier
-                                # phantom) gets a STOP placed that can fire and CREATE
-                                # an unwanted position rather than close one.
-                                time.sleep(1)  # let IB position update propagate
-                                ib_qty = 0
-                                for item in client.get_positions():
-                                    if item.get("symbol") == ticker and item.get("sec_type") == "FUT":
-                                        ib_qty = int(item.get("quantity", 0))
-                                        break
-                                if ib_qty <= 0:
-                                    logger.error(
-                                        "PROTECTIVE STOP SKIPPED for %s [%s] BUY: expected LONG but IB qty=%+d",
-                                        ticker, strategy_name, ib_qty
-                                    )
-                                    try:
-                                        from .supabase_client import send_telegram_message
-                                        send_telegram_message(
-                                            f"⚠️ *Stop not placed* — {ticker} [{strategy_name}] BUY entry filled "
-                                            f"but IB shows qty `{ib_qty:+d}` (expected LONG). Skipping protective "
-                                            f"stop to avoid creating a phantom position."
-                                        )
-                                    except Exception:
-                                        pass
-                                else:
-                                    sl_price = pine_stop if pine_stop > 0 else (fill_price - sl_points)
-                                    # Bracket: SL is a child of the entry order. IB
-                                    # enforces OCO when paired with the TP child.
-                                    sl_payload = client.build_futures_order(
-                                        fut_conid, "SELL", contracts, "STP", sl_price,
-                                        tif="GTC", parent_id=entry_order_id,
-                                    )
-                                    sl_result = client.place_order(sl_payload)
-                                    if isinstance(sl_result, list) and sl_result:
-                                        first = sl_result[0] if isinstance(sl_result[0], dict) else {}
-                                        sl_order_id = str(first.get("order_id", "") or "")
-                                    elif isinstance(sl_result, dict):
-                                        sl_order_id = str(sl_result.get("order_id", "") or "")
-                                    logger.info("Stop loss: SELL %s @ %.2f (entry %.2f, ib_qty=%+d, source=%s, parent=%s) sl_id=%s",
-                                                ticker, sl_price, fill_price, ib_qty,
-                                                "pine" if pine_stop else "config",
-                                                entry_order_id, sl_order_id)
-                                    # Take-profit child if Pine sent a target — also
-                                    # bracketed to the entry for OCO with the SL.
-                                    if pine_target > 0:
-                                        tp_price = pine_target
-                                        tp_payload = client.build_futures_order(
-                                            fut_conid, "SELL", contracts, "LMT", tp_price,
-                                            tif="GTC", parent_id=entry_order_id,
-                                        )
-                                        tp_result = client.place_order(tp_payload)
-                                        if isinstance(tp_result, list) and tp_result:
-                                            first = tp_result[0] if isinstance(tp_result[0], dict) else {}
-                                            tp_order_id = str(first.get("order_id", "") or "")
-                                        elif isinstance(tp_result, dict):
-                                            tp_order_id = str(tp_result.get("order_id", "") or "")
-                                        logger.info("Take profit: SELL %s @ %.2f (parent=%s) tp_id=%s",
-                                                    ticker, tp_price, entry_order_id, tp_order_id)
-                            else:
-                                logger.error("Cannot place SL for %s: entry order %s not filled (status=%s)",
-                                              ticker, entry_order_id, fill_info.get("status", ""))
-                        except Exception as e:
-                            logger.error("Failed to place stop loss/target: %s", e)
-                    elif direction == "SELL":
-                        order_payload = client.build_futures_order(fut_conid, "SELL", contracts, "MKT", tif="GTC")
-                        trade_result = client.place_order(order_payload)
-                        # Same fill-attribution pattern as BUY above.
-                        entry_order_id = ""
-                        if isinstance(trade_result, list) and trade_result:
-                            first = trade_result[0] if isinstance(trade_result[0], dict) else {}
-                            entry_order_id = str(first.get("order_id", "") or "")
-                        elif isinstance(trade_result, dict):
-                            entry_order_id = str(trade_result.get("order_id", "") or "")
-                        sl_order_id = ""
-                        sl_price = 0
-                        tp_order_id = ""
-                        tp_price = 0
-                        try:
-                            fill_info = client.get_order_fill(entry_order_id)
-                            fill_price = float(fill_info.get("avg_price") or 0)
-                            if fill_price > 0:
-                                # SECOND DEFENSE: verify IB actually shows the expected
-                                # direction (SHORT for a SELL entry) before placing the
-                                # protective BUY STP. See BUY-path comment for context.
-                                time.sleep(1)
-                                ib_qty = 0
-                                for item in client.get_positions():
-                                    if item.get("symbol") == ticker and item.get("sec_type") == "FUT":
-                                        ib_qty = int(item.get("quantity", 0))
-                                        break
-                                if ib_qty >= 0:
-                                    logger.error(
-                                        "PROTECTIVE STOP SKIPPED for %s [%s] SELL: expected SHORT but IB qty=%+d",
-                                        ticker, strategy_name, ib_qty
-                                    )
-                                    try:
-                                        from .supabase_client import send_telegram_message
-                                        send_telegram_message(
-                                            f"⚠️ *Stop not placed* — {ticker} [{strategy_name}] SELL entry filled "
-                                            f"but IB shows qty `{ib_qty:+d}` (expected SHORT). Skipping protective "
-                                            f"stop to avoid creating a phantom position."
-                                        )
-                                    except Exception:
-                                        pass
-                                else:
-                                    sl_price = pine_stop if pine_stop > 0 else (fill_price + sl_points)
-                                    # Bracket: SL is a child of the entry order. IB
-                                    # enforces OCO when paired with the TP child.
-                                    sl_payload = client.build_futures_order(
-                                        fut_conid, "BUY", contracts, "STP", sl_price,
-                                        tif="GTC", parent_id=entry_order_id,
-                                    )
-                                    sl_result = client.place_order(sl_payload)
-                                    if isinstance(sl_result, list) and sl_result:
-                                        first = sl_result[0] if isinstance(sl_result[0], dict) else {}
-                                        sl_order_id = str(first.get("order_id", "") or "")
-                                    elif isinstance(sl_result, dict):
-                                        sl_order_id = str(sl_result.get("order_id", "") or "")
-                                    logger.info("Stop loss: BUY %s @ %.2f (entry %.2f, ib_qty=%+d, source=%s, parent=%s) sl_id=%s",
-                                                ticker, sl_price, fill_price, ib_qty,
-                                                "pine" if pine_stop else "config",
-                                                entry_order_id, sl_order_id)
-                                    # Take-profit child if Pine sent a target — also
-                                    # bracketed to the entry for OCO with the SL.
-                                    if pine_target > 0:
-                                        tp_price = pine_target
-                                        tp_payload = client.build_futures_order(
-                                            fut_conid, "BUY", contracts, "LMT", tp_price,
-                                            tif="GTC", parent_id=entry_order_id,
-                                        )
-                                        tp_result = client.place_order(tp_payload)
-                                        if isinstance(tp_result, list) and tp_result:
-                                            first = tp_result[0] if isinstance(tp_result[0], dict) else {}
-                                            tp_order_id = str(first.get("order_id", "") or "")
-                                        elif isinstance(tp_result, dict):
-                                            tp_order_id = str(tp_result.get("order_id", "") or "")
-                                        logger.info("Take profit: BUY %s @ %.2f (parent=%s) tp_id=%s",
-                                                    ticker, tp_price, entry_order_id, tp_order_id)
-                            else:
-                                logger.error("Cannot place SL for %s: entry order %s not filled (status=%s)",
-                                              ticker, entry_order_id, fill_info.get("status", ""))
-                        except Exception as e:
-                            logger.error("Failed to place stop loss/target: %s", e)
+
+                        logger.info(
+                            "Bracket %s %s %dx — entry=%s, sl=%s @ %.2f (%s), tp=%s",
+                            direction, ticker, contracts, entry_order_id,
+                            sl_order_id, sl_price, quote_source,
+                            f"{tp_order_id} @ {tp_price:.2f}" if tp_price > 0 else "none",
+                        )
                     else:
                         logger.error("Unknown futures direction: %s", direction)
                         continue

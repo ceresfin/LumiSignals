@@ -486,6 +486,86 @@ class CPAPIClient:
         return {"orders": [order]}
 
     @staticmethod
+    def build_futures_bracket(conid: int, entry_side: str, quantity: int,
+                              stop_price: float,
+                              entry_type: str = "MKT",
+                              entry_price: float = None,
+                              target_price: float = None,
+                              tif: str = "GTC",
+                              entry_coid: str = None) -> dict:
+        """Build an atomic 3-order bracket payload (parent + SL + optional TP).
+
+        CPAPI wires children to the parent by a customer-supplied cOID so the
+        whole bracket can be POSTed in one shot. IB then:
+          - holds the children as PreSubmitted until the parent fills,
+          - activates SL+TP as an OCA group on fill,
+          - cancels the children if the parent is cancelled.
+
+        Position is never unprotected — no race window between entry fill and
+        SL placement, no "stop skipped" branch needed.
+
+        Args:
+            conid: Front-month futures contract id.
+            entry_side: "BUY" or "SELL".
+            quantity: Contracts.
+            stop_price: Absolute price for the SL child (already
+                computed by caller — Pine target or quote-derived).
+            entry_type: "MKT" or "LMT". MKT is the default for 2n20-style
+                signals where execution speed matters more than price.
+            entry_price: Required when entry_type=="LMT". Ignored otherwise.
+            target_price: When > 0, include a TP child (LMT). When None
+                or 0, no TP is created — same behavior as the old code
+                which only placed TPs when Pine sent one.
+            tif: Time in force for all three orders.
+            entry_coid: Customer order id for the parent so the children
+                can reference it via parentId. Auto-generated if omitted.
+
+        Returns:
+            dict suitable for place_order(): {"orders": [parent, sl, tp?]}.
+        """
+        import uuid as _uuid
+        if entry_coid is None:
+            entry_coid = f"lumi_{_uuid.uuid4().hex[:12]}"
+
+        exit_side = "SELL" if entry_side == "BUY" else "BUY"
+
+        parent = {
+            "cOID": entry_coid,
+            "conid": conid,
+            "orderType": entry_type,
+            "side": entry_side,
+            "quantity": quantity,
+            "tif": tif,
+        }
+        if entry_type == "LMT" and entry_price is not None:
+            parent["price"] = entry_price
+
+        sl = {
+            "parentId": entry_coid,
+            "conid": conid,
+            "orderType": "STP",
+            "side": exit_side,
+            "quantity": quantity,
+            "price": stop_price,
+            "tif": tif,
+        }
+
+        orders = [parent, sl]
+        if target_price and target_price > 0:
+            tp = {
+                "parentId": entry_coid,
+                "conid": conid,
+                "orderType": "LMT",
+                "side": exit_side,
+                "quantity": quantity,
+                "price": target_price,
+                "tif": tif,
+            }
+            orders.append(tp)
+
+        return {"orders": orders}
+
+    @staticmethod
     def build_spread_order(sell_conid: int, buy_conid: int, quantity: int,
                            limit_price: float, is_credit: bool,
                            tif: str = "GTC") -> dict:
