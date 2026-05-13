@@ -2235,11 +2235,39 @@ def monitor_spreads(client, spreads: list):
             close_reason = f"TIME STOP — {dte} DTE remaining (limit: {time_stop_dte})"
 
         if close_reason:
+            # Dedup: after we fire a close order, the spread may still show
+            # open in IB for several seconds (broker propagation + fill
+            # latency). Without this guard, every sync tick during that
+            # window re-runs _close_spread, sending a new close order AND a
+            # new Telegram/push notification. At SYNC_INTERVAL=2s a single
+            # close was generating 5+ duplicate notifications.
+            dedup_rdb = _rdb()
+            close_key = (
+                f"ibkr:spread_closing:{symbol}:{expiration}:"
+                f"{spread.get('long_strike',0)}:{spread.get('short_strike',0)}:"
+                f"{spread.get('right','')}"
+            )
+            if dedup_rdb is not None:
+                try:
+                    if dedup_rdb.get(close_key):
+                        # Close already in flight — skip this tick.
+                        continue
+                    # 90s lock: long enough for fill + position propagation,
+                    # short enough to recover if the close failed silently.
+                    dedup_rdb.setex(close_key, 90, "1")
+                except Exception:
+                    pass
             logger.info("CLOSING %s %s: %s", symbol, spread_type, close_reason)
             try:
                 _close_spread(client, spread, close_reason)
             except Exception as e:
                 logger.error("Failed to close %s spread: %s", symbol, e)
+                # Clear the lock so the next tick can retry
+                if dedup_rdb is not None:
+                    try:
+                        dedup_rdb.delete(close_key)
+                    except Exception:
+                        pass
 
 
 def _close_spread(client, spread: dict, reason: str):
