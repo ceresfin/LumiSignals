@@ -13,6 +13,7 @@ import logging
 import os
 import sys
 import time
+from datetime import datetime, timezone
 
 import requests
 
@@ -315,6 +316,34 @@ def reconcile_strat_pos(ticker: str, ib_qty: int, caller: str = ""):
             except Exception:
                 pass
         if abs(tracked_net) > abs(ib_qty):
+            # Race protection: when a BUY/SELL has just been placed, the
+            # fill takes a few seconds to propagate to /portfolio/positions.
+            # During that window tracked is +1 but IB still reports 0 — and
+            # if we clear strat_pos here, the in-transit fill becomes an
+            # orphan when it eventually lands. Hold off on CLEAR_ALL while
+            # any tracked strat_pos is younger than 90s; the silent
+            # stop-fill case can wait one more tick.
+            now_utc = datetime.now(timezone.utc)
+            youngest_age_s = None
+            for k in keys:
+                try:
+                    s = json.loads(rdb.get(k) or "{}")
+                    opened_at = s.get("opened_at")
+                    if opened_at:
+                        ts = datetime.fromisoformat(opened_at.replace("Z", "+00:00"))
+                        age_s = (now_utc - ts).total_seconds()
+                        if youngest_age_s is None or age_s < youngest_age_s:
+                            youngest_age_s = age_s
+                except Exception:
+                    pass
+            if youngest_age_s is not None and youngest_age_s < 90:
+                logger.info(
+                    "RECONCILE %s: ib_qty=%+d tracked_net=%+d [%s] caller=%s "
+                    "decision=DEFER (youngest strat_pos %.1fs old — fill likely in transit)",
+                    ticker, ib_qty, tracked_net, ",".join(strat_breakdown),
+                    caller or "?", youngest_age_s,
+                )
+                return
             logger.info(
                 "RECONCILE %s: ib_qty=%+d tracked_net=%+d [%s] caller=%s decision=CLEAR_ALL (%d keys)",
                 ticker, ib_qty, tracked_net, ",".join(strat_breakdown),
