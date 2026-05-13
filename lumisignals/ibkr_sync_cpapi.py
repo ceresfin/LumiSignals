@@ -2442,7 +2442,7 @@ def main():
                 monitor_spreads(client, data["spreads"])
 
         except Exception as e:
-            logger.error("Sync error: %s", e)
+            logger.exception("Sync error: %s", e)  # include traceback — past silent failures wasted hours
 
         time.sleep(SYNC_INTERVAL)
 

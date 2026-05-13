@@ -166,14 +166,16 @@ class CPAPIClient:
                 "realized_pnl": float(pos.get("realizedPnl", 0)),
                 "con_id": int(pos.get("conid", 0)),
             }
-            # Options fields
+            # Options fields. CPAPI sometimes returns "multiplier": null
+            # (instead of omitting the key), so `dict.get(key, default)` would
+            # pass None to int() — fall back via `or` to handle that.
             if entry["sec_type"] == "OPT":
                 entry["expiration"] = pos.get("expiry", "")
                 entry["strike"] = float(pos.get("strike", 0))
                 entry["right"] = pos.get("putOrCall", "")
-                entry["multiplier"] = int(pos.get("multiplier", 100))
+                entry["multiplier"] = int(pos.get("multiplier") or 100)
             elif entry["sec_type"] == "FUT":
-                entry["multiplier"] = int(pos.get("multiplier", 5))
+                entry["multiplier"] = int(pos.get("multiplier") or 5)
 
             positions.append(entry)
         return positions
