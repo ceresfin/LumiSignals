@@ -35,7 +35,13 @@ logger = logging.getLogger(__name__)
 # Config
 GRANULARITY = "M2"  # 2-minute candles on Oanda
 CANDLE_COUNT = 15   # Pull 15 candles for analysis (need 10 for avg body + lookback)
-DEFAULT_SL_DOLLARS = 25.0  # Fixed stop loss per trade
+DEFAULT_SL_DOLLARS = 12.5  # Fixed stop loss per trade
+                            # Cut from $25 → $12.50 on 2026-05-14: today's
+                            # 16% win rate + 0.5 R:R said losses were
+                            # disproportionately large; tightening the
+                            # backstop bounds worst-case while leaving
+                            # position size roughly the same (both stop
+                            # distance and dollar risk halved in parallel).
 # Forex trades 24/5: Sunday 5PM ET through Friday 5PM ET
 # No session close flatten — forex has no maintenance break
 VWAP_CANDLE_GRAN = "M2"  # Same granularity for VWAP
@@ -254,12 +260,39 @@ class FXScalp2n20:
 
         # --- ENTRY LOGIC (only during trading window) ---
         if entries_allowed and not state.in_long and not state.in_short:
-            # BUY: above VWAP + green overwhelms red
-            if above_vwap and green_overwhelm:
-                self._open_position(state, "BUY", close, instrument)
-            # SELL: below VWAP + red overwhelms green
-            elif below_vwap and red_overwhelm:
-                self._open_position(state, "SELL", close, instrument)
+            # Dual trend gate: price must agree with BOTH VWAP and the
+            # 20-period EMA before a reversal pattern fires. The candle
+            # overwhelm pattern alone is too noisy on FX — most reversal
+            # candles in the "no-go zone" (mixed VWAP/EMA) are
+            # counter-trend chop that mean-reverts and stops out.
+            # Toggle via FX_2N20_TREND_FILTER=false to disable.
+            trend_filter_on = os.environ.get("FX_2N20_TREND_FILTER", "true").lower() != "false"
+            ema20 = self._calc_ema20(instrument) if trend_filter_on else None
+            if trend_filter_on and ema20 is None:
+                # EMA hasn't converged (cold start / no data) — skip safely
+                logger.info("FX_2N20 SKIP %s: EMA20 unavailable", instrument)
+            else:
+                above_ema = (close > ema20) if ema20 is not None else True
+                below_ema = (close < ema20) if ema20 is not None else True
+                # BUY: above VWAP + above EMA20 + green overwhelms red
+                if above_vwap and above_ema and green_overwhelm:
+                    self._open_position(state, "BUY", close, instrument)
+                elif green_overwhelm and trend_filter_on:
+                    # Log filter rejections so we can measure the gate's effect
+                    logger.info(
+                        "FX_2N20 SKIP BUY %s: price=%.5f vwap_ok=%s ema_ok=%s (ema20=%.5f)",
+                        instrument, close, above_vwap, above_ema,
+                        ema20 if ema20 else 0,
+                    )
+                # SELL: below VWAP + below EMA20 + red overwhelms green
+                elif below_vwap and below_ema and red_overwhelm:
+                    self._open_position(state, "SELL", close, instrument)
+                elif red_overwhelm and trend_filter_on:
+                    logger.info(
+                        "FX_2N20 SKIP SELL %s: price=%.5f vwap_ok=%s ema_ok=%s (ema20=%.5f)",
+                        instrument, close, below_vwap, below_ema,
+                        ema20 if ema20 else 0,
+                    )
 
     # _detect_overwhelm removed — uses shared detect_overwhelm() from overwhelm_detector.py
 
@@ -352,6 +385,47 @@ class FXScalp2n20:
         except Exception:
             return None
 
+    def _calc_ema20(self, instrument: str) -> Optional[float]:
+        """20-period EMA on the same 2-min candle cache VWAP uses.
+
+        Reuses self._vwap_cache so adding this filter doesn't double the
+        Oanda HTTP load. EMA(20) on 2-min bars = 40 min of trend memory,
+        which is the right horizon for a 2-min scalp's directional gate.
+        Returns None when we don't have enough closed candles to converge
+        (need ~60 for stable EMA at period 20).
+        """
+        try:
+            cached = self._vwap_cache.get(instrument)
+            now_ts = time.time()
+            if cached and (now_ts - cached[0]) < VWAP_CACHE_TTL:
+                candles = cached[1]
+            else:
+                candles = self.oanda.get_candles(instrument, GRANULARITY, VWAP_CANDLE_COUNT)
+                if candles:
+                    self._vwap_cache[instrument] = (now_ts, candles)
+            if not candles:
+                return None
+
+            closes = []
+            for c in candles:
+                if not c.get("complete", True):
+                    continue
+                cl = float(c.get("mid", {}).get("c", 0))
+                if cl > 0:
+                    closes.append(cl)
+            if len(closes) < 60:
+                return None
+            # Standard EMA: alpha = 2 / (N+1). Seeded with the SMA of the
+            # first N values, then iterated forward.
+            period = 20
+            alpha = 2.0 / (period + 1)
+            ema = sum(closes[:period]) / period
+            for px in closes[period:]:
+                ema = alpha * px + (1 - alpha) * ema
+            return ema
+        except Exception:
+            return None
+
     def _open_position(self, state: FXScalpState, direction: str, price: float, instrument: str):
         """Open a position with fixed $ stop loss."""
         pip_value, precision = get_pip_precision(instrument)
@@ -375,9 +449,14 @@ class FXScalp2n20:
         # First, pick a reasonable stop: ~2x ATR of 2-min candles
         # Or use fixed pip stop based on pair type
         if "JPY" in instrument:
-            stop_pips = 15  # ~15 pips for JPY pairs
+            stop_pips = 8   # was 15. Today's data showed avg loss 2.8 pips
         else:
-            stop_pips = 10  # ~10 pips for non-JPY
+            stop_pips = 5   # was 10. Avg EUR_USD loss 3.6 pips — backstop
+                            # only needs to catch outliers, candle exit
+                            # handles the typical case. Tighter SL paired
+                            # with halved sl_dollars keeps position size
+                            # ~unchanged (both numerator and denominator
+                            # of units = sl_$ / stop_pips × pip_cost halve).
 
         stop_distance = stop_pips * pip_value
 
