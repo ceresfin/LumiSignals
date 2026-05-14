@@ -32,8 +32,12 @@ logger = logging.getLogger(__name__)
 # Pairs the FX 4H strategy considers.  Keep in sync with the backtester's
 # PAIRS list — single source of truth could live in regime.py later when
 # we have more than one regime-gated strategy.
-FX_4H_PAIRS = ["EUR_USD", "USD_JPY", "GBP_USD", "USD_CHF",
-                "AUD_USD", "USD_CAD", "NZD_USD"]
+# EUR_USD and GBP_USD excluded — both lost money in the 24mo backtest
+# (EUR_USD -$5K, GBP_USD -$31K) even with the regime filter on, so
+# they're not in the FX 4H universe.  Kept here as documentation:
+# if either pair gets re-added later, the regime runner here AND
+# DEFAULT_PAIRS in lumisignals/fx_trend_4h.py must be updated together.
+FX_4H_PAIRS = ["USD_JPY", "USD_CHF", "AUD_USD", "USD_CAD", "NZD_USD"]
 STRATEGY_KEY = "fx_4h"
 REDIS_KEY_PATTERN = "regime:{strategy}:{pair}"
 HISTORY_MAX = 26   # ~half a year of weekly entries kept per pair

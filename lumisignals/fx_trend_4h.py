@@ -38,8 +38,11 @@ from .regime import week_anchor, to_et, pip_factor, RegimeFingerprint
 logger = logging.getLogger(__name__)
 
 # ─── Strategy constants ───────────────────────────────────────────────────
-DEFAULT_PAIRS = ["EUR_USD", "USD_JPY", "GBP_USD", "USD_CHF",
-                  "AUD_USD", "USD_CAD", "NZD_USD"]
+# EUR_USD and GBP_USD excluded from the universe — both were net
+# losers in 24mo backtest even with the regime filter on
+# (EUR_USD -$5K, GBP_USD -$31K).  The correlation group below is a
+# defensive belt-and-suspenders in case they ever come back in.
+DEFAULT_PAIRS = ["USD_JPY", "USD_CHF", "AUD_USD", "USD_CAD", "NZD_USD"]
 GRANULARITY = "H4"
 CANDLE_FETCH_COUNT = 240         # ~40 days of H4 — enough for EMA(20),
                                   # ATR(14), and a clean monthly VWAP.
