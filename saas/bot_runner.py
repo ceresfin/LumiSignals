@@ -633,6 +633,37 @@ def run_bot_for_user(user_data, stop_check):
         except Exception as e:
             log(f"[2n20_FX] Setup error: {e}")
 
+    # --- FX Intraday 4H Trend Strategy (paper launch) ---
+    # Regime-gated 4H trend strategy validated at +$25K net over 24mo
+    # backtest.  Reads regime:fx_4h:{pair} from Redis to know which
+    # pairs are currently eligible; the weekly cron updates that state
+    # every Sunday at the FX rollover.
+    fx_4h = None
+    if not user_data.get("dry_run", True) and os.environ.get("FX_4H_ENABLED", "true").lower() != "false":
+        try:
+            from lumisignals.fx_trend_4h import FXTrend4H
+
+            def fx_4h_signal_cb(sig):
+                log(f"[FX_4H] {sig.get('direction','')} {sig.get('instrument','')} "
+                    f"@ {sig.get('entry', 0):.5f}  SL={sig.get('stop',0):.5f} "
+                    f"TP={sig.get('target',0):.5f}")
+                try:
+                    import redis as _rdb
+                    rdb = _rdb.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+                    import json as _json
+                    from datetime import datetime as _dt2, timezone as _tz2
+                    sig["timestamp"] = _dt2.now(_tz2.utc).isoformat()
+                    rdb.lpush("fx_trend_4h:signals", _json.dumps(sig))
+                    rdb.ltrim("fx_trend_4h:signals", 0, 99)
+                except Exception:
+                    pass
+
+            fx_4h = FXTrend4H(oanda, signal_callback=fx_4h_signal_cb)
+            log(f"[FX_4H] Trend strategy active — {len(fx_4h.pairs)} pairs, "
+                f"risk ${fx_4h.risk_per_trade:.0f}/trade")
+        except Exception as e:
+            log(f"[FX_4H] Setup error: {e}")
+
     # --- 2n20 MES Futures Scalp (server-side) ---
     # Disabled by default: TradingView's Pine Script alert is the source for MES
     # signals because the IB account lacks a CME real-time market data subscription,
@@ -679,6 +710,23 @@ def run_bot_for_user(user_data, stop_check):
                     logger.debug("[2n20_MES] Scan error: %s", e)
             _stop_event.wait(10)
         log("[Thread-2n20] Stopped")
+
+    def run_fx_4h_thread():
+        """Slow loop: FX 4H trend.  Polls every 60s; the strategy's own
+        per-bar dedup ensures it only fires entries on newly closed 4H
+        bars.  Exit checks (Friday flat, EMA invalidation) run every
+        minute too — cheap, and means we don't sit on a stale state
+        between 4H closes if the regime flips."""
+        if fx_4h is None:
+            return
+        log("[Thread-FX4H] Started — polling every 60s")
+        while not _stop_event.is_set():
+            try:
+                fx_4h.scan_all()
+            except Exception as e:
+                logger.debug("[FX_4H] Scan error: %s", e)
+            _stop_event.wait(60)
+        log("[Thread-FX4H] Stopped")
 
     def run_htf_thread():
         """Slow loop: HTF levels strategies. Each model runs at its own cadence."""
@@ -756,6 +804,11 @@ def run_bot_for_user(user_data, stop_check):
 
     if models:
         t = threading.Thread(target=run_htf_thread, name="HTF", daemon=True)
+        t.start()
+        threads.append(t)
+
+    if fx_4h:
+        t = threading.Thread(target=run_fx_4h_thread, name="FX4H", daemon=True)
         t.start()
         threads.append(t)
 
