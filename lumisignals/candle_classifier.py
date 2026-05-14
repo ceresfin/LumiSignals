@@ -324,6 +324,18 @@ def classify_candle_series(candles: List[CandleData]) -> CandleClassification:
     return _classify_basic(candles[-1])
 
 
+# Zone-trigger quality gates.  Without these, classify_for_zone fires
+# on weak partial-match patterns and doji-shaped bars — meaning a 5m
+# "Hanging Man" with a 5% body could trigger a SELL.  The April 17
+# audit showed three HTF FX trades fired in 25 minutes; two of them
+# were weak setups that would've been filtered out here.  The 2n20
+# overwhelm path has equivalent guards (min_body_pct=30); this brings
+# HTF Levels in line.
+MIN_PATTERN_STRENGTH = 80     # TA-Lib returns 0-100; require a clean match
+MIN_TRIGGER_BODY_PCT = 0.30   # Trigger bar's body must be ≥ 30% of range
+                                # (reject doji-shaped reversals)
+
+
 # Patterns valid at demand zones (bullish reversals)
 DEMAND_PATTERN_FUNCS = {
     "CDLHAMMER", "CDLENGULFING", "CDLMORNINGSTAR", "CDLPIERCING",
@@ -379,6 +391,12 @@ def classify_for_zone(candles: List[CandleData], zone_type: str) -> Optional[Can
     else:
         body_pct = upper_wick_pct = lower_wick_pct = 0.0
 
+    # Early reject: trigger bar must have a real body.  A doji-shaped
+    # bar matching a "Harami" or "Hanging Man" carries thin evidence
+    # of a real reversal, especially on 5m FX bars.
+    if body_pct < MIN_TRIGGER_BODY_PCT:
+        return None
+
     detected = []
     for func_name in allowed_funcs:
         try:
@@ -387,12 +405,17 @@ def classify_for_zone(candles: List[CandleData], zone_type: str) -> Optional[Can
                 continue
             result = func(opens, highs, lows, closes)
             last_val = int(result[-1])
-            if last_val != 0:
-                direction = "bullish" if last_val > 0 else "bearish"
-                if direction == expected_direction:
-                    name = PATTERN_NAMES.get(func_name, func_name.replace("CDL", ""))
-                    strength = abs(last_val) / 100.0
-                    detected.append((name, direction, strength))
+            if last_val == 0:
+                continue
+            # Reject partial-match TA-Lib hits — anything below the
+            # quality floor isn't a clean enough pattern to act on.
+            if abs(last_val) < MIN_PATTERN_STRENGTH:
+                continue
+            direction = "bullish" if last_val > 0 else "bearish"
+            if direction == expected_direction:
+                name = PATTERN_NAMES.get(func_name, func_name.replace("CDL", ""))
+                strength = abs(last_val) / 100.0
+                detected.append((name, direction, strength))
         except Exception:
             pass
 
