@@ -728,6 +728,29 @@ def run_bot_for_user(user_data, stop_check):
             _stop_event.wait(60)
         log("[Thread-FX4H] Stopped")
 
+    def run_oanda_close_sync_thread():
+        """Sweep Oanda's closed-trade history every 5 minutes and upsert
+        each trade into the Supabase trades table.  Fills the recording
+        gap for strategies (like HTF Levels) that place via Oanda native
+        brackets and let the broker handle the exit — no bot code is
+        observing the close, so without this sweep the trades never
+        land in the user-facing trades table."""
+        if user_data.get("dry_run", True):
+            return
+        log("[Thread-OandaSync] Started — polling closed trades every 5 min")
+        from lumisignals.oanda_trade_sync import sync_closed_trades
+        # First sweep happens immediately so a fresh restart picks up any
+        # closes that landed while the bot was down.
+        ran_once = False
+        while not _stop_event.is_set():
+            try:
+                sync_closed_trades(oanda)
+            except Exception as e:
+                logger.debug("[OandaSync] Sweep error: %s", e)
+            ran_once = True
+            _stop_event.wait(300)
+        log("[Thread-OandaSync] Stopped")
+
     def run_htf_thread():
         """Slow loop: HTF levels strategies. Each model runs at its own cadence."""
         log("[Thread-HTF] Started — levels strategies running independently")
@@ -809,6 +832,12 @@ def run_bot_for_user(user_data, stop_check):
 
     if fx_4h:
         t = threading.Thread(target=run_fx_4h_thread, name="FX4H", daemon=True)
+        t.start()
+        threads.append(t)
+
+    if not user_data.get("dry_run", True):
+        t = threading.Thread(target=run_oanda_close_sync_thread,
+                              name="OandaSync", daemon=True)
         t.start()
         threads.append(t)
 
