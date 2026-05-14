@@ -31,6 +31,8 @@ type RegimePairState = {
 
 type StrategyView = {
   name: string;
+  subtitle?: string;
+  description?: string;
   universe: string[];
   eligible_count: number;
   total_count: number;
@@ -183,11 +185,19 @@ export default function Strategies() {
           return (
             <View key={sid} style={styles.strategySection}>
               <View style={styles.strategyHeader}>
-                <Text style={styles.strategyName}>{s.name}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.strategyName}>{s.name}</Text>
+                  {s.subtitle ? (
+                    <Text style={styles.strategySubtitle}>{s.subtitle}</Text>
+                  ) : null}
+                </View>
                 <Text style={styles.strategyCount}>
                   {s.eligible_count}/{s.total_count} ACTIVE
                 </Text>
               </View>
+              {s.description ? (
+                <Text style={styles.strategyDescription}>{s.description}</Text>
+              ) : null}
               {sortedPairs.length === 0 ? (
                 <Text style={styles.emptyText}>
                   No regime data yet — first run is scheduled for Sunday 17:00 ET.
@@ -227,7 +237,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 8,
   },
-  strategyName: { fontSize: 18, fontWeight: '600', color: Colors.dark },
+  strategyName: { fontSize: 20, fontWeight: '700', color: Colors.dark, letterSpacing: 0.3 },
+  strategySubtitle: {
+    fontSize: 11, fontWeight: '600', color: Colors.textLight,
+    letterSpacing: 0.7, textTransform: 'uppercase', marginTop: 2,
+  },
+  strategyDescription: {
+    fontSize: 13, lineHeight: 19, color: Colors.textMedium,
+    marginBottom: 12, marginTop: 4,
+  },
   strategyCount: {
     fontSize: 12, fontWeight: '700', color: Colors.olive,
     letterSpacing: 0.5,

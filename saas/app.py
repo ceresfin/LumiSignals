@@ -2175,7 +2175,16 @@ def create_app():
         return jsonify({
             "strategies": {
                 "fx_4h": {
-                    "name": "FX Intraday 4H",
+                    "name": "Stillwater",
+                    "subtitle": "FX Intraday 4H",
+                    "description": (
+                        "Trend continuation on 4-hour bars, restricted "
+                        "to low-volatility pairs in range-bound regimes. "
+                        "Enters when an overwhelm candle aligns with the "
+                        "20 EMA, weekly VWAP, and monthly VWAP. "
+                        "Stops at 1.5× ATR, targets 2:1 R:R, "
+                        "$1,000 risk per trade."
+                    ),
                     "universe": FX_4H_PAIRS,
                     "eligible_count": eligible,
                     "total_count": len(FX_4H_PAIRS),
