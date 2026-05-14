@@ -33,6 +33,13 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="strategies"
+        options={{
+          title: 'Strategies',
+          tabBarIcon: ({ color }) => <IconSymbol size={24} name="slider.horizontal.3" color={color} />,
+        }}
+      />
+      <Tabs.Screen
         name="settings"
         options={{
           title: 'Settings',

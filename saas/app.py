@@ -2148,6 +2148,42 @@ def create_app():
     def health():
         return jsonify({"status": "ok", "service": "lumisignals-bot"})
 
+    @app.route("/api/strategies/regime")
+    def api_strategies_regime():
+        """Per-strategy regime state for each pair.
+
+        Reads the state written by saas.regime_runner.recompute() from
+        Redis (regime:{strategy}:{pair}).  The mobile Strategies tab
+        polls this; the bot's entry path also gates on the same data.
+        """
+        import redis as _redis
+        rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+        # Single strategy for now — when we add more (2n20, options),
+        # we discover them by scanning regime:*:* keys.
+        from saas.regime_runner import FX_4H_PAIRS, REDIS_KEY_PATTERN
+        out_pairs = {}
+        for pair in FX_4H_PAIRS:
+            raw = rdb.get(REDIS_KEY_PATTERN.format(strategy="fx_4h", pair=pair))
+            if not raw:
+                continue
+            try:
+                state = json.loads(raw)
+                out_pairs[pair] = state
+            except Exception:
+                continue
+        eligible = sum(1 for s in out_pairs.values() if s.get("eligible"))
+        return jsonify({
+            "strategies": {
+                "fx_4h": {
+                    "name": "FX Intraday 4H",
+                    "universe": FX_4H_PAIRS,
+                    "eligible_count": eligible,
+                    "total_count": len(FX_4H_PAIRS),
+                    "pairs": out_pairs,
+                },
+            },
+        })
+
     # -----------------------------------------------------------------------
     # SNR / Trend Comparison API
     # -----------------------------------------------------------------------
