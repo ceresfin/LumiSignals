@@ -90,8 +90,8 @@ def fetch_range(client: OandaClient, instrument: str,
     out: list[Bar] = []
     cursor = start
     # Granularity → maximum span per page so we stay under 5000 bars.
-    span_days = {"M5": 14, "M15": 40, "M30": 80, "H1": 160, "H4": 800}.get(
-        granularity, 14)
+    span_days = {"M5": 14, "M15": 40, "M30": 80, "H1": 160,
+                   "H4": 800, "D": 1500}.get(granularity, 14)
     while cursor < end:
         page_end = min(end, cursor + timedelta(days=span_days))
         url = (f"/v3/instruments/{instrument}/candles?"
@@ -124,9 +124,11 @@ def fetch_range(client: OandaClient, instrument: str,
             cursor = page_end + timedelta(seconds=1)
         else:
             # Granularity-aware step forward
-            step = {"M5": timedelta(minutes=5),
+            step = {"M5":  timedelta(minutes=5),
                     "M15": timedelta(minutes=15),
-                    "H1": timedelta(hours=1)}.get(
+                    "H1":  timedelta(hours=1),
+                    "H4":  timedelta(hours=4),
+                    "D":   timedelta(days=1)}.get(
                         granularity, timedelta(minutes=5))
             cursor = page_last + step
     return out
@@ -136,24 +138,25 @@ def fetch_range(client: OandaClient, instrument: str,
 @dataclass
 class Level:
     """A pivot-derived S/R level, plus the timestamp at which it became
-    a 'level' (PIVOT_LOOKBACK bars after the pivot bar)."""
+    a 'level' (PIVOT_LOOKBACK bars after the pivot bar), plus the bar
+    indices in the *trigger* timeframe at which it became active and
+    later got touched.  The bar-index arrays are O(1) lookups inside
+    the simulator's inner loop."""
     ts: datetime
     price: float
     kind: str       # "resistance" or "support"
     tf: str         # "15m" or "1h"
+    active_from_idx: int = -1  # Index into trigger bars when confirmed
+    touched_at_idx: int = -1   # First index where price touched the level
 
 
 def detect_levels(bars: list[Bar], tf: str,
                    lookback: int = PIVOT_LOOKBACK) -> list[Level]:
-    """Return all confirmed pivot levels in chronological order.  A
-    pivot is confirmed `lookback` bars after it forms (no look-ahead
-    beyond that)."""
     out: list[Level] = []
     for i in range(lookback, len(bars) - lookback):
         window_h = [b.h for b in bars[i - lookback:i + lookback + 1]]
         window_l = [b.l for b in bars[i - lookback:i + lookback + 1]]
         if bars[i].h == max(window_h):
-            # Confirmed `lookback` bars later
             out.append(Level(
                 ts=bars[i + lookback].ts,
                 price=bars[i].h, kind="resistance", tf=tf,
@@ -166,36 +169,64 @@ def detect_levels(bars: list[Bar], tf: str,
     return out
 
 
-def active_zones(levels: list[Level], price_path: list[Bar],
-                  at_bar_idx: int) -> list[Level]:
-    """Return levels that have not yet been touched/penetrated by price.
-    Caller passes the current bar index so we only consider levels
-    confirmed at-or-before that bar."""
-    cur_ts = price_path[at_bar_idx].ts
-    # Levels confirmed by now
-    candidates = [l for l in levels if l.ts <= cur_ts]
-    out = []
-    for lvl in candidates:
-        # Check whether any bar between lvl.ts and cur_ts has crossed it
-        touched = False
-        # find the bar index >= lvl.ts (linear scan; could binary search)
-        for j in range(at_bar_idx, -1, -1):
-            if price_path[j].ts < lvl.ts:
-                break
-            b = price_path[j]
+def index_levels_against_bars(levels: list[Level],
+                               trigger_bars: list[Bar]) -> list[Level]:
+    """Precompute, for each level, the trigger-bar index at which it
+    becomes active (first trigger bar with ts >= level.ts) and the
+    first index at which price touches the level (level becomes used).
+    Replaces the O(B × L × B) per-call active_zones scan with O(1)
+    membership tests downstream.
+
+    Returns the same list mutated in place AND sorted by active_from_idx
+    so the simulator can advance through it efficiently.
+    """
+    # Sort trigger bars by ts (already in order, but be safe)
+    ts_list = [b.ts for b in trigger_bars]
+    n = len(trigger_bars)
+    for lvl in levels:
+        # Binary search for first index >= lvl.ts
+        lo, hi = 0, n
+        while lo < hi:
+            mid = (lo + hi) // 2
+            if ts_list[mid] < lvl.ts:
+                lo = mid + 1
+            else:
+                hi = mid
+        lvl.active_from_idx = lo
+        # Walk forward to find the first bar that touches/penetrates
+        lvl.touched_at_idx = n   # sentinel = never touched in window
+        for j in range(lo, n):
+            b = trigger_bars[j]
             if lvl.kind == "resistance" and b.h >= lvl.price:
-                # Touched after confirmation — but allow the confirming
-                # bar itself (we check from at_bar_idx backwards to lvl.ts)
-                if b.ts > lvl.ts:
-                    touched = True
-                    break
+                lvl.touched_at_idx = j
+                break
             if lvl.kind == "support" and b.l <= lvl.price:
-                if b.ts > lvl.ts:
-                    touched = True
-                    break
-        if not touched:
-            out.append(lvl)
-    return out
+                lvl.touched_at_idx = j
+                break
+    levels.sort(key=lambda l: l.active_from_idx)
+    return levels
+
+
+def levels_intersecting(levels_by_kind: dict[str, list[Level]],
+                          idx: int, price: float,
+                          tolerance: float) -> Optional[Level]:
+    """Return the first level whose price is within `tolerance` of
+    `price` AND is active at `idx` AND has been touched at exactly this
+    bar (so we trigger on the touch bar itself, not subsequent bars).
+
+    `levels_by_kind` should have separate sorted lists for "support"
+    and "resistance" — caller decides which to scan.
+    """
+    # Hot path — keep cheap
+    for lvl in levels_by_kind:
+        if lvl.active_from_idx > idx:
+            break   # remaining levels aren't active yet
+        if lvl.touched_at_idx != idx:
+            continue   # only fire on the touch bar
+        if abs(lvl.price - price) / lvl.price > tolerance:
+            continue
+        return lvl
+    return None
 
 
 # ─── ADX (used as the bias-direction signal) ───────────────────────────────
@@ -316,7 +347,17 @@ def simulate_variant(pair: str,
                       level_lists: dict[str, list[Level]],   # tf → levels
                       filter_on: bool,
                       exit_mode: str) -> list[Trade]:
-    """Walk forward through trigger_bars, generating trades."""
+    """Walk forward through trigger_bars, generating trades.
+
+    Maintains an "active pool" of confirmed-but-unbroken levels.  As we
+    advance through bars:
+      - New levels get added to the pool when their active_from_idx ≤ i.
+      - Levels get pruned when price closes beyond them by more than
+        zone tolerance (level is broken — drop it).
+      - A trigger fires when a still-active level has price within
+        tolerance of bar.close.  The level is consumed on first fire
+        (matches the bot's _placed_setups dedup).
+    """
     if len(trigger_bars) < 60:
         return []
     closes = [b.c for b in trigger_bars]
@@ -343,10 +384,28 @@ def simulate_variant(pair: str,
                 hi = mid - 1
         return best
 
+    # Build combined zone-level pool sorted by active_from_idx so we
+    # can advance with a single cursor.
+    zone_entries: list[tuple[Level, str, float]] = []
+    for zone_tf in ZONE_TFS:
+        tol = ZONE_TOLERANCE_PCT[zone_tf]
+        for lvl in level_lists[zone_tf]:
+            zone_entries.append((lvl, zone_tf, tol))
+    zone_entries.sort(key=lambda x: x[0].active_from_idx)
+    active_pool: list[tuple[Level, str, float]] = []
+    next_to_add = 0
+    consumed: set[int] = set()
+
     trades: list[Trade] = []
     open_trade: Optional[Trade] = None
 
     for i, bar in enumerate(trigger_bars):
+        # Advance active pool with newly-confirmed levels
+        while next_to_add < len(zone_entries) and \
+                zone_entries[next_to_add][0].active_from_idx <= i:
+            active_pool.append(zone_entries[next_to_add])
+            next_to_add += 1
+
         # Exit checks
         if open_trade is not None:
             t = open_trade
@@ -384,26 +443,29 @@ def simulate_variant(pair: str,
         if et.weekday() == 4 and et.hour >= FRIDAY_CUTOFF_HOUR_ET:
             continue
 
-        # Check each zone TF for a touched level
-        triggered: Optional[tuple[str, str, float, Level]] = None
-        for zone_tf in ZONE_TFS:
-            tol = ZONE_TOLERANCE_PCT[zone_tf]
-            active = active_zones(level_lists[zone_tf], trigger_bars, i)
-            for lvl in active:
-                if abs(bar.c - lvl.price) / lvl.price > tol:
-                    continue
-                # Zone touched.  Decide direction from level kind.
-                if lvl.kind == "support":
-                    direction = "BUY"
-                else:
-                    direction = "SELL"
-                triggered = (zone_tf, direction, lvl.price, lvl)
-                break
-            if triggered:
-                break
-        if not triggered:
+        # Sweep active pool: prune broken levels, find first match.
+        matched: Optional[tuple[Level, str, float]] = None
+        new_pool: list[tuple[Level, str, float]] = []
+        for entry in active_pool:
+            lvl, ztf, tol = entry
+            if id(lvl) in consumed:
+                continue
+            # Penetration check: level no longer holds
+            if lvl.kind == "resistance" and bar.c > lvl.price * (1 + tol):
+                consumed.add(id(lvl)); continue
+            if lvl.kind == "support" and bar.c < lvl.price * (1 - tol):
+                consumed.add(id(lvl)); continue
+            new_pool.append(entry)
+            # Touch check (only first match per bar)
+            if matched is None and abs(bar.c - lvl.price) / lvl.price <= tol:
+                matched = entry
+        active_pool = new_pool
+        if matched is None:
             continue
-        zone_tf, direction, zone_price, lvl = triggered
+        lvl, zone_tf, tol = matched
+        consumed.add(id(lvl))   # one fire per level
+        direction = "BUY" if lvl.kind == "support" else "SELL"
+        zone_price = lvl.price
 
         # Trigger pattern check — only allowed reversal patterns at
         # the zone, with the new strength+body filters toggleable.
@@ -526,15 +588,31 @@ def run_grid(end: datetime, months: int = 12,
               f"M15={len(pair_bars[pair]['M15'])} "
               f"H1={len(pair_bars[pair]['H1'])}", flush=True)
 
-    # Pre-build levels per pair (zone TFs are 15m + 1h)
-    pair_levels: dict[str, dict[str, list[Level]]] = {}
+    # Pre-build levels per pair (zone TFs are 15m + 1h).  Then index
+    # them against EACH trigger TF (M5, M15) so the simulator's inner
+    # loop becomes O(1) per bar instead of O(L × B).
+    pair_levels_raw: dict[str, dict[str, list[Level]]] = {}
     for pair in pairs:
-        pair_levels[pair] = {
+        pair_levels_raw[pair] = {
             "15m": detect_levels(pair_bars[pair]["M15"], "15m"),
             "1h":  detect_levels(pair_bars[pair]["H1"],  "1h"),
         }
-        print(f"[{pair}] levels: 15m={len(pair_levels[pair]['15m'])} "
-              f"1h={len(pair_levels[pair]['1h'])}", flush=True)
+        print(f"[{pair}] levels: 15m={len(pair_levels_raw[pair]['15m'])} "
+              f"1h={len(pair_levels_raw[pair]['1h'])}", flush=True)
+
+    # pair_levels_indexed[(pair, trigger_tf)][zone_tf] → list[Level]
+    pair_levels_indexed: dict[tuple, dict[str, list[Level]]] = {}
+    import copy
+    for pair in pairs:
+        for trig in TRIGGER_TFS:
+            print(f"[{pair}] indexing levels for trigger={trig} ...", flush=True)
+            indexed = {}
+            for zone_tf, levels in pair_levels_raw[pair].items():
+                # Deep-copy so per-trigger indexing doesn't clobber other variants
+                copies = [copy.copy(l) for l in levels]
+                indexed[zone_tf] = index_levels_against_bars(
+                    copies, pair_bars[pair][trig])
+            pair_levels_indexed[(pair, trig)] = indexed
 
     # Run variants
     results: list[dict] = []
@@ -553,7 +631,7 @@ def run_grid(end: datetime, months: int = 12,
                         trigger_bars=pair_bars[pair][trigger_tf],
                         trigger_tf=trigger_tf,
                         bias_bars=pair_bars[pair]["M15"],
-                        level_lists=pair_levels[pair],
+                        level_lists=pair_levels_indexed[(pair, trigger_tf)],
                         filter_on=filter_on,
                         exit_mode=exit_mode,
                     )
