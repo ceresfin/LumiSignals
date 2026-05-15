@@ -351,7 +351,10 @@ def create_app():
         # available. Building the response touches ~200 Polygon calls
         # across 19 supplemental tickers — ~25s cold, ~50ms warm.
         CACHE_KEY = "api:watchlist:zones:v2"
-        CACHE_TTL = 60
+        CACHE_TTL = 300   # 5 min — cold rebuild costs many Polygon calls
+                           # so we trade staleness for endpoint reliability.
+                           # The bot still writes fresh per-model watchlists
+                           # every cycle; this cache is only the API view.
         try:
             cached = rdb.get(CACHE_KEY)
             if cached:
@@ -438,12 +441,26 @@ def create_app():
                         projected_stop = round(zone_price - stop_distance, 5)
                     elif effective_dir == "SELL":
                         projected_stop = round(zone_price + stop_distance, 5)
-                    if _massive and effective_dir:
+                    # Skip the Polygon-backed target projection for FX
+                    # zones — they don't have meaningful Polygon S/R coverage
+                    # and the call adds ~1s per zone. FX zones fall through
+                    # to the 2R fallback below.
+                    is_fx_zone = "_" in (instrument or "")
+                    if _massive and effective_dir and not is_fx_zone:
                         tgt = _project_target(_massive, instrument, model,
                                               effective_dir, zone_price,
                                               stop_distance, atr)
                         if tgt is not None:
                             projected_target = round(tgt, 5)
+                    # Fallback: if no qualifying S/R level exists (or Massive
+                    # isn't reachable, or we skipped for FX), draw a 2R
+                    # target so the chart always has SOMETHING to show.
+                    if projected_target is None and effective_dir:
+                        rr_distance = 2 * stop_distance
+                        if effective_dir == "BUY":
+                            projected_target = round(zone_price + rr_distance, 5)
+                        elif effective_dir == "SELL":
+                            projected_target = round(zone_price - rr_distance, 5)
 
                 result.append({
                     "instrument": instrument,
@@ -547,7 +564,19 @@ def create_app():
                     ("PLTR", "PLTR", "stock"),
                     ("NFLX", "NFLX", "stock"),
                 ]
+                # Hard time budget for the supplemental loop. Each ticker
+                # costs ~5-10 Polygon calls; before this budget we observed
+                # the endpoint hanging >150s on a cold cache and returning
+                # nothing to mobile. Whatever ticker we're mid-flight on
+                # gets dropped if the budget elapses; the bot watchlist
+                # part above is guaranteed to make it through first.
+                import time as _supp_time
+                _supp_deadline = _supp_time.time() + 15.0
                 for idx_ticker, display_name, mkt in SUPPLEMENTAL_TICKERS:
+                    if _supp_time.time() > _supp_deadline:
+                        logger.info("watchlist/zones: supplemental budget "
+                                    "exhausted before %s", display_name)
+                        break
                     try:
                         price = massive.get_price(idx_ticker)
                         if not price:
@@ -605,6 +634,14 @@ def create_app():
                                                                   trade_dir, level, stop_dist, atr)
                                             if tgt is not None:
                                                 proj_target = round(tgt, 2)
+                                        # 2R fallback so the chart always
+                                        # has a target line.
+                                        if proj_target is None and trade_dir:
+                                            rr = 2 * stop_dist
+                                            if trade_dir == "BUY":
+                                                proj_target = round(level + rr, 2)
+                                            else:
+                                                proj_target = round(level - rr, 2)
                                     result.append({
                                         "instrument": display_name,
                                         "model": model,
@@ -725,8 +762,16 @@ def create_app():
         TICKER_MAP = {"GOLD": "C:XAUUSD", "OIL": "C:WTICOUSD"}
         poly_ticker = TICKER_MAP.get(ticker_upper, ticker_upper)
 
-        # Detect ticker type and format for Polygon
-        is_forex = "_" in ticker_upper
+        # Detect ticker type and format for Polygon.
+        # Accept BOTH "USD_CAD" and "USDCAD" — some callers (positions/trades
+        # nav) strip the underscore. A 6-letter all-alpha symbol that isn't
+        # in a stock-style mapping is treated as forex.
+        is_forex = (
+            "_" in ticker_upper
+            or poly_ticker.startswith("C:")
+            or (len(ticker_upper) == 6 and ticker_upper.isalpha()
+                and ticker_upper not in TICKER_MAP)
+        )
         if is_forex:
             poly_ticker = f"C:{ticker_upper.replace('_', '')}"
 
@@ -2155,11 +2200,12 @@ def create_app():
         Reads the state written by saas.regime_runner.recompute() from
         Redis (regime:{strategy}:{pair}).  The mobile Strategies tab
         polls this; the bot's entry path also gates on the same data.
+
+        Now also lists strategies that don't have a regime filter
+        (H1 Zone Scalp) so the tab can navigate to their charts.
         """
         import redis as _redis
         rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
-        # Single strategy for now — when we add more (2n20, options),
-        # we discover them by scanning regime:*:* keys.
         from saas.regime_runner import FX_4H_PAIRS, REDIS_KEY_PATTERN
         out_pairs = {}
         for pair in FX_4H_PAIRS:
@@ -2172,6 +2218,74 @@ def create_app():
             except Exception:
                 continue
         eligible = sum(1 for s in out_pairs.values() if s.get("eligible"))
+
+        # H1 Zone Scalp — no regime filter, but expose its universe + a
+        # lightweight per-pair active-bundle count from Oanda so the tab
+        # shows useful state. Heavy: this calls Oanda twice. Cache 30s in
+        # Redis so multiple Strategies-tab opens don't hammer the broker.
+        h1_zone_pairs: dict = {}
+        try:
+            from lumisignals.fx_h1_zone_scalp import DEFAULT_PAIRS as H1Z_PAIRS
+            cached = rdb.get("api:h1_zone:strategies_summary")
+            if cached:
+                h1_zone_pairs = json.loads(cached)
+            else:
+                # Fresh fetch
+                import psycopg2
+                with psycopg2.connect(os.environ.get(
+                    "DATABASE_URL",
+                    "postgresql://lumisignals:LumiBot2026@localhost/lumisignals_db",
+                )) as conn:
+                    cur = conn.cursor()
+                    cur.execute(
+                        "SELECT oanda_api_key, oanda_account_id, oanda_environment "
+                        "FROM users WHERE bot_active=true AND oanda_api_key IS NOT NULL "
+                        "ORDER BY id LIMIT 1")
+                    row = cur.fetchone()
+                if row:
+                    from lumisignals.oanda_client import OandaClient
+                    key, acct, env = row
+                    oa = OandaClient(account_id=acct, api_key=key,
+                                     environment=env or "practice")
+                    from collections import Counter
+                    counts = Counter()
+                    try:
+                        pend = oa._request("GET", f"/v3/accounts/{acct}/pendingOrders")
+                        for o in pend.get("orders", []):
+                            tag = ((o.get("clientExtensions") or {}).get("tag") or "")
+                            if not tag.startswith("scalp_h1zone:"): continue
+                            parts = tag.split(":")
+                            if len(parts) == 4:
+                                counts[(parts[2], "pending")] += 1
+                    except Exception:
+                        pass
+                    try:
+                        opn = oa._request("GET", f"/v3/accounts/{acct}/openTrades")
+                        for t in opn.get("trades", []):
+                            tag = ((t.get("clientExtensions") or {}).get("tag") or "")
+                            if not tag.startswith("scalp_h1zone:"): continue
+                            parts = tag.split(":")
+                            if len(parts) == 4:
+                                counts[(parts[2], "filled")] += 1
+                    except Exception:
+                        pass
+                    for p in H1Z_PAIRS:
+                        h1_zone_pairs[p] = {
+                            "pair": p,
+                            "pending_legs": counts.get((p, "pending"), 0),
+                            "filled_legs": counts.get((p, "filled"), 0),
+                        }
+                    rdb.setex("api:h1_zone:strategies_summary", 30,
+                              json.dumps(h1_zone_pairs))
+        except Exception as e:
+            logger.debug("h1_zone strategies summary failed: %s", e)
+            try:
+                from lumisignals.fx_h1_zone_scalp import DEFAULT_PAIRS as H1Z_PAIRS
+                for p in H1Z_PAIRS:
+                    h1_zone_pairs[p] = {"pair": p, "pending_legs": 0, "filled_legs": 0}
+            except Exception:
+                H1Z_PAIRS = []
+
         return jsonify({
             "strategies": {
                 "fx_4h": {
@@ -2189,8 +2303,352 @@ def create_app():
                     "eligible_count": eligible,
                     "total_count": len(FX_4H_PAIRS),
                     "pairs": out_pairs,
+                    "chart_strategy": "fx_4h",
+                },
+                "h1_zone": {
+                    "name": "H1 Zone Scalp",
+                    "subtitle": "FX 5m near H1 zones (paper)",
+                    "description": (
+                        "Limit-orders 2 pips inside H1 demand/supply zones "
+                        "when the 5m setup aligns with higher-TF ADX trend. "
+                        "Each signal places 4 trades targeting 25/50/75/100% "
+                        "of the distance to the opposing zone. Two trend "
+                        "filters run independently: α (15m ADX) and β (1h ADX). "
+                        "$10 risk per leg, paper-only."
+                    ),
+                    "universe": list(H1Z_PAIRS),
+                    "eligible_count": len(H1Z_PAIRS),
+                    "total_count": len(H1Z_PAIRS),
+                    "pairs": h1_zone_pairs,
+                    "chart_strategy": "h1_zone",
                 },
             },
+        })
+
+    @app.route("/api/adx/direction")
+    def api_adx_direction():
+        """ADX direction per TF for a single instrument.
+
+        Used by the mobile chart header to render trend arrows next to
+        the ticker (same look as the positions/watchlist rows).
+
+        Query params:
+          pair: e.g. EUR_USD or EURUSD (forex), MES (futures), SPY (stock)
+          tfs:  comma-separated TFs to compute. Default "5m,15m,1h".
+
+        Returns {tfs: {tf: "UP"|"DOWN"|"SIDE"}, pair, ts}.
+        """
+        pair_raw = (request.args.get("pair") or "").upper().strip()
+        if not pair_raw:
+            return jsonify({"error": "missing ?pair"}), 400
+        tfs_raw = request.args.get("tfs") or "5m,15m,1h"
+        tfs = [t.strip() for t in tfs_raw.split(",") if t.strip()]
+        if not tfs:
+            return jsonify({"error": "no tfs"}), 400
+
+        # Forex pairs may arrive as USD_CAD or USDCAD; normalize.
+        if "_" in pair_raw:
+            pair = pair_raw
+        elif len(pair_raw) == 6 and pair_raw.isalpha():
+            pair = pair_raw[:3] + "_" + pair_raw[3:]
+        else:
+            pair = pair_raw
+
+        # Map mobile-style TF labels → Oanda granularity codes
+        TF_OANDA = {
+            "1m": "M1", "2m": "M2", "5m": "M5", "15m": "M15", "30m": "M30",
+            "1h": "H1", "4h": "H4", "1d": "D", "1w": "W", "1mo": "M",
+        }
+
+        # For now this endpoint pulls Oanda candles (the H1Zone strategy
+        # universe). For non-forex instruments (MES, SPY), we'd add a
+        # Polygon fallback later; return SIDE so the UI shows neutral.
+        is_forex = ("_" in pair) or (len(pair_raw) == 6 and pair_raw.isalpha())
+        out = {tf: "SIDE" for tf in tfs}
+        if not is_forex:
+            return jsonify({"pair": pair, "tfs": out, "source": "neutral"})
+
+        try:
+            import psycopg2 as _pg
+            with _pg.connect(os.environ.get(
+                "DATABASE_URL",
+                "postgresql://lumisignals:LumiBot2026@localhost/lumisignals_db",
+            )) as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT oanda_api_key, oanda_account_id, oanda_environment "
+                    "FROM users WHERE bot_active=true AND oanda_api_key IS NOT NULL "
+                    "ORDER BY id LIMIT 1")
+                row = cur.fetchone()
+            if not row:
+                return jsonify({"pair": pair, "tfs": out, "source": "no-user"})
+            key, acct, env = row
+        except Exception as e:
+            return jsonify({"pair": pair, "tfs": out, "error": f"db: {e}"}), 200
+
+        from lumisignals.oanda_client import OandaClient
+        from lumisignals.untouched_levels import calculate_trend_direction
+        oa = OandaClient(account_id=acct, api_key=key, environment=env or "practice")
+
+        class _C:
+            __slots__ = ("high", "low", "close")
+            def __init__(self, h, l, c):
+                self.high, self.low, self.close = h, l, c
+
+        for tf in tfs:
+            gran = TF_OANDA.get(tf)
+            if not gran:
+                continue
+            try:
+                # FX trend uses N=15 structure. The minimum is 2N+2=32, but
+                # for the macro picture to be honest we need enough history
+                # for multiple confirmed pivot pairs — at low fetch counts
+                # the detector finds only recent micro-pivots and reports
+                # SIDE or the opposite of the true regime. 250 bars gives
+                # ~8 months of daily data (≈4-5 major pivots), and on lower
+                # TFs is just a few hours/days of extra context.
+                resp = oa._request(
+                    "GET",
+                    f"/v3/instruments/{pair}/candles"
+                    f"?granularity={gran}&count=250&price=M")
+                bars = []
+                for c in resp.get("candles", []):
+                    if not c.get("complete"):
+                        continue
+                    mid = c.get("mid") or {}
+                    try:
+                        bars.append(_C(float(mid["h"]), float(mid["l"]), float(mid["c"])))
+                    except Exception:
+                        continue
+                if len(bars) < 32:
+                    continue
+                direction, _val = calculate_trend_direction(bars, instrument=pair)
+                out[tf] = direction
+            except Exception:
+                continue
+
+        return jsonify({"pair": pair, "tfs": out, "source": "oanda"})
+
+    @app.route("/api/h1_zone/state")
+    def api_h1_zone_state():
+        """Live state for the H1 Zone Scalp strategy on one pair.
+
+        Returns:
+            {
+              pair, current_price,
+              zones: {d1, d2, s1, s2},
+              trend: {m15: "UP|DOWN|SIDE", h1: "..."},
+              bundles: [
+                {variant, direction, entry, stop,
+                 targets: {T1, T2, T3, T4}, legs_state: {T1: "pending"|"filled"|"closed", ...}}
+              ],
+              fills: [{time, label, variant, direction, price, pl, reason}]
+            }
+        """
+        pair = (request.args.get("pair") or "").upper().strip()
+        if not pair:
+            return jsonify({"error": "Missing ?pair"}), 400
+
+        # Get active user's Oanda creds (same pattern as bot_runner)
+        import psycopg2
+        try:
+            with psycopg2.connect(os.environ.get(
+                "DATABASE_URL",
+                "postgresql://lumisignals:LumiBot2026@localhost/lumisignals_db"
+            )) as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT oanda_api_key, oanda_account_id, oanda_environment "
+                    "FROM users WHERE bot_active=true AND oanda_api_key IS NOT NULL "
+                    "ORDER BY id LIMIT 1")
+                row = cur.fetchone()
+            if not row:
+                return jsonify({"error": "no active oanda user"}), 503
+            key, acct, env = row
+        except Exception as e:
+            return jsonify({"error": f"db: {e}"}), 500
+
+        from lumisignals.oanda_client import OandaClient
+        from lumisignals.untouched_levels import (
+            find_untouched_levels, calculate_trend_direction,
+        )
+        oa = OandaClient(account_id=acct, api_key=key, environment=env or "practice")
+
+        def _parse_candles(resp):
+            out = []
+            for c in resp.get("candles", []):
+                if not c.get("complete"):
+                    continue
+                mid = c.get("mid") or {}
+                try:
+                    out.append({
+                        "time": c.get("time"),
+                        "open": float(mid["o"]),
+                        "high": float(mid["h"]),
+                        "low":  float(mid["l"]),
+                        "close": float(mid["c"]),
+                    })
+                except Exception:
+                    continue
+            return out
+
+        # ── Candles + zones + trend ──
+        # Trend on 15m/1h uses N=15 structure for FX. Need enough history
+        # for multiple confirmed pivot pairs (small counts find micro
+        # pivots only and misread the macro regime). 250 bars covers it.
+        try:
+            h1 = _parse_candles(oa._request(
+                "GET", f"/v3/instruments/{pair}/candles?granularity=H1&count=30&price=M"))
+            m5 = _parse_candles(oa._request(
+                "GET", f"/v3/instruments/{pair}/candles?granularity=M5&count=2&price=M"))
+            m15 = _parse_candles(oa._request(
+                "GET", f"/v3/instruments/{pair}/candles?granularity=M15&count=250&price=M"))
+            h1_for_trend = _parse_candles(oa._request(
+                "GET", f"/v3/instruments/{pair}/candles?granularity=H1&count=250&price=M"))
+        except Exception as e:
+            return jsonify({"error": f"oanda candles: {e}"}), 502
+
+        current_price = m5[-1]["close"] if m5 else (h1[-1]["close"] if h1 else 0.0)
+        if h1:
+            highs = [b["high"] for b in reversed(h1)]
+            lows  = [b["low"]  for b in reversed(h1)]
+            s1, s2, d1, d2 = find_untouched_levels(highs, lows, current_price, lookback=10)
+        else:
+            s1 = s2 = d1 = d2 = None
+
+        class _C:
+            __slots__ = ("high", "low", "close")
+            def __init__(self, h, l, c):
+                self.high, self.low, self.close = h, l, c
+
+        m15_dir, _ = (calculate_trend_direction(
+            [_C(b["high"], b["low"], b["close"]) for b in m15], instrument=pair)
+            if len(m15) >= 32 else ("SIDE", 0.0))
+        h1_dir, _ = (calculate_trend_direction(
+            [_C(b["high"], b["low"], b["close"]) for b in h1_for_trend], instrument=pair)
+            if len(h1_for_trend) >= 32 else ("SIDE", 0.0))
+
+        # ── Active bundles: pending + open trades tagged for this pair ──
+        bundles_by_variant: dict = {}  # variant -> dict
+        try:
+            pend = oa._request("GET", f"/v3/accounts/{acct}/pendingOrders")
+            open_t = oa._request("GET", f"/v3/accounts/{acct}/openTrades")
+        except Exception as e:
+            pend = {"orders": []}
+            open_t = {"trades": []}
+
+        def _ingest_leg(variant, direction, label, entry, stop, target, state):
+            b = bundles_by_variant.setdefault(variant, {
+                "variant": variant,
+                "direction": direction,
+                "entry": entry,
+                "stop": stop,
+                "targets": {},
+                "legs_state": {},
+            })
+            b["targets"][label] = target
+            b["legs_state"][label] = state
+
+        for o in pend.get("orders", []):
+            if o.get("instrument") != pair:
+                continue
+            tag = ((o.get("clientExtensions") or {}).get("tag") or "")
+            if not tag.startswith("scalp_h1zone:"):
+                continue
+            parts = tag.split(":")
+            if len(parts) != 4:
+                continue
+            _, variant, _pair2, label = parts
+            try:
+                units = int(float(o.get("units", 0)))
+            except Exception:
+                continue
+            direction = "BUY" if units > 0 else "SELL"
+            entry = float(o.get("price", 0))
+            stop = float(((o.get("stopLossOnFill") or {}).get("price") or 0))
+            target = float(((o.get("takeProfitOnFill") or {}).get("price") or 0))
+            _ingest_leg(variant, direction, label, entry, stop, target, "pending")
+
+        for t in open_t.get("trades", []):
+            if t.get("instrument") != pair:
+                continue
+            tag = ((t.get("clientExtensions") or {}).get("tag") or "")
+            if not tag.startswith("scalp_h1zone:"):
+                continue
+            parts = tag.split(":")
+            if len(parts) != 4:
+                continue
+            _, variant, _pair2, label = parts
+            try:
+                units = int(float(t.get("currentUnits", 0)))
+            except Exception:
+                continue
+            direction = "BUY" if units > 0 else "SELL"
+            entry = float(t.get("price", 0))
+            stop = float(((t.get("stopLossOrder") or {}).get("price") or 0))
+            target = float(((t.get("takeProfitOrder") or {}).get("price") or 0))
+            _ingest_leg(variant, direction, label, entry, stop, target, "filled")
+
+        # ── Recent fills/closes (last 24h) ──
+        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+        since = (_dt.now(_tz.utc) - _td(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        until = (_dt.now(_tz.utc)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        fills = []
+        try:
+            idx = oa._request(
+                "GET",
+                f"/v3/accounts/{acct}/transactions?from={since}&to={until}&type=ORDER_FILL")
+            pages = idx.get("pages", [])
+            txs = []
+            for url in pages:
+                endpoint = "/v3/" + url.split("/v3/")[1]
+                page = oa._request("GET", endpoint)
+                txs.extend(page.get("transactions", []))
+        except Exception:
+            txs = []
+
+        for tx in txs:
+            if tx.get("instrument") != pair:
+                continue
+            order_id = tx.get("orderID")
+            # Trace tag back via the originating order's clientExtensions.
+            # Oanda includes orderExtensions or orderFilledExtensions on the
+            # ORDER_FILL transaction when the matched order had any.
+            tag = (((tx.get("orderFilledClientExtensions") or {})
+                    .get("tag")) or
+                   ((tx.get("clientExtensions") or {}).get("tag")) or
+                   "")
+            if not tag.startswith("scalp_h1zone:"):
+                continue
+            parts = tag.split(":")
+            if len(parts) != 4:
+                continue
+            _, variant, _pair2, label = parts
+            try:
+                units = int(float(tx.get("units", 0)))
+            except Exception:
+                units = 0
+            direction = "BUY" if units > 0 else "SELL"
+            price = float(tx.get("price", 0))
+            reason = tx.get("reason", "")
+            pl = float(tx.get("pl", 0))
+            fills.append({
+                "time": tx.get("time", ""),
+                "label": label,
+                "variant": variant,
+                "direction": direction,
+                "price": price,
+                "pl": pl,
+                "reason": reason,
+            })
+
+        return jsonify({
+            "pair": pair,
+            "current_price": current_price,
+            "zones": {"s1": s1, "s2": s2, "d1": d1, "d2": d2},
+            "trend": {"m15": m15_dir, "h1": h1_dir},
+            "bundles": list(bundles_by_variant.values()),
+            "fills": fills,
         })
 
     # -----------------------------------------------------------------------

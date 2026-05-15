@@ -41,7 +41,8 @@
     // Strategy display rules
     const IS_2N20 = STRATEGY.includes('2n20') || STRATEGY.includes('vwap');
     const IS_ORB = STRATEGY.includes('orb');
-    const IS_HTF = STRATEGY.includes('htf') || STRATEGY.includes('levels') || (!IS_2N20 && !IS_ORB && !ENTRY_PRICE);
+    const IS_H1_ZONE = STRATEGY.includes('h1_zone') || STRATEGY.includes('scalp_h1zone');
+    const IS_HTF = STRATEGY.includes('htf') || STRATEGY.includes('levels') || (!IS_2N20 && !IS_ORB && !IS_H1_ZONE && !ENTRY_PRICE);
     const SHOW_LEVELS = !IS_2N20 && !IS_ORB;
     const SHOW_VWAP = IS_2N20;  // VWAP only for 2n20 strategy
     const HAS_TRADE = ENTRY_PRICE !== null;  // Only show entry/exit/stop if it's an actual trade
@@ -218,6 +219,203 @@
         }
         const ATR = computeAtr(unique, 14);
 
+        // ─── ADX Dashboard overlay (mirrors the user's TradingView Pine) ───
+        // Computes Direction / Trend / Momentum / ADX / Quadrant on the
+        // candles already loaded for the current TF, renders as a top-right
+        // panel. Updates on every TF switch since the chart reloads candles.
+        (function renderAdxDashboard() {
+          if (!unique || unique.length < 65) return;  // need ~50 for SMA + 14 for DMI/RSI
+
+          // ── DMI / ADX (Wilder smoothing) ─────────────────────────────
+          function wilderSmooth(arr, p) {
+            if (arr.length < p) return [];
+            const out = [arr.slice(0, p).reduce((a, b) => a + b, 0)];
+            for (let i = p; i < arr.length; i++) {
+              out.push(out[out.length - 1] - out[out.length - 1] / p + arr[i]);
+            }
+            return out;
+          }
+          function computeDmi(bars, period) {
+            if (bars.length < period + 2) return null;
+            const plusDM = [], minusDM = [], trs = [];
+            for (let i = 1; i < bars.length; i++) {
+              const h = bars[i].high, l = bars[i].low, pc = bars[i - 1].close;
+              const ph = bars[i - 1].high, pl = bars[i - 1].low;
+              const up = h - ph, dn = pl - l;
+              plusDM.push((up > dn && up > 0) ? up : 0);
+              minusDM.push((dn > up && dn > 0) ? dn : 0);
+              trs.push(Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc)));
+            }
+            const sPlus = wilderSmooth(plusDM, period);
+            const sMinus = wilderSmooth(minusDM, period);
+            const sTr = wilderSmooth(trs, period);
+            if (!sTr.length || sTr[sTr.length - 1] === 0) return null;
+            const plusDI = 100 * sPlus[sPlus.length - 1] / sTr[sTr.length - 1];
+            const minusDI = 100 * sMinus[sMinus.length - 1] / sTr[sTr.length - 1];
+            // ADX = Wilder-smoothed DX
+            const dx = [];
+            for (let i = 0; i < sPlus.length; i++) {
+              if (sTr[i] === 0) continue;
+              const pdi = 100 * sPlus[i] / sTr[i];
+              const mdi = 100 * sMinus[i] / sTr[i];
+              if (pdi + mdi > 0) dx.push(100 * Math.abs(pdi - mdi) / (pdi + mdi));
+            }
+            let adx = 0;
+            if (dx.length >= period) {
+              const a = wilderSmooth(dx, period);
+              // wilderSmooth returns a running sum; divide by period to
+              // get the Wilder MOVING AVERAGE that ADX requires (0-100).
+              adx = a[a.length - 1] / period;
+            }
+            return { plusDI, minusDI, adx };
+          }
+
+          // ── SMA / RSI on close ───────────────────────────────────────
+          const closes = unique.map(b => b.close);
+          function sma(arr, p) {
+            if (arr.length < p) return null;
+            const s = arr.slice(-p);
+            return s.reduce((a, b) => a + b, 0) / p;
+          }
+          function rsi(arr, p) {
+            if (arr.length <= p) return null;
+            let gains = 0, losses = 0;
+            for (let i = 1; i <= p; i++) {
+              const c = arr[i] - arr[i - 1];
+              if (c > 0) gains += c; else losses -= c;
+            }
+            let ag = gains / p, al = losses / p;
+            for (let i = p + 1; i < arr.length; i++) {
+              const c = arr[i] - arr[i - 1];
+              const g = c > 0 ? c : 0, l2 = c < 0 ? -c : 0;
+              ag = (ag * (p - 1) + g) / p;
+              al = (al * (p - 1) + l2) / p;
+            }
+            if (al === 0) return 100;
+            const rs = ag / al;
+            return 100 - 100 / (1 + rs);
+          }
+
+          const dmi = computeDmi(unique, 14);
+          if (!dmi) return;
+          const sma50 = sma(closes, 50);
+          const rsi14 = rsi(closes, 14);
+          if (sma50 == null || rsi14 == null) return;
+
+          // ── Direction: structure for FX, +DI vs -DI for everything else ─
+          // FX detection mirrors the backend: underscore form (USD_JPY) or
+          // 6-letter alpha (USDJPY).
+          const isFx = (TICKER.includes('_') && TICKER.split('_').length === 2)
+                       || (TICKER.length === 6 && /^[A-Z]+$/.test(TICKER));
+
+          function structureDirection(bars, n) {
+            if (!bars || bars.length < 2 * n + 2) return { dir: 'SIDEWAYS', note: 'not enough bars' };
+            const highs = [], lows = [];
+            for (let i = n; i < bars.length - n; i++) {
+              const h = bars[i].high, l = bars[i].low;
+              let isH = true, isL = true;
+              for (let j = 1; j <= n; j++) {
+                if (!(bars[i-j].high < h && bars[i+j].high < h)) isH = false;
+                if (!(bars[i-j].low  > l && bars[i+j].low  > l)) isL = false;
+                if (!isH && !isL) break;
+              }
+              if (isH) highs.push(h);
+              if (isL) lows.push(l);
+            }
+            if (highs.length < 2 || lows.length < 2) {
+              return { dir: 'SIDEWAYS', note: highs.length + 'H/' + lows.length + 'L pivots' };
+            }
+            const hh = highs[highs.length-1] > highs[highs.length-2];
+            const hl = lows[lows.length-1] > lows[lows.length-2];
+            const lh = highs[highs.length-1] < highs[highs.length-2];
+            const ll = lows[lows.length-1] < lows[lows.length-2];
+            if (hh && hl) return { dir: 'UP',   note: 'HH+HL' };
+            if (lh && ll) return { dir: 'DOWN', note: 'LH+LL' };
+            return { dir: 'SIDEWAYS', note: (hh ? 'HH' : 'LH') + '+' + (hl ? 'HL' : 'LL') };
+          }
+
+          let direction, trendValue;
+          let directionUp = false, directionDown = false;
+          if (isFx) {
+            const struct = structureDirection(unique, 15);
+            direction = struct.dir;
+            directionUp = direction === 'UP';
+            directionDown = direction === 'DOWN';
+            // Repurpose the Trend cell to show structure context (HH+HL etc.)
+            trendValue = struct.note;
+          } else {
+            directionUp = dmi.plusDI > dmi.minusDI + 2;
+            directionDown = dmi.plusDI < dmi.minusDI - 2;
+            direction = directionUp ? 'UP' : directionDown ? 'DOWN' : 'SIDEWAYS';
+            trendValue = (dmi.plusDI - (dmi.minusDI + 2)).toFixed(2);
+          }
+
+          function momentumLabel(adx) {
+            if (adx >= 50) return 'Unusually Very Strong';
+            if (adx >= 30) return 'Very Strong';
+            if (adx >= 25) return 'Strong';
+            if (adx >= 20) return 'Moderate';
+            if (adx >= 15) return 'Weak';
+            if (adx >= 10) return 'Very Weak';
+            return 'No to Very Weak';
+          }
+          function momentumColor(adx) {
+            if (adx >= 50) return 'rgb(204,85,0)';     // burnt orange
+            if (adx >= 30) return 'rgb(255,193,37)';   // gold
+            if (adx >= 25) return 'rgb(238,201,0)';    // light gold
+            if (adx >= 20) return 'rgb(210,180,140)';  // tan
+            if (adx >= 15) return 'rgb(188,170,150)';  // taupe
+            if (adx >= 10) return 'rgb(210,200,190)';  // light taupe
+            return '#fff';
+          }
+          const dirColor = directionUp ? '#3E7F6B' : directionDown ? '#C26A6A' : '#ffeb3b';
+          // trendValue is a number for non-FX (positive=green) and a string
+          // for FX (HH+HL / LH+LL — colored to match the direction).
+          const trendColor = (typeof trendValue === 'number')
+            ? (trendValue >= 0 ? '#3E7F6B' : '#C26A6A')
+            : dirColor;
+          const trendDisplay = (typeof trendValue === 'number')
+            ? trendValue.toFixed(2)
+            : trendValue;
+          const momColor = momentumColor(dmi.adx);
+
+          const aboveSMA = unique[unique.length - 1].close > sma50;
+          const overbought50 = rsi14 >= 50;
+          let qLabel, qColor;
+          if (aboveSMA && overbought50)      { qLabel = 'Q1 Purple'; qColor = '#9c27b0'; }
+          else if (aboveSMA && !overbought50) { qLabel = 'Q2 Green';  qColor = '#3E7F6B'; }
+          else if (!aboveSMA && overbought50) { qLabel = 'Q3 Red';    qColor = '#C26A6A'; }
+          else                                { qLabel = 'Q4 Yellow'; qColor = '#ffeb3b'; }
+          const qSubtitle = (aboveSMA ? 'Above SMA' : 'Below SMA') + ' · RSI ' + rsi14.toFixed(2);
+
+          // ── Render ───────────────────────────────────────────────────
+          const panel = document.createElement('div');
+          panel.id = 'adx-dashboard';
+          // Remove old panel if present (TF switches re-run this)
+          const old = document.getElementById('adx-dashboard');
+          if (old) old.remove();
+          panel.style.cssText =
+            'position:absolute;top:8px;right:8px;background:rgba(30,30,30,0.92);' +
+            'padding:8px 10px;border-radius:8px;border:1px solid #555;' +
+            'font-family:ui-monospace,Menlo,monospace;font-size:11px;' +
+            'color:#ddd;z-index:1000;min-width:170px;';
+          function row(label, value, valueColor) {
+            return '<div style="display:flex;justify-content:space-between;gap:14px;padding:1px 0">' +
+              '<span style="color:#888">' + label + '</span>' +
+              '<span style="color:' + valueColor + ';font-weight:600">' + value + '</span>' +
+              '</div>';
+          }
+          panel.innerHTML =
+            '<div style="color:#888;font-size:9px;letter-spacing:0.6px;margin-bottom:4px">ADX DASHBOARD · ' + TIMESPAN + '</div>' +
+            row('Direction', direction, dirColor) +
+            row('Trend', trendDisplay, trendColor) +
+            row('Momentum', momentumLabel(dmi.adx), momColor) +
+            row('ADX', dmi.adx.toFixed(2), momColor) +
+            row('Quadrant', qLabel, qColor) +
+            '<div style="color:#666;font-size:9px;margin-top:3px;text-align:right">' + qSubtitle + '</div>';
+          document.body.appendChild(panel);
+        })();
+
         // Helper: draw a horizontal shaded band [low, high] over the chart's
         // full time range using a Baseline series.
         function drawBand(low, high, fillColor, label, labelColor) {
@@ -304,6 +502,91 @@
             axisLabelVisible: true,
             title: 'SL',
           });
+        }
+
+        // H1 Zone Scalp: fetch live bundles + trend + fills, overlay T1/T2/T3/T4
+        // per active bundle, an ADX badge in the corner, and fill markers on
+        // the candles where legs actually filled or closed.
+        if (IS_H1_ZONE) {
+          try {
+            const zResp = await fetch('/api/h1_zone/state?pair=' + TICKER);
+            const z = await zResp.json();
+
+            // (ADX trend badge removed — the general ADX Dashboard panel
+            //  rendered earlier already shows the chart-TF direction.)
+
+            // For each active bundle, draw entry/stop + 4 target lines.
+            // Color per variant — alpha (15m trend) blue, beta (1h trend) purple.
+            // Pending = thin/dashed; filled = solid/thicker; closed = skipped.
+            const VARIANT_COLOR = { alpha: '#90caf9', beta: '#ce93d8' };
+            (z.bundles || []).forEach((b) => {
+              const vc = VARIANT_COLOR[b.variant] || '#90caf9';
+              const vTag = b.variant.charAt(0).toUpperCase();   // 'A' or 'B'
+
+              // Entry — only draw if not already drawn by URL params
+              if (!HAS_TRADE && b.entry) {
+                candleSeries.createPriceLine({
+                  price: b.entry,
+                  color: b.direction === 'BUY' ? '#3E7F6B' : '#C26A6A',
+                  lineWidth: 2,
+                  lineStyle: LightweightCharts.LineStyle.Solid,
+                  axisLabelVisible: true,
+                  title: 'Entry ' + vTag,
+                });
+              }
+              if (!HAS_TRADE && b.stop) {
+                candleSeries.createPriceLine({
+                  price: b.stop,
+                  color: '#ff1744',
+                  lineWidth: 1,
+                  lineStyle: LightweightCharts.LineStyle.Dotted,
+                  axisLabelVisible: true,
+                  title: 'SL ' + vTag,
+                });
+              }
+
+              ['T1','T2','T3','T4'].forEach((tl) => {
+                const price = b.targets && b.targets[tl];
+                if (!price) return;
+                const stateStr = (b.legs_state && b.legs_state[tl]) || 'pending';
+                if (stateStr === 'closed') return;  // already exited
+                const lineStyle = tl === 'T4'
+                  ? LightweightCharts.LineStyle.LargeDashed
+                  : LightweightCharts.LineStyle.Solid;
+                candleSeries.createPriceLine({
+                  price: price,
+                  color: vc,
+                  lineWidth: stateStr === 'filled' ? 2 : 1,
+                  lineStyle: lineStyle,
+                  axisLabelVisible: true,
+                  title: tl + ' ' + vTag,
+                });
+              });
+            });
+
+            // Fill markers on the candle nearest each fill timestamp.
+            if (z.fills && z.fills.length) {
+              const markers = z.fills.map((f) => {
+                let ts = 0;
+                try { ts = Math.floor(new Date(f.time).getTime() / 1000) + ET_OFFSET; }
+                catch (e) { ts = 0; }
+                const isClose = f.reason && f.reason !== 'LIMIT_ORDER';
+                return {
+                  time: ts,
+                  position: f.direction === 'BUY' ? 'belowBar' : 'aboveBar',
+                  color: isClose
+                    ? (f.pl > 0 ? '#3E7F6B' : (f.pl < 0 ? '#C26A6A' : '#888'))
+                    : (b => '#ffeb3b')(),
+                  shape: isClose ? 'square' : 'circle',
+                  text: f.label + ' ' + f.variant.charAt(0).toUpperCase()
+                        + (isClose && f.pl ? ' ' + (f.pl > 0 ? '+' : '') + f.pl.toFixed(2) : ''),
+                };
+              }).filter(m => m.time > 0).sort((a, b) => a.time - b.time);
+              if (markers.length) candleSeries.setMarkers(markers);
+            }
+          } catch (e) {
+            console.log('H1Zone overlay error:', e);
+          }
         }
 
         // ORB: draw opening range (first 15-min bar after 9:30 AM ET)

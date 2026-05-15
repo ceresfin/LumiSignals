@@ -441,7 +441,20 @@ def get_closed_trades(client: OandaClient, count: int = 50) -> list:
         # Fallback: match by instrument + entry price
         if not trade_entry.get("strategy"):
             trade_entry = _enrich_by_instrument(trade_entry, instrument, entry, planned_sl)
-        # Only include trades placed by the bot (matched in signal log)
+        # Last-resort attribution: read the trade's clientExtensions tag
+        # directly. fx_h1_zone_scalp sets tradeClientExtensions on order
+        # placement, which Oanda propagates onto the resulting trade.
+        # Tag shape: "scalp_h1zone:{variant}:{pair}:{label}".
+        if not trade_entry.get("strategy"):
+            tag = ((trade.get("clientExtensions") or {}).get("tag") or "")
+            if tag.startswith("scalp_h1zone"):
+                parts = tag.split(":")
+                if len(parts) == 4:
+                    trade_entry["strategy"] = "scalp_h1zone"
+                    trade_entry["strategy_id"] = "scalp_h1zone"
+                    trade_entry["model"] = parts[1]  # 'alpha' or 'beta'
+        # Only include trades placed by the bot (matched in signal log
+        # OR carrying a recognized clientExtensions tag).
         if sig or trade_entry.get("strategy"):
             result.append(trade_entry)
 

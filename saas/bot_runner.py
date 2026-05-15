@@ -604,7 +604,7 @@ def run_bot_for_user(user_data, stop_check):
 
     # --- 2n20 FX Scalp Strategy ---
     fx_scalp = None
-    if not user_data.get("dry_run", True):
+    if not user_data.get("dry_run", True) and os.environ.get("FX_2N20_ENABLED", "true").lower() != "false":
         try:
             from lumisignals.fx_scalp_2n20 import FXScalp2n20
             fx_sl = float(user_data.get("futures_stop_loss", 25))
@@ -663,6 +663,35 @@ def run_bot_for_user(user_data, stop_check):
                 f"risk ${fx_4h.risk_per_trade:.0f}/trade")
         except Exception as e:
             log(f"[FX_4H] Setup error: {e}")
+
+    # --- H1 Zone Scalp (alpha + beta, paper-only by design) ---
+    # 4 trades per signal (T1/T2/T3/T4 with runner-to-opposing-zone) at $10
+    # each, both 15m-trend (alpha) and 1h-trend (beta) fire independently.
+    # See lumisignals/fx_h1_zone_scalp.py header for the locked spec.
+    h1_zone = None
+    if not user_data.get("dry_run", True) and os.environ.get("FX_H1_ZONE_ENABLED", "false").lower() == "true":
+        try:
+            from lumisignals.fx_h1_zone_scalp import H1ZoneScalp
+
+            def h1_zone_signal_cb(sig):
+                log(f"[H1ZONE] {sig.get('strategy','')} {sig.get('direction','')} "
+                    f"{sig.get('instrument','')} @ {sig.get('entry',0):.5f} "
+                    f"stop={sig.get('stop',0):.5f}")
+                try:
+                    import redis as _rdb
+                    rdb = _rdb.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+                    import json as _json
+                    from datetime import datetime as _dt2, timezone as _tz2
+                    sig["timestamp"] = _dt2.now(_tz2.utc).isoformat()
+                    rdb.lpush("fx_h1_zone_scalp:signals", _json.dumps(sig))
+                    rdb.ltrim("fx_h1_zone_scalp:signals", 0, 99)
+                except Exception:
+                    pass
+
+            h1_zone = H1ZoneScalp(oanda, signal_callback=h1_zone_signal_cb)
+            log(f"[H1ZONE] Scalp strategy active — {len(h1_zone.pairs)} pairs × 2 variants")
+        except Exception as e:
+            log(f"[H1ZONE] Setup error: {e}")
 
     # --- 2n20 MES Futures Scalp (server-side) ---
     # Disabled by default: TradingView's Pine Script alert is the source for MES
@@ -727,6 +756,21 @@ def run_bot_for_user(user_data, stop_check):
                 logger.debug("[FX_4H] Scan error: %s", e)
             _stop_event.wait(60)
         log("[Thread-FX4H] Stopped")
+
+    def run_h1_zone_thread():
+        """H1 Zone Scalp loop. 30s cadence — frequent enough to catch wicks
+        on 5m bars and trail T4 promptly; cheap because Oanda candle reads
+        are sub-50ms per pair."""
+        if h1_zone is None:
+            return
+        log("[Thread-H1ZONE] Started — polling every 30s")
+        while not _stop_event.is_set():
+            try:
+                h1_zone.scan_all()
+            except Exception as e:
+                logger.debug("[H1ZONE] Scan error: %s", e)
+            _stop_event.wait(30)
+        log("[Thread-H1ZONE] Stopped")
 
     def run_oanda_close_sync_thread():
         """Sweep Oanda's closed-trade history every 5 minutes and upsert
@@ -832,6 +876,11 @@ def run_bot_for_user(user_data, stop_check):
 
     if fx_4h:
         t = threading.Thread(target=run_fx_4h_thread, name="FX4H", daemon=True)
+        t.start()
+        threads.append(t)
+
+    if h1_zone:
+        t = threading.Thread(target=run_h1_zone_thread, name="H1ZONE", daemon=True)
         t.start()
         threads.append(t)
 

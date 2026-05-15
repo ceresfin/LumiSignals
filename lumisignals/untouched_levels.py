@@ -91,6 +91,144 @@ def find_untouched_levels(highs: List[float], lows: List[float],
     return sup1, sup2, dem1, dem2
 
 
+def calculate_structure_direction(candles, n: int = 15) -> Tuple[str, float]:
+    """Trend direction from swing pivot structure (Dow Theory).
+
+    A bar is a swing HIGH if its high beats the N bars on each side; same
+    for swing LOW. Compares the last two of each:
+
+      UP   = Higher High AND Higher Low
+      DOWN = Lower High  AND Lower Low
+      SIDE = anything else (expanding range, coiling, or not enough pivots)
+
+    Returns (direction, strength) where strength is a 0-100 confidence:
+      100 = both highs and both lows agreed clearly
+       50 = only one of (highs / lows) agrees
+        0 = not enough pivots / fully mixed
+
+    The last N bars can't be confirmed yet (a pivot needs N bars on its
+    right). This is a real structural lag, not artificial.
+
+    Args:
+        candles: list of objects with .high/.low attributes, OR list of
+                 dicts with 'high'/'low' keys, oldest-first.
+        n: half-window for the pivot detector.
+
+    Designed as a drop-in replacement for calculate_adx_direction for
+    FX assets, where ADX's Wilder smoothing keeps single-bar volatility
+    spikes (e.g. BoJ intervention candles) in memory for ~27 daily bars
+    and pulls the +DI/-DI reading the wrong way.
+    """
+    def _h(b):
+        return b["high"] if isinstance(b, dict) else b.high
+
+    def _l(b):
+        return b["low"] if isinstance(b, dict) else b.low
+
+    if len(candles) < 2 * n + 2:
+        return "SIDE", 0.0
+
+    highs: List[Tuple[int, float]] = []
+    lows: List[Tuple[int, float]] = []
+    for i in range(n, len(candles) - n):
+        h = _h(candles[i])
+        l = _l(candles[i])
+        if all(_h(candles[i - j]) < h and _h(candles[i + j]) < h for j in range(1, n + 1)):
+            highs.append((i, h))
+        if all(_l(candles[i - j]) > l and _l(candles[i + j]) > l for j in range(1, n + 1)):
+            lows.append((i, l))
+
+    # In strong unidirectional moves, pivots stop forming because each bar
+    # has a worse extreme than the bar N back (the move dominates the
+    # required N-bar lookback). The detector can get stuck on pre-trend
+    # consolidation pivots and miss the entire move. Check for in-progress
+    # structure breaks: if current price has decisively broken outside the
+    # most recent confirmed pivot, that's a structure-in-progress signal.
+    def _close(b):
+        return b["close"] if isinstance(b, dict) else b.close
+    last_close = _close(candles[-1])
+    # Tolerance: must be beyond the prior pivot by enough that it isn't noise.
+    # Use the average range of the recent bars as a noise floor.
+    recent_ranges = [(_h(candles[i]) - _l(candles[i])) for i in range(max(0, len(candles) - 20), len(candles))]
+    avg_range = sum(recent_ranges) / len(recent_ranges) if recent_ranges else 0.0
+    break_buffer = max(avg_range * 0.5, 1e-9)
+
+    in_progress_up = in_progress_down = False
+    if highs and last_close > highs[-1][1] + break_buffer:
+        in_progress_up = True
+    if lows and last_close < lows[-1][1] - break_buffer:
+        in_progress_down = True
+
+    if len(highs) < 2 or len(lows) < 2:
+        # Not enough confirmed pivots — fall back to in-progress reading only.
+        if in_progress_up:
+            return "UP", 75.0
+        if in_progress_down:
+            return "DOWN", 75.0
+        return "SIDE", 0.0
+
+    hh = highs[-1][1] > highs[-2][1]
+    lh = highs[-1][1] < highs[-2][1]
+    hl = lows[-1][1] > lows[-2][1]
+    ll = lows[-1][1] < lows[-2][1]
+
+    # Strong move override: a confirmed HH+HL "uptrend" can become stale if
+    # price has since broken below the latest swing low (a fresh LL in
+    # progress that hasn't formed a new confirmed pivot yet — common in
+    # strong trends where pivots can't form because every bar dominates
+    # its N-bar lookback). Same logic mirrored for downtrends.
+    if hh and hl and in_progress_down:
+        return "DOWN", 75.0
+    if lh and ll and in_progress_up:
+        return "UP", 75.0
+
+    if hh and hl:
+        return "UP", 100.0
+    if lh and ll:
+        return "DOWN", 100.0
+
+    # Confirmed pivots disagree. Prefer the in-progress break if present;
+    # otherwise return SIDE.
+    if in_progress_down:
+        return "DOWN", 75.0
+    if in_progress_up:
+        return "UP", 75.0
+
+    # Partial agreement gets a 50 score so callers that want a soft signal
+    # can use it; the strict UP/DOWN classifier still returns SIDE.
+    return "SIDE", 50.0 if (hh or hl or lh or ll) else 0.0
+
+
+def _is_fx_instrument(instrument: str) -> bool:
+    """Heuristic: FX if instrument has the OANDA underscore form (USD_JPY)
+    or is a 6-letter alpha symbol (USDJPY)."""
+    if not instrument:
+        return False
+    s = instrument.upper().strip()
+    if "_" in s:
+        parts = s.split("_")
+        return len(parts) == 2 and all(p.isalpha() and len(p) == 3 for p in parts)
+    return len(s) == 6 and s.isalpha()
+
+
+def calculate_trend_direction(candles, instrument: str = "",
+                              adx_period: int = 14,
+                              structure_n: int = 15) -> Tuple[str, float]:
+    """Asset-aware trend direction.
+
+    FX → swing structure (N=15) because ADX's Wilder smoothing handles
+         single-bar BoJ-style spikes badly and pollutes +DI/-DI for weeks.
+    Everything else → +DI vs -DI ADX (the historical behavior).
+
+    Returns (direction, value) where:
+      - for FX: value is the structure confidence (0-100)
+      - for non-FX: value is the ADX numeric reading (0-100ish)
+    """
+    if _is_fx_instrument(instrument):
+        return calculate_structure_direction(candles, n=structure_n)
+    return calculate_adx_direction(candles, period=adx_period)
+
+
 def calculate_adx_direction(candles, period: int = 14) -> Tuple[str, float]:
     """Calculate ADX trend direction from candle data.
 

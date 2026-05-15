@@ -53,16 +53,36 @@ ADX_PERIOD = 14
 
 # Locked-in values for this run (best-of from prior backtest)
 STOP_MULT = 3.0
-TARGET_R = 1.5
 
-# Confluence variants — the three "higher-TF" rules.  Each value is a
-# tuple of (required_tfs, mode) where mode is 'all' or 'any'.  The
-# 15m TF is deliberately excluded — it's too close to 5m to tell us
-# anything meaningfully different about the macro direction.
+# Target sweep — the question this run answers: at $10/trade risk on
+# 5m FX, which R:R target produces a net edge that survives realistic
+# Oanda spread + slippage?  Smaller targets fire more often at higher
+# win rates but each winner is smaller relative to friction; bigger
+# targets fire less but each winner is many multiples of friction.
+TARGET_R_SWEEP = [1.5, 2.0, 3.0, 4.0]
+
+# Confluence — locked to the winner: at least one of {1H, 4H} agrees
 TREND_VARIANTS = {
-    "STRICT  (1H + 4H both agree)":  (["H1", "H4"], "all"),
-    "RELAXED (1H or 4H agrees)":      (["H1", "H4"], "any"),
-    "EXTENDED (1H + 4H + 1D agree)":  (["H1", "H4", "D"], "all"),
+    "RELAXED (1H or 4H agrees)": (["H1", "H4"], "any"),
+}
+
+# Trigger — locked to the winner
+TRIGGER_MODES = ["touch_reject"]
+
+# Risk per trade (smaller positions → smaller friction-per-trade)
+RISK_DOLLARS_OVERRIDE = 10.0
+
+# Per-pair friction estimate (Oanda spread + slippage, round-trip $/pip).
+# Used to compute net-of-friction P&L.  Numbers are typical liquid-
+# hours figures; conservative side of the range.
+PER_PAIR_FRICTION_PIPS = {
+    "EUR_USD": 1.1,  # 0.8 spread + 0.3 slip
+    "USD_JPY": 1.2,
+    "GBP_USD": 1.5,
+    "USD_CHF": 1.9,
+    "AUD_USD": 1.5,
+    "USD_CAD": 1.9,
+    "NZD_USD": 2.4,
 }
 
 
@@ -170,7 +190,9 @@ def simulate_variant(pair: str,
                        confluence_tfs: list[str],
                        confluence_mode: str,
                        stop_mult: float,
-                       target_r: float) -> list[Trade]:
+                       target_r: float,
+                       trigger_mode: str = "touch_reject"
+                       ) -> list[Trade]:
     """One pass through the 5m bars."""
     if len(trigger_bars) < 60:
         return []
@@ -181,6 +203,11 @@ def simulate_variant(pair: str,
     # Track which (level_price, zone_tf) pairs already fired so we
     # don't re-fire on the same level repeatedly.
     fired: set[tuple[str, float]] = set()
+    # For the "through-and-return" trigger, we need to know whether a
+    # level has been penetrated (price closed beyond it) before we can
+    # fire on the reclaim bar.  Map (zone_tf, level_price) → True once
+    # we see the penetration.
+    penetrated: set[tuple[str, float]] = set()
 
     for i, bar in enumerate(trigger_bars):
         # ── Exit checks ──
@@ -253,7 +280,7 @@ def simulate_variant(pair: str,
             else:
                 continue
 
-        # ── Zone match (β: touched-and-rejected) ──
+        # ── Zone match (β or γ depending on trigger_mode) ──
         # Use only CLOSED zone bars for the level snapshot — otherwise
         # the precomputed (S1,S2,D1,D2) for an in-progress bar reflect
         # future high/low.
@@ -265,27 +292,42 @@ def simulate_variant(pair: str,
             if zone_idx < 0 or zone_idx not in zone_levels_by_tf[zone_tf]:
                 continue
             s1, s2, d1, d2 = zone_levels_by_tf[zone_tf][zone_idx]
-            # BUY: support level touched (bar.low ≤ demand) AND closed above
-            if supported_dir == "BUY":
-                for lvl in (d1, d2):
-                    if lvl is None or lvl == 0:
-                        continue
-                    if (zone_tf, lvl) in fired:
-                        continue
-                    # β rule — physically touched the level and closed above
-                    if bar.l <= lvl <= bar.c:
-                        triggered = (zone_tf, "BUY", lvl)
-                        break
-            # SELL: resistance touched AND closed below
-            else:
-                for lvl in (s1, s2):
-                    if lvl is None or lvl == 0:
-                        continue
-                    if (zone_tf, lvl) in fired:
-                        continue
-                    if bar.c <= lvl <= bar.h:
-                        triggered = (zone_tf, "SELL", lvl)
-                        break
+            cand_levels = (d1, d2) if supported_dir == "BUY" else (s1, s2)
+            for lvl in cand_levels:
+                if lvl is None or lvl == 0:
+                    continue
+                key = (zone_tf, lvl)
+                if key in fired:
+                    continue
+
+                if trigger_mode == "touch_reject":
+                    # β: bar physically touched the level AND closed on
+                    # the right side, all in the same bar.
+                    if supported_dir == "BUY" and bar.l <= lvl <= bar.c:
+                        triggered = (zone_tf, "BUY", lvl); break
+                    if supported_dir == "SELL" and bar.c <= lvl <= bar.h:
+                        triggered = (zone_tf, "SELL", lvl); break
+
+                elif trigger_mode == "through_and_return":
+                    # γ: price first PENETRATED the level (bar closed
+                    # beyond it), then on a later bar RECLAIMED it
+                    # (closed back on the trade-direction side).  The
+                    # reclaim bar fires the entry.
+                    if supported_dir == "BUY":
+                        # Demand level — penetration = bar.c < lvl.
+                        # Reclaim = bar.c > lvl after a prior penetration.
+                        if bar.c < lvl:
+                            penetrated.add(key)
+                            continue
+                        if key in penetrated and bar.c > lvl:
+                            triggered = (zone_tf, "BUY", lvl); break
+                    else:
+                        # Supply level — penetration = bar.c > lvl.
+                        if bar.c > lvl:
+                            penetrated.add(key)
+                            continue
+                        if key in penetrated and bar.c < lvl:
+                            triggered = (zone_tf, "SELL", lvl); break
             if triggered:
                 break
         if not triggered:
@@ -301,7 +343,11 @@ def simulate_variant(pair: str,
         # R:R floor 1.0 (we already configure via target_r)
         stop_pips = abs(entry - stop) / pip_factor(pair)
         pdu = pip_dollars_per_unit(pair, entry)
-        units = position_size_units(ACCOUNT_NOTIONAL * RISK_PCT, stop_pips, pdu)
+        # Use RISK_DOLLARS_OVERRIDE if set, otherwise account-pct sizing.
+        risk_dollar = (RISK_DOLLARS_OVERRIDE
+                        if RISK_DOLLARS_OVERRIDE is not None
+                        else ACCOUNT_NOTIONAL * RISK_PCT)
+        units = position_size_units(risk_dollar, stop_pips, pdu)
         if units <= 0:
             continue
         open_trade = Trade(
@@ -366,10 +412,13 @@ def run_grid(end: datetime, months: int = 12, pairs: list[str] = None):
         print(f"[{pair}] precomputed zone levels + trend on {trend_tfs_needed}",
               flush=True)
 
-    # Run the grid (3 variants)
+    # Run the grid — locked confluence/trigger, sweep target R:R.
     results = []
-    for variant_name, (tfs, mode) in TREND_VARIANTS.items():
-        print(f"\n--- {variant_name} ---", flush=True)
+    trig_mode = TRIGGER_MODES[0]   # touch_reject only
+    tfs, mode = list(TREND_VARIANTS.values())[0]   # RELAXED only
+    for target_r in TARGET_R_SWEEP:
+        full_name = f"target={target_r}R  RELAXED  β  risk=${RISK_DOLLARS_OVERRIDE:.0f}"
+        print(f"\n--- {full_name} ---", flush=True)
         all_trades: list[Trade] = []
         for pair in pairs:
             trades = simulate_variant(
@@ -383,63 +432,101 @@ def run_grid(end: datetime, months: int = 12, pairs: list[str] = None):
                 confluence_tfs=tfs,
                 confluence_mode=mode,
                 stop_mult=STOP_MULT,
-                target_r=TARGET_R,
+                target_r=target_r,
+                trigger_mode=trig_mode,
             )
             all_trades.extend(trades)
+        variant_name = full_name
         n = len(all_trades)
         if n == 0:
             print("  no trades")
             results.append({"variant": variant_name, "trades": 0,
                             "wins": 0, "win_pct": 0, "avg_w": 0, "avg_l": 0,
-                            "net": 0, "by_pair": {}})
+                            "net": 0, "friction": 0, "net_after": 0,
+                            "by_pair": {}})
             continue
         wins = [t for t in all_trades if t.pnl_dollars > 0]
         losses = [t for t in all_trades if t.pnl_dollars < 0]
         net = sum(t.pnl_dollars for t in all_trades)
         avg_w = sum(t.pnl_dollars for t in wins) / len(wins) if wins else 0
         avg_l = sum(t.pnl_dollars for t in losses) / len(losses) if losses else 0
-        # Per-pair breakdown for the top-line variant
+        # Friction = trade_count × (friction_pips_per_pair × $_per_pip).
+        # $_per_pip at $10 risk scales with position size, which depends
+        # on stop_pips.  Compute exact per-trade friction.
+        friction_total = 0.0
+        for t in all_trades:
+            pf = pip_factor(t.pair)
+            quote = t.pair.split("_")[1]
+            if quote == "USD":
+                dollar_per_pip = t.units * pf
+            else:
+                dollar_per_pip = t.units * pf / (t.exit_price or 1)
+            friction_pips = PER_PAIR_FRICTION_PIPS.get(t.pair, 1.5)
+            friction_total += friction_pips * dollar_per_pip
+        net_after_friction = net - friction_total
+        # Per-pair breakdown (both raw and net-of-friction)
         by_pair = {}
         for p in pairs:
             ptrades = [t for t in all_trades if t.pair == p]
             if not ptrades: continue
             pw = [t for t in ptrades if t.pnl_dollars > 0]
             pn = len(ptrades); pwn = len(pw)
+            pf_pips = PER_PAIR_FRICTION_PIPS.get(p, 1.5)
+            p_friction = 0.0
+            pf_factor = pip_factor(p)
+            for t in ptrades:
+                quote = p.split("_")[1]
+                dpp = (t.units * pf_factor) if quote == "USD" \
+                      else (t.units * pf_factor / (t.exit_price or 1))
+                p_friction += pf_pips * dpp
+            p_net = sum(t.pnl_dollars for t in ptrades)
             by_pair[p] = {
                 "n": pn,
                 "win_pct": pwn / pn * 100 if pn else 0,
-                "net": sum(t.pnl_dollars for t in ptrades),
+                "net": p_net,
+                "friction": p_friction,
+                "net_after": p_net - p_friction,
             }
         print(f"  {n} trades  win {len(wins)/n*100:.1f}%  "
-              f"net ${net:+,.0f}  avg_w ${avg_w:+,.0f}  avg_l ${avg_l:+,.0f}")
+              f"net ${net:+,.0f}  friction ${friction_total:,.0f}  "
+              f"AFTER ${net_after_friction:+,.0f}  "
+              f"avg_w ${avg_w:+.2f} avg_l ${avg_l:+.2f}")
         results.append({"variant": variant_name, "trades": n,
                         "wins": len(wins), "win_pct": len(wins)/n*100,
-                        "avg_w": avg_w, "avg_l": avg_l, "net": net,
+                        "avg_w": avg_w, "avg_l": avg_l,
+                        "net": net, "friction": friction_total,
+                        "net_after": net_after_friction,
                         "by_pair": by_pair})
 
     # Final report
     print()
-    print("=" * 96)
-    print("HTF no-trigger FX backtest")
-    print("=" * 96)
+    print("=" * 100)
+    print("HTF no-trigger FX backtest — target sweep")
+    print("=" * 100)
     print(f"  Spec: 5m trigger, β touched-rejected, find_untouched_levels live algo,")
-    print(f"        stop={STOP_MULT}x ATR, target={TARGET_R}R, 7 USD majors")
+    print(f"        stop={STOP_MULT}x ATR, RELAXED confluence, risk=${RISK_DOLLARS_OVERRIDE:.0f}/trade, 7 USD majors")
+    print(f"  Friction model: round-trip spread + slippage per pair (pips):")
+    for p, pips in PER_PAIR_FRICTION_PIPS.items():
+        print(f"      {p}: {pips} pips")
     print()
-    print(f"{'VARIANT':45s} {'N':>5s} {'WIN%':>6s} {'AVG W':>8s} {'AVG L':>8s} {'NET $':>10s}")
-    sorted_results = sorted(results, key=lambda x: -x["net"])
+    print(f"{'VARIANT':45s} {'N':>5s} {'WIN%':>6s} {'AVG W':>7s} {'AVG L':>7s} "
+          f"{'NET $':>9s} {'FRICTION':>10s} {'AFTER $':>9s}")
+    sorted_results = sorted(results, key=lambda x: -x["net_after"])
     for r in sorted_results:
         print(f"{r['variant']:45s} {r['trades']:>5d} "
-              f"{r['win_pct']:>5.1f}% {r['avg_w']:>+7.0f}  {r['avg_l']:>+7.0f}  "
-              f"{r['net']:>+9.0f}")
+              f"{r['win_pct']:>5.1f}% {r['avg_w']:>+6.2f}  {r['avg_l']:>+6.2f}  "
+              f"{r['net']:>+8.0f}  {r['friction']:>9.0f}  {r['net_after']:>+8.0f}")
 
-    # Per-pair breakdown of the best variant
+    # Per-pair breakdown of the best (after-friction) variant
     if sorted_results and sorted_results[0]["by_pair"]:
         best = sorted_results[0]
         print()
-        print(f"Per-pair detail — {best['variant']}")
-        print(f"  {'PAIR':9s} {'N':>5s} {'WIN%':>6s} {'NET $':>10s}")
-        for p, s in sorted(best["by_pair"].items(), key=lambda x: -x[1]["net"]):
-            print(f"  {p:9s} {s['n']:>5d} {s['win_pct']:>5.1f}% {s['net']:>+9.0f}")
+        print(f"Per-pair detail — {best['variant']}  (sorted by net AFTER friction)")
+        print(f"  {'PAIR':9s} {'N':>5s} {'WIN%':>6s} {'NET $':>9s} {'FRIC':>7s} {'AFTER':>9s}")
+        for p, s in sorted(best["by_pair"].items(),
+                            key=lambda x: -x[1]["net_after"]):
+            print(f"  {p:9s} {s['n']:>5d} {s['win_pct']:>5.1f}% "
+                  f"{s['net']:>+8.0f}  {s['friction']:>6.0f}  {s['net_after']:>+8.0f}")
 
 
 def main():

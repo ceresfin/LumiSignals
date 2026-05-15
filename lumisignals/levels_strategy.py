@@ -13,7 +13,7 @@ from .candle_classifier import (
 from .models import Signal
 from .oanda_client import OandaClient, resolve_instrument
 from .order_manager import MAJOR_PAIRS
-from .untouched_levels import find_untouched_levels, calculate_adx_direction
+from .untouched_levels import find_untouched_levels, calculate_trend_direction
 
 logger = logging.getLogger(__name__)
 
@@ -490,12 +490,16 @@ class LevelsStrategy:
 
         for tf, label in trend_tfs:
             try:
-                # Sub-hour TFs need more bars (need at least 16 for ADX-14)
-                count = 30 if tf in ("1mo", "1w") else (50 if tf in ("1d", "1h") else 80)
+                # FX uses N=15 swing structure (calculate_trend_direction
+                # routes by instrument), which needs >= 2N+2 = 32 bars.
+                # Non-FX still uses ADX-14 which needs >= 16. Pull 250 so
+                # the macro picture has enough confirmed pivot history (small
+                # counts misread regime by snapping to recent micro-pivots).
+                count = 30 if tf in ("1mo", "1w") else 250
                 candles = self.massive.get_candles(poly_ticker, tf, count)
-                if not candles or len(candles) < 16:
+                if not candles or len(candles) < 32:
                     continue
-                direction, _ = calculate_adx_direction(candles, period=14)
+                direction, _ = calculate_trend_direction(candles, instrument=ticker)
                 result["trends"][label] = "bullish" if direction == "UP" else ("bearish" if direction == "DOWN" else "neutral")
             except Exception as e:
                 logger.debug("Built-in trend error for %s %s: %s", ticker, tf, e)

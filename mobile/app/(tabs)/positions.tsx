@@ -60,6 +60,24 @@ function getChartTimeframe(model?: string, strategy?: string): string {
   return '15m';
 }
 
+// Order trend-row keys low → high (5m, 15m, 1H, 4H, 1D, 1W, 1M).
+// Backend may emit them in any order; we sort to make scanning intuitive.
+const TF_RANK_MIN: Record<string, number> = {
+  '1m': 1, '2m': 2, '5m': 5, '5M': 5,
+  '15m': 15, '15M': 15, '30m': 30,
+  '1h': 60, '1H': 60, '4h': 240, '4H': 240,
+  '1d': 1440, '1D': 1440, 'D': 1440,
+  '1w': 10080, '1W': 10080, 'W': 10080,
+  '1mo': 43200, 'M': 43200,
+};
+function tfRank(key: string): number {
+  const k = key.toLowerCase();
+  return TF_RANK_MIN[k] ?? TF_RANK_MIN[key] ?? 9999;
+}
+function sortedTrendEntries(trends: Record<string, string>): [string, string][] {
+  return Object.entries(trends).sort(([a], [b]) => tfRank(a) - tfRank(b));
+}
+
 // Approximate USD value of a price move on a position. Handles the three
 // pair shapes correctly; falls back to the quote-currency-divided-by-entry
 // approximation for crosses (matches trade_tracker.py's logic).
@@ -219,7 +237,7 @@ function PositionRow({ position, onChartPress, onClose, closing }: {
             ) : null}
             {Object.keys(trends).length > 0 ? (
               <View style={styles.trendRow}>
-                {Object.entries(trends).map(([tfk, dir]) => (
+                {sortedTrendEntries(trends).map(([tfk, dir]) => (
                   <Text key={tfk} style={[styles.trendBadge, {
                     color: dir === 'bullish' ? Colors.green : dir === 'bearish' ? Colors.red : Colors.textLight,
                   }]}>
@@ -674,7 +692,7 @@ export default function Positions() {
                         {strategyBadgeText('htf_levels', z.model)}
                       </Text>
                       <View style={styles.trendRow}>
-                        {Object.entries(trends).map(([tf, dir]) => (
+                        {sortedTrendEntries(trends).map(([tf, dir]) => (
                           <Text key={tf} style={[styles.trendBadge, {
                             color: dir === 'bullish' ? Colors.green : dir === 'bearish' ? Colors.red : Colors.textLight
                           }]}>

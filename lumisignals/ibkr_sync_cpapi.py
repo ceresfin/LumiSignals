@@ -49,6 +49,39 @@ SYNC_INTERVAL = 2  # was 10 — bookkeeping race window shrinks 5x.
 _redis_client = None
 
 
+def _send_telegram_alert(title: str, body: str) -> bool:
+    """Best-effort Telegram alert. Pulls TELEGRAM_BOT_TOKEN +
+    TELEGRAM_CHAT_ID from env. Silent failure (returns False) — alerts
+    should never break the caller. Rate-limit per category via Redis
+    key telegram_alert:{slug}:lock with a 10-min TTL."""
+    import os, hashlib
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+    if not token or not chat_id:
+        return False
+    # Rate-limit by title (slugified): one alert per title per 10 min
+    slug = hashlib.sha1(title.encode()).hexdigest()[:10]
+    rdb = _rdb()
+    if rdb is not None:
+        try:
+            if rdb.get(f"telegram_alert:{slug}:lock"):
+                return False
+            rdb.setex(f"telegram_alert:{slug}:lock", 600, "1")
+        except Exception:
+            pass
+    text = f"*{title}*\n{body}"
+    try:
+        import urllib.request, urllib.parse, json
+        data = urllib.parse.urlencode({
+            "chat_id": chat_id, "text": text, "parse_mode": "Markdown",
+        }).encode()
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        with urllib.request.urlopen(url, data=data, timeout=8) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
+
 def _rdb():
     """Lazy Redis client. Returns None if unreachable (degrades gracefully
     by falling back to the old IB-level position guard)."""
@@ -1123,7 +1156,30 @@ def collect_ib_data(client) -> dict:
             pass
         open_orders.append(order_entry)
 
-    # Completed (filled) orders — recent trades from CPAPI
+    # Completed (filled) orders — recent trades from CPAPI.
+    # IB occasionally returns price (and size) as a string with a currency
+    # suffix like "2425.00 USD"; raw float() blows up on that. _num strips
+    # any non-numeric trailing tokens before parsing.
+    def _num(v, default=0.0):
+        try:
+            if v is None:
+                return default
+            if isinstance(v, (int, float)):
+                return float(v)
+            s = str(v).strip()
+            # Take the leading numeric token (handles "2425.00 USD",
+            # "1,234.56", "+1.5", etc.)
+            cleaned = []
+            for ch in s.replace(",", ""):
+                if ch.isdigit() or ch in ".-+":
+                    cleaned.append(ch)
+                else:
+                    if cleaned:
+                        break
+            return float("".join(cleaned)) if cleaned else default
+        except Exception:
+            return default
+
     filled_orders = []
     for fill in client.get_trades():
         entry = {
@@ -1131,8 +1187,8 @@ def collect_ib_data(client) -> dict:
             "symbol": fill.get("symbol", fill.get("ticker", "")),
             "sec_type": fill.get("sec_type", fill.get("secType", "STK")),
             "action": fill.get("side", ""),
-            "quantity": float(fill.get("size", fill.get("shares", 0))),
-            "price": float(fill.get("price", 0)),
+            "quantity": _num(fill.get("size", fill.get("shares", 0))),
+            "price": _num(fill.get("price", 0)),
             "time": fill.get("trade_time_r", fill.get("trade_time", "")),
         }
         filled_orders.append(entry)
@@ -1740,35 +1796,68 @@ def check_order_requests(client):
                             sl_price = pine_stop
                             quote_source = "pine"
                         else:
-                            # Warm the IBeam subscription, then read a
-                            # fresh snapshot. Field 31=last, 84=bid, 86=ask.
+                            # Warm the IBeam subscription, then poll the
+                            # snapshot until quotes arrive. Field 31=last,
+                            # 84=bid, 86=ask.
+                            #
+                            # Why polling: a cold CPAPI session needs to
+                            # SUBSCRIBE to the conid before quotes flow.
+                            # First snapshot triggers the subscribe; quotes
+                            # arrive on subsequent reads. Bumped from a fixed
+                            # 400ms sleep to a 2.5s warmup + 5s poll after
+                            # 22h of MES entries silently refused on
+                            # 2026-05-14 because the cold-session warmup
+                            # never finished within the old window.
                             try:
                                 client._request("GET", "/iserver/marketdata/snapshot",
                                                 params={"conids": str(fut_conid),
                                                         "fields": "31,84,86"})
-                                time.sleep(0.4)
-                                snap = client._request("GET", "/iserver/marketdata/snapshot",
-                                                       params={"conids": str(fut_conid),
-                                                               "fields": "31,84,86"})
                             except Exception:
-                                snap = None
+                                pass
+                            time.sleep(2.5)
                             last_price = 0.0
-                            if isinstance(snap, list) and snap:
-                                row = snap[0]
-                                for key in ("31", "84", "86"):
-                                    try:
-                                        v = float(row.get(key) or 0)
-                                        if v > 0:
-                                            last_price = v
-                                            break
-                                    except (TypeError, ValueError):
-                                        continue
+                            deadline = time.time() + 5.0
+                            while time.time() < deadline and not last_price:
+                                try:
+                                    snap = client._request(
+                                        "GET", "/iserver/marketdata/snapshot",
+                                        params={"conids": str(fut_conid),
+                                                "fields": "31,84,86"})
+                                except Exception:
+                                    snap = None
+                                if isinstance(snap, list) and snap:
+                                    row = snap[0]
+                                    for key in ("31", "84", "86"):
+                                        try:
+                                            v = float(row.get(key) or 0)
+                                            if v > 0:
+                                                last_price = v
+                                                break
+                                        except (TypeError, ValueError):
+                                            continue
+                                if not last_price:
+                                    time.sleep(0.5)
                             if not last_price:
                                 logger.error(
                                     "Cannot price SL for %s %s [%s] — no quote from IBeam, "
                                     "refusing to place unprotected entry",
                                     direction, ticker, strategy_name,
                                 )
+                                # Alert: webhook signal arrived but the entry
+                                # got refused — this is exactly the silent-
+                                # failure pattern the user hit today (TV alerts
+                                # firing, IBeam quote unavailable, zero fills
+                                # for 22h). Rate-limited per title so a
+                                # crash-looping refusal doesn't spam Telegram.
+                                try:
+                                    _send_telegram_alert(
+                                        f"⚠️ Entry refused: {ticker} [{strategy_name}]",
+                                        f"{direction} {ticker} signal received but "
+                                        f"IBeam has no quote — entry not placed.\n"
+                                        f"Check IB market data subscription / restart sync.",
+                                    )
+                                except Exception:
+                                    pass
                                 continue
                             sl_price = ((last_price - sl_points) if direction == "BUY"
                                         else (last_price + sl_points))
@@ -2374,6 +2463,13 @@ def main():
 
     logger.info("Connected to CPAPI — syncing every %ds to %s", SYNC_INTERVAL, SERVER_URL)
 
+    # Crash-loop alerting: fire one Telegram after N consecutive exceptions
+    # so the next "could not convert string to float" doesn't go silent for
+    # 22 hours. Rate-limit to one alert per error-streak (cleared on first
+    # successful tick).
+    consecutive_errors = 0
+    alerted_for_streak = False
+
     while True:
         try:
             # Keep session alive
@@ -2469,8 +2565,26 @@ def main():
             # if data.get("spreads"):
             #     monitor_spreads(client, data["spreads"])
 
+            # Tick completed without exception — reset the crash-loop counter
+            consecutive_errors = 0
+            alerted_for_streak = False
+
         except Exception as e:
             logger.exception("Sync error: %s", e)  # include traceback — past silent failures wasted hours
+            consecutive_errors += 1
+            # Fire one Telegram after the 3rd consecutive error in the main
+            # loop. Without this, breakage (today's "could not convert string
+            # to float") can run for many hours before being noticed.
+            if consecutive_errors >= 3 and not alerted_for_streak:
+                try:
+                    _send_telegram_alert(
+                        "🚨 IBKR sync crash loop",
+                        f"{consecutive_errors} consecutive sync errors.\n"
+                        f"Latest: {type(e).__name__}: {e}",
+                    )
+                    alerted_for_streak = True
+                except Exception:
+                    pass
 
         time.sleep(SYNC_INTERVAL)
 

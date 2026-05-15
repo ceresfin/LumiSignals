@@ -161,15 +161,41 @@ export default function Trades() {
 
   const loadTrades = async () => {
     if (!user) return;
+    // Pull the 100 most recent trades PER asset class in parallel so a
+    // high-volume class (options) can't crowd out Forex/Futures/etc.
+    // The local tab filter then segments without further loss.
     try {
-      const { data } = await supabase
+      const base = () => supabase
         .from('trades')
         .select('*')
         .eq('user_id', user.id)
         .order('closed_at', { ascending: false })
-        .limit(500);
+        .limit(100);
 
-      if (data) setAllTrades(data);
+      const [forex, options, futures, stocks, indices] = await Promise.all([
+        // Forex — broker=oanda OR asset_type=forex
+        base().or('broker.eq.oanda,asset_type.eq.forex'),
+        // Options
+        base().eq('asset_type', 'options'),
+        // Futures (excluding I: index symbols)
+        base().eq('asset_type', 'futures').not('instrument', 'ilike', 'I:%'),
+        // Stocks (excluding I: index symbols)
+        base().eq('asset_type', 'stock').not('instrument', 'ilike', 'I:%'),
+        // Indices — instrument starts with I:
+        base().ilike('instrument', 'I:%'),
+      ]);
+
+      // Merge, dedup by id, keep ordering by closed_at desc
+      const map = new Map<number, Trade>();
+      for (const r of [forex, options, futures, stocks, indices]) {
+        for (const t of ((r.data || []) as Trade[])) {
+          if (t && t.id != null) map.set(t.id, t);
+        }
+      }
+      const merged = Array.from(map.values()).sort(
+        (a, b) => (b.closed_at || '').localeCompare(a.closed_at || '')
+      );
+      setAllTrades(merged);
     } catch (e) {
       console.error('Trades load error:', e);
     }

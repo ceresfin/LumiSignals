@@ -1,10 +1,34 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useEffect, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Linking, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import { Colors } from '@/constants/theme';
 
 const API_BASE = 'https://bot.lumitrade.ai';
+
+// Trend arrows next to the ticker — same look as positions/watchlist.
+// Direction comes from /api/adx/direction (Oanda candles + Wilder DMI).
+// TFs vary by strategy to match the signal cadence the trade cares about:
+//   scalp     → 5m / 15m / 1h      (5m trigger, 15m+1h zones)
+//   intraday  → 1h / 1d / 1w       (1h trigger, daily+weekly zones)
+//   swing     → 1d / 1w / 1mo      (daily trigger, weekly+monthly zones)
+//   fx_4h     → 4h / 1d / 1w       (Stillwater 4H trend)
+//   default   → 5m / 15m / 1h
+function trendTfsFor(strategy: string | undefined): string[] {
+  const s = (strategy || '').toLowerCase();
+  if (s.includes('swing')) return ['1d', '1w', '1mo'];
+  if (s.includes('intraday')) return ['1h', '1d', '1w'];
+  if (s.includes('fx_4h') || s.includes('stillwater')) return ['4h', '1d', '1w'];
+  // scalp / h1_zone / 2n20 / default → 5m / 15m / 1h
+  return ['5m', '15m', '1h'];
+}
+function arrowFor(dir: string): string {
+  return dir === 'UP' ? '↑' : dir === 'DOWN' ? '↓' : '→';
+}
+function colorFor(dir: string): string {
+  return dir === 'UP' ? '#3E7F6B' : dir === 'DOWN' ? '#C26A6A' : '#888';
+}
 
 const TV_SYMBOLS: Record<string, string> = {
   'EUR_USD': 'OANDA:EURUSD',
@@ -47,6 +71,26 @@ export default function ChartScreen() {
   };
   const stratLabel = strategy ? (STRATEGY_LABELS[strategy] || strategy.toUpperCase().replace('_', ' ')) : null;
 
+  // Fetch ADX direction per TF for the header arrows. TFs depend on the
+  // strategy: scalp uses 5m/15m/1h, intraday uses 1h/1d/1w, swing uses 1d/1w/1mo.
+  const headerTfs = trendTfsFor(strategy);
+  const [trends, setTrends] = useState<Record<string, string>>({});
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch(
+          `${API_BASE}/api/adx/direction?pair=${encodeURIComponent(ticker)}&tfs=${headerTfs.join(',')}`
+        );
+        const d = await r.json();
+        if (!cancelled && d && d.tfs) setTrends(d.tfs);
+      } catch {
+        // silent — header arrows are decorative
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [ticker, strategy]);
+
   // Build chart URL with optional trade lines
   let chartUrl = `${API_BASE}/chart?ticker=${encodeURIComponent(ticker)}&timespan=${tf}&count=300`;
   if (entry) chartUrl += `&entry=${entry}`;
@@ -85,7 +129,22 @@ export default function ChartScreen() {
           <Text style={styles.backText}>Back</Text>
         </TouchableOpacity>
         <View style={styles.titleBlock}>
-          <Text style={styles.title} numberOfLines={1}>{ticker}</Text>
+          <View style={styles.titleRow}>
+            <Text style={styles.title} numberOfLines={1}>{ticker}</Text>
+            {Object.keys(trends).length > 0 && (
+              <View style={styles.trendRow}>
+                {headerTfs.map(tf => {
+                  const dir = trends[tf];
+                  if (!dir) return null;
+                  return (
+                    <Text key={tf} style={[styles.trendBadge, { color: colorFor(dir) }]}>
+                      {tf.toUpperCase()}{arrowFor(dir)}
+                    </Text>
+                  );
+                })}
+              </View>
+            )}
+          </View>
           {stratLabel && (
             <Text style={styles.subtitle} numberOfLines={1}>{stratLabel}</Text>
           )}
@@ -139,9 +198,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#333',
   },
   backText: { color: '#ccc', fontSize: 14 },
-  // Title block stacks ticker on top, strategy label underneath
+  // Title block stacks ticker (+ trend arrows) on top, strategy label underneath
   titleBlock: { flex: 1 },
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   title: { color: '#fff', fontSize: 18, fontWeight: '600' },
+  trendRow: { flexDirection: 'row', gap: 6, alignItems: 'center' },
+  trendBadge: { fontSize: 12, fontWeight: '700' },
   subtitle: { color: Colors.gold, fontSize: 11, fontWeight: '600', marginTop: 2, letterSpacing: 0.5 },
   tvBtn: {
     paddingVertical: 6,
