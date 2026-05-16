@@ -290,10 +290,20 @@ export default function Strategies() {
         contentContainerStyle={styles.scroll}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
-        <Text style={styles.title}>Strategies</Text>
-        <Text style={styles.subtitle}>
-          Pair eligibility recomputed every Sunday at the FX rollover
-        </Text>
+        <View style={styles.titleRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.title}>Strategies</Text>
+            <Text style={styles.subtitle}>
+              Pair eligibility recomputed every Sunday at the FX rollover
+            </Text>
+          </View>
+          <TouchableOpacity
+            style={styles.compareBtn}
+            onPress={() => router.push('/compare')}
+          >
+            <Text style={styles.compareBtnText}>Compare</Text>
+          </TouchableOpacity>
+        </View>
 
         {Object.entries(data).map(([sid, s]) => {
           const sortedPairs = s.universe
@@ -376,6 +386,9 @@ const styles = StyleSheet.create({
   scroll: { padding: 16, paddingBottom: 40 },
   title: { fontSize: 26, fontWeight: '700', color: Colors.dark },
   subtitle: { fontSize: 13, color: Colors.textLight, marginTop: 4, marginBottom: 16 },
+  titleRow: { flexDirection: 'row', alignItems: 'flex-start' },
+  compareBtn: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8, backgroundColor: '#1d4ed8', marginTop: 6 },
+  compareBtnText: { color: '#fff', fontSize: 12, fontWeight: '700', letterSpacing: 0.4 },
   strategySection: { marginBottom: 24 },
   strategyHeader: {
     flexDirection: 'row',

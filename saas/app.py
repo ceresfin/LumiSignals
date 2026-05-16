@@ -2874,6 +2874,125 @@ def create_app():
 
         return jsonify({"tickers": results})
 
+    @app.route("/api/mobile/compare/levels")
+    def api_mobile_compare_levels():
+        """Mobile-friendly version of /api/compare/levels — no login required.
+        Uses the env LUMITRADE_API_KEY directly. Same return shape so the
+        mobile WebView can use a shared rendering template."""
+        import redis as _redis
+        rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+
+        tickers = request.args.get("tickers", "SPY,QQQ,XLF,EURUSD,GBPUSD,USDJPY").upper().split(",")
+        tickers = [t.strip() for t in tickers if t.strip()]
+
+        snr_base_url = "https://app.lumitrade.ai/api/v1"
+        snr_api_key = os.environ.get("LUMITRADE_API_KEY", "")
+
+        interval_to_tf = {"3mo": "Q", "1mo": "M", "1w": "W", "1d": "D", "4h": "4H", "1h": "1H"}
+        snr_intervals = ["3mo", "1mo", "1w", "1d", "4h", "1h"]
+        freq_to_tf = {"quarterly": "Q", "monthly": "M", "weekly": "W", "daily": "D", "fourhour": "4H", "hourly": "1H"}
+        frequencies = ["quarterly", "monthly", "weekly", "daily", "fourhour", "hourly"]
+
+        massive_key = os.environ.get("MASSIVE_API_KEY", "")
+        massive = None
+        if massive_key:
+            from lumisignals.massive_client import MassiveClient
+            from lumisignals.untouched_levels import find_untouched_levels, calculate_adx_direction
+            massive = MassiveClient(massive_key)
+
+        results = []
+        for ticker in tickers:
+            item = {"ticker": ticker, "server": {}, "tradingview": {}, "tv_trends": {}, "server_trends": {}, "tv_updated": ""}
+            is_forex = (len(ticker) == 6 and ticker[:3].isalpha() and ticker[3:].isalpha()
+                        and ticker not in ("GOOGL",))
+
+            if massive:
+                poly_ticker = f"C:{ticker}" if is_forex else ticker
+                for tf, tf_label in interval_to_tf.items():
+                    try:
+                        count = 30 if tf in ("3mo", "1mo", "1w") else 50
+                        candles = massive.get_candles(poly_ticker, tf, count)
+                        if not candles or len(candles) < 3:
+                            continue
+                        price = candles[-1].close
+                        highs = [c.high for c in reversed(candles)]
+                        lows = [c.low for c in reversed(candles)]
+                        s1, s2, d1, d2 = find_untouched_levels(highs, lows, price, lookback=10)
+                        item["server"][tf_label] = {
+                            "supply": s1, "supply2": s2,
+                            "demand": d1, "demand2": d2,
+                        }
+                        direction, adx_val = calculate_adx_direction(candles, period=14)
+                        item["server_trends"][tf_label] = direction
+                    except Exception as e:
+                        logger.debug("Mobile compare level err %s %s: %s", ticker, tf, e)
+            else:
+                item["server"]["error"] = "No Polygon API key configured"
+
+            tv_raw = rdb.get(f"tv:levels:{ticker}")
+            if tv_raw:
+                tv_data = json.loads(tv_raw)
+                item["tradingview"] = tv_data.get("levels", {})
+                item["tv_trends"] = tv_data.get("trends", {})
+                item["tv_updated"] = tv_data.get("updated_at", "")
+
+            item["lumitrade"] = {}
+            item["lt_trends"] = {}
+            if snr_api_key:
+                import requests as _requests
+                session = _requests.Session()
+                session.headers["Authorization"] = f"Bearer {snr_api_key}"
+                try:
+                    resp = session.get(
+                        f"{snr_base_url}/partners/technical-analysis/snr/frequency/",
+                        params={"ticker": ticker, "intervals": ",".join(snr_intervals),
+                                "type": "forex" if is_forex else "stock", "days": 256},
+                        timeout=15,
+                    )
+                    if resp.status_code == 200:
+                        snr_data = resp.json().get("data", resp.json())
+                        for interval, tf_label in interval_to_tf.items():
+                            tf_data = snr_data.get(interval, {})
+                            if isinstance(tf_data, dict):
+                                item["lumitrade"][tf_label] = {
+                                    "supply": tf_data.get("resistance_price"),
+                                    "demand": tf_data.get("support_price"),
+                                }
+                except Exception as e:
+                    item["lumitrade"]["error"] = str(e)
+
+                try:
+                    resp2 = session.get(
+                        f"{snr_base_url}/partners/technical-analysis/trade-builder-setup",
+                        params={"ticker": ticker, "period": 14,
+                                "market": "forex" if is_forex else "stock",
+                                "frequency": ",".join(frequencies)},
+                        timeout=15,
+                    )
+                    if resp2.status_code == 200:
+                        tb_data = resp2.json().get("data", resp2.json())
+                        for freq, tv_tf in freq_to_tf.items():
+                            tf_data = tb_data.get(freq, {})
+                            if isinstance(tf_data, dict):
+                                pos = tf_data.get("position", "")
+                                if pos:
+                                    dir_str = ("UP" if pos in ("positive", "long")
+                                               else "DOWN" if pos in ("negative", "short")
+                                               else "SIDE")
+                                    item["lt_trends"][tv_tf] = dir_str
+                except Exception:
+                    pass
+
+            results.append(item)
+
+        return jsonify({"tickers": results})
+
+    @app.route("/mobile_compare")
+    def mobile_compare_page():
+        """Mobile WebView-friendly compare page. No login. Strips the
+        full-site navigation; everything else renders identically."""
+        return render_template("mobile_compare.html")
+
     # -----------------------------------------------------------------------
     # Scanner — scan stocks for proximity to untouched S/R levels
     # -----------------------------------------------------------------------

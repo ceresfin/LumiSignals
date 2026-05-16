@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>SNR Compare</title>
+<style>
+:root {
+  --bg: #F5F3EE;
+  --card: #fff;
+  --dark: #2E2E2C;
+  --text-light: #8a847e;
+  --text-medium: #56665F;
+  --green: #27ae60;
+  --red: #c0392b;
+  --olive: #7F8464;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Inter', sans-serif;
+  background: var(--bg);
+  color: var(--dark);
+  font-size: 13px;
+  padding: 12px;
+}
+.controls {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+  align-items: center;
+}
+.controls input {
+  flex: 1;
+  padding: 8px 10px;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  font-size: 13px;
+  background: #fff;
+  font-family: inherit;
+}
+.controls button {
+  padding: 8px 14px;
+  background: var(--olive);
+  color: #FFF5E1;
+  border: 0;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+}
+.card {
+  background: var(--card);
+  border-radius: 10px;
+  padding: 14px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+  margin-bottom: 14px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.ticker-header {
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+.updated-at {
+  font-size: 10px;
+  color: var(--text-light);
+  margin-bottom: 8px;
+}
+.section-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-medium);
+  margin: 14px 0 6px;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  min-width: 400px;
+}
+th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--text-light);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 6px 8px;
+  border-bottom: 1.5px solid #eee;
+  white-space: nowrap;
+}
+td {
+  padding: 7px 8px;
+  border-bottom: 1px solid #f5f5f5;
+  vertical-align: middle;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.no-data { color: var(--text-light); font-style: italic; }
+.source-tag {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 50px;
+  letter-spacing: 0.3px;
+  margin-right: 3px;
+}
+.tag-tv { background: #e3f2fd; color: #1565c0; }
+.tag-srv { background: #e8f5e9; color: var(--green); }
+.tag-lt { background: #fff3e0; color: #e65100; }
+.trend-up { color: var(--green); font-weight: 600; }
+.trend-down { color: var(--red); font-weight: 600; }
+.trend-side { color: #f39c12; font-weight: 600; }
+.diff-ok { background: #f1f8e9; }
+.diff-warn { background: #fff8e1; }
+.diff-bad { background: #fbe9e7; }
+.match { color: var(--green); font-weight: 600; }
+.mismatch { color: var(--red); font-weight: 600; }
+.loading {
+  text-align: center;
+  padding: 30px;
+  color: var(--text-light);
+  font-size: 12px;
+}
+</style>
+</head>
+<body>
+
+<div class="controls">
+  <input id="tickerInput" placeholder="SPY,QQQ,XLF,EURUSD,GBPUSD,USDJPY" />
+  <button onclick="loadComparison()">Reload</button>
+</div>
+
+<div id="compareContent">
+  <div class="loading">Loading comparison data...</div>
+</div>
+
+<script>
+var TF_ORDER = ['Q', 'M', 'W', 'D', '4H', '1H'];
+var TF_LABELS = {Q: 'Quarterly', M: 'Monthly', W: 'Weekly', D: 'Daily', '4H': '4-Hour', '1H': 'Hourly'};
+var DEFAULT_TICKERS = 'SPY,QQQ,XLF,EURUSD,GBPUSD,USDJPY';
+
+// Read initial tickers from URL query param if provided
+var urlParams = new URLSearchParams(window.location.search);
+document.getElementById('tickerInput').value = urlParams.get('tickers') || DEFAULT_TICKERS;
+
+function fmt(v) {
+  if (v === null || v === undefined) return '<span class="no-data">--</span>';
+  return parseFloat(v).toFixed(2);
+}
+
+function trendClass(d) {
+  if (!d) return 'no-data';
+  return d === 'UP' ? 'trend-up' : d === 'DOWN' ? 'trend-down' : 'trend-side';
+}
+
+function trendLabel(d) {
+  if (!d) return '<span class="no-data">--</span>';
+  return '<span class="' + trendClass(d) + '">' + d + '</span>';
+}
+
+function diffClass(lt, tv, pct) {
+  if (lt === null || lt === undefined || tv === null || tv === undefined) return '';
+  var diff = Math.abs(lt - tv) / Math.max(lt, 0.0001) * 100;
+  if (diff <= pct * 0.5) return 'diff-ok';
+  if (diff <= pct) return 'diff-warn';
+  return 'diff-bad';
+}
+
+function fmtTime(iso) {
+  if (!iso) return '';
+  var d = new Date(iso);
+  return d.toLocaleString('en-US', {month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true});
+}
+
+function renderTicker(item) {
+  var html = '<div class="card">';
+  html += '<div class="ticker-header">' + item.ticker + '</div>';
+  if (item.tv_updated) {
+    html += '<div class="updated-at">TV data updated: ' + fmtTime(item.tv_updated) + '</div>';
+  } else {
+    html += '<div class="updated-at" style="color:var(--red)">No TradingView data for this ticker</div>';
+  }
+
+  // ─── SUPPLY LEVELS ───
+  html += '<div class="section-label">Supply Levels (Resistance)</div>';
+  html += '<table><tr>';
+  html += '<th>TF</th>';
+  html += '<th><span class="source-tag tag-tv">TV</span>S1</th>';
+  html += '<th><span class="source-tag tag-srv">SRV</span>S1</th>';
+  html += '<th><span class="source-tag tag-lt">LT</span>S1</th>';
+  html += '<th><span class="source-tag tag-tv">TV</span>S2</th>';
+  html += '<th><span class="source-tag tag-srv">SRV</span>S2</th>';
+  html += '</tr>';
+
+  var srvLevels = item.server || {};
+  var tvLevels = item.tradingview || {};
+  var ltLevels = item.lumitrade || {};
+
+  TF_ORDER.forEach(function(tf) {
+    var srv = srvLevels[tf] || {};
+    var tv = tvLevels[tf] || {};
+    var lt = ltLevels[tf] || {};
+    html += '<tr>';
+    html += '<td><strong>' + (TF_LABELS[tf] || tf) + '</strong></td>';
+    html += '<td>' + fmt(tv.supply) + '</td>';
+    html += '<td class="' + diffClass(tv.supply, srv.supply, 0.5) + '">' + fmt(srv.supply) + '</td>';
+    html += '<td class="' + diffClass(tv.supply, lt.supply, 0.5) + '">' + fmt(lt.supply) + '</td>';
+    html += '<td>' + fmt(tv.supply2) + '</td>';
+    html += '<td class="' + diffClass(tv.supply2, srv.supply2, 0.5) + '">' + fmt(srv.supply2) + '</td>';
+    html += '</tr>';
+  });
+  html += '</table>';
+
+  // ─── DEMAND LEVELS ───
+  html += '<div class="section-label">Demand Levels (Support)</div>';
+  html += '<table><tr>';
+  html += '<th>TF</th>';
+  html += '<th><span class="source-tag tag-tv">TV</span>D1</th>';
+  html += '<th><span class="source-tag tag-srv">SRV</span>D1</th>';
+  html += '<th><span class="source-tag tag-lt">LT</span>D1</th>';
+  html += '<th><span class="source-tag tag-tv">TV</span>D2</th>';
+  html += '<th><span class="source-tag tag-srv">SRV</span>D2</th>';
+  html += '</tr>';
+
+  TF_ORDER.forEach(function(tf) {
+    var srv = srvLevels[tf] || {};
+    var tv = tvLevels[tf] || {};
+    var lt = ltLevels[tf] || {};
+    html += '<tr>';
+    html += '<td><strong>' + (TF_LABELS[tf] || tf) + '</strong></td>';
+    html += '<td>' + fmt(tv.demand) + '</td>';
+    html += '<td class="' + diffClass(tv.demand, srv.demand, 0.5) + '">' + fmt(srv.demand) + '</td>';
+    html += '<td class="' + diffClass(tv.demand, lt.demand, 0.5) + '">' + fmt(lt.demand) + '</td>';
+    html += '<td>' + fmt(tv.demand2) + '</td>';
+    html += '<td class="' + diffClass(tv.demand2, srv.demand2, 0.5) + '">' + fmt(srv.demand2) + '</td>';
+    html += '</tr>';
+  });
+  html += '</table>';
+
+  // ─── TREND COMPARISON ───
+  html += '<div class="section-label">Trend Direction (ADX)</div>';
+  html += '<table><tr>';
+  html += '<th>TF</th>';
+  html += '<th><span class="source-tag tag-tv">TV</span></th>';
+  html += '<th><span class="source-tag tag-srv">SRV</span></th>';
+  html += '<th><span class="source-tag tag-lt">LT</span></th>';
+  html += '<th>Match</th>';
+  html += '</tr>';
+
+  var srvTrends = item.server_trends || {};
+  var tvTrends = item.tv_trends || {};
+  var ltTrends = item.lt_trends || {};
+
+  TF_ORDER.forEach(function(tf) {
+    var srvDir = srvTrends[tf];
+    var tvDir = tvTrends[tf] ? tvTrends[tf].dir : undefined;
+    var tvAdx = tvTrends[tf] ? tvTrends[tf].adx : undefined;
+    var ltDir = ltTrends[tf];
+
+    var matchStr = '';
+    if (srvDir && tvDir) {
+      matchStr = srvDir === tvDir ? '<span class="match">✓</span>' : '<span class="mismatch">✗</span>';
+    }
+
+    var tvLabel = tvDir ? trendLabel(tvDir) : '<span class="no-data">--</span>';
+    if (tvAdx !== undefined && tvAdx !== null) {
+      tvLabel += ' <span style="font-size:10px;color:var(--text-light)">(' + parseFloat(tvAdx).toFixed(0) + ')</span>';
+    }
+
+    html += '<tr>';
+    html += '<td><strong>' + (TF_LABELS[tf] || tf) + '</strong></td>';
+    html += '<td>' + tvLabel + '</td>';
+    html += '<td>' + trendLabel(srvDir) + '</td>';
+    html += '<td>' + trendLabel(ltDir) + '</td>';
+    html += '<td>' + matchStr + '</td>';
+    html += '</tr>';
+  });
+  html += '</table>';
+
+  html += '</div>';
+  return html;
+}
+
+function loadComparison() {
+  var tickers = document.getElementById('tickerInput').value || DEFAULT_TICKERS;
+  fetch('/api/mobile/compare/levels?tickers=' + encodeURIComponent(tickers))
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      var tickers = data.tickers || [];
+      if (tickers.length === 0) {
+        document.getElementById('compareContent').innerHTML = '<div class="card"><div class="loading">No data available</div></div>';
+        return;
+      }
+      var html = '';
+      tickers.forEach(function(item) {
+        html += renderTicker(item);
+      });
+      document.getElementById('compareContent').innerHTML = html;
+    })
+    .catch(function(e) {
+      document.getElementById('compareContent').innerHTML = '<div class="card"><div class="loading" style="color:var(--red)">Error: ' + e.message + '</div></div>';
+    });
+}
+
+loadComparison();
+// Auto-refresh every 60s
+setInterval(loadComparison, 60000);
+</script>
+</body>
+</html>
