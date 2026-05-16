@@ -16,7 +16,7 @@
 
 const TIDEWATER_DURATION: Record<string, string> = {
   scalp: 'Hourly',
-  intraday: 'Daily',
+  intraday: 'Intraday',
   swing: 'Weekly',
 };
 

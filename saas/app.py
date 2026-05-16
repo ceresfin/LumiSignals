@@ -483,19 +483,20 @@ def create_app():
         # the mobile cards look identical to forex zones — and stays visible
         # outside market hours when the bot's stock scan is gated off.
         # Tidewater zone TFs (matches lumisignals.levels_strategy.ModelConfig).
-        # SCALP dropped 15m on 2026-05-15 — 15m and 1h zones almost always
-        # came from the same wick (1-3 pips apart) in trending markets.
+        # SCALP dropped 15m on 2026-05-15 — 15m and 1h zones came from the
+        # same wick. INTRADAY dropped 1w on 2026-05-16 alongside the
+        # trigger-TF switch (1h → 15m) and the 1H N=15 direction gate.
         MODEL_ZONE_TFS = {
             "scalp":    ["1h"],
-            "intraday": ["1d", "1w"],
+            "intraday": ["1d"],
             "swing":    ["1w", "1mo"],
         }
         MODEL_TREND_TFS = {
             "scalp":    [("5m", "5M"), ("15m", "15M"), ("1h", "1H")],
-            "intraday": [("1h", "1H"), ("1d", "Daily"), ("1w", "Weekly")],
+            "intraday": [("15m", "15M"), ("1h", "1H"), ("1d", "Daily")],
             "swing":    [("1d", "Daily"), ("1w", "Weekly"), ("1mo", "Monthly")],
         }
-        MODEL_TRIGGER_TF = {"scalp": "5m", "intraday": "1h", "swing": "1d"}
+        MODEL_TRIGGER_TF = {"scalp": "5m", "intraday": "15m", "swing": "1d"}
 
         def _compute_trends(massive, tkr, model):
             """ADX direction on each of the model's trend TFs."""

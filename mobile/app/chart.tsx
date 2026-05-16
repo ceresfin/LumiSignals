@@ -18,7 +18,7 @@ const API_BASE = 'https://bot.lumitrade.ai';
 function trendTfsFor(strategy: string | undefined): string[] {
   const s = (strategy || '').toLowerCase();
   if (s.includes('swing')) return ['1d', '1w', '1mo'];
-  if (s.includes('intraday')) return ['1h', '1d', '1w'];
+  if (s.includes('intraday')) return ['15m', '1h', '1d'];
   if (s.includes('fx_4h') || s.includes('stillwater')) return ['4h', '1d', '1w'];
   // scalp / h1_zone / 2n20 / default → 5m / 15m / 1h
   return ['5m', '15m', '1h'];
@@ -65,9 +65,9 @@ export default function ChartScreen() {
     'htf_supply_demand': 'TIDEWATER',
     'orb_breakout': 'ORB',
     'orb_butterfly': 'ORB BFLY',
-    // Tidewater family — naming by zone-TF anchor (Hourly/Daily/Weekly)
+    // Tidewater family — naming by duration
     'scalp_htf':    'TIDEWATER HOURLY',
-    'intraday_htf': 'TIDEWATER DAILY',
+    'intraday_htf': 'TIDEWATER INTRADAY',
     'swing_htf':    'TIDEWATER WEEKLY',
     // H1 Zone Scalp variants
     'scalp_h1zone':       'H1 ZONE SCALP',

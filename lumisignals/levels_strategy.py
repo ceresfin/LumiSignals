@@ -73,7 +73,9 @@ class ModelConfig:
     bias_tf: str           # Trend direction timeframe
     bias_candle_tfs: list  # Candle classification timeframes for scoring
     risk_percent: float    # Risk per trade as % of account
-    zone_tolerance_pct: dict  # Per-zone-TF tolerance {tf: pct}
+    zone_tolerance_pct: dict  # Per-zone-TF outer proximity {tf: pct} — "is this zone close enough to track?"
+    zone_activation_pct: dict = None  # Per-zone-TF activation tolerance {tf: pct} — "is price actually touching now?"
+                                      # When None, defaults to zone_tolerance_pct × 0.5 (legacy behavior).
     min_score: int = 50
     min_risk_reward: float = 1.5
     atr_stop_multiplier: float = 1.0
@@ -120,15 +122,23 @@ SCALP_MODEL = ModelConfig(
 
 INTRADAY_MODEL = ModelConfig(
     name="intraday",
-    trigger_tf="1h",
-    zone_tfs=["1d", "1w"],
-    bias_tf="1d",
-    bias_candle_tfs=["1d", "1w"],
+    trigger_tf="15m",
+    zone_tfs=["1d"],
+    bias_tf="1h",
+    bias_candle_tfs=["1h", "1d"],
     risk_percent=0.5,
-    zone_tolerance_pct={"1d": 0.005, "1w": 0.007},
+    # OUTER proximity: 0.5% (~58 pips on EUR_USD). Daily zones within
+    # this distance of current price stay on the watchlist. Loose
+    # enough that the bot tracks zones price has yet to reach.
+    zone_tolerance_pct={"1d": 0.005},
+    # ACTIVATION: 0.1% (~12 pips). The trigger only fires when a 15m
+    # bar closes within this tight band around the zone — not on every
+    # distant approach. Without this, activation would be ~29 pips
+    # (half of outer), which is too loose for a daily-zone scalp.
+    zone_activation_pct={"1d": 0.001},
     min_score=50,
     min_risk_reward=1.5,
-    atr_stop_multiplier=3.0,   # stop = 3 x 1h ATR
+    atr_stop_multiplier=3.0,   # stop = 3 × 15m ATR (auto-shrinks vs 1h ATR)
     watchlist_interval=300,
     monitor_interval=30,
     options_dte_range=(7, 14),
@@ -168,7 +178,7 @@ TF_LABELS = {
 # will actually aim for at trigger time).
 TARGET_TFS_BY_MODEL = {
     "scalp":    ["5m", "15m", "1h"],
-    "intraday": ["1h", "1d", "1w"],
+    "intraday": ["15m", "1h", "1d"],
     "swing":    ["1d", "1w", "1mo"],
 }
 
@@ -366,6 +376,9 @@ class LevelsStrategy:
             self.atr_stop_multiplier = model.atr_stop_multiplier
             self.min_risk_reward = model.min_risk_reward
             self.zone_tolerances = model.zone_tolerance_pct
+            # Activation tolerances are optional — when None, the activation
+            # check falls back to outer × 0.5 (legacy behavior).
+            self.zone_activations = model.zone_activation_pct
             self.watchlist_interval = model.watchlist_interval
             self.monitor_interval = model.monitor_interval
             self.risk_percent = model.risk_percent
@@ -380,6 +393,7 @@ class LevelsStrategy:
             self.atr_stop_multiplier = atr_stop_multiplier
             self.min_risk_reward = min_risk_reward
             self.zone_tolerances = zone_tolerances or {"1w": 0.006, "1mo": 0.009}
+            self.zone_activations = None   # legacy path uses outer × 0.5
             self.watchlist_interval = watchlist_interval
             self.monitor_interval = monitor_interval
             self.risk_percent = 1.0
@@ -491,7 +505,7 @@ class LevelsStrategy:
         # what shows up on the mobile zone card's trend arrows.
         TREND_TFS_BY_MODEL = {
             "scalp":    [("5m", "5M"), ("15m", "15M"), ("1h", "1H")],
-            "intraday": [("1h", "1H"), ("1d", "Daily"), ("1w", "Weekly")],
+            "intraday": [("15m", "15M"), ("1h", "1H"), ("1d", "Daily")],
             "swing":    [("1d", "Daily"), ("1w", "Weekly"), ("1mo", "Monthly")],
         }
         trend_tfs = TREND_TFS_BY_MODEL.get(
@@ -1068,8 +1082,16 @@ class LevelsStrategy:
             if price is None:
                 continue
 
-            # Activation tolerance is tighter than outer tolerance — half the zone tolerance
-            activation_tolerance = price * self.zone_tolerances.get(zone.zone_timeframe, 0.003) * 0.5
+            # Activation tolerance: use the model's explicit zone_activation_pct
+            # if provided, otherwise fall back to outer × 0.5 (legacy behavior).
+            # Splitting these two lets a model have a loose outer "is this zone
+            # worth tracking" radius and a tight inner "fire trigger now" band
+            # — required for Intraday/Tidewater where daily zones are far from
+            # current price but we only want to fire on a close approach.
+            if self.zone_activations and zone.zone_timeframe in self.zone_activations:
+                activation_tolerance = price * self.zone_activations[zone.zone_timeframe]
+            else:
+                activation_tolerance = price * self.zone_tolerances.get(zone.zone_timeframe, 0.003) * 0.5
             distance = abs(price - zone.zone_price)
 
             if zone.status == "watching":
@@ -1172,6 +1194,15 @@ class LevelsStrategy:
         trigger_candle = candles[-1]
         entry = trigger_candle.close
 
+        # Tidewater Intraday: hard 1H direction gate AT TRIGGER TIME.
+        # Re-check the 1H N=15 structure direction right before firing —
+        # catches the case where the trend has flipped between the
+        # watchlist scan (every 5 min) and the actual trigger. UP only
+        # allows BUY at demand; DOWN only allows SELL at supply.
+        if self.model_name == "intraday":
+            if not self._intraday_direction_ok(zone):
+                return
+
         # Stop = below/above the zone (zone level +/- ATR x multiplier)
         stop_distance = zone.atr * self.atr_stop_multiplier
         if zone.trade_direction == "BUY":
@@ -1212,6 +1243,50 @@ class LevelsStrategy:
         )
 
         self._fire_trigger(trigger)
+
+    def _intraday_direction_ok(self, zone: ZoneEntry) -> bool:
+        """Hard 1H direction gate at trigger time for Tidewater Intraday.
+
+        Fetches fresh 1H candles and recomputes the structure direction
+        (N=15 for FX, ADX for non-FX via calculate_trend_direction). The
+        zone's trade direction must agree:
+          demand zone → trade_direction BUY  → 1H must be UP
+          supply zone → trade_direction SELL → 1H must be DOWN
+        SIDE always blocks the trade.
+
+        Fails open (returns True) on fetch errors so a transient API
+        problem doesn't silently kill the strategy — the standing
+        watchlist-time gate already filtered for trend agreement.
+        """
+        try:
+            is_forex = "_" in zone.instrument
+            if is_forex:
+                # Oanda 1H candles, 250 bars for N=15 structure history
+                candles = self._get_candles(zone.instrument,
+                                            granularity="H1", count=250)
+            else:
+                if not self.massive:
+                    return True
+                candles = self.massive.get_candles(zone.instrument,
+                                                   timespan="1h", count=250)
+            if not candles or len(candles) < 32:
+                return True
+            direction, _ = calculate_trend_direction(
+                candles, instrument=zone.instrument)
+        except Exception as e:
+            logger.debug("intraday direction recheck failed for %s: %s",
+                         zone.instrument, e)
+            return True
+
+        expected = "UP" if zone.trade_direction == "BUY" else "DOWN"
+        if direction != expected:
+            logger.info(
+                "intraday %s skip — 1H trend %s != expected %s "
+                "(zone=%s)", zone.instrument, direction, expected,
+                zone.zone_type,
+            )
+            return False
+        return True
 
     def _find_target(self, zone: ZoneEntry, entry: float, stop_distance: float) -> float:
         ticker = zone.instrument.replace("_", "")
