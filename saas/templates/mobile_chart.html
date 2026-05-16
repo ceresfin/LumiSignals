@@ -35,6 +35,7 @@
     const ENTRY_PRICE = params.get('entry') ? parseFloat(params.get('entry')) : null;
     const EXIT_PRICE = params.get('exit') ? parseFloat(params.get('exit')) : null;
     const STOP_PRICE = params.get('stop') ? parseFloat(params.get('stop')) : null;
+    const UNITS = params.get('units') ? parseFloat(params.get('units')) : null;
     const DIRECTION = params.get('direction') || '';
     const STRATEGY = params.get('strategy') || '';
 
@@ -217,7 +218,28 @@
           const slice = trs.slice(-period);
           return slice.reduce((a, b) => a + b, 0) / slice.length;
         }
+        // Chart-TF ATR (used by some general overlays). Falls back to
+        // chart-TF for non-trade contexts.
         const ATR = computeAtr(unique, 14);
+
+        // ── 5m-anchored ATR for the entry / target shaded bands ──
+        // The Tidewater strategy stops are 3 × 5m ATR; the on-chart bands
+        // should be sized to the SAME 5m ATR so they read consistently
+        // regardless of which TF the user is viewing. If the chart is on
+        // 5m we already have the candles; otherwise fetch 100 5m bars
+        // and compute ATR(14) there.
+        let ATR_5M = ATR;
+        if (TIMESPAN !== '5m') {
+          try {
+            const r5 = await fetch('/api/candles/' + TICKER + '?timespan=5m&count=100');
+            const d5 = await r5.json();
+            if (d5.candles && d5.candles.length >= 15) {
+              ATR_5M = computeAtr(d5.candles, 14);
+            }
+          } catch (e) {
+            console.log('5m ATR fetch error:', e);
+          }
+        }
 
         // ─── ADX Dashboard overlay (mirrors the user's TradingView Pine) ───
         // Computes Direction / Trend / Momentum / ADX / Quadrant on the
@@ -388,6 +410,68 @@
           else                                { qLabel = 'Q4 Yellow'; qColor = '#ffeb3b'; }
           const qSubtitle = (aboveSMA ? 'Above SMA' : 'Below SMA') + ' · RSI ' + rsi14.toFixed(2);
 
+          // ── Trade economics (only when entry/stop/target are in URL) ──
+          // Risk/Reward are price distances; if UNITS is also provided
+          // we convert to $ using the right pip math per pair.
+          const isJpyPair = TICKER.includes('JPY');
+          function priceFmt(p) {
+            if (p == null) return '—';
+            return p.toFixed(isJpyPair ? 3 : 5);
+          }
+          function distanceDollars(priceDistance, units, lastClose) {
+            // Oanda FX dollar conversion:
+            //   USD-quoted (xxx_USD): $ = price_distance × units
+            //   USD-base (USD_xxx):   $ = price_distance × units / lastClose
+            //   Cross pairs:          approximate using lastClose
+            //   Non-FX:               assume direct (futures pts × $/pt, stocks × shares)
+            if (!units || !priceDistance || !lastClose) return null;
+            const parts = TICKER.split('_');
+            if (parts.length === 2) {
+              const [base, quote] = parts;
+              if (quote === 'USD') return priceDistance * units;
+              if (base === 'USD')  return priceDistance * units / lastClose;
+              return priceDistance * units / lastClose;  // cross approx
+            }
+            // Non-FX (e.g. MES futures, SPY): price unit IS dollars per share/contract.
+            return priceDistance * units;
+          }
+          // When the URL doesn't carry units (watchlist views, generic
+          // charts), assume a 10K-unit mini lot so the dashboard can
+          // still show meaningful dollar context alongside the pip count.
+          // The "/10K" suffix tells the user the $ figure scales with
+          // their actual position size.
+          const DEFAULT_UNITS = 10000;
+          const effectiveUnits = (UNITS != null && UNITS > 0) ? UNITS : DEFAULT_UNITS;
+          const usingDefaultUnits = (UNITS == null || UNITS <= 0);
+
+          let entryStr = '—', stopStr = '—', targetStr = '—';
+          let riskStr = '—', rewardStr = '—', rrStr = '—';
+          let rrColor = '#888';
+          if (ENTRY_PRICE != null && STOP_PRICE != null) {
+            entryStr = priceFmt(ENTRY_PRICE);
+            stopStr  = priceFmt(STOP_PRICE);
+            const lastClose = unique[unique.length-1].close;
+            const pipSize = isJpyPair ? 0.01 : 0.0001;
+
+            const riskDist = Math.abs(ENTRY_PRICE - STOP_PRICE);
+            const riskPips = riskDist / pipSize;
+            const riskUsd  = distanceDollars(riskDist, effectiveUnits, lastClose) || 0;
+            riskStr = riskPips.toFixed(1) + 'p · $' + riskUsd.toFixed(2)
+                      + (usingDefaultUnits ? '/10K' : '');
+
+            if (EXIT_PRICE != null) {
+              targetStr = priceFmt(EXIT_PRICE);
+              const rewDist = Math.abs(EXIT_PRICE - ENTRY_PRICE);
+              const rewPips = rewDist / pipSize;
+              const rewUsd  = distanceDollars(rewDist, effectiveUnits, lastClose) || 0;
+              rewardStr = rewPips.toFixed(1) + 'p · $' + rewUsd.toFixed(2)
+                          + (usingDefaultUnits ? '/10K' : '');
+              const rr = riskDist > 0 ? rewDist / riskDist : 0;
+              rrStr = rr.toFixed(2) + ':1';
+              rrColor = rr >= 1.5 ? '#3E7F6B' : (rr >= 1.0 ? '#ffeb3b' : '#C26A6A');
+            }
+          }
+
           // ── Render ───────────────────────────────────────────────────
           const panel = document.createElement('div');
           panel.id = 'adx-dashboard';
@@ -398,7 +482,7 @@
             'position:absolute;top:8px;right:8px;background:rgba(30,30,30,0.92);' +
             'padding:8px 10px;border-radius:8px;border:1px solid #555;' +
             'font-family:ui-monospace,Menlo,monospace;font-size:11px;' +
-            'color:#ddd;z-index:1000;min-width:170px;';
+            'color:#ddd;z-index:1000;min-width:190px;';
           function row(label, value, valueColor) {
             return '<div style="display:flex;justify-content:space-between;gap:14px;padding:1px 0">' +
               '<span style="color:#888">' + label + '</span>' +
@@ -406,13 +490,15 @@
               '</div>';
           }
           panel.innerHTML =
-            '<div style="color:#888;font-size:9px;letter-spacing:0.6px;margin-bottom:4px">ADX DASHBOARD · ' + TIMESPAN + '</div>' +
+            '<div style="color:#888;font-size:9px;letter-spacing:0.6px;margin-bottom:4px">DASHBOARD · ' + TIMESPAN + '</div>' +
             row('Direction', direction, dirColor) +
             row('Trend', trendDisplay, trendColor) +
-            row('Momentum', momentumLabel(dmi.adx), momColor) +
-            row('ADX', dmi.adx.toFixed(2), momColor) +
-            row('Quadrant', qLabel, qColor) +
-            '<div style="color:#666;font-size:9px;margin-top:3px;text-align:right">' + qSubtitle + '</div>';
+            row('Entry',  entryStr,  '#ddd') +
+            row('Target', targetStr, '#ff9800') +
+            row('Stop',   stopStr,   '#ff1744') +
+            row('Risk',   riskStr,   '#C26A6A') +
+            row('Reward', rewardStr, '#3E7F6B') +
+            row('R:R',    rrStr,     rrColor);
           document.body.appendChild(panel);
         })();
 
@@ -453,8 +539,10 @@
 
         // Entry: solid line + one-sided shaded band extending TOWARD the
         // target so it visually leans the way the trade is meant to go.
-        if (HAS_TRADE && ENTRY_PRICE && ATR > 0) {
-          const w = 0.5 * ATR;
+        // Width = 0.5 × 5m ATR (matches the strategy's actual sizing
+        // math, which uses 5m ATR for stops regardless of viewing TF).
+        if (HAS_TRADE && ENTRY_PRICE && ATR_5M > 0) {
+          const w = 0.5 * ATR_5M;
           const low  = isLong ? ENTRY_PRICE : ENTRY_PRICE - w;
           const high = isLong ? ENTRY_PRICE + w : ENTRY_PRICE;
           const fill = isLong ? 'rgba(62,127,107,0.40)' : 'rgba(194,106,106,0.40)';
@@ -473,10 +561,10 @@
 
         // Target: solid line + one-sided shaded "meat" band on the ENTRY
         // side of the target — the territory the trade has to traverse to
-        // be profitable. Same lean as the entry band so both visually point
-        // the same way.
-        if (HAS_TRADE && EXIT_PRICE && ATR > 0) {
-          const w = 1.0 * ATR;
+        // be profitable. Width = 1 × 5m ATR (the approach zone). Like
+        // the entry band, sized to 5m ATR regardless of viewing TF.
+        if (HAS_TRADE && EXIT_PRICE && ATR_5M > 0) {
+          const w = 1.0 * ATR_5M;
           const low  = isLong ? EXIT_PRICE - w : EXIT_PRICE;
           const high = isLong ? EXIT_PRICE : EXIT_PRICE + w;
           drawBand(low, high, 'rgba(255,152,0,0.45)', null);

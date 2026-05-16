@@ -88,17 +88,28 @@ class ModelConfig:
 #   bias_tf         = trend frame
 #   containment     = TF the whole move should fit inside (drives target search)
 #
-# SCALP:    5m execute / 15m trend / 1H containment      → zones from 15m + 1h
+# SCALP:    5m execute / 15m trend / 1H containment      → zones from 1h only
 # INTRADAY: 1h execute / 1d trend  / 1W containment      → zones from 1d + 1w
 # SWING:    1d execute / 1w trend  / 1M containment      → zones from 1w + 1mo
+# Dropped 15m from SCALP zone_tfs (2026-05-15): in trending markets the
+# 15m and 1h "untouched supply" almost always come from the same wick
+# (1-3 pips apart), producing duplicate-looking watchlist cards. The 1h
+# zone alone captures the structural level; the 5m trigger still gives
+# entry granularity. Trend confluence still uses 15m as one of the TFs.
 SCALP_MODEL = ModelConfig(
     name="scalp",
     trigger_tf="5m",
-    zone_tfs=["15m", "1h"],
+    zone_tfs=["1h"],
     bias_tf="15m",
     bias_candle_tfs=["15m", "1h"],
     risk_percent=0.25,
-    zone_tolerance_pct={"15m": 0.0015, "1h": 0.002},
+    # Tightened from 0.002 → 0.0005 on 2026-05-15 with the move to
+    # touch-to-trigger (no candle pattern required). At 0.05% of price:
+    #   EUR_USD 1.16 → ~6 pip tolerance
+    #   USD_JPY 158  → ~8 pip tolerance
+    # Tight enough that the entry sits near the actual zone level, not
+    # 23 pips away as it did at 0.2%.
+    zone_tolerance_pct={"1h": 0.0005},
     min_score=50,
     min_risk_reward=1.5,
     atr_stop_multiplier=3.0,   # stop = 3 x 5m ATR
@@ -1148,17 +1159,16 @@ class LevelsStrategy:
         if len(candles) < 3:
             return
 
-        # Run zone-filtered classification
-        classification = classify_for_zone(candles, zone.zone_type)
-        if classification is None:
-            return  # No matching pattern
-
-        # Pattern must align with trade direction
-        expected_dir = "bullish" if zone.trade_direction == "BUY" else "bearish"
-        if classification.direction != expected_dir:
-            return
-
-        # Entry = trigger candle's close price
+        # Touch-to-trigger (2026-05-15): no candle pattern required. The
+        # fact that this function was called means the zone is in
+        # "activated" status (price is inside the zone_tolerance_pct band
+        # around zone_price). Fire immediately on touch.
+        #
+        # Previously the strategy required a bearish/bullish reversal
+        # pattern at the LTF, which often kept it on the sidelines while
+        # price tagged the zone repeatedly without a clean pattern. The
+        # bias_score (60% trend + 40% candle) is still computed at
+        # watchlist scan time and gates which zones make it here.
         trigger_candle = candles[-1]
         entry = trigger_candle.close
 
@@ -1181,16 +1191,20 @@ class LevelsStrategy:
 
         if rr < self.min_risk_reward:
             logger.debug(
-                "Rejected: %s %s R:R %.1f < min %.1f",
-                zone.instrument, classification.pattern, rr, self.min_risk_reward,
+                "Rejected: %s touch R:R %.2f < min %.1f",
+                zone.instrument, rr, self.min_risk_reward,
             )
             return
 
+        # Touch-to-trigger: no candle pattern, so we tag the trigger
+        # generically. The trade direction is still derived from zone type
+        # (supply→SELL, demand→BUY) via zone.trade_direction.
+        expected_dir = "bullish" if zone.trade_direction == "BUY" else "bearish"
         trigger = TriggerResult(
             zone=zone,
             trigger_timeframe=tf,
-            trigger_pattern=classification.pattern,
-            trigger_direction=classification.direction,
+            trigger_pattern="touch",
+            trigger_direction=expected_dir,
             entry=entry,
             stop=stop,
             target=target,

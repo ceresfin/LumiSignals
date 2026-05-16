@@ -49,8 +49,8 @@ function getTvUrl(instrument: string): string {
 }
 
 export default function ChartScreen() {
-  const { symbol, interval, entry, exit, direction, stop, strategy } = useLocalSearchParams<{
-    symbol: string; interval?: string; entry?: string; exit?: string; direction?: string; stop?: string; strategy?: string;
+  const { symbol, interval, entry, exit, direction, stop, units, strategy } = useLocalSearchParams<{
+    symbol: string; interval?: string; entry?: string; exit?: string; direction?: string; stop?: string; units?: string; strategy?: string;
   }>();
   const router = useRouter();
   const tf = interval || '15m';
@@ -61,13 +61,18 @@ export default function ChartScreen() {
     '2n20': '2N20',
     'vwap_2n20': '2N20',
     '2n20_exit': '2N20',
-    'htf_levels': 'HTF LEVELS',
-    'htf_supply_demand': 'HTF LEVELS',
+    'htf_levels': 'TIDEWATER',
+    'htf_supply_demand': 'TIDEWATER',
     'orb_breakout': 'ORB',
     'orb_butterfly': 'ORB BFLY',
-    'scalp_htf':    'SCALP HTF',
-    'intraday_htf': 'INTRADAY HTF',
-    'swing_htf':    'SWING HTF',
+    // Tidewater family — naming by zone-TF anchor (Hourly/Daily/Weekly)
+    'scalp_htf':    'TIDEWATER HOURLY',
+    'intraday_htf': 'TIDEWATER DAILY',
+    'swing_htf':    'TIDEWATER WEEKLY',
+    // H1 Zone Scalp variants
+    'scalp_h1zone':       'H1 ZONE SCALP',
+    'scalp_h1zone_alpha': 'H1 ZONE α (15m)',
+    'scalp_h1zone_beta':  'H1 ZONE β (1h)',
   };
   const stratLabel = strategy ? (STRATEGY_LABELS[strategy] || strategy.toUpperCase().replace('_', ' ')) : null;
 
@@ -97,6 +102,7 @@ export default function ChartScreen() {
   if (exit) chartUrl += `&exit=${exit}`;
   if (direction) chartUrl += `&direction=${direction}`;
   if (stop) chartUrl += `&stop=${stop}`;
+  if (units) chartUrl += `&units=${units}`;
   if (strategy) chartUrl += `&strategy=${strategy}`;
 
   const timespans = ticker === 'MES' || ticker === 'ES'

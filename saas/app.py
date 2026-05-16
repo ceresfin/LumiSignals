@@ -482,8 +482,11 @@ def create_app():
         # bot's real scan structure (model-aware zone_tfs, trend_tfs, ATR) so
         # the mobile cards look identical to forex zones — and stays visible
         # outside market hours when the bot's stock scan is gated off.
+        # Tidewater zone TFs (matches lumisignals.levels_strategy.ModelConfig).
+        # SCALP dropped 15m on 2026-05-15 — 15m and 1h zones almost always
+        # came from the same wick (1-3 pips apart) in trending markets.
         MODEL_ZONE_TFS = {
-            "scalp":    ["15m", "1h"],
+            "scalp":    ["1h"],
             "intraday": ["1d", "1w"],
             "swing":    ["1w", "1mo"],
         }
@@ -2286,6 +2289,37 @@ def create_app():
             except Exception:
                 H1Z_PAIRS = []
 
+        # ── Tidewater (HTF Levels family) per-pair zone counts ──
+        # No regime filter; per-pair card shows how many active zones
+        # exist across the three durations (Hourly/Daily/Weekly) so the
+        # user can see at a glance where the strategy is currently
+        # watching. Pulls from the bot's per-model watchlist:1:{model}
+        # Redis keys — same data the watchlist endpoint serves.
+        tide_pairs: dict = {}
+        try:
+            FX_PAIRS = ["EUR_USD", "USD_JPY", "GBP_USD", "USD_CHF",
+                        "AUD_USD", "USD_CAD", "NZD_USD"]
+            for p in FX_PAIRS:
+                tide_pairs[p] = {"pair": p,
+                                  "hourly_zones": 0,   # scalp model
+                                  "daily_zones": 0,    # intraday model
+                                  "weekly_zones": 0,   # swing model
+                                  "total_zones": 0}
+            for model_key, duration_key in (("scalp", "hourly_zones"),
+                                             ("intraday", "daily_zones"),
+                                             ("swing", "weekly_zones")):
+                raw = rdb.get(f"watchlist:1:{model_key}")
+                if not raw:
+                    continue
+                zones = json.loads(raw)
+                for z in zones:
+                    inst = z.get("instrument") or ""
+                    if inst in tide_pairs:
+                        tide_pairs[inst][duration_key] += 1
+                        tide_pairs[inst]["total_zones"] += 1
+        except Exception as e:
+            logger.debug("tidewater summary failed: %s", e)
+
         return jsonify({
             "strategies": {
                 "fx_4h": {
@@ -2305,16 +2339,36 @@ def create_app():
                     "pairs": out_pairs,
                     "chart_strategy": "fx_4h",
                 },
+                "tidewater": {
+                    "name": "Tidewater",
+                    "subtitle": "Multi-TF zone scalp/intraday/swing",
+                    "description": (
+                        "Watches untouched supply/demand zones at three "
+                        "durations — Hourly (1H zones, 5m trigger), Daily "
+                        "(1D zones, 1H trigger), Weekly (1W zones, 1D "
+                        "trigger). Trades the bounce: bias_score = 60% "
+                        "trend-confluence + 40% candle pattern, native "
+                        "Oanda SL/TP brackets. FX trend uses N=15 swing "
+                        "structure direction."
+                    ),
+                    "universe": list(tide_pairs.keys()),
+                    "eligible_count": sum(
+                        1 for p in tide_pairs.values()
+                        if p["total_zones"] > 0),
+                    "total_count": len(tide_pairs),
+                    "pairs": tide_pairs,
+                    "chart_strategy": "htf_levels",
+                },
                 "h1_zone": {
                     "name": "H1 Zone Scalp",
                     "subtitle": "FX 5m near H1 zones (paper)",
                     "description": (
                         "Limit-orders 2 pips inside H1 demand/supply zones "
-                        "when the 5m setup aligns with higher-TF ADX trend. "
-                        "Each signal places 4 trades targeting 25/50/75/100% "
-                        "of the distance to the opposing zone. Two trend "
-                        "filters run independently: α (15m ADX) and β (1h ADX). "
-                        "$10 risk per leg, paper-only."
+                        "when the 5m setup aligns with higher-TF structure "
+                        "direction. Each signal places 4 trades targeting "
+                        "25/50/75/100% of the distance to the opposing "
+                        "zone. Two trend filters run independently: α "
+                        "(15m) and β (1h). $10 risk per leg, paper-only."
                     ),
                     "universe": list(H1Z_PAIRS),
                     "eligible_count": len(H1Z_PAIRS),

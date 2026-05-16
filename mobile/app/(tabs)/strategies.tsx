@@ -22,8 +22,8 @@ type RegimeHistoryEntry = {
 type RegimePairState = {
   pair: string;
   // Regime-strategy fields (Stillwater). All optional so the same shape
-  // works for non-regime strategies (H1 Zone Scalp) which only report
-  // active-trade counts.
+  // works for non-regime strategies (H1 Zone Scalp, Tidewater) which
+  // only report active-trade or active-zone counts.
   eligible?: boolean;
   atr_pct?: number;
   drift_pips?: number;
@@ -34,6 +34,11 @@ type RegimePairState = {
   // H1Zone fields
   pending_legs?: number;
   filled_legs?: number;
+  // Tidewater (HTF Levels) fields
+  hourly_zones?: number;
+  daily_zones?: number;
+  weekly_zones?: number;
+  total_zones?: number;
 };
 
 type StrategyView = {
@@ -93,6 +98,51 @@ function PairCard({ state, onPress, onChart }: {
       {state.since ? <Text style={styles.sinceLine}>since {formatSince(state.since)}</Text> : null}
       {!state.eligible && state.fail_reason ? (
         <Text style={styles.reasonLine}>⚠ {state.fail_reason}</Text>
+      ) : null}
+    </TouchableOpacity>
+  );
+}
+
+// Tidewater pair card — shows active zone counts across three durations
+// (Hourly / Daily / Weekly). Card tap opens the chart with strategy=
+// htf_levels so the chart's HTF overlay code path is used.
+function TidewaterPairCard({ state, onChart }: {
+  state: RegimePairState;
+  onChart: () => void;
+}) {
+  const hourly = state.hourly_zones ?? 0;
+  const daily = state.daily_zones ?? 0;
+  const weekly = state.weekly_zones ?? 0;
+  const total = state.total_zones ?? (hourly + daily + weekly);
+  const isActive = total > 0;
+  const pillColor = isActive ? Colors.green : '#666';
+  return (
+    <TouchableOpacity style={styles.pairCard} onPress={onChart}>
+      <View style={styles.pairCardHeader}>
+        <Text style={styles.pairName}>{state.pair}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <View style={[styles.statusPill, { backgroundColor: pillColor + '22' }]}>
+            <Text style={[styles.statusText, { color: pillColor }]}>
+              {isActive ? `● ${total} ZONE${total > 1 ? 'S' : ''}` : '○ FLAT'}
+            </Text>
+          </View>
+          <TouchableOpacity onPress={(e) => { e.stopPropagation(); onChart(); }} style={styles.chartBtn}>
+            <Text style={styles.chartBtnText}>chart</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+      {isActive ? (
+        <View style={styles.metricsRow}>
+          <Text style={styles.metric}>
+            hourly <Text style={styles.metricValue}>{hourly}</Text>
+          </Text>
+          <Text style={styles.metric}>
+            daily <Text style={styles.metricValue}>{daily}</Text>
+          </Text>
+          <Text style={styles.metric}>
+            weekly <Text style={styles.metricValue}>{weekly}</Text>
+          </Text>
+        </View>
       ) : null}
     </TouchableOpacity>
   );
@@ -287,6 +337,14 @@ export default function Strategies() {
                     key={p.pair}
                     state={p}
                     onChart={() => openChart(p.pair, 'h1_zone')}
+                  />
+                ))
+              ) : s.chart_strategy === 'htf_levels' ? (
+                sortedPairs.map(p => (
+                  <TidewaterPairCard
+                    key={p.pair}
+                    state={p}
+                    onChart={() => openChart(p.pair, 'htf_levels')}
                   />
                 ))
               ) : (

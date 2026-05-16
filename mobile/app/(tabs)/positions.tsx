@@ -78,6 +78,73 @@ function sortedTrendEntries(trends: Record<string, string>): [string, string][] 
   return Object.entries(trends).sort(([a], [b]) => tfRank(a) - tfRank(b));
 }
 
+// Trade-economics math for HTF zone cards — mirrors the chart dashboard.
+// Returns {entryStr, targetStr, stopStr, riskStr, rewardStr, rrStr, rrColor}
+// with consistent "Xp · $Y/10K" formatting (the /10K caveats reminds the
+// user the $ figure scales linearly with position size).
+const DEFAULT_UNITS_FOR_DOLLARS = 10000;
+function formatPrice(price: number | null | undefined, instrument: string): string {
+  if (price == null) return '—';
+  const isJpy = instrument.includes('JPY');
+  const decimals = isJpy ? 3 : (instrument.includes('_') ? 5 : 2);
+  return price.toFixed(decimals);
+}
+function pipDollars(distance: number, instrument: string, refPrice: number): number {
+  // Convert a price distance into a $ amount at DEFAULT_UNITS_FOR_DOLLARS.
+  // XXX_USD pair: $ = distance × units (direct).
+  // USD_XXX pair: $ = distance × units / refPrice (convert quote → USD).
+  // Cross or non-FX: approximate using refPrice if available.
+  const parts = instrument.split('_');
+  if (parts.length === 2) {
+    const [base, quote] = parts;
+    if (quote === 'USD') return distance * DEFAULT_UNITS_FOR_DOLLARS;
+    if (base === 'USD' && refPrice > 0) return distance * DEFAULT_UNITS_FOR_DOLLARS / refPrice;
+    if (refPrice > 0) return distance * DEFAULT_UNITS_FOR_DOLLARS / refPrice;
+  }
+  return distance * DEFAULT_UNITS_FOR_DOLLARS;
+}
+function buildZoneTradePlan(z: any): {
+  entry: string; target: string; stop: string;
+  risk: string; reward: string; rr: string;
+  rrColor: string;
+  hasPlan: boolean;
+} {
+  const inst = z.instrument || '';
+  const entry = z.projected_entry;
+  const stop = z.projected_stop;
+  const target = z.projected_target;
+  if (entry == null || stop == null) {
+    return { entry: '—', target: '—', stop: '—', risk: '—', reward: '—',
+             rr: '—', rrColor: Colors.textLight, hasPlan: false };
+  }
+  const isJpy = inst.includes('JPY');
+  const pipSize = isJpy ? 0.01 : 0.0001;
+  const riskDist = Math.abs(entry - stop);
+  const riskPips = riskDist / pipSize;
+  const riskUsd = pipDollars(riskDist, inst, entry);
+  let rewardStr = '—', rrStr = '—';
+  let rrColor: string = Colors.textLight;
+  if (target != null) {
+    const rewardDist = Math.abs(target - entry);
+    const rewardPips = rewardDist / pipSize;
+    const rewardUsd = pipDollars(rewardDist, inst, entry);
+    rewardStr = `${rewardPips.toFixed(1)}p · $${rewardUsd.toFixed(2)}/10K`;
+    const rr = riskDist > 0 ? rewardDist / riskDist : 0;
+    rrStr = `${rr.toFixed(2)}:1`;
+    rrColor = rr >= 1.5 ? Colors.green : (rr >= 1.0 ? Colors.gold : Colors.red);
+  }
+  return {
+    entry: formatPrice(entry, inst),
+    target: formatPrice(target, inst),
+    stop: formatPrice(stop, inst),
+    risk: `${riskPips.toFixed(1)}p · $${riskUsd.toFixed(2)}/10K`,
+    reward: rewardStr,
+    rr: rrStr,
+    rrColor,
+    hasPlan: true,
+  };
+}
+
 // Approximate USD value of a price move on a position. Handles the three
 // pair shapes correctly; falls back to the quote-currency-divided-by-entry
 // approximation for crosses (matches trade_tracker.py's logic).
@@ -537,6 +604,9 @@ export default function Positions() {
             entry: item.entry_price?.toString(),
             stop: item.stop_loss?.toString(),
             exit: item.take_profit?.toString(),
+            // Units lets the chart dashboard compute $ Risk/Reward
+            // instead of just pip distances.
+            units: item.units?.toString(),
             direction: item.direction,
             strategy: item.strategy || item.model || '',
           }
@@ -701,6 +771,30 @@ export default function Positions() {
                         ))}
                       </View>
                     </View>
+                    {(() => {
+                      const plan = buildZoneTradePlan(z);
+                      if (!plan.hasPlan) return null;
+                      return (
+                        <>
+                          <View style={styles.zonePlanRow}>
+                            <Text style={styles.zonePlanLabel}>E</Text>
+                            <Text style={styles.zonePlanValue}>{plan.entry}</Text>
+                            <Text style={styles.zonePlanLabel}>T</Text>
+                            <Text style={[styles.zonePlanValue, { color: '#ff9800' }]}>{plan.target}</Text>
+                            <Text style={styles.zonePlanLabel}>S</Text>
+                            <Text style={[styles.zonePlanValue, { color: Colors.red }]}>{plan.stop}</Text>
+                          </View>
+                          <View style={styles.zonePlanRow}>
+                            <Text style={styles.zonePlanLabel}>Risk</Text>
+                            <Text style={[styles.zonePlanValue, { color: Colors.red }]}>{plan.risk}</Text>
+                            <Text style={styles.zonePlanLabel}>Reward</Text>
+                            <Text style={[styles.zonePlanValue, { color: Colors.green }]}>{plan.reward}</Text>
+                            <Text style={styles.zonePlanLabel}>R:R</Text>
+                            <Text style={[styles.zonePlanValue, { color: plan.rrColor, fontWeight: '700' }]}>{plan.rr}</Text>
+                          </View>
+                        </>
+                      );
+                    })()}
                   </TouchableOpacity>
                 );
               })
@@ -879,6 +973,9 @@ const styles = StyleSheet.create({
   zoneBottom: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   zonePrice: { fontSize: 13, color: Colors.textMedium },
   zoneModel: { fontSize: 10, fontWeight: '700', color: Colors.textLight, letterSpacing: 0.3 },
+  zonePlanRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4, flexWrap: 'wrap' },
+  zonePlanLabel: { fontSize: 10, color: Colors.textLight, letterSpacing: 0.3, textTransform: 'uppercase' },
+  zonePlanValue: { fontSize: 11, color: Colors.dark, fontFamily: 'Menlo', marginRight: 4 },
   trendRow: { flexDirection: 'row', gap: 4 },
   trendBadge: { fontSize: 11, fontWeight: '600' },
   empty: { alignItems: 'center', paddingTop: 60 },
