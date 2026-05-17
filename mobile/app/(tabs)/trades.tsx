@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/auth';
 import { Colors } from '@/constants/theme';
 import { strategyBadgeText } from '@/lib/strategyLabel';
+import IbStatusBanner from '@/components/ib-status-banner';
 
 type Trade = {
   id: number;
@@ -192,9 +193,16 @@ export default function Trades() {
           if (t && t.id != null) map.set(t.id, t);
         }
       }
-      const merged = Array.from(map.values()).sort(
-        (a, b) => (b.closed_at || '').localeCompare(a.closed_at || '')
-      );
+      // Hide retired FX 2n20 trades — strategy is no longer running and the
+      // historical fills clutter performance views.
+      const isFx2n20 = (t: Trade) => {
+        const isFx = t.broker === 'oanda' || t.asset_type === 'forex';
+        const tag = `${t.model || ''} ${t.strategy || ''}`.toLowerCase();
+        return isFx && tag.includes('2n20');
+      };
+      const merged = Array.from(map.values())
+        .filter(t => !isFx2n20(t))
+        .sort((a, b) => (b.closed_at || '').localeCompare(a.closed_at || ''));
       setAllTrades(merged);
     } catch (e) {
       console.error('Trades load error:', e);
@@ -235,6 +243,8 @@ export default function Trades() {
         <Text style={styles.headerTitle}>Closed Trades</Text>
         <Text style={styles.headerCount}>{trades.length}</Text>
       </View>
+
+      <IbStatusBanner />
 
       {/* Broker Tabs */}
       <View style={styles.tabBar}>

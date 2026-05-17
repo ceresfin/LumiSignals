@@ -6,6 +6,7 @@ import { useRouter } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/auth';
 import { Colors } from '@/constants/theme';
+import IbStatusBanner from '@/components/ib-status-banner';
 
 type Trade = {
   realized_pl: number | null;
@@ -370,7 +371,14 @@ export default function Dashboard() {
           .select('strategy, asset_type, instrument, broker, model, broker_trade_id, direction, entry_price, stop_loss, take_profit, opened_at')
           .eq('user_id', user.id),
       ]);
-      if (tradesRes.data) setAllTrades(tradesRes.data);
+      // Drop retired FX 2n20 trades from all dashboard math — strategy is
+      // no longer running, the legacy fills distort performance breakdowns.
+      const isFx2n20 = (t: Trade) => {
+        const isFx = t.broker === 'oanda' || t.asset_type === 'forex';
+        const tag = `${t.model || ''} ${t.strategy || ''}`.toLowerCase();
+        return isFx && tag.includes('2n20');
+      };
+      if (tradesRes.data) setAllTrades((tradesRes.data as Trade[]).filter(t => !isFx2n20(t)));
       if (posRes.data) setAllPositions(posRes.data);
     } catch (e) {
       console.error('Stats load error:', e);
@@ -429,6 +437,8 @@ export default function Dashboard() {
           <Text style={styles.headerTitle}>LumiSignals</Text>
           <Text style={styles.headerSubtitle}>Trading Dashboard</Text>
         </View>
+
+        <IbStatusBanner />
 
         {/* Broker Tabs */}
         <View style={styles.tabBar}>

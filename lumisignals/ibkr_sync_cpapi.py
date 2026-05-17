@@ -252,6 +252,8 @@ def check_stop_fills(client):
                         "entry_price": round(entry_price, 2),
                         "exit_price": round(exit_price, 2),
                         "realized_pnl": round(pnl, 2),
+                        "stop_loss": round(stop_price, 2) if stop_price else None,
+                        "take_profit": round(target_price, 2) if target_price else None,
                         "strategy": strategy,
                         "close_reason": close_reason,
                         "opened_at": sp.get("opened_at", ""),
@@ -1426,6 +1428,30 @@ def check_order_requests(client):
                 contracts = int(order.get("contracts", 1))
                 strategy_name = order.get("strategy", "")
 
+                # Weekend lockout: between Friday 17:00 ET flatten and
+                # Sunday 18:00 ET open, futures should not re-enter on
+                # late TV signals (this is how an MES short got stuck
+                # over the 2026-05-15 weekend).
+                rdb_lock = _rdb()
+                if rdb_lock is not None:
+                    try:
+                        if rdb_lock.get("ibkr:weekend_lockout"):
+                            logger.info(
+                                "SKIP weekend lockout %s %s %s — futures market closed",
+                                direction, ticker, strategy_name,
+                            )
+                            try:
+                                requests.post(f"{SERVER_URL}/api/ibkr/order/update",
+                                    json={"order_id": order_id,
+                                          "status": "rejected",
+                                          "reason": "weekend lockout (futures market closed)"},
+                                    headers={"X-Sync-Key": SYNC_KEY}, timeout=5)
+                            except Exception:
+                                pass
+                            continue
+                    except Exception:
+                        pass
+
                 # Skip stale orders (queued more than 5 minutes ago)
                 queued_at = order.get("queued_at", "")
                 if queued_at:
@@ -1741,6 +1767,12 @@ def check_order_requests(client):
                             if not opened_at:
                                 opened_at = order.get("queued_at", "")
 
+                            # SL/TP come from the strat_pos record so the
+                            # closed-trade row carries the original bracket
+                            # levels. Used downstream to compute planned_rr
+                            # and achieved_rr.
+                            sp_stop = float((sp_strat or {}).get("stop_price") or 0) or None
+                            sp_target = float((sp_strat or {}).get("target_price") or 0) or None
                             closed_trade = {
                                 "symbol": ticker,
                                 "type": "futures",
@@ -1749,6 +1781,8 @@ def check_order_requests(client):
                                 "entry_price": round(entry_price, 2),
                                 "exit_price": round(exit_price, 2),
                                 "realized_pnl": round(pnl, 2),
+                                "stop_loss": round(sp_stop, 2) if sp_stop else None,
+                                "take_profit": round(sp_target, 2) if sp_target else None,
                                 "strategy": entry_strategy,
                                 "close_reason": close_reason,
                                 "opened_at": opened_at,
@@ -2448,6 +2482,125 @@ def _close_spread(client, spread: dict, reason: str):
         pass
 
 
+# ─── Weekend safety net ──────────────────────────────────────────────────
+# Futures (MES, NQ, ES, …) should not carry across a CME weekend close.
+# The 2n20 strategy has its own end-of-week flatten, but the TV-webhook
+# path doesn't — and on 2026-05-15 we ended up with a stuck MES short
+# overnight Saturday because Pine sent a fresh SELL minutes after the
+# strategy's own flatten ran. This is the independent safety net:
+#   - At 16:55–17:00 ET Friday, flatten every open futures position with a
+#     market order opposite to current side.
+#   - Set a Redis lockout flag (ibkr:weekend_lockout) so check_order_requests
+#     refuses any new futures entries between Friday close and Sunday open.
+# Idempotent: once the flatten has been recorded for a given Friday, the
+# function is a no-op until the next Friday window opens.
+
+_ET_TZ = None
+
+def _et_now():
+    """Current datetime in US/Eastern. Cache zoneinfo lookup."""
+    from datetime import datetime as _dt
+    global _ET_TZ
+    if _ET_TZ is None:
+        try:
+            from zoneinfo import ZoneInfo
+            _ET_TZ = ZoneInfo("America/New_York")
+        except Exception:
+            # Fallback: rough UTC-4 (won't be correct around DST switches
+            # but the only behavior gated on this is a 5-min window, so
+            # an offset miss just means we run a few minutes early/late).
+            from datetime import timezone as _tz, timedelta as _td
+            _ET_TZ = _tz(_td(hours=-4))
+    return _dt.now(_ET_TZ)
+
+
+def weekend_flatten_futures(client):
+    """Friday 16:55 ET safety net: flatten all open futures positions.
+
+    Runs every sync tick; the time/lockout checks keep it a no-op outside
+    the window. Sets ibkr:weekend_lockout (TTL through Sunday 17:55 ET)
+    so check_order_requests can refuse any TV-fired futures entries until
+    the next regular session.
+    """
+    try:
+        now_et = _et_now()
+        # Friday = weekday 4. Window: 16:55-17:00 ET (CME futures close 17:00).
+        is_friday = now_et.weekday() == 4
+        in_window = (
+            now_et.hour == 16 and now_et.minute >= 55
+        ) or (
+            now_et.hour == 17 and now_et.minute == 0
+        )
+        if not (is_friday and in_window):
+            return
+
+        rdb = _rdb()
+        if rdb is None:
+            return
+
+        # Set lockout flag for the whole weekend. CME reopens Sunday 18:00
+        # ET; we lift the flag at Sunday 17:55 so the bot is ready when
+        # quotes return. TTL in seconds from Friday 16:55 ET → Sunday 17:55 ET.
+        # Set every tick in case earlier set was missed; SET overrides TTL.
+        rdb.setex("ibkr:weekend_lockout", 49 * 3600, "1")  # 49h: covers Fri 17:00 → Sun 18:00
+
+        # Idempotent: skip if we already flattened this Friday.
+        date_key = now_et.strftime("%Y-%m-%d")
+        done_key = f"ibkr:weekend_flatten:done:{date_key}"
+        if rdb.get(done_key):
+            return
+
+        positions = client.get_positions() or []
+        fut_positions = [p for p in positions
+                         if p.get("sec_type") == "FUT" and int(p.get("quantity", 0)) != 0]
+
+        if not fut_positions:
+            # Nothing to do, but still mark done so we don't re-check.
+            rdb.setex(done_key, 24 * 3600, "1")
+            return
+
+        from .ibkr_cpapi import CPAPIClient
+        flattened = []
+        errors = []
+        for pos in fut_positions:
+            qty = int(pos.get("quantity", 0))
+            conid = int(pos.get("con_id", 0))
+            sym = pos.get("symbol", "?")
+            if qty == 0 or conid == 0:
+                continue
+            side = "SELL" if qty > 0 else "BUY"
+            try:
+                payload = CPAPIClient.build_futures_order(
+                    conid=conid, action=side, quantity=abs(qty),
+                    order_type="MKT", tif="DAY",
+                )
+                resp = client.place_order(payload)
+                logger.info("WEEKEND FLATTEN: %s %s %d → %s", side, sym, abs(qty), resp)
+                flattened.append(f"{side} {sym} ×{abs(qty)}")
+                # Drop strat_pos records for this ticker so Sunday signals
+                # start clean.
+                try:
+                    for k in rdb.scan_iter(match=f"ibkr:strat_pos:{sym}:*"):
+                        rdb.delete(k)
+                except Exception:
+                    pass
+            except Exception as e:
+                logger.error("WEEKEND FLATTEN failed for %s: %s", sym, e)
+                errors.append(f"{sym}: {e}")
+
+        rdb.setex(done_key, 24 * 3600, "1")
+        try:
+            _send_telegram_alert(
+                "🌅 Weekend flatten",
+                "Flattened: " + (", ".join(flattened) or "(none)") +
+                (f"\nErrors: {'; '.join(errors)}" if errors else ""),
+            )
+        except Exception:
+            pass
+    except Exception as e:
+        logger.error("weekend_flatten_futures error: %s", e)
+
+
 def main():
     logger.info("IB CPAPI Sync starting — connecting to %s", CPAPI_URL)
 
@@ -2487,6 +2640,17 @@ def main():
                                    smtp_pass=alert_pass)
                 except Exception:
                     pass
+                # Telegram alert too — email lag has hidden expiries for hours.
+                # _send_telegram_alert rate-limits per title (10 min), so we
+                # won't spam even though this branch hits every loop until reauth.
+                try:
+                    _send_telegram_alert(
+                        "🔐 IBeam session expired",
+                        "Bot cannot place orders. Open bot.lumitrade.ai/ib-auth "
+                        "and click Re-authenticate.",
+                    )
+                except Exception:
+                    pass
                 time.sleep(60)
                 continue
 
@@ -2509,6 +2673,11 @@ def main():
             # at order-placement-time values).
             sync_positions_to_supabase(data.get("positions", []))
             sync_oanda_positions_to_supabase()
+
+            # Friday 16:55 ET safety net: flatten all open futures so no
+            # position carries through the weekend. Sets the weekend lockout
+            # flag that check_order_requests reads to refuse new entries.
+            weekend_flatten_futures(client)
 
             # Watch for stop-loss fills. When a strategy's SL fires, its
             # tracked stop_order_id disappears from open orders — clear the

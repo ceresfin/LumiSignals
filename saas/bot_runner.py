@@ -497,6 +497,12 @@ def run_bot_for_user(user_data, stop_check):
                             record_loss(user_id, model_name, risk_amt)
                         # Also record under Oanda order ID for trade enrichment
                         signal_log.record(result.order_id, log_entry)
+                        # Record under trade_id when the order filled immediately.
+                        # trade_tracker.get_closed_trades() looks up by trade_id
+                        # first; without this, Tidewater closes get filtered
+                        # out as "not bot-placed" and never reach Supabase.
+                        if getattr(result, "trade_id", None):
+                            signal_log.record(str(result.trade_id), log_entry)
                         try:
                             signal_log.record(str(int(result.order_id) + 1), log_entry)
                         except (ValueError, TypeError):

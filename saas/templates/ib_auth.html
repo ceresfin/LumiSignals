@@ -50,17 +50,9 @@ iframe { width: 100%; height: 600px; border: 1px solid #ddd; border-radius: 8px;
     <div id="authStatus" class="status-box">Checking connection...</div>
     <div style="margin-bottom:16px">
       <button class="auth-btn" onclick="checkStatus()">Check Status</button>
-      <button class="auth-btn danger" onclick="showLogin()" id="loginBtn" style="display:none">Re-authenticate</button>
-      <button class="auth-btn" onclick="openFullscreen()" style="background:#2c3e50">Open VNC Fullscreen</button>
+      <button class="auth-btn danger" onclick="reauthenticate()" id="loginBtn" style="display:none">Re-authenticate</button>
     </div>
-    <div id="loginFrame" style="display:none">
-      <p style="font-size:0.78rem; color:var(--text-light); margin-bottom:8px;">
-        IB Gateway is shown below via VNC. Log in with your IB credentials directly in the gateway window.<br>
-        VNC Password: <code>lumisignals2026</code><br>
-        Once the gateway shows "Active" or your account number, click "Check Status" above to verify.
-      </p>
-      <iframe src="" id="ibFrame" style="height:700px"></iframe>
-    </div>
+    <div id="reauthMsg" style="display:none; font-size:0.85rem; padding:12px; border-radius:8px; margin-top:8px;"></div>
   </div>
 </div>
 <script>
@@ -95,13 +87,31 @@ function checkStatus() {
     });
 }
 
-function openFullscreen() {
-  window.open('/ib-vnc/vnc_lite.html?path=ib-vnc/websockify&password=lumisignals2026&autoconnect=true&resize=scale', '_blank');
-}
-
-function showLogin() {
-  document.getElementById('loginFrame').style.display = 'block';
-  document.getElementById('ibFrame').src = '/ib-vnc/vnc_lite.html?path=ib-vnc/websockify&password=lumisignals2026&autoconnect=true&resize=scale';
+function reauthenticate() {
+  var msg = document.getElementById('reauthMsg');
+  msg.style.display = 'block';
+  msg.style.background = '#f8f6f0';
+  msg.style.color = 'var(--text-medium)';
+  msg.textContent = 'Triggering IBeam reauth...';
+  fetch('/ib-auth/proxy/v1/api/iserver/reauthenticate', {method: 'POST'})
+    .then(function(r) { return r.json().catch(function() { return {}; }); })
+    .then(function(d) {
+      if (d.message === 'triggered' || d.message === '') {
+        msg.style.background = '#e8f5e9';
+        msg.style.color = 'var(--green)';
+        msg.textContent = 'Reauth triggered. Session should be live in a few seconds — checking...';
+        setTimeout(checkStatus, 5000);
+      } else {
+        msg.style.background = '#fdecea';
+        msg.style.color = 'var(--red)';
+        msg.textContent = 'Reauth failed: ' + (d.error || JSON.stringify(d));
+      }
+    })
+    .catch(function(e) {
+      msg.style.background = '#fdecea';
+      msg.style.color = 'var(--red)';
+      msg.textContent = 'Reauth error: ' + e.message;
+    });
 }
 
 checkStatus();

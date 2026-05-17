@@ -462,6 +462,39 @@ class FXTrend4H:
 
         logger.info("fx_4h OPEN %s %s %d units @ %.5f  SL=%.5f TP=%.5f",
                     pair, direction, abs(units), actual_fill, stop, target)
+
+        # Persist strategy metadata so oanda_trade_sync can attribute the
+        # close — Oanda doesn't echo clientExtensions back on /trades/{id},
+        # so without this record the close gets filtered out by
+        # trade_tracker (no signal match, no recognized tag).
+        try:
+            from .signal_log import get_signal_log
+            meta = {
+                "strategy": "fx_4h_trend",
+                "strategy_id": "fx_4h_trend",
+                "model": "trend",
+                "instrument": pair,
+                "symbol": pair,
+                "direction": direction,
+                "action": direction,
+                "entry": actual_fill,
+                "stop": stop,
+                "target": target,
+                "units": abs(units),
+                "risk_reward": 2.0,
+                "level_timeframe": "4h",
+                "level_type": "trend",
+                "trigger_pattern": "overwhelm + vwap align",
+            }
+            sl_log = get_signal_log()
+            if state.trade_id:
+                sl_log.record(str(state.trade_id), meta)
+            order_id = ((result.get("orderCreateTransaction") or {}).get("id"))
+            if order_id:
+                sl_log.record(str(order_id), meta)
+        except Exception as e:
+            logger.debug("fx_4h signal_log record failed for %s: %s", pair, e)
+
         # Notification
         try:
             from .supabase_client import notify_trade_opened

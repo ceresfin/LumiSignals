@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/auth';
 import { Colors } from '@/constants/theme';
 import { strategyBadgeText } from '@/lib/strategyLabel';
+import IbStatusBanner from '@/components/ib-status-banner';
 
 type Position = {
   id: number;
@@ -577,6 +578,8 @@ export default function Positions() {
           </Text>
         </View>
       </View>
+
+      <IbStatusBanner />
 
       {/* Broker Tabs */}
       <View style={styles.tabBar}>

@@ -1396,6 +1396,41 @@ def create_app():
             user_id = os.environ.get("SUPABASE_USER_ID", "")
             if user_id:
                 asset_type = data.get("type", "options")
+
+                # Backfill derived fields server-side so every caller
+                # benefits without each one having to recompute. Closed-
+                # trade rows have been arriving with duration_mins / RR
+                # null even when entry, stop, and exit are all known.
+                entry_p = data.get("entry_price", 0) or 0
+                exit_p = data.get("exit_price", 0) or 0
+                stop_p = data.get("stop_loss") or 0
+                target_p = data.get("take_profit") or 0
+
+                opened_s = data.get("opened_at", "")
+                closed_s = data.get("closed_at", "")
+                duration_mins = data.get("duration_mins")
+                if duration_mins is None and opened_s and closed_s:
+                    try:
+                        _o = datetime.fromisoformat(opened_s.replace("Z", "+00:00"))
+                        _c = datetime.fromisoformat(closed_s.replace("Z", "+00:00"))
+                        duration_mins = round((_c - _o).total_seconds() / 60, 1)
+                    except Exception:
+                        duration_mins = None
+
+                planned_rr = data.get("planned_rr")
+                achieved_rr = data.get("achieved_rr")
+                # Risk = |entry - stop|; planned reward = |target - entry|;
+                # achieved reward = |exit - entry|. Sign-agnostic ratio.
+                if entry_p and stop_p:
+                    risk = abs(entry_p - stop_p)
+                    if risk:
+                        if planned_rr is None and target_p:
+                            planned_rr = round(abs(target_p - entry_p) / risk, 2)
+                        if achieved_rr is None and exit_p:
+                            achieved_rr = round((exit_p - entry_p) / risk
+                                                * (1 if str(data.get("direction", "")).upper() in ("LONG", "BUY")
+                                                   else -1), 2)
+
                 record_closed_trade(user_id, {
                     "id": trade_id,
                     "broker": "ib",
@@ -1403,10 +1438,13 @@ def create_app():
                     "instrument": data.get("ticker", data.get("symbol", "")),
                     "direction": data.get("direction", ""),
                     "contracts": data.get("contracts", 1),
-                    "entry_price": data.get("entry_price", 0),
-                    "exit_price": data.get("exit_price", 0),
+                    "entry_price": entry_p,
+                    "exit_price": exit_p,
                     "realized_pl": data.get("realized_pnl", 0),
                     "stop_loss": data.get("stop_loss"),
+                    "take_profit": data.get("take_profit"),
+                    "planned_rr": planned_rr,
+                    "achieved_rr": achieved_rr,
                     "strategy": data.get("strategy", ""),
                     "model": data.get("model", ""),
                     "close_reason": data.get("close_reason", ""),
@@ -1414,9 +1452,9 @@ def create_app():
                     "spread_type": data.get("spread_type"),
                     "sell_strike": data.get("sell_strike"),
                     "buy_strike": data.get("buy_strike"),
-                    "opened_at": data.get("opened_at", ""),
-                    "closed_at": data.get("closed_at", ""),
-                    "duration_mins": data.get("duration_mins"),
+                    "opened_at": opened_s,
+                    "closed_at": closed_s,
+                    "duration_mins": duration_mins,
                 })
                 # Push notification
                 pl = data.get("realized_pnl", 0) or 0
@@ -2345,12 +2383,12 @@ def create_app():
                     "subtitle": "Multi-TF zone scalp/intraday/swing",
                     "description": (
                         "Watches untouched supply/demand zones at three "
-                        "durations — Hourly (1H zones, 5m trigger), Daily "
-                        "(1D zones, 1H trigger), Weekly (1W zones, 1D "
-                        "trigger). Trades the bounce: bias_score = 60% "
-                        "trend-confluence + 40% candle pattern, native "
-                        "Oanda SL/TP brackets. FX trend uses N=15 swing "
-                        "structure direction."
+                        "durations — Hourly (1H zones, 5m trigger), "
+                        "Intraday (1D zones, 15m trigger, 1H direction "
+                        "gate), Weekly (1W zones, 1D trigger). Touch-"
+                        "to-trigger on a zone tap; FX direction comes "
+                        "from N=15 swing structure. Native Oanda SL/TP "
+                        "brackets."
                     ),
                     "universe": list(tide_pairs.keys()),
                     "eligible_count": sum(

@@ -617,6 +617,40 @@ class H1ZoneScalp:
             if trade_id:
                 any_filled = True
 
+            # Persist strategy metadata to signal_log so oanda_trade_sync
+            # can attribute the close. Oanda doesn't propagate
+            # tradeClientExtensions back on /trades/{id}, so without this
+            # record the close lands without a strategy tag and gets
+            # filtered out by trade_tracker. Record under both trade_id
+            # and order_id (trade_tracker looks up trade_id first).
+            try:
+                from .signal_log import get_signal_log
+                meta = {
+                    "strategy": "scalp_h1zone",
+                    "strategy_id": "scalp_h1zone",
+                    "model": variant,
+                    "instrument": pair,
+                    "symbol": pair,
+                    "direction": direction,
+                    "action": "BUY" if direction == "long" else "SELL",
+                    "entry": entry_price,
+                    "stop": stop_price,
+                    "target": target_price,
+                    "units": units_per_leg,
+                    "target_label": label,
+                    "level_timeframe": "1h",
+                    "level_type": "zone",
+                    "trigger_pattern": "touch-to-trigger",
+                }
+                sl = get_signal_log()
+                if trade_id:
+                    sl.record(str(trade_id), meta)
+                if order_id:
+                    sl.record(str(order_id), meta)
+            except Exception as e:
+                logger.debug("[H1ZONE] signal_log record failed for %s/%s: %s",
+                             pair, label, e)
+
         if not bundle.legs:
             return None
 
