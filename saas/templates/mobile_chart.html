@@ -60,12 +60,15 @@
     }
 
     const LEVEL_COLORS = {
-      "M": { color: "#ff9800", label: "M" },
-      "W": { color: "#ffeb3b", label: "W" },
-      "D": { color: "#2196f3", label: "D" },
-      "4H": { color: "#ce93d8", label: "4H" },
-      "1H": { color: "#66bb6a", label: "1H" },
-      "Q": { color: "#ff5722", label: "Q" },
+      // textColor used for the axis-label price chip. M's bright orange
+      // background washes out white text, so use a dark forest green for
+      // the chip's text instead.
+      "M": { color: "#ff9800", label: "M", textColor: "#0d3b2e" },
+      "W": { color: "#ffeb3b", label: "W", textColor: "#1a1a1a" },
+      "D": { color: "#2196f3", label: "D", textColor: "#ffffff" },
+      "4H": { color: "#ce93d8", label: "4H", textColor: "#1a1a1a" },
+      "1H": { color: "#66bb6a", label: "1H", textColor: "#1a1a1a" },
+      "Q": { color: "#ff5722", label: "Q", textColor: "#ffffff" },
     };
 
     async function loadChart() {
@@ -215,6 +218,7 @@
                 lineWidth: 1,
                 lineStyle: LightweightCharts.LineStyle.Dashed,
                 axisLabelVisible: true,
+                axisLabelTextColor: cfg.textColor,
                 title: cfg.label + ' S1',
               });
             }
@@ -225,6 +229,7 @@
                 lineWidth: 1,
                 lineStyle: LightweightCharts.LineStyle.Dashed,
                 axisLabelVisible: true,
+                axisLabelTextColor: cfg.textColor,
                 title: cfg.label + ' D1',
               });
             }
@@ -425,11 +430,16 @@
             if (adx >= 10) return 'rgb(210,200,190)';  // light taupe
             return '#fff';
           }
-          const dirColor = directionUp ? '#3E7F6B' : directionDown ? '#C26A6A' : '#ffeb3b';
+          // Sage pearl green for dashboard text — Alpine Growth Green
+          // (#3E7F6B) was too dark/saturated to read on the panel's
+          // semi-transparent black background. This lighter, dustier
+          // tone keeps the green semantic without the eye strain.
+          const SAGE = '#A8C8B3';
+          const dirColor = directionUp ? SAGE : directionDown ? '#C26A6A' : '#ffeb3b';
           // trendValue is a number for non-FX (positive=green) and a string
           // for FX (HH+HL / LH+LL — colored to match the direction).
           const trendColor = (typeof trendValue === 'number')
-            ? (trendValue >= 0 ? '#3E7F6B' : '#C26A6A')
+            ? (trendValue >= 0 ? SAGE : '#C26A6A')
             : dirColor;
           const trendDisplay = (typeof trendValue === 'number')
             ? trendValue.toFixed(2)
@@ -503,7 +513,7 @@
                           + (usingDefaultUnits ? '/10K' : '');
               const rr = riskDist > 0 ? rewDist / riskDist : 0;
               rrStr = rr.toFixed(2) + ':1';
-              rrColor = rr >= 1.5 ? '#3E7F6B' : (rr >= 1.0 ? '#ffeb3b' : '#C26A6A');
+              rrColor = rr >= 1.5 ? SAGE : (rr >= 1.0 ? '#ffeb3b' : '#C26A6A');
             }
           }
 
@@ -532,7 +542,7 @@
             row('Target', targetStr, '#ff9800') +
             row('Stop',   stopStr,   '#ff1744') +
             row('Risk',   riskStr,   '#C26A6A') +
-            row('Reward', rewardStr, '#3E7F6B') +
+            row('Reward', rewardStr, SAGE) +
             row('R:R',    rrStr,     rrColor);
           document.body.appendChild(panel);
         })();
