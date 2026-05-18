@@ -44,7 +44,19 @@ type BrokerStats = {
   totalPips: number;
 };
 
-type ModelKey = 'scalp' | 'intraday' | 'swing';
+// Tidewater family uses scalp/intraday/swing. H1 Zone Scalp uses
+// alpha/beta (the two direction-gate variants — α=15m, β=1h). Keep
+// them in the same enum so a single ModelStats record can carry either.
+type ModelKey = 'scalp' | 'intraday' | 'swing' | 'alpha' | 'beta';
+
+// Which sub-buckets to render for each canonical strategy.
+const MODEL_KEYS_BY_STRATEGY: Record<string, ModelKey[]> = {
+  htf_levels: ['scalp', 'intraday', 'swing'],
+  vwap_2n20: ['scalp'],
+  orb_breakout: ['scalp'],
+  scalp_h1zone: ['alpha', 'beta'],
+  manual: ['scalp'],
+};
 
 type ModelStats = {
   open: number;
@@ -101,9 +113,12 @@ function emptyModelStats(): ModelStats {
 
 function modelKey(raw: string): ModelKey {
   const m = (raw || '').toLowerCase();
-  if (m.includes('scalp')) return 'scalp';
+  // H1 Zone Scalp variants come through with model="alpha"|"beta"
+  if (m === 'alpha' || m.includes('alpha')) return 'alpha';
+  if (m === 'beta' || m.includes('beta')) return 'beta';
   if (m.includes('intraday')) return 'intraday';
   if (m.includes('swing')) return 'swing';
+  if (m.includes('scalp')) return 'scalp';
   return 'scalp'; // sensible default
 }
 
@@ -147,7 +162,10 @@ function calcStrategiesByModel(trades: Trade[], positions: Position[],
         name: STRATEGY_NAMES[sid] || normalizeStrategy(t.strategy || ''),
         totalTrades: 0,
         dateRange: '',
-        byModel: { scalp: emptyModelStats(), intraday: emptyModelStats(), swing: emptyModelStats() },
+        byModel: {
+          scalp: emptyModelStats(), intraday: emptyModelStats(), swing: emptyModelStats(),
+          alpha: emptyModelStats(), beta: emptyModelStats(),
+        },
       };
     }
     map[sid].totalTrades++;
@@ -171,7 +189,9 @@ function calcStrategiesByModel(trades: Trade[], positions: Position[],
   positions.forEach(p => {
     const sid = strategyKey(p.strategy || '');
     if (!map[sid]) return;
-    // Position records often lack a model; default to scalp for now (matches website)
+    // H1Zone positions carry model=alpha/beta; Tidewater carries
+    // scalp/intraday/swing. Default to 'scalp' as a generic fallback
+    // when the field is empty (matches website behavior).
     const mk = modelKey(p.model || 'scalp');
     map[sid].byModel[mk].open++;
   });
@@ -210,9 +230,12 @@ function calcStrategiesByModel(trades: Trade[], positions: Position[],
   });
 
   return Object.values(map).sort((a, b) => {
-    const aPl = a.byModel.scalp.realizedPl + a.byModel.intraday.realizedPl + a.byModel.swing.realizedPl;
-    const bPl = b.byModel.scalp.realizedPl + b.byModel.intraday.realizedPl + b.byModel.swing.realizedPl;
-    return bPl - aPl;
+    // Sum P&L across ALL model buckets so the sort is correct for both
+    // Tidewater (scalp/intraday/swing) and H1Zone (alpha/beta).
+    const sumPl = (s: StrategyStats) =>
+      (Object.values(s.byModel) as ModelStats[])
+        .reduce((acc, ms) => acc + ms.realizedPl, 0);
+    return sumPl(b) - sumPl(a);
   });
 }
 
@@ -242,6 +265,7 @@ const STRATEGY_KEYS: Record<string, string> = {
   'htf_levels': 'htf_levels',
   'htf_supply_demand': 'htf_levels',
   'orb_breakout': 'orb_breakout',
+  'scalp_h1zone': 'scalp_h1zone',
   'manual_close': 'manual',
   'manual_test': 'manual',
   '': 'htf_levels',  // Options with no strategy tag are HTF
@@ -254,6 +278,7 @@ const STRATEGY_NAMES: Record<string, string> = {
   'vwap_2n20': 'VWAP Candlestick Trigger (2n20)',
   'htf_levels': 'HTF Untouched Levels',
   'orb_breakout': 'Opening Range Breakout',
+  'scalp_h1zone': 'H1 Zone Scalp',
   'manual': 'Manual',
 };
 
@@ -261,12 +286,16 @@ const MODEL_LABELS: Record<ModelKey, string> = {
   scalp: 'SCALP',
   intraday: 'INTRADAY',
   swing: 'SWING',
+  alpha: 'α  (15M GATE)',
+  beta:  'β  (1H GATE)',
 };
 
 const MODEL_COLORS: Record<ModelKey, string> = {
   scalp: Colors.scalp,
   intraday: Colors.intraday,
   swing: Colors.swing,
+  alpha: Colors.scalp,
+  beta:  Colors.intraday,
 };
 
 function strategyKey(raw: string): string {
@@ -519,7 +548,7 @@ export default function Dashboard() {
                 {!!s.dateRange && (
                   <Text style={styles.strategyDateRange}>{s.dateRange}</Text>
                 )}
-                {(['scalp', 'intraday', 'swing'] as ModelKey[]).map(mk => {
+                {(MODEL_KEYS_BY_STRATEGY[s.key] || ['scalp', 'intraday', 'swing']).map(mk => {
                   const ms = s.byModel[mk];
                   if (!hasModelData(ms)) {
                     // Render a faded "Coming soon" placeholder, matching the website
