@@ -48,8 +48,11 @@ type Position = {
 //   Tidewater Scalp:    bias=15m   (trigger 5m, zones 1H)
 //   Tidewater Intraday: bias=1H    (trigger 15m, zones 1D)
 //   Tidewater Swing:    bias=1W    (trigger 1D, zones 1mo)
-//   H1 Zone Scalp α:    bias=15m   (5m trigger, 1H zones, 15m direction)
-//   H1 Zone Scalp β:    bias=1H    (5m trigger, 1H zones, 1H direction)
+//   H1 Zone Scalp α/β:  always open at 15m. Both variants trade on 1H zones
+//                        and 5m triggers; 15m is the most useful "read the
+//                        setup" frame regardless of which direction-gate TF
+//                        the variant happens to use. Consistency > literal
+//                        bias-TF for this strategy.
 const STRATEGY_TIMEFRAMES: Record<string, string> = {
   'scalp_2n20': '2m',
   'vwap_2n20': '2m',
@@ -58,9 +61,9 @@ const STRATEGY_TIMEFRAMES: Record<string, string> = {
   'intraday': '1h',
   'swing': '1w',
   'orb_breakout': '15m',
-  // H1 Zone Scalp — model field carries the variant
+  // H1 Zone Scalp — model field carries the variant; both go to 15m
   'alpha': '15m',
-  'beta': '1h',
+  'beta': '15m',
   'scalp_h1zone': '15m',
 };
 

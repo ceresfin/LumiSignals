@@ -48,7 +48,13 @@
     const IS_ORB = STRATEGY.includes('orb');
     const IS_H1_ZONE = STRATEGY.includes('h1_zone') || STRATEGY.includes('scalp_h1zone');
     const IS_HTF = STRATEGY.includes('htf') || STRATEGY.includes('levels') || (!IS_2N20 && !IS_ORB && !IS_H1_ZONE && !ENTRY_PRICE);
-    const SHOW_LEVELS = !IS_2N20 && !IS_ORB;
+    // S/R labels (M S1, W S1, D S1, 4H S1, 1H S1) come from Polygon/TV
+    // via /api/levels. They're useful on Tidewater charts as background
+    // structure, but on H1 Zone Scalp the strategy ALREADY paints its
+    // own zone overlay — and Polygon's published levels can disagree
+    // (e.g. 1H S1 from Polygon vs the strategy's own untouched-supply
+    // detector). Showing both is confusing. Suppress on H1Zone.
+    const SHOW_LEVELS = !IS_2N20 && !IS_ORB && !IS_H1_ZONE;
     const SHOW_VWAP = IS_2N20;  // VWAP only for 2n20 strategy
     const HAS_TRADE = ENTRY_PRICE !== null;  // Only show entry/exit/stop if it's an actual trade
 
@@ -590,7 +596,11 @@
         // target so it visually leans the way the trade is meant to go.
         // Width = 0.5 × 5m ATR (matches the strategy's actual sizing
         // math, which uses 5m ATR for stops regardless of viewing TF).
-        if (HAS_TRADE && ENTRY_PRICE && ATR_5M > 0) {
+        //
+        // Skipped on H1 Zone Scalp charts — that strategy's total trade
+        // span is often ~10 pips, and a 0.5×ATR(5m) band of ~3 pips
+        // visually swallows the T1/T2/T3/T4 lines.
+        if (HAS_TRADE && ENTRY_PRICE && ATR_5M > 0 && !IS_H1_ZONE) {
           const w = 0.5 * ATR_5M;
           const low  = isLong ? ENTRY_PRICE : ENTRY_PRICE - w;
           const high = isLong ? ENTRY_PRICE + w : ENTRY_PRICE;
@@ -612,7 +622,10 @@
         // side of the target — the territory the trade has to traverse to
         // be profitable. Width = 1 × 5m ATR (the approach zone). Like
         // the entry band, sized to 5m ATR regardless of viewing TF.
-        if (HAS_TRADE && EXIT_PRICE && ATR_5M > 0) {
+        //
+        // Skipped on H1Zone for the same reason — the band merges with the
+        // entry band and visually swallows the scalp's tight T1-T4 ladder.
+        if (HAS_TRADE && EXIT_PRICE && ATR_5M > 0 && !IS_H1_ZONE) {
           const w = 1.0 * ATR_5M;
           const low  = isLong ? EXIT_PRICE - w : EXIT_PRICE;
           const high = isLong ? EXIT_PRICE : EXIT_PRICE + w;
