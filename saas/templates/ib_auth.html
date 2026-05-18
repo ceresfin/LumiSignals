@@ -70,7 +70,11 @@ function checkStatus() {
           'Server: ' + (d.serverInfo ? d.serverInfo.serverName : 'unknown') +
           ' | Version: ' + (d.serverInfo ? d.serverInfo.serverVersion : 'unknown');
         loginBtn.style.display = 'none';
-        document.getElementById('loginFrame').style.display = 'none';
+        // Always show the Re-authenticate button — even when connected,
+        // the user may want to manually trigger a session refresh
+        // (sometimes IBeam reports authenticated but order endpoints
+        // 500). Hidden only during the reauth-in-flight state.
+        loginBtn.style.display = 'inline-block';
       } else {
         el.className = 'status-box status-bad';
         el.innerHTML = '<strong>Not Connected</strong> — IB session expired or gateway not running.' +
