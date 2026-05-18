@@ -90,16 +90,22 @@ export default function ChartScreen() {
     '2n20_exit': '2N20',
     'orb_breakout': 'ORB',
     'orb_butterfly': 'ORB BFLY',
-    // H1 Zone Scalp variants
-    'scalp_h1zone':       'H1 ZONE SCALP',
-    'scalp_h1zone_alpha': 'H1 ZONE α (15m)',
-    'scalp_h1zone_beta':  'H1 ZONE β (1h)',
+  };
+  // H1 Zone Scalp variants: model field carries alpha/beta, tag the
+  // chart label so user can tell which direction-gate is active.
+  const H1Z_VARIANT_NAME: Record<string, string> = {
+    alpha: 'α',
+    beta: 'β',
   };
   const isTidewater = strategy === 'htf_levels' || strategy === 'htf_supply_demand';
+  const isH1ZoneStrat = strategy === 'scalp_h1zone' || (strategy || '').startsWith('scalp_h1zone');
   let stratLabel: string | null = null;
   if (isTidewater) {
     const duration = TIDEWATER_DURATION_NAME[(model || '').toLowerCase()] || '';
     stratLabel = duration ? `Tidewater ${duration}` : 'Tidewater';
+  } else if (isH1ZoneStrat) {
+    const variant = H1Z_VARIANT_NAME[(model || '').toLowerCase()] || '';
+    stratLabel = variant ? `H1 Zone Scalp ${variant}` : 'H1 Zone Scalp';
   } else if (strategy) {
     stratLabel = STRATEGY_LABELS[strategy] || strategy.toUpperCase().replace('_', ' ');
   }
