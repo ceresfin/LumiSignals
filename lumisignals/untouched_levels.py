@@ -91,7 +91,8 @@ def find_untouched_levels(highs: List[float], lows: List[float],
     return sup1, sup2, dem1, dem2
 
 
-def calculate_structure_direction(candles, n: int = 15) -> Tuple[str, float]:
+def calculate_structure_direction(candles, n: int = 15,
+                                  prefer_confirmed: bool = False) -> Tuple[str, float]:
     """Trend direction from swing pivot structure (Dow Theory).
 
     A bar is a swing HIGH if its high beats the N bars on each side; same
@@ -177,10 +178,17 @@ def calculate_structure_direction(candles, n: int = 15) -> Tuple[str, float]:
     # progress that hasn't formed a new confirmed pivot yet — common in
     # strong trends where pivots can't form because every bar dominates
     # its N-bar lookback). Same logic mirrored for downtrends.
-    if hh and hl and in_progress_down:
-        return "DOWN", 75.0
-    if lh and ll and in_progress_up:
-        return "UP", 75.0
+    #
+    # UI callers (chart title arrows, watchlist badges) pass
+    # prefer_confirmed=True to disable this flip — visually a chart that
+    # still prints HH+HL or LH+LL doesn't read as "reversal in progress"
+    # to a human eye, and showing the flipped value made the title arrow
+    # disagree with the chart's own dashboard.
+    if not prefer_confirmed:
+        if hh and hl and in_progress_down:
+            return "DOWN", 75.0
+        if lh and ll and in_progress_up:
+            return "UP", 75.0
 
     if hh and hl:
         return "UP", 100.0
@@ -213,19 +221,27 @@ def _is_fx_instrument(instrument: str) -> bool:
 
 def calculate_trend_direction(candles, instrument: str = "",
                               adx_period: int = 14,
-                              structure_n: int = 15) -> Tuple[str, float]:
+                              structure_n: int = 15,
+                              prefer_confirmed: bool = False) -> Tuple[str, float]:
     """Asset-aware trend direction.
 
     FX → swing structure (N=15) because ADX's Wilder smoothing handles
          single-bar BoJ-style spikes badly and pollutes +DI/-DI for weeks.
     Everything else → +DI vs -DI ADX (the historical behavior).
 
+    prefer_confirmed: when True, FX structure ignores the in-progress
+    "break above last swing high / below last swing low" override that
+    would otherwise flip a confirmed UP/DOWN reading. Use this for UI
+    displays so the title/dashboard agree with the visible pivot
+    structure. Strategy callers leave it False to keep the override.
+
     Returns (direction, value) where:
       - for FX: value is the structure confidence (0-100)
       - for non-FX: value is the ADX numeric reading (0-100ish)
     """
     if _is_fx_instrument(instrument):
-        return calculate_structure_direction(candles, n=structure_n)
+        return calculate_structure_direction(candles, n=structure_n,
+                                              prefer_confirmed=prefer_confirmed)
     return calculate_adx_direction(candles, period=adx_period)
 
 

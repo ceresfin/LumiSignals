@@ -2488,7 +2488,12 @@ def create_app():
                         continue
                 if len(bars) < 32:
                     continue
-                direction, _val = calculate_trend_direction(bars, instrument=pair)
+                # prefer_confirmed=True so a marginal close above the last
+                # swing high doesn't flip a visually-LH+LL structure to UP.
+                # The chart's JS dashboard doesn't do that override, and we
+                # want the title arrow to match what the user sees.
+                direction, _val = calculate_trend_direction(
+                    bars, instrument=pair, prefer_confirmed=True)
                 out[tf] = direction
             except Exception:
                 continue
