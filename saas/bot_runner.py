@@ -60,21 +60,37 @@ def get_active_users():
     return [dict(zip(cols, row)) for row in rows]
 
 
+# TTL per model. Must exceed the scan cadence (saas/bot_runner.py:820) or
+# the key expires in the gap between rebuilds and the API returns no
+# zones. 2× cadence is the safety floor; we use a bit more for headroom
+# in case a scan is delayed (e.g. by a slow Polygon round-trip).
+#   scalp:    cadence 5 min   → TTL 30 min
+#   intraday: cadence 15 min  → TTL  1 hr
+#   swing:    cadence 24 hr   → TTL 25 hr
+WATCHLIST_TTL_BY_MODEL = {
+    "scalp": 1800,
+    "intraday": 3600,
+    "swing": 90000,
+}
+WATCHLIST_TTL_COMBINED = 90000   # max of the three so combined never beats parts
+
+
 def publish_watchlist(user_id, zones):
     """Store combined watchlist in Redis."""
-    rdb.setex(f"watchlist:{user_id}", 600, json.dumps(zones))
+    rdb.setex(f"watchlist:{user_id}", WATCHLIST_TTL_COMBINED, json.dumps(zones))
 
 
 def publish_watchlist_model(user_id, model_name, zones):
     """Store per-model watchlist in Redis."""
-    rdb.setex(f"watchlist:{user_id}:{model_name}", 600, json.dumps(zones))
+    ttl = WATCHLIST_TTL_BY_MODEL.get(model_name, 1800)
+    rdb.setex(f"watchlist:{user_id}:{model_name}", ttl, json.dumps(zones))
     # Also update combined
     all_zones = []
     for mn in ["scalp", "intraday", "swing"]:
         raw = rdb.get(f"watchlist:{user_id}:{mn}")
         if raw:
             all_zones.extend(json.loads(raw))
-    rdb.setex(f"watchlist:{user_id}", 600, json.dumps(all_zones))
+    rdb.setex(f"watchlist:{user_id}", WATCHLIST_TTL_COMBINED, json.dumps(all_zones))
 
 
 def publish_log(user_id, entries):
