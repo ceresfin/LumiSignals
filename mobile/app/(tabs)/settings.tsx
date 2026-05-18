@@ -175,11 +175,11 @@ export default function Settings() {
           ) : null}
           <TouchableOpacity
             style={styles.ibAuthButton}
-            onPress={() => Linking.openURL('https://bot.lumitrade.ai/ib-vnc/vnc.html?autoconnect=true&resize=remote&password=lumisignals2026')}
+            onPress={() => Linking.openURL('https://bot.lumitrade.ai/ib-auth')}
           >
-            <Text style={styles.ibAuthText}>Open IB Re-Auth (VNC)</Text>
+            <Text style={styles.ibAuthText}>Open IB Re-Auth</Text>
           </TouchableOpacity>
-          <Text style={styles.fieldHint}>Opens VNC in browser — no login needed. Click Login in the IB Gateway window.</Text>
+          <Text style={styles.fieldHint}>Opens the IBeam auth panel. Log in to bot.lumitrade.ai, then tap Re-authenticate.</Text>
         </Section>
 
         <Section title="2. Strategy Settings">

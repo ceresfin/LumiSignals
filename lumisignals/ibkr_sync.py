@@ -1886,10 +1886,10 @@ def _alert_disconnected(disconnected_seconds: float):
             f"The bot's IB Gateway connection has been down for {int(disconnected_seconds/60)} minutes "
             f"and is failing to reconnect. This usually means the IB session expired (every ~24h) "
             f"and needs you to log in again.\n\n"
-            f"Open in any browser: https://bot.lumitrade.ai/ib-vnc/vnc_lite.html\n\n"
+            f"Open in any browser: https://bot.lumitrade.ai/ib-auth\n\n"
             f"Once you log in, the bot will resume trading automatically. "
             f"While disconnected, no new futures trades are placed and existing positions are not monitored.",
-            details={"Reconnect URL": "https://bot.lumitrade.ai/ib-vnc/vnc_lite.html"},
+            details={"Reconnect URL": "https://bot.lumitrade.ai/ib-auth"},
             smtp_pass=alert_pass,
         )
         logger.info("Sent disconnect alert email")
