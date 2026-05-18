@@ -2330,7 +2330,7 @@ def create_app():
 
         # ── Tidewater (HTF Levels family) per-pair zone counts ──
         # No regime filter; per-pair card shows how many active zones
-        # exist across the three durations (Hourly/Daily/Weekly) so the
+        # exist across the three durations (Scalp/Intraday/Swing) so the
         # user can see at a glance where the strategy is currently
         # watching. Pulls from the bot's per-model watchlist:1:{model}
         # Redis keys — same data the watchlist endpoint serves.
@@ -2383,11 +2383,12 @@ def create_app():
                     "subtitle": "Multi-TF zone scalp/intraday/swing",
                     "description": (
                         "Watches untouched supply/demand zones at three "
-                        "durations — Hourly (1H zones, 5m trigger), "
-                        "Intraday (1D zones, 15m trigger, 1H direction "
-                        "gate), Weekly (1W zones, 1D trigger). Touch-"
-                        "to-trigger on a zone tap; FX direction comes "
-                        "from N=15 swing structure. Native Oanda SL/TP "
+                        "durations — Scalp (1H zones, 5m trigger, 15m "
+                        "direction gate), Intraday (1D zones, 15m "
+                        "trigger, 1H direction gate), Swing (1mo zones, "
+                        "1D trigger, 1W direction gate). Touch-to-"
+                        "trigger on a zone tap; FX direction comes from "
+                        "N=15 swing structure. Native Oanda SL/TP "
                         "brackets."
                     ),
                     "universe": list(tide_pairs.keys()),
@@ -2447,41 +2448,26 @@ def create_app():
         else:
             pair = pair_raw
 
-        # Map mobile-style TF labels → Oanda granularity codes
-        TF_OANDA = {
-            "1m": "M1", "2m": "M2", "5m": "M5", "15m": "M15", "30m": "M30",
-            "1h": "H1", "4h": "H4", "1d": "D", "1w": "W", "1mo": "M",
-        }
-
-        # For now this endpoint pulls Oanda candles (the H1Zone strategy
-        # universe). For non-forex instruments (MES, SPY), we'd add a
-        # Polygon fallback later; return SIDE so the UI shows neutral.
         is_forex = ("_" in pair) or (len(pair_raw) == 6 and pair_raw.isalpha())
         out = {tf: "SIDE" for tf in tfs}
         if not is_forex:
             return jsonify({"pair": pair, "tfs": out, "source": "neutral"})
 
-        try:
-            import psycopg2 as _pg
-            with _pg.connect(os.environ.get(
-                "DATABASE_URL",
-                "postgresql://lumisignals:LumiBot2026@localhost/lumisignals_db",
-            )) as conn:
-                cur = conn.cursor()
-                cur.execute(
-                    "SELECT oanda_api_key, oanda_account_id, oanda_environment "
-                    "FROM users WHERE bot_active=true AND oanda_api_key IS NOT NULL "
-                    "ORDER BY id LIMIT 1")
-                row = cur.fetchone()
-            if not row:
-                return jsonify({"pair": pair, "tfs": out, "source": "no-user"})
-            key, acct, env = row
-        except Exception as e:
-            return jsonify({"pair": pair, "tfs": out, "error": f"db: {e}"}), 200
+        # Pull bars from the SAME source the chart uses (Polygon via
+        # MassiveClient). Previously this endpoint hit Oanda directly with
+        # count=250 + complete-only filtering, which excluded the
+        # in-progress monthly candle and produced different pivots than
+        # the chart's dashboard. Result: title arrow said UP, dashboard
+        # said DOWN for the same instrument and TF. Aligning the data
+        # source guarantees they agree.
+        massive_key = os.environ.get("MASSIVE_API_KEY", "")
+        if not massive_key:
+            return jsonify({"pair": pair, "tfs": out, "error": "no polygon key"}), 200
 
-        from lumisignals.oanda_client import OandaClient
+        from lumisignals.massive_client import MassiveClient
         from lumisignals.untouched_levels import calculate_trend_direction
-        oa = OandaClient(account_id=acct, api_key=key, environment=env or "practice")
+        massive = MassiveClient(massive_key)
+        poly_ticker = f"C:{pair.replace('_', '')}"
 
         class _C:
             __slots__ = ("high", "low", "close")
@@ -2489,28 +2475,15 @@ def create_app():
                 self.high, self.low, self.close = h, l, c
 
         for tf in tfs:
-            gran = TF_OANDA.get(tf)
-            if not gran:
-                continue
             try:
-                # FX trend uses N=15 structure. The minimum is 2N+2=32, but
-                # for the macro picture to be honest we need enough history
-                # for multiple confirmed pivot pairs — at low fetch counts
-                # the detector finds only recent micro-pivots and reports
-                # SIDE or the opposite of the true regime. 250 bars gives
-                # ~8 months of daily data (≈4-5 major pivots), and on lower
-                # TFs is just a few hours/days of extra context.
-                resp = oa._request(
-                    "GET",
-                    f"/v3/instruments/{pair}/candles"
-                    f"?granularity={gran}&count=250&price=M")
+                # 300 bars: same default as the chart's /api/candles call
+                # for monthly (the largest TF). For lower TFs this is just
+                # extra context for the pivot detector.
+                cs = massive.get_candles(poly_ticker, tf, 300)
                 bars = []
-                for c in resp.get("candles", []):
-                    if not c.get("complete"):
-                        continue
-                    mid = c.get("mid") or {}
+                for c in cs:
                     try:
-                        bars.append(_C(float(mid["h"]), float(mid["l"]), float(mid["c"])))
+                        bars.append(_C(float(c.high), float(c.low), float(c.close)))
                     except Exception:
                         continue
                 if len(bars) < 32:
@@ -2520,7 +2493,7 @@ def create_app():
             except Exception:
                 continue
 
-        return jsonify({"pair": pair, "tfs": out, "source": "oanda"})
+        return jsonify({"pair": pair, "tfs": out, "source": "polygon"})
 
     @app.route("/api/h1_zone/state")
     def api_h1_zone_state():

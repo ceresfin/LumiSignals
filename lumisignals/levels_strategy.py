@@ -146,12 +146,15 @@ INTRADAY_MODEL = ModelConfig(
 
 SWING_MODEL = ModelConfig(
     name="swing",
-    trigger_tf="1d",
-    zone_tfs=["1w", "1mo"],
-    bias_tf="1w",
-    bias_candle_tfs=["1w", "1mo"],
+    trigger_tf="1d",         # daily candlestick triggers the entry
+    zone_tfs=["1mo"],        # monthly S/R only — weekly zones moved out
+                              # to keep this clearly the "swing" timeframe
+                              # cluster (daily trigger / weekly trend /
+                              # monthly zones, no overlap with intraday)
+    bias_tf="1w",            # weekly trend (N=15 swing structure on FX)
+    bias_candle_tfs=["1w"],  # candle-confluence reads weekly only
     risk_percent=1.0,
-    zone_tolerance_pct={"1w": 0.006, "1mo": 0.009},
+    zone_tolerance_pct={"1mo": 0.009},
     min_score=50,
     min_risk_reward=1.5,
     atr_stop_multiplier=3.0,   # stop = 3 x 1d ATR
@@ -386,13 +389,13 @@ class LevelsStrategy:
             self.model = None
             self.model_name = "swing"
             self.trading_timeframe = trading_timeframe
-            self.zone_tfs = ["1w", "1mo"]
-            self.bias_tf = "1mo"
-            self.bias_candle_tfs = ["1w", "1mo"]
+            self.zone_tfs = ["1mo"]
+            self.bias_tf = "1w"
+            self.bias_candle_tfs = ["1w"]
             self.min_score = min_score
             self.atr_stop_multiplier = atr_stop_multiplier
             self.min_risk_reward = min_risk_reward
-            self.zone_tolerances = zone_tolerances or {"1w": 0.006, "1mo": 0.009}
+            self.zone_tolerances = zone_tolerances or {"1mo": 0.009}
             self.zone_activations = None   # legacy path uses outer × 0.5
             self.watchlist_interval = watchlist_interval
             self.monitor_interval = monitor_interval

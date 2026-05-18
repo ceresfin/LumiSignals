@@ -41,17 +41,20 @@ type Position = {
   } | null;
 };
 
-// Default chart timeframe = the model's execution bar.
-// - scalp:    5m bars (trend on 15m, move fits in 1H)
-// - intraday: 1h bars (trend on 1d, move fits in 1W)
-// - swing:    1d bars (trend on 1w, move fits in 1M)
+// Default chart timeframe = the trend (bias) TF for the model — the
+// "middle" frame, between the trigger candle and the zone TF. Reading
+// trend structure is the main reason to open the chart; the trigger is
+// too noisy for orientation and the zone TF is too coarse.
+//   Tidewater Scalp:    bias=15m   (trigger 5m, zones 1H)
+//   Tidewater Intraday: bias=1H    (trigger 15m, zones 1D)
+//   Tidewater Swing:    bias=1W    (trigger 1D, zones 1mo)
 const STRATEGY_TIMEFRAMES: Record<string, string> = {
   'scalp_2n20': '2m',
   'vwap_2n20': '2m',
   '2n20': '2m',
-  'scalp': '5m',
+  'scalp': '15m',
   'intraday': '1h',
-  'swing': '1d',
+  'swing': '1w',
   'orb_breakout': '15m',
 };
 
@@ -612,6 +615,7 @@ export default function Positions() {
             units: item.units?.toString(),
             direction: item.direction,
             strategy: item.strategy || item.model || '',
+            model: item.model || '',
           }
         })} />}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}

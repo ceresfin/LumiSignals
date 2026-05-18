@@ -3,9 +3,9 @@
 //
 // Strategy naming:
 //   • Tidewater  — HTF Levels family (was "HTF"). Three durations:
-//       Hourly  (1H zones, 5m trigger)
-//       Daily   (1D zones, 1H trigger)
-//       Weekly  (1W zones, 1D trigger)
+//       Scalp    (1H zones, 5m trigger, 15m bias)
+//       Intraday (1D zones, 15m trigger, 1H bias)
+//       Swing    (1mo zones, 1D trigger, 1W bias)
 //   • Stillwater — FX 4H trend
 //   • H1 Zone Scalp — paper-only 5m H1-zone scalper
 //   • 2N20 — VWAP overwhelm scalp
@@ -15,9 +15,9 @@
 // strategy="vwap_2n20", strategy="scalp_h1zone", etc.) so we normalize.
 
 const TIDEWATER_DURATION: Record<string, string> = {
-  scalp: 'Hourly',
+  scalp: 'Scalp',
   intraday: 'Intraday',
-  swing: 'Weekly',
+  swing: 'Swing',
 };
 
 export function durationFromModel(strategy?: string, model?: string): string {
@@ -52,7 +52,7 @@ export function strategyBadgeText(strategy?: string, model?: string): string {
   const m = (model || '').toLowerCase();
 
   // Tidewater family — show as "TIDEWATER · {duration name}" where the
-  // duration is the natural-language anchor TF (Hourly / Daily / Weekly).
+  // duration matches the strategy variant (Scalp / Intraday / Swing).
   if (s === 'htf_levels' || s === 'htf_supply_demand' || m === 'htf'
       || ((s.includes('htf') || m.includes('htf'))
           && (m === 'scalp' || m === 'intraday' || m === 'swing'))) {

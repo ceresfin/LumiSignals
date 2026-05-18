@@ -104,7 +104,7 @@ function PairCard({ state, onPress, onChart }: {
 }
 
 // Tidewater pair card — shows active zone counts across three durations
-// (Hourly / Daily / Weekly). Card tap opens the chart with strategy=
+// (Scalp / Intraday / Swing). Card tap opens the chart with strategy=
 // htf_levels so the chart's HTF overlay code path is used.
 function TidewaterPairCard({ state, onChart }: {
   state: RegimePairState;

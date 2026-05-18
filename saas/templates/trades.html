@@ -253,9 +253,9 @@ var STRATEGY_NAMES = {
   'gap_fill': 'Gap Fill',
 };
 var MODEL_ORDER = ['scalp', 'scalp_2n20', 'intraday', 'intraday_2n20', 'swing', 'swing_2n20'];
-// Tidewater family — labels by duration (Hourly = 1H zones / 5m trigger,
-// Intraday = 1D zones / 15m trigger / 1H trend gate, Weekly = 1W zones / 1D trigger)
-var MODEL_LABELS = {'scalp': 'TIDEWATER · HOURLY', 'scalp_2n20': 'SCALP 2n20', 'intraday': 'TIDEWATER · INTRADAY', 'intraday_2n20': 'INTRADAY 2n20', 'swing': 'TIDEWATER · WEEKLY', 'swing_2n20': 'SWING 2n20'};
+// Tidewater family — labels by duration (Scalp = 1H zones / 5m trigger / 15m trend gate,
+// Intraday = 1D zones / 15m trigger / 1H trend gate, Swing = 1mo zones / 1D trigger / 1W trend gate)
+var MODEL_LABELS = {'scalp': 'TIDEWATER · SCALP', 'scalp_2n20': 'SCALP 2n20', 'intraday': 'TIDEWATER · INTRADAY', 'intraday_2n20': 'INTRADAY 2n20', 'swing': 'TIDEWATER · SWING', 'swing_2n20': 'SWING 2n20'};
 
 function buildTable(headers, rows) {
   if (!rows.length) return '<div style="text-align:center;padding:20px;color:#8a847e;">No data</div>';
@@ -282,9 +282,9 @@ function modelBadge(model) {
   if (!model) return '—';
   var m = model.toLowerCase();
   if (m.indexOf('2n20') >= 0) return '<span class="badge" style="background:#fef3c7;color:#d97706">' + (MODEL_LABELS[m] || m.toUpperCase()) + '</span>';
-  if (m === 'scalp') return '<span class="badge" style="background:#fce7f3;color:#be185d">TIDEWATER · HOURLY</span>';
+  if (m === 'scalp') return '<span class="badge" style="background:#fce7f3;color:#be185d">TIDEWATER · SCALP</span>';
   if (m === 'intraday') return '<span class="badge" style="background:#dbeafe;color:#1d4ed8">TIDEWATER · INTRADAY</span>';
-  if (m === 'swing') return '<span class="badge badge-open">TIDEWATER · WEEKLY</span>';
+  if (m === 'swing') return '<span class="badge badge-open">TIDEWATER · SWING</span>';
   return '<span class="badge badge-closed">' + model + '</span>';
 }
 

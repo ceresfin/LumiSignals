@@ -9,19 +9,37 @@ const API_BASE = 'https://bot.lumitrade.ai';
 
 // Trend arrows next to the ticker — same look as positions/watchlist.
 // Direction comes from /api/adx/direction (Oanda candles + Wilder DMI).
-// TFs vary by strategy to match the signal cadence the trade cares about:
-//   scalp     → 5m / 15m / 1h      (5m trigger, 15m+1h zones)
-//   intraday  → 1h / 1d / 1w       (1h trigger, daily+weekly zones)
-//   swing     → 1d / 1w / 1mo      (daily trigger, weekly+monthly zones)
-//   fx_4h     → 4h / 1d / 1w       (Stillwater 4H trend)
-//   default   → 5m / 15m / 1h
-function trendTfsFor(strategy: string | undefined): string[] {
+// TFs vary by strategy/model to match the signal cadence the trade cares about:
+//   tidewater scalp     → 5m / 15m / 1h      (5m trigger, 1H zones, 15m bias)
+//   tidewater intraday  → 15m / 1h / 1d      (15m trigger, 1D zones, 1H bias)
+//   tidewater weekly    → 1d / 1w / 1mo      (1D trigger, 1mo zones, 1W bias)
+//   fx_4h               → 4h / 1d / 1w       (Stillwater 4H trend)
+//   default             → 5m / 15m / 1h
+function trendTfsFor(strategy: string | undefined, model?: string): string[] {
   const s = (strategy || '').toLowerCase();
+  const m = (model || '').toLowerCase();
+  // Tidewater — anchor by model since strategy is just "htf_levels"
+  if (s === 'htf_levels' || s === 'htf_supply_demand') {
+    if (m === 'swing') return ['1d', '1w', '1mo'];
+    if (m === 'intraday') return ['15m', '1h', '1d'];
+    return ['5m', '15m', '1h'];   // scalp / default
+  }
   if (s.includes('swing')) return ['1d', '1w', '1mo'];
   if (s.includes('intraday')) return ['15m', '1h', '1d'];
   if (s.includes('fx_4h') || s.includes('stillwater')) return ['4h', '1d', '1w'];
   // scalp / h1_zone / 2n20 / default → 5m / 15m / 1h
   return ['5m', '15m', '1h'];
+}
+
+// Pretty TF label for the parenthetical next to the strategy name.
+// "5m, 15m, 1H" not "5M, 15M, 1H".
+function prettyTf(tf: string): string {
+  if (tf === '1h') return '1H';
+  if (tf === '4h') return '4H';
+  if (tf === '1d') return '1D';
+  if (tf === '1w') return '1W';
+  if (tf === '1mo') return '1M';
+  return tf;
 }
 function arrowFor(dir: string): string {
   return dir === 'UP' ? '↑' : dir === 'DOWN' ? '↓' : '→';
@@ -49,36 +67,51 @@ function getTvUrl(instrument: string): string {
 }
 
 export default function ChartScreen() {
-  const { symbol, interval, entry, exit, direction, stop, units, strategy } = useLocalSearchParams<{
-    symbol: string; interval?: string; entry?: string; exit?: string; direction?: string; stop?: string; units?: string; strategy?: string;
+  const { symbol, interval, entry, exit, direction, stop, units, strategy, model } = useLocalSearchParams<{
+    symbol: string; interval?: string; entry?: string; exit?: string; direction?: string; stop?: string; units?: string; strategy?: string; model?: string;
   }>();
   const router = useRouter();
   const tf = interval || '15m';
   const ticker = symbol || 'EUR_USD';
 
-  // Pretty strategy label for the header
+  // Pretty strategy label for the header. Tidewater carries the duration
+  // in the `model` field (scalp / intraday / swing) so the chart can name
+  // which variant fired — without it the label is just "TIDEWATER" and you
+  // can't tell whether the trade was triggered by a 5m candle at a 1H zone
+  // (Scalp) or a 1D candle at a 1mo zone (Swing).
+  const TIDEWATER_DURATION_NAME: Record<string, string> = {
+    scalp: 'Scalp',
+    intraday: 'Intraday',
+    swing: 'Swing',
+  };
   const STRATEGY_LABELS: Record<string, string> = {
     '2n20': '2N20',
     'vwap_2n20': '2N20',
     '2n20_exit': '2N20',
-    'htf_levels': 'TIDEWATER',
-    'htf_supply_demand': 'TIDEWATER',
     'orb_breakout': 'ORB',
     'orb_butterfly': 'ORB BFLY',
-    // Tidewater family — naming by duration
-    'scalp_htf':    'TIDEWATER HOURLY',
-    'intraday_htf': 'TIDEWATER INTRADAY',
-    'swing_htf':    'TIDEWATER WEEKLY',
     // H1 Zone Scalp variants
     'scalp_h1zone':       'H1 ZONE SCALP',
     'scalp_h1zone_alpha': 'H1 ZONE α (15m)',
     'scalp_h1zone_beta':  'H1 ZONE β (1h)',
   };
-  const stratLabel = strategy ? (STRATEGY_LABELS[strategy] || strategy.toUpperCase().replace('_', ' ')) : null;
+  const isTidewater = strategy === 'htf_levels' || strategy === 'htf_supply_demand';
+  let stratLabel: string | null = null;
+  if (isTidewater) {
+    const duration = TIDEWATER_DURATION_NAME[(model || '').toLowerCase()] || '';
+    stratLabel = duration ? `Tidewater ${duration}` : 'Tidewater';
+  } else if (strategy) {
+    stratLabel = STRATEGY_LABELS[strategy] || strategy.toUpperCase().replace('_', ' ');
+  }
 
   // Fetch ADX direction per TF for the header arrows. TFs depend on the
-  // strategy: scalp uses 5m/15m/1h, intraday uses 1h/1d/1w, swing uses 1d/1w/1mo.
-  const headerTfs = trendTfsFor(strategy);
+  // strategy/model: tidewater-scalp 5m/15m/1h, intraday 15m/1h/1d, weekly 1d/1w/1mo.
+  const headerTfs = trendTfsFor(strategy, model);
+  // "Tidewater Scalp (5m, 15m, 1H)" — the parenthetical is the TF cluster
+  // we render arrows for, so the strategy name reads naturally.
+  if (stratLabel && isTidewater) {
+    stratLabel = `${stratLabel} (${headerTfs.map(prettyTf).join(', ')})`;
+  }
   const [trends, setTrends] = useState<Record<string, string>>({});
   useEffect(() => {
     let cancelled = false;
