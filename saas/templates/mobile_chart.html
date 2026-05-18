@@ -275,19 +275,27 @@
         // ── 5m-anchored ATR for the entry / target shaded bands ──
         // The Tidewater strategy stops are 3 × 5m ATR; the on-chart bands
         // should be sized to the SAME 5m ATR so they read consistently
-        // regardless of which TF the user is viewing. If the chart is on
-        // 5m we already have the candles; otherwise fetch 100 5m bars
-        // and compute ATR(14) there.
-        let ATR_5M = ATR;
-        if (TIMESPAN !== '5m') {
+        // regardless of which TF the user is viewing.
+        //
+        // CRITICAL: if we can't get genuine 5m data we set ATR_5M = 0,
+        // which makes the band drawing skip rather than fall back to the
+        // chart-TF ATR (which is much larger on 15m/1h and made the bands
+        // visually swallow scalp setups).
+        let ATR_5M = 0;
+        if (TIMESPAN === '5m') {
+          ATR_5M = ATR;   // we're already viewing 5m
+        } else {
           try {
             const r5 = await fetch('/api/candles/' + TICKER + '?timespan=5m&count=100');
             const d5 = await r5.json();
             if (d5.candles && d5.candles.length >= 15) {
               ATR_5M = computeAtr(d5.candles, 14);
+            } else {
+              console.warn('5m ATR: too few bars (' +
+                (d5.candles ? d5.candles.length : 0) + '), bands suppressed');
             }
           } catch (e) {
-            console.log('5m ATR fetch error:', e);
+            console.warn('5m ATR fetch failed, bands suppressed:', e);
           }
         }
 
@@ -596,11 +604,9 @@
         // target so it visually leans the way the trade is meant to go.
         // Width = 0.5 × 5m ATR (matches the strategy's actual sizing
         // math, which uses 5m ATR for stops regardless of viewing TF).
-        //
-        // Skipped on H1 Zone Scalp charts — that strategy's total trade
-        // span is often ~10 pips, and a 0.5×ATR(5m) band of ~3 pips
-        // visually swallows the T1/T2/T3/T4 lines.
-        if (HAS_TRADE && ENTRY_PRICE && ATR_5M > 0 && !IS_H1_ZONE) {
+        // ATR_5M is 0 if the 5m fetch failed — band gets skipped rather
+        // than drawn with chart-TF ATR (which would be too wide).
+        if (HAS_TRADE && ENTRY_PRICE && ATR_5M > 0) {
           const w = 0.5 * ATR_5M;
           const low  = isLong ? ENTRY_PRICE : ENTRY_PRICE - w;
           const high = isLong ? ENTRY_PRICE + w : ENTRY_PRICE;
@@ -622,10 +628,7 @@
         // side of the target — the territory the trade has to traverse to
         // be profitable. Width = 1 × 5m ATR (the approach zone). Like
         // the entry band, sized to 5m ATR regardless of viewing TF.
-        //
-        // Skipped on H1Zone for the same reason — the band merges with the
-        // entry band and visually swallows the scalp's tight T1-T4 ladder.
-        if (HAS_TRADE && EXIT_PRICE && ATR_5M > 0 && !IS_H1_ZONE) {
+        if (HAS_TRADE && EXIT_PRICE && ATR_5M > 0) {
           const w = 1.0 * ATR_5M;
           const low  = isLong ? EXIT_PRICE - w : EXIT_PRICE;
           const high = isLong ? EXIT_PRICE : EXIT_PRICE + w;
