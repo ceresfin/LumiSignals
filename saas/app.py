@@ -476,6 +476,9 @@ def create_app():
                     "projected_entry": projected_entry,
                     "projected_stop": projected_stop,
                     "projected_target": projected_target,
+                    # Unix seconds; 0 when never activated. Mobile renders
+                    # "Activated Xh ago"; chart drops a triangle at this ts.
+                    "activated_at": z.get("activated_at") or 0,
                 })
 
         # Supplemental always-on zones for key indices/commodities. Mirrors the

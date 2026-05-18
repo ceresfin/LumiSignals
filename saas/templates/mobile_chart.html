@@ -38,6 +38,10 @@
     const UNITS = params.get('units') ? parseFloat(params.get('units')) : null;
     const DIRECTION = params.get('direction') || '';
     const STRATEGY = params.get('strategy') || '';
+    // Watchlist zone "activated" timestamp (unix seconds). When set,
+    // drops a triangle marker on the bar where price first entered the
+    // zone band. Optional; ignored if not provided.
+    const ACTIVATED_AT = params.get('activated_at') ? parseFloat(params.get('activated_at')) : null;
 
     // Strategy display rules
     const IS_2N20 = STRATEGY.includes('2n20') || STRATEGY.includes('vwap');
@@ -637,6 +641,23 @@
             axisLabelTextColor: '#000',
             title: 'SL',
           });
+        }
+
+        // Activation triangle — marks the bar where price first entered
+        // the watchlist zone band. Only set when caller didn't pass
+        // H1Zone fills (those have their own marker set that would be
+        // replaced — lightweight-charts setMarkers REPLACES). For
+        // Tidewater zone charts this is the only marker, no conflict.
+        if (ACTIVATED_AT && !IS_H1_ZONE) {
+          const ts = Math.floor(ACTIVATED_AT) + ET_OFFSET;
+          candleSeries.setMarkers([{
+            time: ts,
+            position: 'belowBar',
+            color: '#A8C8B3',
+            shape: 'arrowUp',
+            text: 'activated',
+            size: 1,
+          }]);
         }
 
         // H1 Zone Scalp: fetch live bundles + trend + fills, overlay T1/T2/T3/T4

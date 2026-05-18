@@ -70,6 +70,19 @@ function getChartTimeframe(model?: string, strategy?: string): string {
   return '15m';
 }
 
+// "Activated 2h 12m ago" / "Activated 14m ago" / "Activated just now".
+// activatedAt is a unix-seconds timestamp from the watchlist API.
+function formatActivatedAt(activatedAt: number): string {
+  if (!activatedAt) return '';
+  const ageSec = Math.max(0, Date.now() / 1000 - activatedAt);
+  const m = Math.floor(ageSec / 60);
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  const rem = m % 60;
+  return rem ? `${h}h ${rem}m ago` : `${h}h ago`;
+}
+
 // Order trend-row keys low → high (5m, 15m, 1H, 4H, 1D, 1W, 1M).
 // Backend may emit them in any order; we sort to make scanning intuitive.
 const TF_RANK_MIN: Record<string, number> = {
@@ -749,6 +762,9 @@ export default function Positions() {
                         model: z.model || '',
                         direction: z.trade_direction,
                       };
+                      // Activation timestamp lets the chart drop a triangle
+                      // at the bar where price first entered the zone band.
+                      if (z.activated_at) params.activated_at = String(z.activated_at);
                       // Projected entry/stop from the watched zone — let
                       // the chart render them as the planned trade lines
                       if (z.projected_entry != null) params.entry = String(z.projected_entry);
@@ -816,6 +832,11 @@ export default function Positions() {
                         </>
                       );
                     })()}
+                    {isActivated && z.activated_at ? (
+                      <Text style={styles.zoneActivatedAt}>
+                        Activated {formatActivatedAt(z.activated_at)}
+                      </Text>
+                    ) : null}
                   </TouchableOpacity>
                 );
               })
@@ -997,6 +1018,7 @@ const styles = StyleSheet.create({
   zonePlanRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4, flexWrap: 'wrap' },
   zonePlanLabel: { fontSize: 10, color: Colors.textLight, letterSpacing: 0.3, textTransform: 'uppercase' },
   zonePlanValue: { fontSize: 11, color: Colors.dark, fontFamily: 'Menlo', marginRight: 4 },
+  zoneActivatedAt: { fontSize: 10, color: Colors.olive, fontStyle: 'italic', marginTop: 6 },
   trendRow: { flexDirection: 'row', gap: 4 },
   trendBadge: { fontSize: 11, fontWeight: '600' },
   empty: { alignItems: 'center', paddingTop: 60 },
