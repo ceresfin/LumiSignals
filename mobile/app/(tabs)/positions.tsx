@@ -724,15 +724,23 @@ export default function Positions() {
                     key={`${z.instrument}-${z.zone_type}-${z.zone_timeframe}-${i}`}
                     style={[styles.zoneCard, isActivated && styles.zoneCardActivated]}
                     onPress={() => {
-                      // Compose the strategy label so the chart header
-                      // shows e.g. "SCALP HTF" instead of just "HTF LEVELS"
-                      const stratLabel = z.model
-                        ? `${z.model}_htf`
-                        : 'htf_levels';
+                      // Open the chart at the strategy's bias (trend) TF —
+                      // not the zone TF — so the user lands on the same
+                      // frame they read for direction. Pass strategy +
+                      // model separately so the chart label reads
+                      // "Tidewater Scalp" etc. instead of "SCALP HTF".
+                      const biasTfByModel: Record<string, string> = {
+                        scalp: '15m',
+                        intraday: '1h',
+                        swing: '1w',
+                      };
+                      const chartTf = biasTfByModel[(z.model || '').toLowerCase()]
+                        || z.zone_timeframe;
                       const params: any = {
                         symbol: z.instrument,
-                        interval: z.zone_timeframe,
-                        strategy: stratLabel,
+                        interval: chartTf,
+                        strategy: 'htf_levels',
+                        model: z.model || '',
                         direction: z.trade_direction,
                       };
                       // Projected entry/stop from the watched zone — let
