@@ -348,6 +348,18 @@ def run_bot_for_user(user_data, stop_check):
         log(f"Massive connected — scanning {len(stock_tickers)} stock/crypto tickers")
 
     signal_log = SignalLog(path=f"/opt/lumisignals/signal_log_user_{user_id}.json")
+    # Override the signal_log module's global so any caller using
+    # get_signal_log() (H1 Zone Scalp, FX 4H Stillwater) writes to the
+    # SAME per-user file the Oanda sync reads from. Without this they'd
+    # land in /opt/lumisignals/app/signal_log.json — invisible to the
+    # sweep, which only looks at signal_log_user_{id}.json. Same issue
+    # we hit before going live; the per-strategy signal_log writes are
+    # otherwise correct.
+    try:
+        from lumisignals import signal_log as _sl_module
+        _sl_module._log = signal_log
+    except Exception as e:
+        logger.warning("Failed to share signal_log with strategies: %s", e)
 
     def on_signal(signal, extra_meta=None):
         log(f"SIGNAL: {signal.action} {signal.symbol} @ {signal.entry:.5f} | R:R {signal.risk_reward:.1f}")
