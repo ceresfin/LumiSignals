@@ -48,6 +48,8 @@ type Position = {
 //   Tidewater Scalp:    bias=15m   (trigger 5m, zones 1H)
 //   Tidewater Intraday: bias=1H    (trigger 15m, zones 1D)
 //   Tidewater Swing:    bias=1W    (trigger 1D, zones 1mo)
+//   H1 Zone Scalp α:    bias=15m   (5m trigger, 1H zones, 15m direction)
+//   H1 Zone Scalp β:    bias=1H    (5m trigger, 1H zones, 1H direction)
 const STRATEGY_TIMEFRAMES: Record<string, string> = {
   'scalp_2n20': '2m',
   'vwap_2n20': '2m',
@@ -56,6 +58,10 @@ const STRATEGY_TIMEFRAMES: Record<string, string> = {
   'intraday': '1h',
   'swing': '1w',
   'orb_breakout': '15m',
+  // H1 Zone Scalp — model field carries the variant
+  'alpha': '15m',
+  'beta': '1h',
+  'scalp_h1zone': '15m',
 };
 
 function getChartTimeframe(model?: string, strategy?: string): string {
