@@ -1416,7 +1416,8 @@ def create_app():
                     try:
                         _o = datetime.fromisoformat(opened_s.replace("Z", "+00:00"))
                         _c = datetime.fromisoformat(closed_s.replace("Z", "+00:00"))
-                        duration_mins = round((_c - _o).total_seconds() / 60, 1)
+                        # Column is INTEGER — must cast.
+                        duration_mins = int(round((_c - _o).total_seconds() / 60))
                     except Exception:
                         duration_mins = None
 
