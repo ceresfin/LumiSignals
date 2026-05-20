@@ -349,13 +349,39 @@ export default function Dashboard() {
   const [dateRange, setDateRange] = useState<'today' | 'wtd' | 'mtd' | 'qtd' | 'ytd' | 'all'>('mtd');
 
   // Compute the start-of-range ISO timestamp for the user's selection.
-  // All times are evaluated in user-local; the trades table stores UTC,
-  // so we convert to UTC for the .gte() filter.
+  // The trades table stores UTC, so we always return a UTC ISO string.
+  //
+  // "Today" follows the CME futures session boundary (6:00 PM NY time
+  // of the previous calendar day → 5:00 PM NY time of today). That's
+  // the canonical "trading day" for futures and matches what TradingView
+  // shows on a MES chart's session shading. If we used local-device
+  // midnight here, the overnight Asia/EU session of Tuesday would fall
+  // under "yesterday" even though it's part of Tuesday's session.
+  //
+  // WTD / MTD / QTD / YTD keep local-midnight semantics — broader
+  // windows so the boundary choice matters less.
   const getRangeStartIso = (range: typeof dateRange): string | null => {
     if (range === 'all') return null;
     const now = new Date();
-    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());  // local midnight today
-    if (range === 'today') return start.toISOString();
+    if (range === 'today') {
+      // 6 PM NY (UTC-4 EDT or UTC-5 EST). Detect which via the date's
+      // own NY tz formatter and subtract.
+      const tzShort = now.toLocaleString('en-US', {
+        timeZone: 'America/New_York', timeZoneName: 'short',
+      });
+      const offsetHours = tzShort.includes('EDT') ? 4 : 5;
+      // 18:00 NY = (18 + offsetHours) UTC, same UTC day if offset >= 6
+      // (always true here), so set on the current UTC date first.
+      const utc6PM_ET = new Date(now);
+      utc6PM_ET.setUTCHours(18 + offsetHours, 0, 0, 0);
+      // If we're before today's NY 6 PM, the active session started
+      // YESTERDAY at NY 6 PM. Step back one UTC day.
+      if (now < utc6PM_ET) {
+        utc6PM_ET.setUTCDate(utc6PM_ET.getUTCDate() - 1);
+      }
+      return utc6PM_ET.toISOString();
+    }
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());  // local midnight
     if (range === 'wtd') {
       // Week starts Monday
       const day = start.getDay(); // 0=Sun ... 6=Sat
