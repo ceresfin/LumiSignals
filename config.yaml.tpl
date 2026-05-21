@@ -6,7 +6,7 @@ signals:
   mode: polling
   strategy: levels
   api_url: https://app.lumitrade.ai/api/v1/partners/technical-analysis/top-tickers/
-  api_key: trk_live_cu7vj7nyYrc.toO5kCkvaw59f_eWNaMQ1XGph5-lbbk-8OIYz8zH3Ps
+  api_key: {{ op://Lumi/LumiSignals - Signals API/credential }}
   poll_interval_seconds: 60
   market_filter: fx
   min_reward_risk: 1.5
@@ -35,11 +35,11 @@ levels:
   min_risk_reward: 1.5
   zone_timeout: 14400
 massive:
-  api_key: iuT5Pj3thRCf6dRliPm4cGlzolW99E2n
+  api_key: {{ op://Lumi/LumiSignals - Massive/credential }}
   stock_atr_multiplier: 0.5
 schwab:
-  client_id: 63gzbYNANfMMCb6t71GGUPIAZzt1UN9GKIlw9nF84YPxaSIC
-  client_secret: B5yON4pcdwEjPwsPAkAEiPKIpxnT8IjOAEHrHQu9aI5jZixDqjdjhIPIds1fOIqA
+  client_id: {{ op://Lumi/LumiSignals - Schwab/username }}
+  client_secret: {{ op://Lumi/LumiSignals - Schwab/credential }}
   redirect_uri: "https://127.0.0.1"
 bot:
   dry_run: true
