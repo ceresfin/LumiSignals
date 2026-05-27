@@ -165,16 +165,14 @@
           priceFormat: { type: 'price', precision: priceDecimals, minMove: Math.pow(10, -priceDecimals) },
         });
 
-        // Shift timestamps from UTC to ET (UTC-4 EDT / UTC-5 EST)
-        // Lightweight Charts treats timestamps as local time, so we offset to ET
-        const now = new Date();
-        const jan = new Date(now.getFullYear(), 0, 1);
-        const jul = new Date(now.getFullYear(), 6, 1);
-        const isDST = Math.max(jan.getTimezoneOffset(), jul.getTimezoneOffset()) > now.getTimezoneOffset();
-        // We want ET offset: -4h EDT, -5h EST. But since the device might be any tz,
-        // we apply a fixed offset to make the chart axis show ET.
-        const ET_OFFSET = isDST ? -4 * 3600 : -5 * 3600;
-        candleData.candles.forEach(c => { c.time = c.time + ET_OFFSET; });
+        // Candle timestamps are UTC unix seconds. We deliberately do NOT
+        // pre-shift them — the `tickMarkFormatter` and `timeFormatter`
+        // declared on the chart already convert to America/New_York via
+        // toLocaleString. A previous version subtracted ET_OFFSET here
+        // AND the formatter applied ET conversion on top, displaying
+        // every label 4 hours behind real ET (UTC 17:38 → shifted to
+        // 13:38 → formatter re-converted → 9:38 AM). Removing the
+        // manual shift restores correct labels in EDT and EST.
 
         // Sort + dedup candles
         const sorted = candleData.candles.filter(c => c.time > 0).sort((a, b) => a.time - b.time);
@@ -187,6 +185,59 @@
           }
         }
         candleSeries.setData(unique);
+
+        // ── Auto-refresh of candles ────────────────────────────────
+        // The chart fetches once on load — without polling, the last
+        // bar visible is whatever was current when the WebView opened.
+        // For a position card that stays expanded while the trade is
+        // live, that means the chart freezes 13+ minutes behind reality
+        // on a 2m TF. Re-fetch on a cadence matched to the TF: a touch
+        // longer than the bar period so we don't hammer the endpoint
+        // but new closes appear within ~one bar.
+        const REFRESH_MS = ({
+          '1m':  30 * 1000,
+          '2m':  60 * 1000,
+          '5m':  90 * 1000,
+          '15m': 3  * 60 * 1000,
+          '30m': 5  * 60 * 1000,
+          '1h':  5  * 60 * 1000,
+          '4h':  10 * 60 * 1000,
+          '1d':  15 * 60 * 1000,
+          '1w':  60 * 60 * 1000,
+          '1mo': 60 * 60 * 1000,
+        })[TIMESPAN] || 60 * 1000;
+        const _refreshTimer = setInterval(async () => {
+          try {
+            const r = await fetch('/api/candles/' + TICKER + '?timespan=' + TIMESPAN + '&count=' + COUNT);
+            const fresh = await r.json();
+            if (!fresh || !Array.isArray(fresh.candles) || fresh.candles.length === 0) return;
+            const _sorted = fresh.candles.filter(c => c.time > 0).sort((a, b) => a.time - b.time);
+            const _uniq = [];
+            const _seen = new Set();
+            for (const c of _sorted) {
+              if (!_seen.has(c.time)) { _seen.add(c.time); _uniq.push(c); }
+            }
+            candleSeries.setData(_uniq);
+            // Also redraw VWAP if the strategy has it on.
+            if (SHOW_VWAP && typeof window._vwapSeries !== 'undefined' && window._vwapSeries) {
+              let n = 0, d = 0;
+              const vw = [];
+              for (const c of _uniq) {
+                const hlc3 = (c.high + c.low + c.close) / 3;
+                n += hlc3; d += 1;
+                vw.push({ time: c.time, value: n / d });
+              }
+              window._vwapSeries.setData(vw);
+            }
+          } catch (e) {
+            // Silent — refresh errors shouldn't break the chart.
+          }
+        }, REFRESH_MS);
+        // Stop the poller when the page is hidden (mobile WebView
+        // visibility flips when the card is collapsed / app backgrounds).
+        document.addEventListener('visibilitychange', () => {
+          if (document.hidden) clearInterval(_refreshTimer);
+        });
 
         // VWAP line — only for 2n20 strategy
         if (SHOW_VWAP) {
@@ -205,6 +256,9 @@
             priceLineVisible: false,
           });
           vwapSeries.setData(vwapData);
+          // Expose so the auto-refresh poller can redraw VWAP on every
+          // new candle batch. Scope is the chart page only.
+          window._vwapSeries = vwapSeries;
         }
 
         // Fetch and overlay S/R levels (only for HTF strategies, not 2n20)
@@ -507,6 +561,17 @@
           const effectiveUnits = (UNITS != null && UNITS > 0) ? UNITS : DEFAULT_UNITS;
           const usingDefaultUnits = (UNITS == null || UNITS <= 0);
 
+          // Futures contract multipliers ($ per point). When `isFx` is
+          // false and the ticker matches one of these, risk/reward dollar
+          // math uses points × multiplier × contracts instead of FX pip
+          // math (which previously treated 5 MES points as 50,000 pips
+          // and reported $5 risk instead of $25).
+          const FUT_MULT = { MES: 5, MNQ: 2, MGC: 10, MCL: 100,
+                              ES: 50, NQ: 20, RTY: 50, YM: 5,
+                              GC: 100, CL: 1000 };
+          const futMult = FUT_MULT[TICKER];
+          const isFutures = !isFx && futMult != null;
+
           let entryStr = '—', stopStr = '—', targetStr = '—';
           let riskStr = '—', rewardStr = '—', rrStr = '—';
           let rrColor = '#888';
@@ -514,24 +579,43 @@
             entryStr = priceFmt(ENTRY_PRICE);
             stopStr  = priceFmt(STOP_PRICE);
             const lastClose = unique[unique.length-1].close;
-            const pipSize = isJpyPair ? 0.01 : 0.0001;
-
             const riskDist = Math.abs(ENTRY_PRICE - STOP_PRICE);
-            const riskPips = riskDist / pipSize;
-            const riskUsd  = distanceDollars(riskDist, effectiveUnits, lastClose) || 0;
-            riskStr = riskPips.toFixed(1) + 'p · $' + riskUsd.toFixed(2)
-                      + (usingDefaultUnits ? '/10K' : '');
 
-            if (EXIT_PRICE != null) {
-              targetStr = priceFmt(EXIT_PRICE);
-              const rewDist = Math.abs(EXIT_PRICE - ENTRY_PRICE);
-              const rewPips = rewDist / pipSize;
-              const rewUsd  = distanceDollars(rewDist, effectiveUnits, lastClose) || 0;
-              rewardStr = rewPips.toFixed(1) + 'p · $' + rewUsd.toFixed(2)
-                          + (usingDefaultUnits ? '/10K' : '');
-              const rr = riskDist > 0 ? rewDist / riskDist : 0;
-              rrStr = rr.toFixed(2) + ':1';
-              rrColor = rr >= 1.5 ? SAGE : (rr >= 1.0 ? '#ffeb3b' : '#C26A6A');
+            if (isFutures) {
+              // Futures: distance in points × contracts × $/point.
+              // UNITS arrives as `contracts` from the mobile URL builder
+              // (positions.tsx passes position.contracts → ?units=).
+              const contracts = (UNITS != null && UNITS > 0) ? UNITS : 1;
+              const riskUsd = riskDist * futMult * contracts;
+              riskStr = riskDist.toFixed(2) + 'pts · $' + riskUsd.toFixed(2);
+              if (EXIT_PRICE != null) {
+                targetStr = priceFmt(EXIT_PRICE);
+                const rewDist = Math.abs(EXIT_PRICE - ENTRY_PRICE);
+                const rewUsd = rewDist * futMult * contracts;
+                rewardStr = rewDist.toFixed(2) + 'pts · $' + rewUsd.toFixed(2);
+                const rr = riskDist > 0 ? rewDist / riskDist : 0;
+                rrStr = rr.toFixed(2) + ':1';
+                rrColor = rr >= 1.5 ? SAGE : (rr >= 1.0 ? '#ffeb3b' : '#C26A6A');
+              }
+            } else {
+              // FX: original pip math.
+              const pipSize = isJpyPair ? 0.01 : 0.0001;
+              const riskPips = riskDist / pipSize;
+              const riskUsd  = distanceDollars(riskDist, effectiveUnits, lastClose) || 0;
+              riskStr = riskPips.toFixed(1) + 'p · $' + riskUsd.toFixed(2)
+                        + (usingDefaultUnits ? '/10K' : '');
+
+              if (EXIT_PRICE != null) {
+                targetStr = priceFmt(EXIT_PRICE);
+                const rewDist = Math.abs(EXIT_PRICE - ENTRY_PRICE);
+                const rewPips = rewDist / pipSize;
+                const rewUsd  = distanceDollars(rewDist, effectiveUnits, lastClose) || 0;
+                rewardStr = rewPips.toFixed(1) + 'p · $' + rewUsd.toFixed(2)
+                            + (usingDefaultUnits ? '/10K' : '');
+                const rr = riskDist > 0 ? rewDist / riskDist : 0;
+                rrStr = rr.toFixed(2) + ':1';
+                rrColor = rr >= 1.5 ? SAGE : (rr >= 1.0 ? '#ffeb3b' : '#C26A6A');
+              }
             }
           }
 
@@ -552,16 +636,20 @@
               '<span style="color:' + valueColor + ';font-weight:600">' + value + '</span>' +
               '</div>';
           }
+          // Strategy-specific rows. 2n20 has no fixed target — it exits
+          // on candlestick formation / VWAP cross — so hiding Target /
+          // Reward / R:R cleans up the dashboard. HTF, ORB, H1Zone all
+          // carry an explicit target, so they keep the full set.
+          const showTargetRows = !IS_2N20;
           panel.innerHTML =
             '<div style="color:#888;font-size:9px;letter-spacing:0.6px;margin-bottom:4px">DASHBOARD · ' + TIMESPAN + '</div>' +
             row('Direction', direction, dirColor) +
-            row('Trend', trendDisplay, trendColor) +
             row('Entry',  entryStr,  '#ddd') +
-            row('Target', targetStr, '#ff9800') +
+            (showTargetRows ? row('Target', targetStr, '#ff9800') : '') +
             row('Stop',   stopStr,   '#ff1744') +
             row('Risk',   riskStr,   '#C26A6A') +
-            row('Reward', rewardStr, SAGE) +
-            row('R:R',    rrStr,     rrColor);
+            (showTargetRows ? row('Reward', rewardStr, SAGE) : '') +
+            (showTargetRows ? row('R:R',    rrStr,     rrColor) : '');
           document.body.appendChild(panel);
         })();
 

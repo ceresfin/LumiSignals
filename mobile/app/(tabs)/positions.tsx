@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Alert, View, Text, FlatList, StyleSheet, RefreshControl, TouchableOpacity } from 'react-native';
+import { Alert, View, Text, FlatList, StyleSheet, RefreshControl, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { WebView } from 'react-native-webview';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '@/lib/supabase';
@@ -7,6 +8,41 @@ import { useAuth } from '@/contexts/auth';
 import { Colors } from '@/constants/theme';
 import { strategyBadgeText } from '@/lib/strategyLabel';
 import IbStatusBanner from '@/components/ib-status-banner';
+
+const CHART_API_BASE = 'https://bot.lumitrade.ai';
+// Default timeframe per asset class. Futures scalps live on the 2m;
+// FX H1 zones want the 15m; HTF swing wants the daily. We pick a sane
+// default per (strategy, model) but the user can flip TFs inline.
+function defaultChartTf(strategy?: string, model?: string): string {
+  const s = (strategy || '').toLowerCase();
+  const m = (model || '').toLowerCase();
+  if (s.includes('2n20') || s.includes('orb')) return '2m';
+  if (s === 'htf_levels' || s === 'htf_supply_demand') {
+    if (m === 'swing') return '1d';
+    if (m === 'intraday') return '15m';
+    return '5m';
+  }
+  if (s.includes('fx_4h') || s.includes('stillwater')) return '4h';
+  if (s.includes('h1_zone')) return '15m';
+  return '15m';
+}
+function buildChartUrl(p: { instrument: string; entry_price?: number;
+                            direction?: string; stop_loss?: number;
+                            contracts?: number; strategy?: string; },
+                       tf: string): string {
+  const params = new URLSearchParams({
+    ticker: p.instrument,
+    timespan: tf,
+    count: '300',
+  });
+  if (p.entry_price)  params.set('entry', String(p.entry_price));
+  if (p.direction)    params.set('direction', p.direction);
+  if (p.stop_loss)    params.set('stop', String(p.stop_loss));
+  if (p.contracts)    params.set('units', String(p.contracts));
+  if (p.strategy)     params.set('strategy', p.strategy);
+  return `${CHART_API_BASE}/chart?${params.toString()}`;
+}
+const INLINE_CHART_TFS = ['2m', '5m', '15m', '1h', '4h', '1d'];
 
 type Position = {
   id: number;
@@ -211,14 +247,36 @@ function positionRiskReward(p: Position): { risk: number; reward: number } {
   return { risk: 0, reward: 0 };
 }
 
-function PositionRow({ position, onChartPress, onClose, closing }: {
+function PositionRow({ position, onChartPress, onClose, closing, livePrice,
+                       chartExpanded, chartTf, onToggleChart, onChangeTf }: {
   position: Position;
   onChartPress: (instrument: string, tf: string) => void;
   onClose: (p: Position) => void;
   closing: boolean;
+  livePrice?: number;
+  chartExpanded: boolean;
+  chartTf: string;
+  onToggleChart: () => void;
+  onChangeTf: (tf: string) => void;
 }) {
   const dir = position.direction === 'LONG' || position.direction === 'BUY' ? 'BUY' : 'SELL';
-  const pl = position.unrealized_pl || 0;
+  // Prefer client-side recomputed P&L when a fresh live price is in
+  // scope — the Supabase row's unrealized_pl is only as fresh as the
+  // bot's last sync write (~5 s). With livePrice from the live_prices
+  // realtime channel, this updates within ms of the IB CPAPI snapshot.
+  // Falls back to the row's unrealized_pl when no live price yet.
+  let pl = position.unrealized_pl || 0;
+  if (livePrice && position.entry_price && position.contracts) {
+    const mult = (position as any).multiplier || (
+      position.instrument === 'MES' ? 5 :
+      position.instrument === 'MNQ' ? 2 :
+      position.instrument === 'MGC' ? 10 :
+      position.instrument === 'MCL' ? 100 :
+      1
+    );
+    const sign = dir === 'BUY' ? 1 : -1;
+    pl = (livePrice - position.entry_price) * sign * position.contracts * mult;
+  }
   const isOptions = position.asset_type === 'options';
   const { risk, reward } = positionRiskReward(position);
   const rr = risk > 0 && reward > 0 ? (reward / risk).toFixed(1) : '';
@@ -386,6 +444,15 @@ function PositionRow({ position, onChartPress, onClose, closing }: {
           {strategyBadgeText(position.strategy, position.model)}
         </Text>
         <TouchableOpacity
+          onPress={onToggleChart}
+          style={styles.chartToggleBtn}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Text style={styles.chartToggleText}>
+            {chartExpanded ? '▼ Chart' : '▶ Chart'}
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
           style={[styles.closeBtn, closing && { opacity: 0.4 }]}
           onPress={() => !closing && onClose(position)}
           disabled={closing}
@@ -394,6 +461,45 @@ function PositionRow({ position, onChartPress, onClose, closing }: {
           <Text style={styles.closeBtnText}>{closing ? 'Closing…' : 'Close'}</Text>
         </TouchableOpacity>
       </View>
+
+      {chartExpanded ? (
+        <View style={styles.inlineChart}>
+          <View style={styles.tfRow}>
+            {INLINE_CHART_TFS.map(t => (
+              <TouchableOpacity
+                key={t}
+                onPress={() => onChangeTf(t)}
+                style={[styles.tfPill, chartTf === t && styles.tfPillActive]}
+              >
+                <Text style={[styles.tfPillText, chartTf === t && styles.tfPillTextActive]}>
+                  {t}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          <WebView
+            key={`${position.id}-${chartTf}`}
+            source={{ uri: buildChartUrl({
+              instrument: position.instrument,
+              entry_price: position.entry_price,
+              direction: position.direction,
+              stop_loss: position.stop_loss,
+              contracts: position.contracts,
+              strategy: position.strategy,
+            }, chartTf) }}
+            style={styles.inlineChartWebview}
+            javaScriptEnabled
+            domStorageEnabled
+            startInLoadingState
+            renderLoading={() => (
+              <ActivityIndicator
+                style={{ flex: 1, backgroundColor: '#1a1a2e' }}
+                color={Colors.olive}
+              />
+            )}
+          />
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -410,6 +516,36 @@ export default function Positions() {
   // Per-position "closing" lock so a Close tap is honored exactly once
   // until either the row disappears from the next sync OR 30 s pass.
   const [closingIds, setClosingIds] = useState<Set<string | number>>(new Set());
+
+  // Latest market price per ticker, fed by the live_prices Supabase
+  // realtime channel. PositionRow uses these to recompute P&L without
+  // waiting for the bot's per-position write cycle. Updates land within
+  // ms of the bot's CPAPI snapshot.
+  const [livePrices, setLivePrices] = useState<Record<string, number>>({});
+
+  // Single-expand chart state: only one position's chart is mounted at
+  // a time to avoid loading multiple WebViews simultaneously. `chartTf`
+  // remembers per-position TF selection so flipping cards doesn't reset
+  // the user's choice.
+  const [expandedChartId, setExpandedChartId] = useState<string | number | null>(null);
+  const [chartTf, setChartTf] = useState<Record<string | number, string>>({});
+
+  // Belt-and-suspenders refresh every 5 s: bump the tick AND refetch
+  // the positions rows from Supabase. Without the refetch a stalled
+  // realtime push leaves the card showing data from initial mount —
+  // observed 2026-05-27 with a 22-min-old position still rendering as
+  // 5m duration. Setting interval to 5 s keeps both duration AND P&L
+  // within ~5 s of Supabase. Each tick adds 1 PostgREST read; trivial
+  // against the project rate limit.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => {
+      setTick(t => t + 1);
+      loadPositions();
+    }, 5_000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
 
   const TABS = [
     { key: 'forex', label: 'Forex', filter: (p: Position) => p.broker === 'oanda' || p.asset_type === 'forex' },
@@ -468,6 +604,45 @@ export default function Positions() {
         'postgres_changes',
         { event: '*', schema: 'public', table: 'positions', filter: `user_id=eq.${user.id}` },
         () => { loadPositions(); }
+      )
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [user]);
+
+  // Live prices subscription — UPDATE events on the `live_prices` table
+  // each time the bot pushes a fresh CPAPI snapshot. Updates the local
+  // `livePrices` map so PositionRow can recompute P&L instantly.
+  useEffect(() => {
+    if (!user) return;
+    // Seed with whatever's already in the table on mount so we don't wait
+    // for the first push to populate.
+    supabase
+      .from('live_prices')
+      .select('ticker, price')
+      .then(({ data }) => {
+        if (data) {
+          const seed: Record<string, number> = {};
+          for (const r of data) {
+            if (r.ticker && r.price != null) seed[r.ticker] = Number(r.price);
+          }
+          setLivePrices(prev => ({ ...seed, ...prev }));
+        }
+      });
+
+    const channel = supabase
+      .channel('live-prices-realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'live_prices' },
+        (payload: any) => {
+          const row = (payload?.new || payload?.record) as { ticker?: string; price?: number } | undefined;
+          if (row?.ticker && row.price != null) {
+            const ticker = row.ticker;
+            const price = Number(row.price);
+            setLivePrices(prev => (prev[ticker] === price ? prev : { ...prev, [ticker]: price }));
+          }
+        },
       )
       .subscribe();
 
@@ -624,22 +799,32 @@ export default function Positions() {
       <FlatList
         data={positions}
         keyExtractor={(item) => item.id.toString()}
-        renderItem={({ item }) => <PositionRow position={item} onClose={handleClose} closing={closingIds.has(item.id)} onChartPress={(sym, tf) => router.push({
-          pathname: '/chart',
-          params: {
-            symbol: sym,
-            interval: tf,
-            entry: item.entry_price?.toString(),
-            stop: item.stop_loss?.toString(),
-            exit: item.take_profit?.toString(),
-            // Units lets the chart dashboard compute $ Risk/Reward
-            // instead of just pip distances.
-            units: item.units?.toString(),
-            direction: item.direction,
-            strategy: item.strategy || item.model || '',
-            model: item.model || '',
-          }
-        })} />}
+        renderItem={({ item }) => <PositionRow
+          position={item}
+          onClose={handleClose}
+          closing={closingIds.has(item.id)}
+          livePrice={livePrices[item.instrument]}
+          chartExpanded={expandedChartId === item.id}
+          chartTf={chartTf[item.id] || defaultChartTf(item.strategy, item.model)}
+          onToggleChart={() => setExpandedChartId(prev => prev === item.id ? null : item.id)}
+          onChangeTf={(tf) => setChartTf(prev => ({ ...prev, [item.id]: tf }))}
+          onChartPress={(sym, tf) => router.push({
+            pathname: '/chart',
+            params: {
+              symbol: sym,
+              interval: tf,
+              entry: item.entry_price?.toString(),
+              stop: item.stop_loss?.toString(),
+              exit: item.take_profit?.toString(),
+              // Units lets the chart dashboard compute $ Risk/Reward
+              // instead of just pip distances.
+              units: item.units?.toString(),
+              direction: item.direction,
+              strategy: item.strategy || item.model || '',
+              model: item.model || '',
+            }
+          })}
+        />}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 20 }}
         ListEmptyComponent={
@@ -970,6 +1155,56 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: Colors.red,
     letterSpacing: 0.5,
+  },
+  chartToggleBtn: {
+    marginLeft: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: Colors.olive,
+  },
+  chartToggleText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: Colors.olive,
+    letterSpacing: 0.3,
+  },
+  inlineChart: {
+    marginTop: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#e5e5e5',
+    paddingTop: 8,
+  },
+  tfRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: 6,
+  },
+  tfPill: {
+    paddingHorizontal: 9,
+    paddingVertical: 3,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#ccc',
+    backgroundColor: '#f7f7f7',
+  },
+  tfPillActive: {
+    backgroundColor: Colors.olive,
+    borderColor: Colors.olive,
+  },
+  tfPillText: {
+    fontSize: 11,
+    color: Colors.dark,
+    fontWeight: '600',
+  },
+  tfPillTextActive: { color: '#fff' },
+  inlineChartWebview: {
+    height: 360,
+    backgroundColor: '#1a1a2e',
+    borderRadius: 6,
+    overflow: 'hidden',
   },
   watchlistSection: { marginTop: 24, paddingBottom: 20 },
 

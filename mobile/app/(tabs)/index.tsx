@@ -53,6 +53,7 @@ type ModelKey = 'scalp' | 'intraday' | 'swing' | 'alpha' | 'beta';
 const MODEL_KEYS_BY_STRATEGY: Record<string, ModelKey[]> = {
   htf_levels: ['scalp', 'intraday', 'swing'],
   vwap_2n20: ['scalp'],
+  vwap_2n20_v2: ['scalp'],
   orb_breakout: ['scalp'],
   scalp_h1zone: ['alpha', 'beta'],
   manual: ['scalp'],
@@ -262,6 +263,8 @@ const STRATEGY_KEYS: Record<string, string> = {
   'vwap_2n20': 'vwap_2n20',
   '2n20': 'vwap_2n20',
   '2n20_exit': 'vwap_2n20',
+  '2n20_v2': 'vwap_2n20_v2',
+  'vwap_2n20_v2': 'vwap_2n20_v2',
   'htf_levels': 'htf_levels',
   'htf_supply_demand': 'htf_levels',
   'orb_breakout': 'orb_breakout',
@@ -276,6 +279,7 @@ const STRATEGY_KEYS: Record<string, string> = {
 // stay in sync.
 const STRATEGY_NAMES: Record<string, string> = {
   'vwap_2n20': 'VWAP Candlestick Trigger (2n20)',
+  'vwap_2n20_v2': 'VWAP Candlestick Trigger (2n20 v2)',
   'htf_levels': 'HTF Untouched Levels',
   'orb_breakout': 'Opening Range Breakout',
   'scalp_h1zone': 'H1 Zone Scalp',
@@ -433,7 +437,23 @@ export default function Dashboard() {
         const tag = `${t.model || ''} ${t.strategy || ''}`.toLowerCase();
         return isFx && tag.includes('2n20');
       };
-      if (tradesRes.data) setAllTrades((tradesRes.data as Trade[]).filter(t => !isFx2n20(t)));
+      // Anything in this strategy that opened before its live-from cutoff is
+      // pre-live debug noise — exclude from dashboard math. Edit the cutoff
+      // to re-baseline performance going forward.
+      const STRATEGY_LIVE_FROM: Record<string, string> = {
+        futures_2n20: '2026-05-27T18:14:00Z',
+      };
+      const isPreLive = (t: Trade) => {
+        const isFutures = t.broker !== 'oanda' && t.asset_type !== 'forex';
+        const tag = `${t.model || ''} ${t.strategy || ''}`.toLowerCase();
+        // v2 is brand new — every v2 trade is real, no cutoff applies.
+        if (isFutures && tag.includes('2n20') && !tag.includes('v2')) {
+          const ts = t.opened_at || t.closed_at || '';
+          return !!ts && ts < STRATEGY_LIVE_FROM.futures_2n20;
+        }
+        return false;
+      };
+      if (tradesRes.data) setAllTrades((tradesRes.data as Trade[]).filter(t => !isFx2n20(t) && !isPreLive(t)));
       if (posRes.data) setAllPositions(posRes.data);
     } catch (e) {
       console.error('Stats load error:', e);

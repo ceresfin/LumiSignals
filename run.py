@@ -42,6 +42,24 @@ def main():
         help="Web dashboard port (default: 5050)",
     )
     args = parser.parse_args()
+    # Render config.yaml from .tpl + 1Password if a template exists
+    import os
+    import subprocess
+    tpl_path = args.config + ".tpl"
+    if os.path.exists(tpl_path):
+        print(f"Rendering {args.config} from {tpl_path} via 1Password...")
+        try:
+            subprocess.run(
+                ["op", "inject", "-i", tpl_path, "-o", args.config, "--force"],
+                check=True,
+            )
+        except subprocess.CalledProcessError:
+            print("Error: op inject failed. Run eval $(op signin) in this shell, then retry.")
+            sys.exit(1)
+        except FileNotFoundError:
+            print("Error: op CLI not found. Install 1Password CLI.")
+            sys.exit(1)
+
 
     if args.no_web:
         # CLI mode — original behavior

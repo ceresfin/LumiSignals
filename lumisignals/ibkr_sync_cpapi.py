@@ -17,6 +17,9 @@ from datetime import datetime, timezone
 
 import requests
 
+from . import diary
+from . import reconciler
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -283,6 +286,25 @@ def check_stop_fills(client):
             except Exception as e:
                 logger.debug("notify (child fill) failed: %s", e)
 
+            # Diary: STOP_FIRED (or TP-hit — share the same close state so
+            # the reconciler treats both as "closed by broker bracket").
+            try:
+                diary.record_event(
+                    broker="ib",
+                    broker_trade_id=str(sp.get("perm_id") or ""),
+                    strategy_id=(diary.strategy_slug(strategy) or strategy),
+                    ticker=ticker,
+                    state=diary.State.STOP_FIRED if fired == "stop" else diary.State.CLOSED,
+                    reason=close_reason,
+                    expected_qty=0,
+                    entry_price=entry_price or None,
+                    exit_price=exit_price or None,
+                    realized_pl=pnl,
+                    meta={"fired": fired, "survivor_cancelled": survivor_id or None},
+                )
+            except Exception as _de:
+                logger.debug("diary STOP_FIRED write failed: %s", _de)
+
             logger.info(
                 "STRAT_POS clear  %s/%s: reason=child-fill(%s) survivor=%s",
                 ticker, strategy, fired, survivor_id or "-",
@@ -318,85 +340,23 @@ def clear_strat_pos(ticker: str, strategy: str, reason: str = ""):
 
 
 def reconcile_strat_pos(ticker: str, ib_qty: int, caller: str = ""):
-    """If the sum of per-strategy contracts doesn't match IB's actual
-    position, a stop loss almost certainly fired (IB closes the position
-    silently and we get no callback). Clear all strat_pos for the ticker
-    so the next signal in either strategy can enter cleanly.
+    """DEPRECATED — no-op since 2026-05-22.
 
-    Conservative: only clears when there is a real discrepancy in absolute
-    terms (tracked > actual). Never clears when tracked matches or is less.
+    This function used to CLEAR_ALL strat_pos for a ticker when IB's
+    /portfolio/positions disagreed with our tracked net qty. The check was
+    based on a snapshot endpoint with up to 4+ minutes of lag, leading to
+    false positives that orphaned live positions (see 14:14 incident on
+    2026-05-22). The trade diary + reconciler.py replace this — they key
+    on broker_trade_id and order status, not aggregate position quantity.
 
-    Every call is logged so we can audit decisions later (which call
-    triggered the clear, what IB qty it saw vs tracked qty, whether the
-    decision was correct in hindsight)."""
-    rdb = _rdb()
-    if rdb is None:
-        return
-    try:
-        keys = list(rdb.scan_iter(f"ibkr:strat_pos:{ticker}:*"))
-        if not keys:
-            logger.info("RECONCILE %s: ib_qty=%+d tracked=none caller=%s decision=noop",
-                        ticker, ib_qty, caller or "?")
-            return
-        tracked_net = 0
-        strat_breakdown = []
-        for k in keys:
-            try:
-                s = json.loads(rdb.get(k) or "{}")
-                qty = int(s.get("contracts", 0))
-                strat_name = s.get("strategy", "?")
-                strat_dir = s.get("direction", "?")
-                strat_breakdown.append(f"{strat_name}={strat_dir}{qty}")
-                if strat_dir == "BUY":
-                    tracked_net += qty
-                elif strat_dir == "SELL":
-                    tracked_net -= qty
-            except Exception:
-                pass
-        if abs(tracked_net) > abs(ib_qty):
-            # Race protection: when a BUY/SELL has just been placed, the
-            # fill takes a few seconds to propagate to /portfolio/positions.
-            # During that window tracked is +1 but IB still reports 0 — and
-            # if we clear strat_pos here, the in-transit fill becomes an
-            # orphan when it eventually lands. Hold off on CLEAR_ALL while
-            # any tracked strat_pos is younger than 90s; the silent
-            # stop-fill case can wait one more tick.
-            now_utc = datetime.now(timezone.utc)
-            youngest_age_s = None
-            for k in keys:
-                try:
-                    s = json.loads(rdb.get(k) or "{}")
-                    opened_at = s.get("opened_at")
-                    if opened_at:
-                        ts = datetime.fromisoformat(opened_at.replace("Z", "+00:00"))
-                        age_s = (now_utc - ts).total_seconds()
-                        if youngest_age_s is None or age_s < youngest_age_s:
-                            youngest_age_s = age_s
-                except Exception:
-                    pass
-            if youngest_age_s is not None and youngest_age_s < 90:
-                logger.info(
-                    "RECONCILE %s: ib_qty=%+d tracked_net=%+d [%s] caller=%s "
-                    "decision=DEFER (youngest strat_pos %.1fs old — fill likely in transit)",
-                    ticker, ib_qty, tracked_net, ",".join(strat_breakdown),
-                    caller or "?", youngest_age_s,
-                )
-                return
-            logger.info(
-                "RECONCILE %s: ib_qty=%+d tracked_net=%+d [%s] caller=%s decision=CLEAR_ALL (%d keys)",
-                ticker, ib_qty, tracked_net, ",".join(strat_breakdown),
-                caller or "?", len(keys),
-            )
-            for k in keys:
-                rdb.delete(k)
-        else:
-            logger.info(
-                "RECONCILE %s: ib_qty=%+d tracked_net=%+d [%s] caller=%s decision=keep",
-                ticker, ib_qty, tracked_net, ",".join(strat_breakdown),
-                caller or "?",
-            )
-    except Exception as e:
-        logger.warning("strat_pos reconcile failed: %s", e)
+    Kept as a no-op stub so any straggler call sites don't NameError.
+    Remove entirely once no callers remain (search: reconcile_strat_pos).
+    """
+    logger.debug(
+        "RECONCILE_NOOP %s ib_qty=%+d caller=%s — function deprecated",
+        ticker, ib_qty, caller or "?",
+    )
+    return
 
 
 def _lookup_signal_metadata(signal_log: dict, trade_id: str, instrument: str,
@@ -678,6 +638,16 @@ def sync_positions_to_supabase(positions: list):
         market_price = float(pos.get("market_price") or 0)
         qty = int(pos.get("quantity") or 0)
         asset_type = "futures" if sec_type == "FUT" else "stock"
+
+        # Push the latest market price to the shared live_prices table
+        # so the mobile UI can recompute P&L locally (sub-cycle freshness)
+        # instead of waiting for the per-position row to be PATCHed.
+        # Best-effort: failures log but never break the sync loop.
+        if market_price > 0:
+            try:
+                diary.upsert_live_price(symbol, market_price)
+            except Exception as _lpe:
+                logger.debug("live_price push failed for %s: %s", symbol, _lpe)
 
         # Log IB qty changes for forensics
         prev_qty = _last_ib_qty.get(symbol)
@@ -1478,23 +1448,78 @@ def check_order_requests(client):
                 # independent strategies (e.g. 2n20 and ORB) can both hold a
                 # position in the same contract at the same time. IB aggregates
                 # at the account level; we book per-strategy here.
-                time.sleep(1)
+                #
+                # Position truth: fills-based (~1-2s lag) instead of
+                # /portfolio/positions (up to 4+ min lag — caused the 2026-05-22
+                # CLEAR_ALL false positive). The time.sleep(1) below used
+                # to be needed to let positions endpoint settle; with fills,
+                # we don't have to wait.
                 current_pos = 0
-                for item in client.get_positions():
-                    if item.get("symbol") == ticker and item.get("sec_type") == "FUT":
-                        current_pos = int(item.get("quantity", 0))
-                        break
+                try:
+                    _fills_qty = reconciler.qty_map_from_fills(client)
+                    current_pos = int(_fills_qty.get(ticker, 0))
+                except Exception as _e:
+                    logger.debug("fills-based current_pos lookup failed, falling back: %s", _e)
+                    for item in client.get_positions():
+                        if item.get("symbol") == ticker and item.get("sec_type") == "FUT":
+                            current_pos = int(item.get("quantity", 0))
+                            break
 
-                # Reconcile in case a stop loss closed one of the legs silently
-                reconcile_strat_pos(ticker, current_pos, caller=f"order_proc:{direction}/{strategy_name}")
+                # NOTE: reconcile_strat_pos() used to be called here as a
+                # "best-effort cleanup" against stale strat_pos when IB's
+                # position didn't match tracked qty. Disabled 2026-05-22
+                # after it CLEAR_ALL'd a live 2n20 trade based on a 4.5-minute
+                # /portfolio/positions lag — exactly the false-positive
+                # category the trade diary system was built to eliminate.
+                # The diary (lumisignals/diary.py) + reconciler.py now own
+                # all reconciliation, keyed on broker_trade_id rather than
+                # aggregate position quantities. See task #56.
 
                 sp = get_strat_pos(ticker, strategy_name)
                 strat_long = sp.get("direction") == "BUY"
                 strat_short = sp.get("direction") == "SELL"
+
+                # Diary fallback: if strat_pos (Redis) is empty for this
+                # (ticker, strategy) but the trade diary still has a live
+                # OPEN row, honor close webhooks via diary. Task #7 —
+                # without this, today's bot SKIPPED two TV CLOSE signals
+                # because the old reconciler had wiped strat_pos. The
+                # diary keys on broker_trade_id so it survives strat_pos
+                # bugs.
+                diary_live = None
+                diary_long = False
+                diary_short = False
+                # Diary lookup applies to BOTH close signals (fallback when
+                # strat_pos got wiped) AND entry signals (so close-and-reverse
+                # can detect opposing positions the strategy still owns per
+                # the diary even if Redis lost the strat_pos row). Only
+                # consulted when strat_pos is empty for THIS strategy.
+                if direction in ("CLOSE_LONG", "CLOSE_SHORT", "BUY", "SELL") and \
+                   not (strat_long or strat_short):
+                    try:
+                        diary_live = diary.find_live_open(
+                            diary.strategy_slug(strategy_name) or strategy_name,
+                            ticker,
+                        )
+                        if diary_live:
+                            qty = int(diary_live.get("expected_qty") or 0)
+                            diary_long = qty > 0
+                            diary_short = qty < 0
+                            if diary_long or diary_short:
+                                logger.info(
+                                    "Diary fallback: strat_pos empty but diary OPEN "
+                                    "%s [%s] qty=%+d broker_trade_id=%s",
+                                    ticker, strategy_name, qty,
+                                    diary_live.get("broker_trade_id") or "-",
+                                )
+                    except Exception as _e:
+                        logger.debug("diary fallback lookup failed: %s", _e)
+
                 logger.info(
-                    "Position check: %s ib_pos=%+d  [%s] strat=%s",
+                    "Position check: %s ib_pos=%+d  [%s] strat=%s diary=%s",
                     ticker, current_pos, strategy_name,
                     f"{sp.get('direction')} {sp.get('contracts',0)}" if sp else "flat",
+                    ("OPEN+" if diary_long else "OPEN-" if diary_short else "flat"),
                 )
 
                 # Manual close of an "untracked" orphan row (mobile Close
@@ -1536,12 +1561,36 @@ def check_order_requests(client):
                     logger.info("SKIP %s SELL [%s] — strategy already short (opened %s)",
                                 ticker, strategy_name, sp.get("opened_at", ""))
                     skip = True
-                elif direction == "CLOSE_LONG" and not strat_long and not is_untracked_close:
-                    logger.info("SKIP %s CLOSE_LONG [%s] — strategy not long",
+                # Diary-based same-direction duplicate guard. Fires when
+                # strat_pos was wiped but the diary still shows this
+                # strategy holds a position in the same direction as the
+                # new signal — without this, today's 2026-05-27 10:08
+                # incident recurred (SELL signal stacked onto a leftover
+                # short, ending with two unprotected shorts). If diary is
+                # stale (broker actually flat), the reconciler will write
+                # RECONCILE_GONE and clear it, unblocking the next signal.
+                elif direction == "BUY" and diary_long and not (strat_long or strat_short):
+                    logger.info(
+                        "SKIP %s BUY [%s] — diary has live OPEN long "
+                        "(broker_trade_id=%s); refusing to stack a duplicate.",
+                        ticker, strategy_name,
+                        (diary_live or {}).get("broker_trade_id") or "-",
+                    )
+                    skip = True
+                elif direction == "SELL" and diary_short and not (strat_long or strat_short):
+                    logger.info(
+                        "SKIP %s SELL [%s] — diary has live OPEN short "
+                        "(broker_trade_id=%s); refusing to stack a duplicate.",
+                        ticker, strategy_name,
+                        (diary_live or {}).get("broker_trade_id") or "-",
+                    )
+                    skip = True
+                elif direction == "CLOSE_LONG" and not strat_long and not is_untracked_close and not diary_long:
+                    logger.info("SKIP %s CLOSE_LONG [%s] — strategy not long (diary also flat)",
                                 ticker, strategy_name)
                     skip = True
-                elif direction == "CLOSE_SHORT" and not strat_short and not is_untracked_close:
-                    logger.info("SKIP %s CLOSE_SHORT [%s] — strategy not short",
+                elif direction == "CLOSE_SHORT" and not strat_short and not is_untracked_close and not diary_short:
+                    logger.info("SKIP %s CLOSE_SHORT [%s] — strategy not short (diary also flat)",
                                 ticker, strategy_name)
                     skip = True
                 elif is_untracked_close:
@@ -1566,20 +1615,33 @@ def check_order_requests(client):
                     and ((direction == "BUY" and current_pos < 0)
                          or (direction == "SELL" and current_pos > 0))
                 ):
-                    # Fresh entry blocked by an opposing IB-side orphan.
-                    # If we let this SELL through with IB already +1, the
-                    # SELL closes the orphan instead of opening a short.
-                    # We'd write strat_pos=SELL1 but IB ends FLAT — phantom.
-                    # User must clear the orphan first (mobile Close button
-                    # now works for pure orphans), then the next signal
-                    # can fire cleanly.
-                    logger.info(
-                        "SKIP %s %s [%s] — IB has opposing orphan (qty=%+d). "
-                        "Fresh entry would close the orphan rather than open a "
-                        "new position; manual-flat the orphan first.",
-                        ticker, direction, strategy_name, current_pos,
+                    # Opposing position at IB. Three sub-cases:
+                    #   (a) Diary has live OPEN for THIS strategy in the
+                    #       opposing direction → close-and-reverse path
+                    #       below picks it up (don't skip).
+                    #   (b) No diary lineage → still skip (we don't know
+                    #       whose orphan it is, can't safely reverse).
+                    # The previous behavior was always (b); (a) is new in
+                    # 2026-05-27 so legitimate reversal signals on diary-
+                    # tracked positions stop getting blocked.
+                    can_reverse_via_diary = (
+                        (direction == "BUY" and diary_short)
+                        or (direction == "SELL" and diary_long)
                     )
-                    skip = True
+                    if can_reverse_via_diary:
+                        logger.info(
+                            "ALLOW %s %s [%s] — opposing IB qty=%+d will be reversed "
+                            "via diary lineage (broker_trade_id=%s)",
+                            ticker, direction, strategy_name, current_pos,
+                            (diary_live or {}).get("broker_trade_id") or "-",
+                        )
+                    else:
+                        logger.info(
+                            "SKIP %s %s [%s] — IB has opposing orphan (qty=%+d). "
+                            "No diary lineage to reverse from; manual-flat the orphan first.",
+                            ticker, direction, strategy_name, current_pos,
+                        )
+                        skip = True
 
                 if skip:
                     try:
@@ -1628,14 +1690,39 @@ def check_order_requests(client):
                     if direction in ("CLOSE_LONG", "CLOSE_SHORT"):
                         # Per-strategy entry price — prefer strat_pos (the
                         # specific entry this strategy made), fall back to
-                        # IB's aggregate avg_cost only if no strat_pos exists
-                        # (orphan/untracked, e.g. manually opened).
+                        # the diary's OPEN row (#7 — survives strat_pos
+                        # wipes), then IB's aggregate avg_cost as a last
+                        # resort.
                         sp_strat = get_strat_pos(ticker, strategy_name)
                         entry_price = 0
                         entry_qty = 0
                         if sp_strat:
                             entry_price = float(sp_strat.get("entry_price") or 0)
                             entry_qty = int(sp_strat.get("contracts") or 0)
+                        if not entry_price and diary_live:
+                            entry_price = float(diary_live.get("entry_price") or 0)
+                            entry_qty = abs(int(diary_live.get("expected_qty") or 0))
+
+                        # Diary: INTENT_CLOSE so a mid-close failure still
+                        # leaves a clear "we tried to close it" marker.
+                        diary_strategy_id = diary.strategy_slug(strategy_name) or strategy_name
+                        diary_perm_id = (
+                            str((sp_strat or {}).get("perm_id") or "")
+                            or (diary_live or {}).get("broker_trade_id")
+                            or None
+                        )
+                        try:
+                            diary.record_event(
+                                broker="ib",
+                                broker_trade_id=diary_perm_id,
+                                strategy_id=diary_strategy_id,
+                                ticker=ticker,
+                                state=diary.State.INTENT_CLOSE,
+                                reason=f"TV {direction} [{strategy_name}]",
+                                expected_qty=0,
+                            )
+                        except Exception as _de:
+                            logger.debug("diary INTENT_CLOSE write failed: %s", _de)
                         if not entry_price:
                             for item in client.get_positions():
                                 if item.get("symbol") == ticker and item.get("sec_type") == "FUT":
@@ -1650,57 +1737,100 @@ def check_order_requests(client):
                         close_action = "SELL" if direction == "CLOSE_LONG" else "BUY"
                         cancelled_stops = 0
                         # Prefer cancelling THIS strategy's specific stop (tracked
-                        # in strat_pos when the position was opened).
+                        # in strat_pos when the position was opened). Fall back
+                        # to the diary's meta.stop_order_id when strat_pos is
+                        # empty — task #7.
                         sp_for_close = get_strat_pos(ticker, strategy_name)
-                        targeted_stop = sp_for_close.get("stop_order_id") if sp_for_close else ""
-                        targeted_target = sp_for_close.get("target_order_id") if sp_for_close else ""
+                        targeted_stop = (sp_for_close or {}).get("stop_order_id", "")
+                        targeted_target = (sp_for_close or {}).get("target_order_id", "")
+                        if not targeted_stop and diary_live:
+                            dm = diary_live.get("meta") or {}
+                            targeted_stop = dm.get("stop_order_id") or ""
+                            targeted_target = dm.get("target_order_id") or ""
+
+                        # Atomic stop-and-close via order-modify (Phase 3).
+                        # When we have the stop's order_id, modify it from
+                        # STP into MKT in a single REST call. The stop fires
+                        # immediately as a market order — same orderId, no
+                        # second order, no cancel-then-place race window.
+                        # The stop's identity is preserved across its
+                        # transformation into the close. Empirically validated
+                        # against IBeam/CPAPI on 2026-05-22.
+                        #
+                        # Fallback to legacy cancel-then-close when stop_order_id
+                        # is missing (orphan, untracked, or pre-Phase-3 legacy
+                        # position). The TP child, when present, is cancelled
+                        # explicitly either way.
+                        atomic_close_used = False
+                        trade_result = None
                         if targeted_stop:
                             try:
-                                client.cancel_order(targeted_stop)
-                                cancelled_stops = 1
-                                logger.info("Cancelled SL %s for [%s] before close",
+                                logger.info("Atomic close: modify STP %s → MKT for [%s]",
                                             targeted_stop, strategy_name)
+                                trade_result = client.modify_order(
+                                    targeted_stop,
+                                    conid=fut_conid,
+                                    side=close_action,
+                                    quantity=contracts,
+                                    order_type="MKT",
+                                    tif="GTC",
+                                )
+                                atomic_close_used = True
                             except Exception as e:
-                                logger.warning("Cancel SL %s failed (may be already filled): %s",
-                                                targeted_stop, e)
-                        # Also cancel the bracketed TP child (ORB has both;
-                        # 2n20 has none, so this is a no-op there). Without
-                        # this, a manual close on an ORB position leaves the
-                        # TP limit dangling at IB until session end.
-                        if targeted_target and targeted_target != "0":
+                                logger.warning(
+                                    "Atomic STP→MKT modify failed for %s — falling back to cancel+close: %s",
+                                    targeted_stop, e,
+                                )
+
+                        if not atomic_close_used:
+                            # Legacy path: explicit cancel before placing close.
+                            if targeted_stop:
+                                try:
+                                    client.cancel_order(targeted_stop)
+                                    cancelled_stops = 1
+                                    logger.info("Cancelled SL %s for [%s] before close",
+                                                targeted_stop, strategy_name)
+                                except Exception as e:
+                                    logger.warning("Cancel SL %s failed (may be already filled): %s",
+                                                    targeted_stop, e)
+                            else:
+                                # Cancel matching orphan stops as protection.
+                                try:
+                                    open_orders_now = client.get_open_orders() or []
+                                    matching = [o for o in open_orders_now
+                                                if o.get("ticker") == ticker
+                                                and o.get("side") == close_action
+                                                and o.get("orderType") in ("Stop", "STP")
+                                                and o.get("status") not in ("Filled", "Cancelled")][:contracts]
+                                    for o in matching:
+                                        try:
+                                            client.cancel_order(str(o.get("orderId")))
+                                            cancelled_stops += 1
+                                        except Exception:
+                                            pass
+                                    if cancelled_stops:
+                                        logger.info("Cancelled %d orphan %s stop(s) on %s before close",
+                                                    cancelled_stops, close_action, ticker)
+                                except Exception as e:
+                                    logger.debug("orphan stop cancel scan failed: %s", e)
+                            if cancelled_stops:
+                                time.sleep(1)
+                            order_payload = client.build_futures_order(
+                                fut_conid, close_action, contracts, "MKT", tif="GTC",
+                            )
+                            trade_result = client.place_order(order_payload)
+
+                        # TP child cancel (atomic-close path doesn't auto-handle TP).
+                        # In the atomic path, the SL becomes the close, but a
+                        # separate TP child needs its own cancel. In legacy path,
+                        # this is already handled above.
+                        if atomic_close_used and targeted_target and targeted_target != "0":
                             try:
                                 client.cancel_order(targeted_target)
-                                logger.info("Cancelled TP %s for [%s] before close",
+                                logger.info("Cancelled TP %s for [%s] after atomic close",
                                             targeted_target, strategy_name)
                             except Exception as e:
-                                logger.warning("Cancel TP %s failed (may be already filled): %s",
-                                                targeted_target, e)
-                        else:
-                            # Fall back: cancel up to `contracts` matching stops
-                            # (orphan / unattributed protection from older entries).
-                            try:
-                                open_orders_now = client.get_open_orders() or []
-                                matching = [o for o in open_orders_now
-                                            if o.get("ticker") == ticker
-                                            and o.get("side") == close_action
-                                            and o.get("orderType") in ("Stop", "STP")
-                                            and o.get("status") not in ("Filled", "Cancelled")][:contracts]
-                                for o in matching:
-                                    try:
-                                        client.cancel_order(str(o.get("orderId")))
-                                        cancelled_stops += 1
-                                    except Exception:
-                                        pass
-                                if cancelled_stops:
-                                    logger.info("Cancelled %d orphan %s stop(s) on %s before close",
-                                                cancelled_stops, close_action, ticker)
-                            except Exception as e:
-                                logger.debug("orphan stop cancel scan failed: %s", e)
-                        if cancelled_stops:
-                            time.sleep(1)  # give IB a beat to process cancels
-
-                        order_payload = client.build_futures_order(fut_conid, close_action, contracts, "MKT", tif="GTC")
-                        trade_result = client.place_order(order_payload)
+                                logger.warning("Cancel TP %s failed: %s", targeted_target, e)
 
                         # Extract close-order ID and read its specific fill
                         # price (avoids the get_trades()[-1] cross-contract
@@ -1794,6 +1924,23 @@ def check_order_requests(client):
                             except Exception:
                                 pass
                             logger.info("Closed %s %s: entry=%.2f exit=%.2f P&L=$%.2f", ticker, direction, entry_price, exit_price, pnl)
+                            # Diary: CLOSED with realized P&L. broker_trade_id
+                            # is the original entry's perm_id from strat_pos.
+                            try:
+                                diary.record_event(
+                                    broker="ib",
+                                    broker_trade_id=diary_perm_id,
+                                    strategy_id=diary_strategy_id,
+                                    ticker=ticker,
+                                    state=diary.State.CLOSED,
+                                    reason=close_reason or f"TV {direction}",
+                                    expected_qty=0,
+                                    entry_price=entry_price,
+                                    exit_price=exit_price,
+                                    realized_pl=pnl,
+                                )
+                            except Exception as _de:
+                                logger.debug("diary CLOSED write failed: %s", _de)
                             # Push notification: trade closed.
                             try:
                                 from .supabase_client import notify_trade_closed
@@ -1898,13 +2045,130 @@ def check_order_requests(client):
                             quote_source = f"config (anchor={last_price:.2f})"
                         tp_price = pine_target if pine_target > 0 else 0
 
+                        # Diary intent + strategy ID resolved BEFORE the
+                        # bracket build so we can encode them into the
+                        # parent's cOID. Every IB order then self-identifies
+                        # via order_ref — the reconciler can decode strategy
+                        # attribution from any fill without external lookup,
+                        # and "phantom" detection becomes "adopt by tag".
+                        diary_intent_id = diary.new_intent_id()
+                        diary_strategy_id = diary.strategy_slug(strategy_name) or strategy_name
+                        # IB cOID limit is 36 chars. Format: lumi_<slug>_<8 hex>
+                        # — 8 hex from uuid is 4 billion-space, ample for
+                        # our trade volume.
+                        entry_coid = f"lumi_{diary_strategy_id}_{diary_intent_id.replace('-', '')[:8]}"[:36]
+
+                        # Close-and-reverse detection. When THIS strategy
+                        # currently holds the OPPOSITE direction (intra-
+                        # strategy reversal), submit a single MKT sized
+                        # (existing_qty + entry_qty). IB processes the fills
+                        # as: close existing + open new in one trade. Net
+                        # position lands at exactly the intended direction.
+                        # The SL/TP children are sized to entry_qty only
+                        # (protecting the NEW position, not the inflated
+                        # close-and-open total).
+                        #
+                        # Safety gate: refuse to auto-reverse if any OTHER
+                        # strategy holds a strat_pos for this ticker. A
+                        # reversal MKT would inadvertently close the other
+                        # strategy's leg too — IB position is fungible.
+                        # In that case fall back to legacy single-qty entry
+                        # and log loudly so the operator sees the divergence.
+                        reverse_qty = 0
+                        prior_sl_id = ""
+                        prior_tp_id = ""
+                        reverse_via = None  # "strat_pos" | "diary"
+
+                        # Helper: refuse reversal if any OTHER strategy holds
+                        # a strat_pos for this ticker (would close their leg).
+                        def _other_strat_pos_present():
+                            try:
+                                rev_chk = _rdb()
+                                if rev_chk is None:
+                                    return False
+                                for k in rev_chk.scan_iter(f"ibkr:strat_pos:{ticker}:*"):
+                                    if not k.endswith(f":{strategy_name}"):
+                                        return True
+                            except Exception:
+                                pass
+                            return False
+
+                        # Case 1: strat_pos says this strategy holds opposing.
+                        if (direction == "BUY" and strat_short) or \
+                           (direction == "SELL" and strat_long):
+                            if not _other_strat_pos_present():
+                                reverse_qty = int(sp.get("contracts") or 0)
+                                prior_sl_id = str(sp.get("stop_order_id") or "")
+                                prior_tp_id = str(sp.get("target_order_id") or "")
+                                reverse_via = "strat_pos"
+                            else:
+                                logger.warning(
+                                    "REVERSE SKIP %s %s [%s] — other strat_pos rows "
+                                    "share this ticker; refusing to auto-flip.",
+                                    ticker, direction, strategy_name,
+                                )
+
+                        # Case 2: strat_pos empty but diary has live OPEN for
+                        # this strategy in the opposing direction. The diary
+                        # remembers the entry id; we use it to cancel obsolete
+                        # bracket children after the reverse fills.
+                        if reverse_qty == 0 and diary_live and \
+                           ((direction == "BUY" and diary_short) or
+                            (direction == "SELL" and diary_long)):
+                            if not _other_strat_pos_present():
+                                reverse_qty = abs(int(diary_live.get("expected_qty") or 0))
+                                dm = diary_live.get("meta") or {}
+                                prior_sl_id = str(dm.get("stop_order_id") or "")
+                                prior_tp_id = str(dm.get("target_order_id") or "")
+                                reverse_via = "diary"
+                            else:
+                                logger.warning(
+                                    "REVERSE SKIP %s %s [%s] — diary lineage exists "
+                                    "but other strat_pos rows share this ticker.",
+                                    ticker, direction, strategy_name,
+                                )
+
+                        if reverse_qty > 0:
+                            logger.info(
+                                "REVERSE %s %s via=%s — existing %d %s, opening %d %s, "
+                                "single MKT %d contracts (SL child sized %d)",
+                                ticker, direction, reverse_via,
+                                reverse_qty, "long" if direction == "SELL" else "short",
+                                contracts, "short" if direction == "SELL" else "long",
+                                reverse_qty + contracts, contracts,
+                            )
+
+                        parent_qty = contracts + reverse_qty
                         bracket_payload = client.build_futures_bracket(
-                            fut_conid, direction, contracts,
+                            fut_conid, direction, parent_qty,
                             stop_price=sl_price,
                             entry_type="MKT",
                             target_price=tp_price if tp_price > 0 else None,
                             tif="GTC",
+                            entry_coid=entry_coid,
+                            child_quantity=(contracts if reverse_qty > 0 else None),
                         )
+
+                        # Diary: INTENT_OPEN before we hit the broker. This
+                        # row carries an intent_id we'll thread to OPEN/
+                        # CANCELLED below so the reconciler can see we
+                        # tried, even if the place_order fails silently.
+                        try:
+                            diary.record_event(
+                                broker="ib",
+                                strategy_id=diary_strategy_id,
+                                ticker=ticker,
+                                state=diary.State.INTENT_OPEN,
+                                reason=f"TV {direction} [{strategy_name}]",
+                                client_intent_id=diary_intent_id,
+                                expected_qty=(contracts if direction == "BUY" else -contracts),
+                                stop_price=sl_price,
+                                target_price=(tp_price if tp_price > 0 else None),
+                                meta={"quote_source": quote_source} if quote_source else None,
+                            )
+                        except Exception as _de:
+                            logger.debug("diary INTENT_OPEN write failed: %s", _de)
+
                         trade_result = client.place_order(bracket_payload)
 
                         # Response is an array of result objects in the same
@@ -1921,6 +2185,37 @@ def check_order_requests(client):
                                 tp_order_id = str(trade_result[2].get("order_id", "") or "")
                         elif isinstance(trade_result, dict):
                             entry_order_id = str(trade_result.get("order_id", "") or "")
+
+                        # If CPAPI's bracket response didn't surface the
+                        # child order IDs (we've observed empty sl_order_id
+                        # for every bracket today), discover them by
+                        # searching open orders for the parent's children.
+                        # This populates the diary's stop_order_id field so
+                        # check_stop_fills() can detect stop fires within
+                        # ~2s — critical for 30-second scalps. Task #3.
+                        if entry_order_id and (not sl_order_id or not tp_order_id):
+                            try:
+                                open_orders = client.get_open_orders() or []
+                                children = [
+                                    o for o in open_orders
+                                    if str(o.get("parentId") or "") == entry_order_id
+                                ]
+                                for c in children:
+                                    ot = (c.get("orderType") or "").upper()
+                                    cid = str(c.get("orderId") or "")
+                                    if not cid:
+                                        continue
+                                    if not sl_order_id and ot in ("STP", "STOP", "STOP_LIMIT"):
+                                        sl_order_id = cid
+                                    elif not tp_order_id and ot in ("LMT", "LIMIT", "LIMIT_ON_CLOSE"):
+                                        tp_order_id = cid
+                                if children and (sl_order_id or tp_order_id):
+                                    logger.info(
+                                        "Bracket children discovered for entry %s: sl=%s tp=%s",
+                                        entry_order_id, sl_order_id or "-", tp_order_id or "-",
+                                    )
+                            except Exception as _e:
+                                logger.debug("bracket child discovery failed: %s", _e)
 
                         logger.info(
                             "Bracket %s %s %dx — entry=%s, sl=%s @ %.2f (%s), tp=%s",
@@ -1989,6 +2284,18 @@ def check_order_requests(client):
                                     headers={"X-Sync-Key": SYNC_KEY}, timeout=5)
                             except Exception:
                                 pass
+                            try:
+                                diary.record_event(
+                                    broker="ib",
+                                    strategy_id=diary_strategy_id,
+                                    ticker=ticker,
+                                    state=diary.State.CANCELLED,
+                                    reason=f"invalid perm_id {perm_id!r}",
+                                    client_intent_id=diary_intent_id,
+                                    expected_qty=0,
+                                )
+                            except Exception as _de:
+                                logger.debug("diary CANCELLED write failed: %s", _de)
                             continue
 
                         # Read THIS order's fill price by order ID — not the
@@ -2020,6 +2327,19 @@ def check_order_requests(client):
                                 )
                             except Exception:
                                 pass
+                            try:
+                                diary.record_event(
+                                    broker="ib",
+                                    broker_trade_id=str(perm_id),
+                                    client_intent_id=diary_intent_id,
+                                    strategy_id=diary_strategy_id,
+                                    ticker=ticker,
+                                    state=diary.State.CANCELLED,
+                                    reason="placed but never filled",
+                                    expected_qty=0,
+                                )
+                            except Exception as _de:
+                                logger.debug("diary CANCELLED (no fill) write failed: %s", _de)
                             continue
 
                         # Per-strategy position state — lets independent
@@ -2027,6 +2347,13 @@ def check_order_requests(client):
                         # contract; each closes only its own leg. Stop info
                         # included so check_stop_fills() can detect when
                         # this strategy's SL hits and book the close.
+                        # Persist the entry_coid in strat_pos metadata so the
+                        # close handler (Phase 2) can submit the close in the
+                        # same OCA group and IB cancels the SL atomically.
+                        strat_meta = dict(pine_meta or {})
+                        strat_meta["entry_coid"] = entry_coid
+                        if reverse_qty > 0:
+                            strat_meta["reversed_from_qty"] = reverse_qty
                         save_strat_pos(ticker, strategy_name, direction,
                                        contracts, entry_fill_price, perm_id,
                                        stop_order_id=sl_order_id,
@@ -2034,8 +2361,85 @@ def check_order_requests(client):
                                        target_order_id=tp_order_id,
                                        target_price=tp_price,
                                        multiplier=multiplier,
-                                       metadata=pine_meta,
+                                       metadata=strat_meta,
                                        caller=f"entry_fill:{strategy_name}")
+
+                        # If this was a close-and-reverse, the PRIOR strat_pos's
+                        # bracket SL/TP children are now obsolete (they were
+                        # sized to protect the OLD direction). Cancel them so
+                        # they don't linger and accidentally fire later. The
+                        # new bracket's children (sl_order_id / tp_order_id)
+                        # are correctly sized for the new position.
+                        if reverse_qty > 0:
+                            for oid, label in ((prior_sl_id, "SL"), (prior_tp_id, "TP")):
+                                if oid and oid != "0" and oid != sl_order_id and oid != tp_order_id:
+                                    try:
+                                        client.cancel_order(oid)
+                                        logger.info(
+                                            "Cancelled obsolete %s %s from reversed position",
+                                            label, oid,
+                                        )
+                                    except Exception as _ce:
+                                        logger.debug("obsolete %s cancel failed: %s", label, _ce)
+
+                            # Also write CLOSED for the prior diary lineage
+                            # so it doesn't stay live forever. Without this,
+                            # the diary accumulates stale OPEN rows after
+                            # each reverse, and the same-direction-duplicate
+                            # guard would block future same-direction signals
+                            # indefinitely.
+                            if reverse_via == "diary" and diary_live:
+                                prior_btid = diary_live.get("broker_trade_id")
+                                if prior_btid:
+                                    try:
+                                        diary.record_event(
+                                            broker="ib",
+                                            broker_trade_id=str(prior_btid),
+                                            strategy_id=diary_strategy_id,
+                                            ticker=ticker,
+                                            state=diary.State.CLOSED,
+                                            reason=f"closed by close-and-reverse "
+                                                   f"(replaced by {perm_id})",
+                                            expected_qty=0,
+                                            exit_price=entry_fill_price,
+                                            meta={
+                                                "replaced_by_broker_trade_id": str(perm_id),
+                                                "reversed_to": direction,
+                                            },
+                                        )
+                                        logger.info(
+                                            "Diary: CLOSED prior trade %s "
+                                            "(replaced by %s in close-and-reverse)",
+                                            prior_btid, perm_id,
+                                        )
+                                    except Exception as _de:
+                                        logger.debug("diary close-prior write failed: %s", _de)
+
+                        # Diary: OPEN — bind broker_trade_id to the intent so
+                        # the trigger retires the orphan INTENT_OPEN row.
+                        try:
+                            diary.record_event(
+                                broker="ib",
+                                broker_trade_id=str(perm_id),
+                                client_intent_id=diary_intent_id,
+                                strategy_id=diary_strategy_id,
+                                ticker=ticker,
+                                state=diary.State.OPEN,
+                                reason=f"IB fill {direction}",
+                                expected_qty=(contracts if direction == "BUY"
+                                              else -contracts),
+                                entry_price=entry_fill_price,
+                                stop_price=sl_price,
+                                target_price=(tp_price if tp_price > 0 else None),
+                                meta={
+                                    "stop_order_id": sl_order_id or None,
+                                    "target_order_id": tp_order_id or None,
+                                    "multiplier": multiplier,
+                                    "entry_coid": entry_coid,
+                                },
+                            )
+                        except Exception as _de:
+                            logger.debug("diary OPEN write failed: %s", _de)
 
                         # Push + Telegram notification with the full plan
                         # (entry/target/stop/risk/reward) when Pine supplied it.
@@ -2562,31 +2966,141 @@ def weekend_flatten_futures(client):
         from .ibkr_cpapi import CPAPIClient
         flattened = []
         errors = []
-        for pos in fut_positions:
-            qty = int(pos.get("quantity", 0))
-            conid = int(pos.get("con_id", 0))
-            sym = pos.get("symbol", "?")
-            if qty == 0 or conid == 0:
-                continue
-            side = "SELL" if qty > 0 else "BUY"
+
+        # First pass: for each tracked strat_pos with a known stop_order_id,
+        # modify the stop into a MKT — atomic close per leg. The SL's
+        # identity is preserved; it transforms into the exit. This
+        # eliminates the pre-2026-05-23 bug where MKT closes left dormant
+        # protective stops alive over the weekend, which could fire as
+        # unintended entries on Sunday open if price gapped through them.
+        try:
+            sp_keys = list(rdb.scan_iter("ibkr:strat_pos:*"))
+        except Exception:
+            sp_keys = []
+        per_ticker_closed_qty: dict = {}
+        for k in sp_keys:
             try:
+                sp_raw = rdb.get(k)
+                if not sp_raw:
+                    continue
+                sp = json.loads(sp_raw)
+                sym = sp.get("ticker") or ""
+                qty = int(sp.get("contracts") or 0)
+                direction = sp.get("direction") or ""
+                stop_id = str(sp.get("stop_order_id") or "")
+                target_id = str(sp.get("target_order_id") or "")
+                # Look up the conid from positions (strat_pos doesn't store it).
+                conid = 0
+                for p in fut_positions:
+                    if p.get("symbol") == sym:
+                        try:
+                            conid = int(p.get("con_id", 0) or 0)
+                        except (TypeError, ValueError):
+                            conid = 0
+                        break
+                if qty == 0 or not sym or conid == 0 or not direction:
+                    continue
+                close_side = "SELL" if direction == "BUY" else "BUY"
+                if not stop_id:
+                    # No tracked stop — fall through to second pass.
+                    continue
+                try:
+                    resp = client.modify_order(
+                        stop_id, conid=conid, side=close_side,
+                        quantity=qty, order_type="MKT", tif="DAY",
+                    )
+                    logger.info(
+                        "WEEKEND FLATTEN (atomic): STP %s -> MKT close %s %s ×%d resp=%s",
+                        stop_id, close_side, sym, qty, resp,
+                    )
+                    flattened.append(f"atomic {close_side} {sym} ×{qty}")
+                    # Track the NET CHANGE to IB position caused by the
+                    # close, not the leg size. Closing a long (direction=
+                    # "BUY") via SELL reduces position by qty → -qty.
+                    # Closing a short via BUY increases by qty → +qty.
+                    # Original code had the sign inverted, causing the
+                    # residual pass to over-sell (observed 2026-05-26
+                    # when starting +3 → oversold to -2). Fix is critical
+                    # before next Friday's auto-flatten.
+                    per_ticker_closed_qty[sym] = (
+                        per_ticker_closed_qty.get(sym, 0)
+                        + (-qty if direction == "BUY" else qty)
+                    )
+                    # Cancel any TP child explicitly — modify only handles the SL.
+                    if target_id and target_id != "0":
+                        try:
+                            client.cancel_order(target_id)
+                        except Exception:
+                            pass
+                except Exception as e:
+                    logger.warning(
+                        "WEEKEND FLATTEN atomic-modify failed for %s/%s SL=%s: %s — "
+                        "falling back to cancel+MKT close",
+                        sym, sp.get("strategy", "?"), stop_id, e,
+                    )
+                    # Fall back: cancel the stop, then we'll MKT-close in the
+                    # untracked-residual pass below.
+                    try:
+                        client.cancel_order(stop_id)
+                    except Exception:
+                        pass
+                # Drop the strat_pos record either way — Sunday starts clean.
+                rdb.delete(k)
+            except Exception as e:
+                logger.warning("WEEKEND FLATTEN strat_pos %s error: %s", k, e)
+
+        # Second pass: any untracked residual (IB qty that wasn't covered
+        # by the atomic-modify pass) — close with MKT and cancel any
+        # leftover stops on the contract.
+        for pos in fut_positions:
+            try:
+                qty = int(pos.get("quantity", 0))
+                conid = int(pos.get("con_id", 0))
+                sym = pos.get("symbol", "?")
+                if qty == 0 or conid == 0:
+                    continue
+                # Subtract what the atomic pass already closed from the IB qty.
+                # net residual = IB qty + atomic-pass delta (atomic delta is
+                # signed in the opposite direction of the original position).
+                residual = qty + per_ticker_closed_qty.get(sym, 0)
+                if residual == 0:
+                    continue
+                side = "SELL" if residual > 0 else "BUY"
+
+                # Cancel any leftover open stops on this contract first.
+                try:
+                    open_orders_now = client.get_open_orders() or []
+                    for o in open_orders_now:
+                        if (o.get("ticker") == sym
+                                and o.get("orderType") in ("Stop", "STP", "STOP_LIMIT")
+                                and o.get("status") not in ("Filled", "Cancelled")):
+                            try:
+                                client.cancel_order(str(o.get("orderId")))
+                                logger.info("WEEKEND FLATTEN: cancelled leftover STP %s on %s",
+                                            o.get("orderId"), sym)
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+
                 payload = CPAPIClient.build_futures_order(
-                    conid=conid, action=side, quantity=abs(qty),
+                    conid=conid, action=side, quantity=abs(residual),
                     order_type="MKT", tif="DAY",
                 )
                 resp = client.place_order(payload)
-                logger.info("WEEKEND FLATTEN: %s %s %d → %s", side, sym, abs(qty), resp)
-                flattened.append(f"{side} {sym} ×{abs(qty)}")
-                # Drop strat_pos records for this ticker so Sunday signals
-                # start clean.
+                logger.info("WEEKEND FLATTEN (residual): %s %s %d → %s",
+                            side, sym, abs(residual), resp)
+                flattened.append(f"residual {side} {sym} ×{abs(residual)}")
+                # Final safety: drop any remaining strat_pos for this ticker.
                 try:
                     for k in rdb.scan_iter(match=f"ibkr:strat_pos:{sym}:*"):
                         rdb.delete(k)
                 except Exception:
                     pass
             except Exception as e:
-                logger.error("WEEKEND FLATTEN failed for %s: %s", sym, e)
-                errors.append(f"{sym}: {e}")
+                logger.error("WEEKEND FLATTEN residual failed for %s: %s",
+                             pos.get("symbol", "?"), e)
+                errors.append(f"{pos.get('symbol','?')}: {e}")
 
         rdb.setex(done_key, 24 * 3600, "1")
         try:
@@ -2673,6 +3187,39 @@ def main():
             # at order-placement-time values).
             sync_positions_to_supabase(data.get("positions", []))
             sync_oanda_positions_to_supabase()
+
+            # Diary reconciler: compare what the trade-event diary thinks
+            # is live against what IB actually shows. Detection only in v1
+            # — flags RECONCILE_GONE / RECONCILE_PHANTOM events and Telegram
+            # alerts; never closes positions or alters state.
+            #
+            # Position truth comes from /iserver/account/trades (fills),
+            # which lags real fills by ~1-2s — fast enough to catch scalp
+            # stops that hold positions for only 30s. /portfolio/positions
+            # (which lagged 4.5min on 2026-05-22) is no longer used here.
+            #
+            # Safe to call every tick — self-throttles to MIN_INTERVAL.
+            try:
+                # Fast tier (every ~5s): fills-based net positions + order
+                # status. Catches scalp closes within seconds, INTENT_OPEN
+                # confirmations, and per-trade lifecycle transitions.
+                fill_details = reconciler.net_positions_from_fills(client)
+                ib_qty = {s: d["qty"] for s, d in fill_details.items() if d["qty"] != 0}
+                # Multipliers used to compute realized_pl on RECONCILE_GONE.
+                # Hardcoded for now; future step is to read from
+                # symbol_metadata table (cached in Redis).
+                mults = {"MES": 5, "MNQ": 2, "MGC": 10, "MCL": 100}
+                ord_snap = reconciler.orders_by_id(client)
+                reconciler.run_pass("ib", ib_qty,
+                                    fill_details=fill_details,
+                                    multiplier_by_ticker=mults,
+                                    order_status_by_id=ord_snap)
+                # Slow tier (every ~60s): /portfolio/positions sanity
+                # backstop. Catches positions the fills stream wouldn't
+                # see (manual IB GUI entries, holdings >7d). Self-throttles.
+                reconciler.slow_tier_pass("ib", data.get("positions", []))
+            except Exception as e:
+                logger.debug("reconciler pass failed: %s", e)
 
             # Friday 16:55 ET safety net: flatten all open futures so no
             # position carries through the weekend. Sets the weekend lockout

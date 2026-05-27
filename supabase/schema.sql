@@ -298,6 +298,154 @@ alter table bot_logs enable row level security;
 create policy "Users read own logs" on bot_logs for select using (auth.uid() = user_id);
 
 -- ============================================================
+-- 10. STRATEGIES (stable slug → display-name registry)
+-- ============================================================
+create table if not exists strategies (
+  strategy_id   text primary key,
+  display_name  text not null,
+  description   text,
+  asset_classes text[] not null default '{}',
+  active        boolean not null default true,
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now()
+);
+
+-- ============================================================
+-- 11. SYMBOL METADATA (per-ticker contract specs / sessions)
+-- ============================================================
+create table if not exists symbol_metadata (
+  ticker             text primary key,
+  asset_class        text not null,
+  exchange           text not null,
+  tick_size          numeric(18, 8) not null,
+  multiplier         numeric(18, 8) not null,
+  quote_currency     text not null default 'USD',
+  session_open_local   time,
+  session_close_local  time,
+  session_tz           text,
+  trades_overnight     boolean not null default false,
+  ib_conid           bigint,
+  oanda_instrument   text,
+  pine_alert_symbol  text,
+  active             boolean not null default true,
+  created_at         timestamptz not null default now(),
+  updated_at         timestamptz not null default now()
+);
+
+-- ============================================================
+-- 12. USER STRATEGY SETTINGS (per user / strategy / ticker)
+-- ============================================================
+create table if not exists user_strategy_settings (
+  id              uuid primary key default gen_random_uuid(),
+  user_id         uuid not null references profiles(id) on delete cascade,
+  strategy_id     text not null references strategies(strategy_id),
+  ticker          text references symbol_metadata(ticker),
+  stop_loss_usd   numeric(12, 2),
+  take_profit_usd numeric(12, 2),
+  qty             int not null default 1 check (qty > 0),
+  enabled         boolean not null default true,
+  created_at      timestamptz not null default now(),
+  updated_at      timestamptz not null default now()
+);
+create unique index if not exists ux_user_strategy_ticker
+  on user_strategy_settings(user_id, strategy_id, coalesce(ticker, ''));
+
+-- ============================================================
+-- 13. TRADE EVENTS (append-only diary of state transitions)
+-- ============================================================
+create table if not exists trade_events (
+  id                uuid primary key default gen_random_uuid(),
+  broker            text not null,
+  broker_trade_id   text,
+  client_intent_id  uuid,
+  strategy_id       text not null references strategies(strategy_id),
+  ticker            text not null references symbol_metadata(ticker),
+  user_id           uuid not null references profiles(id) on delete cascade,
+  state             text not null,
+  event_time        timestamptz not null default now(),
+  reason            text,
+  expected_qty      int,
+  observed_qty      int,
+  entry_price       numeric(18, 8),
+  exit_price        numeric(18, 8),
+  stop_price        numeric(18, 8),
+  target_price      numeric(18, 8),
+  realized_pl       numeric(18, 4),
+  broker_snapshot   jsonb,
+  meta              jsonb,
+  created_at        timestamptz not null default now()
+);
+create index if not exists idx_trade_events_broker_trade
+  on trade_events(broker, broker_trade_id) where broker_trade_id is not null;
+create index if not exists idx_trade_events_intent
+  on trade_events(client_intent_id) where client_intent_id is not null;
+create index if not exists idx_trade_events_live
+  on trade_events(strategy_id, ticker, state)
+  where state in ('INTENT_OPEN', 'OPEN', 'INTENT_CLOSE');
+create index if not exists idx_trade_events_user_time
+  on trade_events(user_id, event_time desc);
+
+-- ============================================================
+-- 14. TRADE STATE CURRENT (latest state per trade — fast lookups)
+-- ============================================================
+create table if not exists trade_state_current (
+  id                uuid primary key default gen_random_uuid(),
+  broker_trade_id   text,
+  client_intent_id  uuid,
+  broker            text not null,
+  strategy_id       text not null references strategies(strategy_id),
+  ticker            text not null references symbol_metadata(ticker),
+  user_id           uuid not null references profiles(id) on delete cascade,
+  state             text not null,
+  expected_qty      int,
+  observed_qty      int,
+  entry_price       numeric(18, 8),
+  stop_price        numeric(18, 8),
+  target_price      numeric(18, 8),
+  last_event_id     uuid not null references trade_events(id),
+  last_event_time   timestamptz not null,
+  check (broker_trade_id is not null or client_intent_id is not null)
+);
+create unique index if not exists ux_trade_state_current_broker
+  on trade_state_current(broker, broker_trade_id)
+  where broker_trade_id is not null;
+create unique index if not exists ux_trade_state_current_intent
+  on trade_state_current(client_intent_id)
+  where client_intent_id is not null and broker_trade_id is null;
+create index if not exists idx_trade_state_current_live
+  on trade_state_current(strategy_id, ticker, state)
+  where state in ('INTENT_OPEN', 'OPEN', 'INTENT_CLOSE');
+
+-- See migrations/001_trade_diary.sql for the trigger that keeps
+-- trade_state_current in sync with trade_events.
+
+-- ============================================================
+-- ROW LEVEL SECURITY (diary tables)
+-- ============================================================
+alter table strategies              enable row level security;
+alter table symbol_metadata         enable row level security;
+alter table user_strategy_settings  enable row level security;
+alter table trade_events            enable row level security;
+alter table trade_state_current     enable row level security;
+
+create policy "Authenticated read strategies" on strategies
+  for select using (auth.role() = 'authenticated');
+create policy "Authenticated read symbol_metadata" on symbol_metadata
+  for select using (auth.role() = 'authenticated');
+create policy "Users read own settings" on user_strategy_settings
+  for select using (auth.uid() = user_id);
+create policy "Users update own settings" on user_strategy_settings
+  for update using (auth.uid() = user_id);
+create policy "Users insert own settings" on user_strategy_settings
+  for insert with check (auth.uid() = user_id);
+create policy "Users delete own settings" on user_strategy_settings
+  for delete using (auth.uid() = user_id);
+create policy "Users read own trade events" on trade_events
+  for select using (auth.uid() = user_id);
+create policy "Users read own current state" on trade_state_current
+  for select using (auth.uid() = user_id);
+
+-- ============================================================
 -- REALTIME (enable for tables the app subscribes to)
 -- ============================================================
 alter publication supabase_realtime add table positions;
@@ -305,3 +453,6 @@ alter publication supabase_realtime add table trades;
 alter publication supabase_realtime add table orders;
 alter publication supabase_realtime add table watchlist_zones;
 alter publication supabase_realtime add table bot_logs;
+alter publication supabase_realtime add table trade_events;
+alter publication supabase_realtime add table trade_state_current;
+alter publication supabase_realtime add table user_strategy_settings;

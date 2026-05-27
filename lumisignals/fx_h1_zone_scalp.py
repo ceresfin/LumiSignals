@@ -40,7 +40,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Tuple
 
 from .oanda_client import OandaClient
@@ -318,6 +318,28 @@ class H1ZoneScalp:
     # ─── Main scan tick ───────────────────────────────────────────────────
     def scan_all(self):
         """Called every ~30s by bot_runner."""
+        # Friday 16:50 ET flatten + weekend lockout. Matches the cutoff
+        # window used by fx_scalp_2n20.scan_all so all FX scalps exit
+        # uniformly before the weekend. Oanda's close_trade() atomically
+        # closes the trade and the attached SL/TP — no dangling orders
+        # left to fire on Sunday open.
+        try:
+            from zoneinfo import ZoneInfo
+            et_tz = ZoneInfo("America/New_York")
+        except Exception:
+            et_tz = timezone(timedelta(hours=-4))
+        now_et = datetime.now(timezone.utc).astimezone(et_tz)
+        et_hour, et_minute, weekday = now_et.hour, now_et.minute, now_et.weekday()
+
+        if weekday == 4 and et_hour == 16 and et_minute >= 50:
+            self._flatten_all("Friday close")
+            return
+        # Weekend skip: Saturday all day, Sunday before 17:00 ET
+        if weekday == 5:
+            return
+        if weekday == 6 and et_hour < 17:
+            return
+
         # Build a fresh "what's already in flight" cache once per tick so
         # _maybe_fire can dedup against Oanda's authoritative state (not just
         # our in-memory `last_fire_*` which can decay across restarts and
@@ -330,6 +352,60 @@ class H1ZoneScalp:
                 except Exception as e:
                     logger.debug("[H1ZONE] scan %s/%s error: %s",
                                  pair, variant, e)
+
+    def _flatten_all(self, reason: str):
+        """Close every live H1Zone leg + cancel pending H1Zone limit orders.
+        Idempotent — running twice in the same window is harmless because
+        Oanda rejects close on already-closed trades.
+
+        Uses Oanda's close_trade(trade_id) which atomically closes the
+        trade AND drops the attached stopLoss/takeProfit — no separate
+        cancel needed, no dangling protective orders.
+        """
+        acct = self.oanda.account_id
+        closed_trades = 0
+        cancelled_orders = 0
+
+        # 1. Cancel pending limit orders (not-yet-filled entries) tagged
+        #    scalp_h1zone:*.
+        try:
+            resp = self.oanda._request("GET", f"/v3/accounts/{acct}/pendingOrders")
+            for o in resp.get("orders", []) or []:
+                tag = ((o.get("clientExtensions") or {}).get("tag") or "")
+                if not tag.startswith("scalp_h1zone:"):
+                    continue
+                oid = o.get("id")
+                if not oid:
+                    continue
+                try:
+                    self.oanda._request("PUT", f"/v3/accounts/{acct}/orders/{oid}/cancel")
+                    cancelled_orders += 1
+                except Exception as e:
+                    logger.warning("[H1ZONE] cancel pending %s failed: %s", oid, e)
+        except Exception as e:
+            logger.debug("[H1ZONE] pendingOrders fetch failed: %s", e)
+
+        # 2. Close every open scalp_h1zone-tagged trade.
+        try:
+            resp = self.oanda._request("GET", f"/v3/accounts/{acct}/openTrades")
+            for t in resp.get("trades", []) or []:
+                tag = ((t.get("clientExtensions") or {}).get("tag") or "")
+                if not tag.startswith("scalp_h1zone:"):
+                    continue
+                tid = t.get("id")
+                if not tid:
+                    continue
+                try:
+                    self.oanda.close_trade(str(tid))
+                    closed_trades += 1
+                except Exception as e:
+                    logger.warning("[H1ZONE] close trade %s failed: %s", tid, e)
+        except Exception as e:
+            logger.debug("[H1ZONE] openTrades fetch failed: %s", e)
+
+        if closed_trades or cancelled_orders:
+            logger.info("[H1ZONE] %s: closed %d trades, cancelled %d pending orders",
+                        reason, closed_trades, cancelled_orders)
 
     def _snapshot_active_keys(self) -> set:
         """Return a set of (pair, variant, direction) tuples that already

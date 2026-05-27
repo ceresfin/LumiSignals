@@ -682,6 +682,38 @@ def create_app():
         resp.headers["X-Cache"] = "MISS"
         return resp
 
+    @app.route("/api/ib/reauth", methods=["POST"])
+    def api_ib_reauth():
+        """Mobile-friendly Reauth trigger. Auth via X-Sync-Key header
+        (matches /api/positions/close pattern). POSTs to the local CPAPI
+        gateway's /iserver/reauthenticate so the user doesn't have to
+        navigate to bot.lumitrade.ai → settings → button — they can
+        trigger the reauth right from the mobile app.
+
+        Note: this only refreshes a session IBeam still has cookies for.
+        If IBeam is fully logged out, a full browser login at /ib-auth
+        is still required.
+        """
+        sync_key = request.headers.get("X-Sync-Key", "")
+        if sync_key != os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026"):
+            return jsonify({"error": "unauthorized"}), 401
+        import requests as _req
+        cpapi_url = os.environ.get("CPAPI_BASE_URL", "https://localhost:5000/v1/api")
+        try:
+            resp = _req.post(f"{cpapi_url}/iserver/reauthenticate",
+                             verify=False, timeout=15)
+            try:
+                body = resp.json()
+            except Exception:
+                body = {"raw": resp.text[:500]}
+            return jsonify({
+                "ok": resp.ok,
+                "status_code": resp.status_code,
+                "body": body,
+            }), 200 if resp.ok else 502
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e)}), 502
+
     @app.route("/api/ib/status")
     def api_ib_status_public():
         """Public IB status for mobile app — no login required."""
@@ -3244,6 +3276,26 @@ def create_app():
         ticker = data.get("ticker", "").upper().strip()
         direction = data.get("direction", "").upper().strip()
         strategy = data.get("strategy", "tradingview")
+
+        # Normalize Pine's exit-alert direction names. TradingView's 2n20
+        # script emits X-LONG / X-SHORT / VWAP-X-L / VWAP-X-S on exits;
+        # the webhook contract is BUY / SELL / CLOSE_LONG / CLOSE_SHORT.
+        # Without this, every exit signal was returning HTTP 400 and the
+        # bot saw entries but no closes — half the day's alerts vanishing.
+        # The original Pine label is preserved as `reason` so the closed-
+        # trade row carries "VWAP Cross" / "Green Takeout Red" etc.
+        _PINE_DIR_MAP = {
+            "X-LONG":     "CLOSE_LONG",
+            "X-SHORT":    "CLOSE_SHORT",
+            "VWAP-X-L":   "CLOSE_LONG",
+            "VWAP-X-S":   "CLOSE_SHORT",
+            "LONG":       "BUY",          # some Pine alerts use LONG/SHORT
+            "SHORT":      "SELL",
+        }
+        if direction in _PINE_DIR_MAP:
+            if not data.get("reason"):
+                data["reason"] = direction  # preserve original label
+            direction = _PINE_DIR_MAP[direction]
 
         # ─── LEVELS SYNC PATH — store TV levels for comparison dashboard ───
         if strategy == "tv_levels_sync":

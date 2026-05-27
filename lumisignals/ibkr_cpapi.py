@@ -245,6 +245,42 @@ class CPAPIClient:
         return self._request("DELETE",
                              f"/iserver/account/{self.account_id}/order/{order_id}")
 
+    def modify_order(self, order_id, conid: int, side: str,
+                     quantity: int, order_type: str,
+                     price: float = None, tif: str = "GTC") -> dict:
+        """Modify an existing live order. Modifiable fields per CPAPI docs:
+        conid, orderType, price, side, tif, quantity.
+
+        The original order_id is preserved. Most useful pattern for this
+        codebase: convert an existing STP (stop loss) into a MKT order so
+        it fires immediately as the close — atomic stop-and-close in one
+        REST call. Empirically validated 2026-05-22.
+
+        Returns the modify response (same shape as place_order).
+        """
+        if not self.account_id:
+            return {"error": "No account ID"}
+        body = {
+            "conid": conid,
+            "orderType": order_type,
+            "side": side,
+            "quantity": quantity,
+            "tif": tif,
+        }
+        if price is not None and order_type in ("LMT", "STP", "STP_LIMIT"):
+            body["price"] = price
+        result = self._request(
+            "POST",
+            f"/iserver/account/{self.account_id}/order/{order_id}",
+            json_data=body,
+        )
+        # Modify may need confirmation prompts like place_order does.
+        for _ in range(3):
+            result = self._handle_reply(result)
+            if not isinstance(result, list) or not any(r.get("id") for r in result if isinstance(r, dict)):
+                break
+        return result
+
     # ─── CONTRACT SEARCH ────────────────────────────────────────────────
 
     def search_contract(self, symbol: str, sec_type: str = "STK") -> list:
@@ -492,7 +528,8 @@ class CPAPIClient:
                               entry_price: float = None,
                               target_price: float = None,
                               tif: str = "GTC",
-                              entry_coid: str = None) -> dict:
+                              entry_coid: str = None,
+                              child_quantity: int = None) -> dict:
         """Build an atomic 3-order bracket payload (parent + SL + optional TP).
 
         CPAPI wires children to the parent by a customer-supplied cOID so the
@@ -519,6 +556,12 @@ class CPAPIClient:
             tif: Time in force for all three orders.
             entry_coid: Customer order id for the parent so the children
                 can reference it via parentId. Auto-generated if omitted.
+            child_quantity: Size of SL/TP children when it differs from the
+                parent quantity. Used by the close-and-reverse entry path:
+                parent SELLs (existing_long + new_short_qty) to flip the net
+                position in one fill, but the SL/TP should protect only the
+                NEW position size, not the inflated close-and-open total.
+                Defaults to `quantity` (the standard bracket case).
 
         Returns:
             dict suitable for place_order(): {"orders": [parent, sl, tp?]}.
@@ -526,6 +569,7 @@ class CPAPIClient:
         import uuid as _uuid
         if entry_coid is None:
             entry_coid = f"lumi_{_uuid.uuid4().hex[:12]}"
+        child_qty = child_quantity if child_quantity is not None else quantity
 
         exit_side = "SELL" if entry_side == "BUY" else "BUY"
 
@@ -545,7 +589,7 @@ class CPAPIClient:
             "conid": conid,
             "orderType": "STP",
             "side": exit_side,
-            "quantity": quantity,
+            "quantity": child_qty,
             "price": stop_price,
             "tif": tif,
         }
@@ -557,7 +601,7 @@ class CPAPIClient:
                 "conid": conid,
                 "orderType": "LMT",
                 "side": exit_side,
-                "quantity": quantity,
+                "quantity": child_qty,
                 "price": target_price,
                 "tif": tif,
             }

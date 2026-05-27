@@ -51,6 +51,7 @@ export default function Settings() {
   const [profile, setProfile] = useState<Profile>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [reauthing, setReauthing] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [ibStatus, setIbStatus] = useState<{ connected: boolean; age_seconds?: number; nav?: number } | null>(null);
 
@@ -174,12 +175,50 @@ export default function Settings() {
             </View>
           ) : null}
           <TouchableOpacity
-            style={styles.ibAuthButton}
-            onPress={() => Linking.openURL('https://bot.lumitrade.ai/ib-auth')}
+            style={[styles.ibAuthButton, reauthing && { opacity: 0.5 }]}
+            disabled={reauthing}
+            onPress={async () => {
+              if (reauthing) return;
+              setReauthing(true);
+              const syncKey = process.env.EXPO_PUBLIC_LUMI_SYNC_KEY || '';
+              try {
+                const r = await fetch('https://bot.lumitrade.ai/api/ib/reauth', {
+                  method: 'POST',
+                  headers: { 'X-Sync-Key': syncKey, 'Content-Type': 'application/json' },
+                });
+                const d = await r.json();
+                if (r.ok && d?.ok) {
+                  Alert.alert('Reauth triggered', 'Session should be live in a few seconds.');
+                  // Poll IB status until connected or 30 s elapses
+                  for (let i = 0; i < 15; i++) {
+                    await new Promise(res => setTimeout(res, 2000));
+                    try {
+                      const sr = await fetch('https://bot.lumitrade.ai/api/ib/status');
+                      const sd = await sr.json();
+                      setIbStatus(sd);
+                      if (sd?.connected) break;
+                    } catch {}
+                  }
+                } else {
+                  Alert.alert(
+                    'Reauth needs browser',
+                    'IBeam is fully signed out — opening the IB login page in Safari.',
+                    [
+                      { text: 'Cancel', style: 'cancel' },
+                      { text: 'Open', onPress: () => Linking.openURL('https://bot.lumitrade.ai/ib-auth') },
+                    ],
+                  );
+                }
+              } catch (e: any) {
+                Alert.alert('Reauth failed', String(e?.message || e));
+              } finally {
+                setReauthing(false);
+              }
+            }}
           >
-            <Text style={styles.ibAuthText}>Open IB Re-Auth</Text>
+            <Text style={styles.ibAuthText}>{reauthing ? 'Reauthenticating…' : 'Re-authenticate IB'}</Text>
           </TouchableOpacity>
-          <Text style={styles.fieldHint}>Opens the IBeam auth panel. Log in to bot.lumitrade.ai, then tap Re-authenticate.</Text>
+          <Text style={styles.fieldHint}>Refreshes the IBeam session in-place. If IBeam is fully signed out, you'll get a prompt to open the browser login.</Text>
         </Section>
 
         <Section title="2. Strategy Settings">

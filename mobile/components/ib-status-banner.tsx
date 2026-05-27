@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Linking } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Linking, Alert } from 'react-native';
 import { Colors } from '@/constants/theme';
 
 const API_BASE = 'https://bot.lumitrade.ai';
@@ -13,6 +13,17 @@ type IbStatus = {
 
 export default function IbStatusBanner() {
   const [status, setStatus] = useState<IbStatus | null>(null);
+  const [reauthing, setReauthing] = useState(false);
+
+  const loadStatus = async () => {
+    try {
+      const r = await fetch(`${API_BASE}/api/ib/status`);
+      const d = await r.json();
+      setStatus(d);
+    } catch {
+      setStatus({ connected: false, age_seconds: null, last_synced: null });
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -30,6 +41,43 @@ export default function IbStatusBanner() {
     return () => { cancelled = true; clearInterval(id); };
   }, []);
 
+  const handleReauth = async () => {
+    if (reauthing) return;
+    setReauthing(true);
+    const syncKey = process.env.EXPO_PUBLIC_LUMI_SYNC_KEY || '';
+    try {
+      const r = await fetch(`${API_BASE}/api/ib/reauth`, {
+        method: 'POST',
+        headers: { 'X-Sync-Key': syncKey, 'Content-Type': 'application/json' },
+      });
+      const d = await r.json();
+      if (r.ok && d?.ok) {
+        Alert.alert('Reauth triggered', 'Session should be live in a few seconds.');
+        // Poll status until connected or 30s elapses
+        for (let i = 0; i < 15; i++) {
+          await new Promise(res => setTimeout(res, 2000));
+          await loadStatus();
+        }
+      } else {
+        // IBeam likely has no session at all — fall back to the full
+        // browser flow on bot.lumitrade.ai/ib-auth where the user can
+        // log in via the proxied portal page.
+        Alert.alert(
+          'Reauth needs browser',
+          'IBeam is fully signed out — opening the IB login page in Safari.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Open', onPress: () => Linking.openURL(`${API_BASE}/ib-auth`) },
+          ],
+        );
+      }
+    } catch (e) {
+      Alert.alert('Reauth failed', String(e));
+    } finally {
+      setReauthing(false);
+    }
+  };
+
   if (!status || status.connected) return null;
 
   const ageLabel = status.age_seconds != null
@@ -45,10 +93,11 @@ export default function IbStatusBanner() {
           <Text style={styles.subtitle}>Last sync: {ageLabel}. Orders are not being processed.</Text>
         </View>
         <TouchableOpacity
-          onPress={() => Linking.openURL(`${API_BASE}/ib-auth`)}
-          style={styles.btn}
+          onPress={handleReauth}
+          disabled={reauthing}
+          style={[styles.btn, reauthing && { opacity: 0.5 }]}
         >
-          <Text style={styles.btnText}>Reauth</Text>
+          <Text style={styles.btnText}>{reauthing ? '…' : 'Reauth'}</Text>
         </TouchableOpacity>
       </View>
     </View>
