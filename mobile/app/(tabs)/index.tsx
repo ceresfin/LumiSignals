@@ -642,6 +642,28 @@ export default function Dashboard() {
                     <Text style={styles.strategyBadgeText}>STRATEGY</Text>
                   </View>
                   <Text style={styles.strategyName}>{s.name}</Text>
+                  <TouchableOpacity
+                    style={styles.signalsLinkBtn}
+                    onPress={() => router.push({
+                      pathname: '/signals',
+                      params: {
+                        // Map canonical mobile key back to the strategy_id the
+                        // bot writes into trade_events. Add new strategies here
+                        // as they ship.
+                        strategy: (s.key === 'vwap_2n20'    ? 'futures_2n20' :
+                                   s.key === 'vwap_2n20_v2' ? 'futures_2n20_v2' :
+                                   s.key === 'orb_breakout' ? 'orb_breakout' :
+                                   s.key === 'scalp_h1zone' ? 'fx_h1_zone_scalp' :
+                                   s.key === 'htf_levels'   ? 'htf_levels' :
+                                                              s.key),
+                        ticker: tab.key === 'futures' ? 'MES' : '',
+                        strategyName: s.name,
+                      },
+                    })}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Text style={styles.signalsLinkText}>Signals →</Text>
+                  </TouchableOpacity>
                 </View>
                 {!!s.dateRange && (
                   <Text style={styles.strategyDateRange}>{s.dateRange}</Text>
@@ -896,6 +918,8 @@ const styles = StyleSheet.create({
   strategyBadge: { backgroundColor: Colors.olive, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 50 },
   strategyBadgeText: { color: Colors.gold, fontSize: 10, fontWeight: '600', letterSpacing: 0.3 },
   strategyName: { fontSize: 18, fontWeight: '500', color: Colors.dark, flexShrink: 1 },
+  signalsLinkBtn: { marginLeft: 'auto', paddingHorizontal: 8, paddingVertical: 4 },
+  signalsLinkText: { fontSize: 12, color: Colors.olive, fontWeight: '600' },
   strategyDateRange: { fontSize: 11, color: Colors.textLight, marginTop: 2, marginBottom: 12 },
   // Per-model card under each strategy header
   modelCard: {

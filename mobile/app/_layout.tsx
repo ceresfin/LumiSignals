@@ -42,6 +42,7 @@ function AuthGate() {
       <Stack.Screen name="(auth)" />
       <Stack.Screen name="(tabs)" />
       <Stack.Screen name="chart" options={{ presentation: 'fullScreenModal' }} />
+      <Stack.Screen name="signals" options={{ headerShown: true, title: 'Signals' }} />
     </Stack>
   );
 }
