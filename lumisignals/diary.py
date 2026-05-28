@@ -207,6 +207,7 @@ def record_event(
     stop_price: Optional[float] = None,
     target_price: Optional[float] = None,
     realized_pl: Optional[float] = None,
+    signal_price: Optional[float] = None,
     broker_snapshot: Optional[dict] = None,
     meta: Optional[dict] = None,
 ) -> Optional[str]:
@@ -245,6 +246,7 @@ def record_event(
         "stop_price": stop_price,
         "target_price": target_price,
         "realized_pl": realized_pl,
+        "signal_price": signal_price,
         "broker_snapshot": broker_snapshot,
         "meta": meta,
     }

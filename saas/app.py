@@ -2609,6 +2609,129 @@ def create_app():
         state = kill_switch.check_and_trip()
         return jsonify({"config": cfg, "state": state})
 
+    @app.route("/api/strategies/slippage")
+    def api_strategies_slippage():
+        """Slippage stats per strategy/ticker over a window.
+
+        For each pair (INTENT_OPEN, OPEN) matched by client_intent_id, we
+        compute the signed slippage in instrument points:
+
+            BUY:  slippage = fill_price - signal_price  (positive = paid more = adverse)
+            SELL: slippage = signal_price - fill_price  (positive = received less = adverse)
+
+        Returns count, average, median, p95, plus a per-direction breakdown
+        and the instrument multiplier so the UI can convert points to USD.
+
+        Query params:
+            strategy  — strategy_id (default futures_2n20)
+            ticker    — instrument (default MES)
+            since     — ISO lower bound
+            until     — ISO upper bound
+            limit     — max events to scan (default 2000)
+
+        Auth: X-Sync-Key.
+        """
+        sync_key = request.headers.get("X-Sync-Key", "")
+        if sync_key != os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026"):
+            return jsonify({"error": "unauthorized"}), 401
+
+        strategy = request.args.get("strategy") or "futures_2n20"
+        ticker = (request.args.get("ticker") or "MES").upper().strip()
+        since = request.args.get("since") or None
+        until = request.args.get("until") or None
+        try:
+            limit = int(request.args.get("limit", 2000))
+        except ValueError:
+            limit = 2000
+
+        from lumisignals.diary import query_events
+        rows = query_events(strategy_id=strategy, ticker=ticker,
+                            since=since, until=until, limit=limit)
+
+        # Build a {client_intent_id: signal_price} map from INTENT_OPENs.
+        intent_signal: dict = {}
+        for r in rows:
+            if r.get("state") != "INTENT_OPEN":
+                continue
+            cid = r.get("client_intent_id")
+            sp = r.get("signal_price")
+            if cid and sp is not None:
+                intent_signal[cid] = float(sp)
+
+        # Pair against OPEN fills, parsing direction from reason field.
+        pairs: list = []
+        for r in rows:
+            if r.get("state") != "OPEN":
+                continue
+            cid = r.get("client_intent_id")
+            if not cid or cid not in intent_signal:
+                continue
+            sp = intent_signal[cid]
+            fp = r.get("entry_price")
+            if fp is None:
+                continue
+            reason = (r.get("reason") or "").upper()
+            if " BUY" in reason or reason.startswith("BUY") or reason.endswith("BUY"):
+                direction = "BUY"
+                signed = float(fp) - sp
+            elif " SELL" in reason or reason.startswith("SELL") or reason.endswith("SELL"):
+                direction = "SELL"
+                signed = sp - float(fp)
+            else:
+                continue
+            pairs.append({
+                "event_time": r.get("event_time"),
+                "direction": direction,
+                "signal_price": sp,
+                "fill_price": float(fp),
+                "slippage_pts": round(signed, 4),
+                "client_intent_id": cid,
+            })
+
+        # Instrument point multipliers (USD per point per contract).
+        MULTIPLIERS = {
+            "MES": 5.0, "MNQ": 2.0, "MGC": 10.0, "MCL": 100.0,
+            "ES": 50.0, "NQ": 20.0, "GC": 100.0, "CL": 1000.0,
+            "RTY": 50.0, "YM": 5.0, "MYM": 0.5, "M2K": 5.0,
+        }
+        mult = MULTIPLIERS.get(ticker, 1.0)
+
+        def stats(slips: list) -> dict:
+            if not slips:
+                return {"count": 0, "avg_pts": None, "median_pts": None,
+                        "p95_pts": None, "avg_usd": None, "median_usd": None}
+            sorted_s = sorted(slips)
+            n = len(sorted_s)
+            avg = sum(sorted_s) / n
+            median = sorted_s[n // 2] if n % 2 == 1 else (sorted_s[n // 2 - 1] + sorted_s[n // 2]) / 2
+            p95_idx = max(0, min(n - 1, int(0.95 * n)))
+            p95 = sorted_s[p95_idx]
+            return {
+                "count": n,
+                "avg_pts": round(avg, 4),
+                "median_pts": round(median, 4),
+                "p95_pts": round(p95, 4),
+                "avg_usd": round(avg * mult, 2),
+                "median_usd": round(median * mult, 2),
+            }
+
+        all_slips = [p["slippage_pts"] for p in pairs]
+        buy_slips = [p["slippage_pts"] for p in pairs if p["direction"] == "BUY"]
+        sell_slips = [p["slippage_pts"] for p in pairs if p["direction"] == "SELL"]
+
+        return jsonify({
+            "ticker": ticker,
+            "strategy": strategy,
+            "multiplier_usd_per_pt": mult,
+            "window": {"since": since, "until": until},
+            "overall": stats(all_slips),
+            "by_direction": {
+                "BUY": stats(buy_slips),
+                "SELL": stats(sell_slips),
+            },
+            "recent_pairs": pairs[-25:],  # last 25 for spot-checking
+        })
+
     @app.route("/api/risk/missed-signal-alert", methods=["GET", "PUT", "POST"])
     def api_risk_missed_signal_alert():
         """Manage + run the missed-signal alert.

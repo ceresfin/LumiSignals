@@ -1975,6 +1975,7 @@ def check_order_requests(client):
                         # us at most a few dollars on the $25 stop budget —
                         # immaterial against the risk of an unprotected
                         # window during fast markets.
+                        last_price = 0.0  # signal_price for the diary; may be set below
                         if pine_stop > 0:
                             sl_price = pine_stop
                             quote_source = "pine"
@@ -2155,6 +2156,14 @@ def check_order_requests(client):
                         # row carries an intent_id we'll thread to OPEN/
                         # CANCELLED below so the reconciler can see we
                         # tried, even if the place_order fails silently.
+                        #
+                        # signal_price = last_price (the IBeam quote at the
+                        # moment we processed the signal). Not exactly the
+                        # bar close Pine saw — Pine fires on bar close, then
+                        # webhook delivery adds 5-30s. But this is the price
+                        # we'd have to beat for the trade to be at "no
+                        # slippage". Used by /api/strategies/slippage to
+                        # measure decision-to-fill drift over many trades.
                         try:
                             diary.record_event(
                                 broker="ib",
@@ -2166,6 +2175,7 @@ def check_order_requests(client):
                                 expected_qty=(contracts if direction == "BUY" else -contracts),
                                 stop_price=sl_price,
                                 target_price=(tp_price if tp_price > 0 else None),
+                                signal_price=last_price if last_price else None,
                                 meta={"quote_source": quote_source} if quote_source else None,
                             )
                         except Exception as _de:
