@@ -2609,6 +2609,34 @@ def create_app():
         state = kill_switch.check_and_trip()
         return jsonify({"config": cfg, "state": state})
 
+    @app.route("/api/risk/position-guard", methods=["GET", "PUT"])
+    def api_risk_position_guard():
+        """Read or update the position size guard.
+
+        GET  → { config, positions: {ticker: current_net} }
+        PUT  → body: any subset of { enabled, default_limit, limits }
+                where `limits` is {ticker: int} per-ticker overrides.
+                returns the new merged config.
+        Auth: X-Sync-Key header.
+        """
+        sync_key = request.headers.get("X-Sync-Key", "")
+        if sync_key != os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026"):
+            return jsonify({"error": "unauthorized"}), 401
+        from lumisignals import position_guard
+        if request.method == "PUT":
+            body = request.get_json(silent=True) or {}
+            cfg = position_guard.set_config(body)
+        else:
+            cfg = position_guard.get_config()
+        # Surface current net for known futures so the UI can show
+        # "MES: +1, MNQ: 0" alongside the limits.
+        positions: dict = {}
+        for t in ("MES", "MNQ", "MGC", "MCL", "ES", "NQ", "GC", "CL"):
+            n = position_guard.current_net_contracts(t)
+            if n != 0:
+                positions[t] = n
+        return jsonify({"config": cfg, "positions": positions})
+
     @app.route("/api/risk/kill-switch/reset", methods=["POST"])
     def api_risk_kill_switch_reset():
         """Manually clear a tripped state. Day P&L stays as is."""
@@ -3606,6 +3634,33 @@ def create_app():
                     # continue — fail-open is the safer default given the
                     # bracket SL is still in place per-trade.
                     logger.warning("kill switch check failed (fail-open): %s", e)
+
+            # Position size guard — refuse entries that would push projected
+            # net contracts past the configured ceiling. Defense against
+            # runaway loops or duplicate signals from stacking too many
+            # contracts. Closes are never blocked (they reduce exposure).
+            if direction in ("BUY", "SELL"):
+                try:
+                    from lumisignals import position_guard
+                    pg_result = position_guard.check(ticker, direction, int(override_contracts or 1))
+                    if pg_result.get("blocked"):
+                        logger.warning(
+                            "position guard BLOCKED %s %s contracts=%s: current=%s projected=%s limit=%s",
+                            direction, ticker, pg_result.get("contracts"),
+                            pg_result.get("current_net"),
+                            pg_result.get("projected_net"),
+                            pg_result.get("limit"),
+                        )
+                        return jsonify({
+                            "status": "skipped",
+                            "reason": "position_size_guard",
+                            "ticker": ticker, "direction": direction,
+                            "current_net": pg_result.get("current_net"),
+                            "projected_net": pg_result.get("projected_net"),
+                            "limit": pg_result.get("limit"),
+                        }), 200
+                except Exception as e:
+                    logger.warning("position guard check failed (fail-open): %s", e)
 
             # Refuse to queue if IB sync is offline. Better to skip the trade
             # than to pile up stale orders that fire on reconnect. User's pref:

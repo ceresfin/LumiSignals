@@ -65,6 +65,12 @@ export default function Settings() {
   }>({ tripped: false, tripped_at: null, day_pnl: 0, day_start: null, reason: null });
   const [killSaving, setKillSaving] = useState(false);
   const [killResetting, setKillResetting] = useState(false);
+  // Position size guard
+  const [pgCfg, setPgCfg] = useState<{
+    enabled: boolean; default_limit: number; limits: Record<string, number>;
+  }>({ enabled: true, default_limit: 2, limits: {} });
+  const [pgPositions, setPgPositions] = useState<Record<string, number>>({});
+  const [pgSaving, setPgSaving] = useState(false);
 
   const loadProfile = async () => {
     if (!user) return;
@@ -137,7 +143,44 @@ export default function Settings() {
     }
   };
 
-  useEffect(() => { loadProfile(); loadIbStatus(); loadKillSwitch(); }, [user]);
+  const loadPositionGuard = async () => {
+    try {
+      const syncKey = process.env.EXPO_PUBLIC_LUMI_SYNC_KEY || '';
+      const r = await fetch('https://bot.lumitrade.ai/api/risk/position-guard', {
+        headers: { 'X-Sync-Key': syncKey },
+      });
+      if (!r.ok) return;
+      const d = await r.json();
+      if (d?.config) setPgCfg(d.config);
+      if (d?.positions) setPgPositions(d.positions);
+    } catch {
+      // best-effort
+    }
+  };
+
+  const savePositionGuard = async (patch: Partial<typeof pgCfg>) => {
+    setPgSaving(true);
+    try {
+      const next = { ...pgCfg, ...patch };
+      setPgCfg(next); // optimistic
+      const syncKey = process.env.EXPO_PUBLIC_LUMI_SYNC_KEY || '';
+      const r = await fetch('https://bot.lumitrade.ai/api/risk/position-guard', {
+        method: 'PUT',
+        headers: { 'X-Sync-Key': syncKey, 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const d = await r.json();
+      if (d?.config) setPgCfg(d.config);
+      if (d?.positions) setPgPositions(d.positions);
+    } catch (e: any) {
+      Alert.alert('Position guard save failed', String(e?.message || e));
+    } finally {
+      setPgSaving(false);
+    }
+  };
+
+  useEffect(() => { loadProfile(); loadIbStatus(); loadKillSwitch(); loadPositionGuard(); }, [user]);
   // Refresh IB status every 30s
   useEffect(() => {
     const interval = setInterval(loadIbStatus, 30000);
@@ -158,7 +201,7 @@ export default function Settings() {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await Promise.all([loadProfile(), loadIbStatus(), loadKillSwitch()]);
+    await Promise.all([loadProfile(), loadIbStatus(), loadKillSwitch(), loadPositionGuard()]);
     setRefreshing(false);
   };
 
@@ -483,6 +526,44 @@ export default function Settings() {
             Blocks new BUY/SELL entries when day P&L crosses the threshold.
             Closes still process so existing positions exit normally.
             Bracket SL at IB stays in place as the per-trade safety net.
+          </Text>
+        </Section>
+
+        {/* Position Size Guard */}
+        <Section title="7. Position Size Guard">
+          <View style={styles.row}>
+            <Text style={styles.fieldLabel}>Enabled</Text>
+            <Switch
+              value={pgCfg.enabled}
+              onValueChange={v => savePositionGuard({ enabled: v })}
+              disabled={pgSaving}
+              trackColor={{ true: Colors.green }}
+            />
+          </View>
+          <Field label="Max contracts per instrument" hint="Bot refuses entries that would push |net position| past this">
+            <TextInput
+              style={styles.input}
+              value={String(pgCfg.default_limit ?? 2)}
+              onChangeText={t => setPgCfg({ ...pgCfg, default_limit: parseInt(t, 10) || 0 })}
+              onEndEditing={() => savePositionGuard({ default_limit: pgCfg.default_limit })}
+              keyboardType="number-pad"
+              editable={!pgSaving}
+            />
+          </Field>
+          <View style={[styles.row, { marginTop: 4 }]}>
+            <Text style={styles.fieldLabel}>Current positions</Text>
+            <Text style={[styles.fieldValue, { fontWeight: '600' }]}>
+              {Object.keys(pgPositions).length === 0
+                ? 'Flat'
+                : Object.entries(pgPositions)
+                    .map(([t, n]) => `${t} ${n > 0 ? '+' : ''}${n}`)
+                    .join(', ')}
+            </Text>
+          </View>
+          <Text style={styles.fieldHint}>
+            Reversals (e.g. BUY signal while short) project to ±limit and pass.
+            Closes never blocked. Set per-instrument overrides via the API if
+            different limits are needed per ticker (default applies to all).
           </Text>
         </Section>
 
