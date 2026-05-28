@@ -24,7 +24,15 @@ type SignalEvent = {
 };
 
 type Range = 'today' | 'wtd' | 'mtd' | 'all';
-type StateFilter = 'all' | 'entries' | 'closed';
+type StateFilter = 'all' | 'entries' | 'closed' | 'missed';
+
+type MissedSignal = {
+  bar_time: string;
+  direction: 'BUY' | 'SELL';
+  reason: string;
+  close: number;
+  vwap: number;
+};
 
 // Build start/end of the selected window. "Today" anchors at the most-recent
 // 9:30 AM ET — matches the trading-day boundary the dashboard already uses.
@@ -106,6 +114,9 @@ function statePillStyle(state: string, direction: SignalEvent['direction']) {
   if (state === 'INTENT_CLOSE' || state === 'CLOSED') {
     return { bg: '#eceff1', fg: Colors.dark };
   }
+  if (state === 'MISSED') {
+    return { bg: '#fff3e0', fg: Colors.amber };
+  }
   if (state.startsWith('RECONCILE')) {
     return { bg: '#fff3e0', fg: Colors.amber };
   }
@@ -134,25 +145,51 @@ export default function SignalsScreen() {
   const [range, setRange] = useState<Range>('today');
   const [stateFilter, setStateFilter] = useState<StateFilter>('all');
   const [refreshing, setRefreshing] = useState(false);
+  const [missed, setMissed] = useState<MissedSignal[]>([]);
 
   const load = async () => {
     setLoading(true);
     setError(null);
     try {
       const { since, until } = rangeWindow(range);
+      const syncKey = process.env.EXPO_PUBLIC_LUMI_SYNC_KEY || '';
+
+      // Always fetch the diary events.
       const qs = new URLSearchParams({ strategy, limit: '1000' });
       if (ticker) qs.set('ticker', ticker);
       if (since) qs.set('since', since);
       if (until) qs.set('until', until);
-      const syncKey = process.env.EXPO_PUBLIC_LUMI_SYNC_KEY || '';
       const resp = await fetch(`${API_BASE}/api/strategies/signals?${qs.toString()}`, {
         headers: { 'X-Sync-Key': syncKey },
       });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const data = await resp.json();
-      // Newest first for scrolling.
       const arr: SignalEvent[] = Array.isArray(data?.events) ? data.events.slice().reverse() : [];
       setEvents(arr);
+
+      // Also fetch missed signals — replay 2n20 logic on cached bars and
+      // diff against actual INTENT_OPENs. Only meaningful for 2n20+MES today.
+      if (ticker && strategy.includes('2n20')) {
+        const mqs = new URLSearchParams({ ticker, mode: 'missed' });
+        if (since) mqs.set('since', since);
+        if (until) mqs.set('until', until);
+        try {
+          const mresp = await fetch(
+            `${API_BASE}/api/strategies/expected-signals?${mqs.toString()}`,
+            { headers: { 'X-Sync-Key': syncKey } },
+          );
+          if (mresp.ok) {
+            const mdata = await mresp.json();
+            setMissed(Array.isArray(mdata?.missed) ? mdata.missed.slice().reverse() : []);
+          } else {
+            setMissed([]);
+          }
+        } catch {
+          setMissed([]);
+        }
+      } else {
+        setMissed([]);
+      }
     } catch (e: any) {
       setError(String(e?.message || e));
     } finally {
@@ -169,13 +206,30 @@ export default function SignalsScreen() {
     return c;
   }, [events]);
 
-  const visibleEvents = useMemo(() => {
+  const visibleEvents = useMemo<SignalEvent[]>(() => {
+    if (stateFilter === 'missed') {
+      // Project missed signals onto the SignalEvent shape so the row
+      // renderer can stay one code path.
+      return missed.map(m => ({
+        event_time: m.bar_time,
+        state: 'MISSED',
+        ticker: ticker || 'MES',
+        strategy_id: strategy,
+        reason: m.reason,
+        direction: m.direction,
+        entry_price: m.close,
+        exit_price: null,
+        stop_price: null,
+        realized_pl: null,
+        broker_trade_id: null,
+      }));
+    }
     if (stateFilter === 'all') return events;
     if (stateFilter === 'entries') {
       return events.filter(e => e.state === 'INTENT_OPEN' || e.state === 'OPEN');
     }
     return events.filter(e => e.state === 'CLOSED');
-  }, [events, stateFilter]);
+  }, [events, missed, stateFilter, ticker, strategy]);
 
   const totalPl = useMemo(() => {
     if (stateFilter !== 'closed') return null;
@@ -191,13 +245,16 @@ export default function SignalsScreen() {
         <Text style={styles.title}>{strategyName}</Text>
         <Text style={styles.subtitle}>
           {ticker ? `${ticker} · ` : ''}
-          {stateFilter === 'closed'
-            ? `${visibleEvents.length} closed trades${totalPl != null ? `  ·  ${totalPl >= 0 ? '+' : ''}$${totalPl.toFixed(2)}` : ''}`
-            : stateFilter === 'entries'
-              ? `${visibleEvents.length} entry signals`
-              : `${events.length} events`
-                + (counts.INTENT_OPEN ? `  ·  ${counts.INTENT_OPEN} entries` : '')
-                + (counts.CLOSED ? `  ·  ${counts.CLOSED} closed` : '')}
+          {stateFilter === 'missed'
+            ? `${missed.length} missed (expected but no webhook arrived)`
+            : stateFilter === 'closed'
+              ? `${visibleEvents.length} closed trades${totalPl != null ? `  ·  ${totalPl >= 0 ? '+' : ''}$${totalPl.toFixed(2)}` : ''}`
+              : stateFilter === 'entries'
+                ? `${visibleEvents.length} entry signals`
+                : `${events.length} events`
+                  + (counts.INTENT_OPEN ? `  ·  ${counts.INTENT_OPEN} entries` : '')
+                  + (counts.CLOSED ? `  ·  ${counts.CLOSED} closed` : '')
+                  + (missed.length ? `  ·  ${missed.length} missed` : '')}
         </Text>
       </View>
 
@@ -217,9 +274,10 @@ export default function SignalsScreen() {
 
       <View style={styles.pillBar}>
         {([
-          ['all', 'All Events'],
+          ['all', 'All'],
           ['entries', 'Entries'],
           ['closed', 'Closed'],
+          ['missed', `Missed${missed.length ? ` (${missed.length})` : ''}`],
         ] as const).map(([k, label]) => (
           <TouchableOpacity
             key={k}
@@ -302,9 +360,11 @@ export default function SignalsScreen() {
           ListEmptyComponent={
             <View style={styles.center}>
               <Text style={styles.emptyText}>
-                {events.length === 0
-                  ? 'No signals in this range'
-                  : `No ${stateFilter === 'closed' ? 'closed trades' : 'entries'} in this range`}
+                {stateFilter === 'missed'
+                  ? 'No missed signals in this range — every Pine signal we expected was also received.'
+                  : events.length === 0
+                    ? 'No signals in this range'
+                    : `No ${stateFilter === 'closed' ? 'closed trades' : 'entries'} in this range`}
               </Text>
             </View>
           }

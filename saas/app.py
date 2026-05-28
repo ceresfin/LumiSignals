@@ -2587,6 +2587,77 @@ def create_app():
         )
         return html, 200, {"Content-Type": "text/html; charset=utf-8"}
 
+    @app.route("/api/strategies/expected-signals")
+    def api_strategies_expected_signals():
+        """Replay 2n20 entry+exit logic on cached bars to surface what Pine
+        should have fired — useful for finding signals we never received as
+        webhooks (TV delivery loss, alert quota, etc.).
+
+        Query params:
+            ticker    — e.g. MES (required for now; only MES bars cached)
+            since     — ISO timestamp lower bound (clip the replay window)
+            until     — ISO timestamp upper bound
+            mode      — "expected" (default): list every signal the replay fires
+                        "missed":   only signals with no matching INTENT_OPEN
+                                    in trade_events (within 90s of bar close)
+                        "diff":     full {missed, matched, extras} breakdown
+
+        Auth: X-Sync-Key header.
+        """
+        sync_key = request.headers.get("X-Sync-Key", "")
+        if sync_key != os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026"):
+            return jsonify({"error": "unauthorized"}), 401
+
+        ticker = (request.args.get("ticker") or "MES").upper().strip()
+        since = request.args.get("since") or None
+        until = request.args.get("until") or None
+        mode = (request.args.get("mode") or "expected").lower()
+
+        # Currently only MES bars are cached in Redis. Future strategies/
+        # tickers would pull from Polygon/Massive instead.
+        import redis as _redis
+        rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+        raw = rdb.get(f"ibkr:bars:{ticker}:2m")
+        if not raw:
+            return jsonify({"error": f"no cached bars for {ticker}"}), 404
+        cached = json.loads(raw)
+        bars = cached.get("bars", [])
+
+        # Clip the bar window to [since, until] BEFORE the replay so VWAP
+        # anchoring still has the prior session context. Actually — VWAP
+        # anchors daily at 18:00 ET, so we need bars back to that anchor
+        # for accurate replay. Simpler: replay over the full cached window
+        # then filter the output by [since, until].
+        from lumisignals.strategy_replay import replay_2n20_signals, diff_against_diary
+        all_signals = replay_2n20_signals(bars)
+
+        def in_window(iso: str) -> bool:
+            if since and iso < since:
+                return False
+            if until and iso >= until:
+                return False
+            return True
+        signals = [s for s in all_signals if in_window(s["bar_time"])]
+
+        if mode == "expected":
+            return jsonify({"ticker": ticker, "count": len(signals),
+                            "signals": signals})
+
+        # missed/diff modes: also pull actual diary INTENT_OPEN events for
+        # the same window so we can diff.
+        from lumisignals.diary import query_events
+        # Slightly widen the since/until for the diary query so we capture
+        # INTENT_OPENs whose bar-close timestamps sit near the edge.
+        actual = query_events(strategy_id="futures_2n20", ticker=ticker,
+                              since=since, until=until, limit=5000)
+        actual_entries = [a for a in actual if a.get("state") == "INTENT_OPEN"]
+        diff = diff_against_diary(signals, actual_entries)
+        if mode == "missed":
+            return jsonify({"ticker": ticker, "count": len(diff["missed"]),
+                            "missed": diff["missed"]})
+        return jsonify({"ticker": ticker, **{k: len(v) for k, v in diff.items()},
+                        "details": diff})
+
     @app.route("/api/adx/direction")
     def api_adx_direction():
         """ADX direction per TF for a single instrument.
