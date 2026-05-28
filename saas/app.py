@@ -2609,6 +2609,31 @@ def create_app():
         state = kill_switch.check_and_trip()
         return jsonify({"config": cfg, "state": state})
 
+    @app.route("/api/risk/reconcile-state", methods=["GET"])
+    def api_risk_reconcile_state():
+        """Read the restart-safety gate state. Mobile polls this every few
+        seconds to show the dashboard banner.
+
+        Public — no auth — so the banner works before login.
+        """
+        from lumisignals import reconcile_gate
+        state = reconcile_gate.get_state()
+        return jsonify({"state": state, "locked": reconcile_gate.is_locked()})
+
+    @app.route("/api/risk/reconcile-state/reset", methods=["POST"])
+    def api_risk_reconcile_state_reset():
+        """Manual unlock from a timed_out state. The user is taking
+        responsibility for broker/bot state being consistent.
+
+        Auth: X-Sync-Key header.
+        """
+        sync_key = request.headers.get("X-Sync-Key", "")
+        if sync_key != os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026"):
+            return jsonify({"error": "unauthorized"}), 401
+        from lumisignals import reconcile_gate
+        state = reconcile_gate.manual_reset()
+        return jsonify({"state": state})
+
     @app.route("/api/risk/position-guard", methods=["GET", "PUT"])
     def api_risk_position_guard():
         """Read or update the position size guard.
@@ -3606,6 +3631,35 @@ def create_app():
         if trade_type == "futures":
             rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
             today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+            # Restart-safety gate — refuse ALL futures signals (including
+            # closes) until ibkr-sync has completed at least one reconcile
+            # pass and is heart-beating. Without this, a webhook could land
+            # between bot restart and the first state-sync, and we'd act on
+            # stale strat_pos / diary state.
+            try:
+                from lumisignals import reconcile_gate
+                if reconcile_gate.is_locked():
+                    state = reconcile_gate.get_state()
+                    logger.warning("reconcile_gate BLOCKED %s %s: status=%s",
+                                   direction, ticker, state.get("status"))
+                    return jsonify({
+                        "status": "skipped",
+                        "reason": "reconcile_gate_locked",
+                        "gate_status": state.get("status"),
+                        "gate_reason": state.get("reason"),
+                        "ticker": ticker, "direction": direction,
+                    }), 503
+            except Exception as e:
+                # Fail-CLOSED on gate errors. The whole point of this gate
+                # is to prevent action on uncertain state — if we can't
+                # verify, we refuse rather than assume safe.
+                logger.warning("reconcile_gate check failed (fail-closed): %s", e)
+                return jsonify({
+                    "status": "skipped",
+                    "reason": "reconcile_gate_check_failed",
+                    "ticker": ticker, "direction": direction,
+                }), 503
 
             # Daily-loss kill switch — only blocks new ENTRIES. Closes still
             # process so existing positions can exit normally. The bracket SL

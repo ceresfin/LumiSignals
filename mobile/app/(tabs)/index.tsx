@@ -7,6 +7,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/auth';
 import { Colors } from '@/constants/theme';
 import IbStatusBanner from '@/components/ib-status-banner';
+import ReconcileBanner from '@/components/reconcile-banner';
 
 type Trade = {
   realized_pl: number | null;
@@ -546,6 +547,7 @@ export default function Dashboard() {
           <Text style={styles.headerSubtitle}>Trading Dashboard</Text>
         </View>
 
+        <ReconcileBanner />
         <IbStatusBanner />
 
         {/* Broker Tabs */}

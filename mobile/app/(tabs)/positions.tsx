@@ -8,6 +8,7 @@ import { useAuth } from '@/contexts/auth';
 import { Colors } from '@/constants/theme';
 import { strategyBadgeText } from '@/lib/strategyLabel';
 import IbStatusBanner from '@/components/ib-status-banner';
+import ReconcileBanner from '@/components/reconcile-banner';
 
 const CHART_API_BASE = 'https://bot.lumitrade.ai';
 // Default timeframe per asset class. Futures scalps live on the 2m;
@@ -785,6 +786,7 @@ export default function Positions() {
         </View>
       </View>
 
+      <ReconcileBanner />
       <IbStatusBanner />
 
       {/* Broker Tabs */}

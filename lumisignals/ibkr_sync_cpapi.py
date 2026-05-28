@@ -3118,6 +3118,16 @@ def weekend_flatten_futures(client):
 def main():
     logger.info("IB CPAPI Sync starting — connecting to %s", CPAPI_URL)
 
+    # Restart-safety gate: mark RECONCILING immediately so the saas webhook
+    # handler refuses new entries until we've completed at least one full
+    # sync+reconcile pass. Flips to OK at the end of the first error-free
+    # loop iteration; held to refresh the heartbeat on every iteration after.
+    try:
+        from .reconcile_gate import mark_reconciling
+        mark_reconciling()
+    except Exception as _e:
+        logger.warning("reconcile_gate mark_reconciling failed: %s", _e)
+
     from .ibkr_cpapi import CPAPIClient
     client = CPAPIClient(base_url=CPAPI_URL)
 
@@ -3136,6 +3146,7 @@ def main():
     # successful tick).
     consecutive_errors = 0
     alerted_for_streak = False
+    first_pass_complete = False
 
     while True:
         try:
@@ -3284,6 +3295,18 @@ def main():
             # Tick completed without exception — reset the crash-loop counter
             consecutive_errors = 0
             alerted_for_streak = False
+
+            # Restart-safety gate: first error-free loop flips state to OK,
+            # which unlocks the saas webhook handler. Subsequent loops just
+            # refresh the heartbeat so the gate knows we're still alive.
+            try:
+                from .reconcile_gate import mark_ok
+                mark_ok()
+                if not first_pass_complete:
+                    first_pass_complete = True
+                    logger.info("First sync+reconcile pass complete — webhooks unlocked")
+            except Exception as _e:
+                logger.debug("reconcile_gate mark_ok failed: %s", _e)
 
         except Exception as e:
             logger.exception("Sync error: %s", e)  # include traceback — past silent failures wasted hours

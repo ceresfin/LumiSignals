@@ -7,6 +7,7 @@ import { useAuth } from '@/contexts/auth';
 import { Colors } from '@/constants/theme';
 import { strategyBadgeText } from '@/lib/strategyLabel';
 import IbStatusBanner from '@/components/ib-status-banner';
+import ReconcileBanner from '@/components/reconcile-banner';
 
 type Trade = {
   id: number;
@@ -244,6 +245,7 @@ export default function Trades() {
         <Text style={styles.headerCount}>{trades.length}</Text>
       </View>
 
+      <ReconcileBanner />
       <IbStatusBanner />
 
       {/* Broker Tabs */}

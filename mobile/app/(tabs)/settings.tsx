@@ -71,6 +71,15 @@ export default function Settings() {
   }>({ enabled: true, default_limit: 2, limits: {} });
   const [pgPositions, setPgPositions] = useState<Record<string, number>>({});
   const [pgSaving, setPgSaving] = useState(false);
+  // Reconcile gate (restart-safety lock)
+  const [rgState, setRgState] = useState<{
+    status: 'ok' | 'reconciling' | 'timed_out';
+    duration_seconds: number | null;
+    last_heartbeat: string | null;
+    reason: string | null;
+  }>({ status: 'ok', duration_seconds: null, last_heartbeat: null, reason: null });
+  const [rgLocked, setRgLocked] = useState(false);
+  const [rgResetting, setRgResetting] = useState(false);
 
   const loadProfile = async () => {
     if (!user) return;
@@ -180,7 +189,44 @@ export default function Settings() {
     }
   };
 
-  useEffect(() => { loadProfile(); loadIbStatus(); loadKillSwitch(); loadPositionGuard(); }, [user]);
+  const loadReconcileGate = async () => {
+    try {
+      const r = await fetch('https://bot.lumitrade.ai/api/risk/reconcile-state');
+      if (!r.ok) return;
+      const d = await r.json();
+      if (d?.state) setRgState(d.state);
+      setRgLocked(!!d.locked);
+    } catch {
+      // best-effort
+    }
+  };
+
+  const resetReconcileGate = async () => {
+    setRgResetting(true);
+    try {
+      const syncKey = process.env.EXPO_PUBLIC_LUMI_SYNC_KEY || '';
+      const r = await fetch('https://bot.lumitrade.ai/api/risk/reconcile-state/reset', {
+        method: 'POST',
+        headers: { 'X-Sync-Key': syncKey },
+      });
+      const d = await r.json();
+      if (d?.state) setRgState(d.state);
+      setRgLocked(false);
+    } catch (e: any) {
+      Alert.alert('Reset failed', String(e?.message || e));
+    } finally {
+      setRgResetting(false);
+    }
+  };
+
+  useEffect(() => {
+    loadProfile(); loadIbStatus(); loadKillSwitch(); loadPositionGuard(); loadReconcileGate();
+  }, [user]);
+  // Poll reconcile gate every 5s so the Settings screen reflects state quickly.
+  useEffect(() => {
+    const id = setInterval(loadReconcileGate, 5000);
+    return () => clearInterval(id);
+  }, []);
   // Refresh IB status every 30s
   useEffect(() => {
     const interval = setInterval(loadIbStatus, 30000);
@@ -564,6 +610,62 @@ export default function Settings() {
             Reversals (e.g. BUY signal while short) project to ±limit and pass.
             Closes never blocked. Set per-instrument overrides via the API if
             different limits are needed per ticker (default applies to all).
+          </Text>
+        </Section>
+
+        {/* Restart-Safety Gate */}
+        <Section title="8. Restart-Safety Gate">
+          <View style={styles.row}>
+            <Text style={styles.fieldLabel}>Status</Text>
+            <Text style={[
+              styles.fieldValue,
+              { fontWeight: '600',
+                color: rgState.status === 'ok' && !rgLocked ? Colors.green
+                  : rgState.status === 'timed_out' ? Colors.red
+                  : Colors.amber },
+            ]}>
+              {rgState.status === 'timed_out' ? 'TIMED OUT'
+                : rgState.status === 'reconciling' ? 'Reconciling…'
+                : rgLocked ? 'Heartbeat stale' : 'OK'}
+            </Text>
+          </View>
+          {rgState.duration_seconds != null ? (
+            <View style={styles.row}>
+              <Text style={styles.fieldLabel}>Last reconcile took</Text>
+              <Text style={styles.fieldValue}>{rgState.duration_seconds.toFixed(1)}s</Text>
+            </View>
+          ) : null}
+          {rgState.reason ? (
+            <Text style={[styles.fieldHint, { color: rgState.status === 'timed_out' ? Colors.red : Colors.dark }]}>
+              {rgState.reason}
+            </Text>
+          ) : null}
+          {rgState.status === 'timed_out' ? (
+            <TouchableOpacity
+              style={[styles.ibAuthButton, { backgroundColor: Colors.red, marginTop: 12 },
+                      rgResetting && { opacity: 0.5 }]}
+              onPress={() =>
+                Alert.alert(
+                  'Reset reconcile gate?',
+                  'New trades will resume immediately. Only do this if you have verified broker positions match the bot state.',
+                  [
+                    { text: 'Cancel', style: 'cancel' },
+                    { text: 'Reset', style: 'destructive', onPress: resetReconcileGate },
+                  ],
+                )
+              }
+              disabled={rgResetting}
+            >
+              <Text style={styles.ibAuthText}>
+                {rgResetting ? 'Resetting…' : 'Reset gate'}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
+          <Text style={styles.fieldHint}>
+            On bot restart, webhooks return 503 until the first reconcile pass
+            completes (typically 2–10 s). Hard timeout: 2 min. Defense against
+            acting on stale strat_pos / diary state before the bot has
+            re-synced with the broker.
           </Text>
         </Section>
 
