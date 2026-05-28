@@ -341,6 +341,47 @@ def upsert_live_price(ticker: str, price: float,
         logger.debug("upsert_live_price failed for %s: %s", ticker, e)
 
 
+def query_events(*, strategy_id: Optional[str] = None,
+                 ticker: Optional[str] = None,
+                 since: Optional[str] = None,
+                 until: Optional[str] = None,
+                 limit: int = 500,
+                 user_id: Optional[str] = None) -> list:
+    """Return trade_events rows matching the filters, oldest first.
+
+    All filters are AND-ed; omit any to skip. Used by the /api/strategies/
+    signals endpoint to expose the raw signal stream for comparison against
+    TradingView's alert log.
+    """
+    if not _service_key():
+        return []
+    params: dict = {
+        "select": "event_time,state,ticker,strategy_id,reason,entry_price,exit_price,stop_price,realized_pl,broker_trade_id,client_intent_id",
+        "order": "event_time.asc",
+        "limit": str(max(1, min(limit, 5000))),
+    }
+    if strategy_id:
+        params["strategy_id"] = f"eq.{strategy_id}"
+    if ticker:
+        params["ticker"] = f"eq.{ticker}"
+    if since:
+        params["event_time"] = f"gte.{since}"
+    if until:
+        # PostgREST allows multiple filters on the same column via two query
+        # params with the same name, but urlencode collapses them. Use the
+        # "and=" syntax instead for both bounds when both are set.
+        if since:
+            params.pop("event_time", None)
+            params["and"] = f"(event_time.gte.{since},event_time.lt.{until})"
+        else:
+            params["event_time"] = f"lt.{until}"
+    uid = user_id or _supabase_user_id()
+    if uid:
+        params["user_id"] = f"eq.{uid}"
+    data = _rest_request("GET", "trade_events", params=params)
+    return data if isinstance(data, list) else []
+
+
 def list_live(strategy_id: str, ticker: str, user_id: Optional[str] = None) -> list:
     """List trades currently in a live state (INTENT_OPEN/OPEN/INTENT_CLOSE)
     for one strategy+ticker. Used by the reconciler to compare against

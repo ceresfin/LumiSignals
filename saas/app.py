@@ -2455,6 +2455,115 @@ def create_app():
             },
         })
 
+    @app.route("/api/strategies/signals")
+    def api_strategies_signals():
+        """Return every trade_events row matching the filters.
+
+        Built for diffing the bot's signal stream against TradingView's
+        alert log when counts disagree. JSON list, oldest first.
+
+        Query params:
+            strategy  — strategy_id, e.g. "futures_2n20" or "futures_2n20_v2" (optional)
+            ticker    — e.g. "MES" (optional)
+            since     — ISO timestamp inclusive lower bound (optional)
+            until     — ISO timestamp exclusive upper bound (optional)
+            limit     — max rows, default 500, max 5000
+            format    — "json" (default) or "html" for a sortable browser view
+
+        Auth: X-Sync-Key header.
+        """
+        sync_key = request.headers.get("X-Sync-Key", "")
+        if sync_key != os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026"):
+            return jsonify({"error": "unauthorized"}), 401
+        from lumisignals.diary import query_events
+        strategy = request.args.get("strategy") or None
+        ticker = (request.args.get("ticker") or "").upper().strip() or None
+        since = request.args.get("since") or None
+        until = request.args.get("until") or None
+        try:
+            limit = int(request.args.get("limit", 500))
+        except ValueError:
+            limit = 500
+        rows = query_events(strategy_id=strategy, ticker=ticker,
+                            since=since, until=until, limit=limit)
+
+        # Annotate each row with a "direction" parsed out of `reason`.
+        # The reason field carries the TV-side signal label ("TV BUY [2n20]",
+        # "TV CLOSE_SHORT [2n20]", "Red Takeout Green", etc.) — pull a clean
+        # direction out so consumers don't have to re-parse.
+        for r in rows:
+            reason = (r.get("reason") or "").upper()
+            if "CLOSE_LONG" in reason or "X-LONG" in reason:
+                r["direction"] = "CLOSE_LONG"
+            elif "CLOSE_SHORT" in reason or "X-SHORT" in reason:
+                r["direction"] = "CLOSE_SHORT"
+            elif " BUY" in reason or reason.startswith("BUY"):
+                r["direction"] = "BUY"
+            elif " SELL" in reason or reason.startswith("SELL"):
+                r["direction"] = "SELL"
+            else:
+                r["direction"] = None
+
+        fmt = request.args.get("format", "json").lower()
+        if fmt != "html":
+            return jsonify({
+                "count": len(rows),
+                "filters": {"strategy": strategy, "ticker": ticker,
+                            "since": since, "until": until, "limit": limit},
+                "events": rows,
+            })
+
+        # Tiny HTML view — sortable browser table for visual diff vs TV.
+        def esc(v):
+            from html import escape as _e
+            return _e(str(v)) if v is not None else ""
+        def color_for(state, direction):
+            if state == "INTENT_OPEN" or state == "OPEN":
+                return "#1b5e20" if direction == "BUY" else "#b71c1c"
+            if state == "INTENT_CLOSE" or state == "CLOSED":
+                return "#555"
+            return "#777"
+        head_filters = f"strategy={strategy or '*'} ticker={ticker or '*'} since={since or '*'} until={until or '*'}"
+        body_rows = []
+        for r in rows:
+            color = color_for(r.get("state"), r.get("direction"))
+            body_rows.append(
+                "<tr>"
+                + f"<td>{esc(r.get('event_time', '')[:19])}</td>"
+                + f"<td>{esc(r.get('ticker'))}</td>"
+                + f"<td style='color:{color}'>{esc(r.get('state'))}</td>"
+                + f"<td>{esc(r.get('direction'))}</td>"
+                + f"<td>{esc(r.get('entry_price'))}</td>"
+                + f"<td>{esc(r.get('exit_price'))}</td>"
+                + f"<td>{esc(r.get('stop_price'))}</td>"
+                + f"<td>{esc(r.get('realized_pl'))}</td>"
+                + f"<td>{esc(r.get('reason'))}</td>"
+                + f"<td>{esc(r.get('broker_trade_id'))}</td>"
+                + "</tr>"
+            )
+        html = (
+            "<!doctype html><html><head><meta charset='utf-8'>"
+            "<title>Signals</title>"
+            "<style>"
+            "body{font:13px -apple-system,sans-serif;background:#fafafa;color:#222;padding:12px}"
+            "h2{margin:0 0 8px;font-size:15px}"
+            ".sub{color:#888;font-size:11px;margin-bottom:12px}"
+            "table{border-collapse:collapse;width:100%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.06)}"
+            "th,td{padding:6px 10px;border-bottom:1px solid #eee;text-align:left;white-space:nowrap}"
+            "th{background:#f0f0f0;font-weight:600;font-size:12px}"
+            "tr:hover{background:#fafcff}"
+            "</style></head><body>"
+            f"<h2>Signals · {len(rows)} events</h2>"
+            f"<div class='sub'>{esc(head_filters)}</div>"
+            "<table>"
+            "<thead><tr><th>Time (UTC)</th><th>Ticker</th><th>State</th>"
+            "<th>Dir</th><th>Entry</th><th>Exit</th><th>Stop</th><th>P&amp;L</th>"
+            "<th>Reason</th><th>Broker ID</th></tr></thead>"
+            "<tbody>" + "".join(body_rows) + "</tbody></table>"
+            "</body></html>"
+        )
+        return html, 200, {"Content-Type": "text/html; charset=utf-8"}
+
     @app.route("/api/adx/direction")
     def api_adx_direction():
         """ADX direction per TF for a single instrument.
