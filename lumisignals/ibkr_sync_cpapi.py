@@ -1688,6 +1688,11 @@ def check_order_requests(client):
                         "vix", "or_high", "or_low", "or_range",
                         "stop_size", "stop_reason", "reversal",
                     ) if order.get(k) is not None}
+                    # Latency telemetry from the saas webhook handler
+                    # (Tier 2 #9). Stored on the queued order; threaded
+                    # into the INTENT_OPEN diary row below.
+                    webhook_received_at = order.get("webhook_received_at")
+                    tv_latency_seconds = order.get("tv_latency_seconds")
 
                     if direction in ("CLOSE_LONG", "CLOSE_SHORT"):
                         # Per-strategy entry price — prefer strat_pos (the
@@ -2176,6 +2181,8 @@ def check_order_requests(client):
                                 stop_price=sl_price,
                                 target_price=(tp_price if tp_price > 0 else None),
                                 signal_price=last_price if last_price else None,
+                                webhook_received_at=webhook_received_at,
+                                tv_latency_seconds=tv_latency_seconds,
                                 meta={"quote_source": quote_source} if quote_source else None,
                             )
                         except Exception as _de:

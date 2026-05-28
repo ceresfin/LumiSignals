@@ -2732,6 +2732,98 @@ def create_app():
             "recent_pairs": pairs[-25:],  # last 25 for spot-checking
         })
 
+    @app.route("/api/strategies/latency")
+    def api_strategies_latency():
+        """TV → bot latency stats over a window.
+
+        For each INTENT_OPEN row with tv_latency_seconds populated, computes
+        count, average, median, p50, p95, max in seconds.
+
+        Latency = (webhook_received_at − signal_bar_close_at) where
+        signal_bar_close_at is the most-recent closed bar in our cache at
+        webhook receive time (bar_open + 120s for 2m bars). Captures the
+        Pine alert latency + TV delivery latency end-to-end.
+
+        Query params: strategy, ticker, since, until, limit.
+        Auth: X-Sync-Key.
+        """
+        sync_key = request.headers.get("X-Sync-Key", "")
+        if sync_key != os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026"):
+            return jsonify({"error": "unauthorized"}), 401
+        strategy = request.args.get("strategy") or "futures_2n20"
+        ticker = (request.args.get("ticker") or "MES").upper().strip()
+        since = request.args.get("since") or None
+        until = request.args.get("until") or None
+        try:
+            limit = int(request.args.get("limit", 2000))
+        except ValueError:
+            limit = 2000
+
+        # query_events doesn't currently select tv_latency_seconds; raw fetch.
+        url = os.environ.get("SUPABASE_URL") or ""
+        key = os.environ.get("SUPABASE_SERVICE_KEY") or ""
+        if not url or not key:
+            return jsonify({"error": "supabase env missing"}), 500
+        import urllib.parse, urllib.request, urllib.error
+        params = {
+            "select": "event_time,tv_latency_seconds,webhook_received_at,reason",
+            "state": "eq.INTENT_OPEN",
+            "strategy_id": f"eq.{strategy}",
+            "ticker": f"eq.{ticker}",
+            "tv_latency_seconds": "not.is.null",
+            "order": "event_time.desc",
+            "limit": str(max(1, min(limit, 5000))),
+        }
+        if since and until:
+            params["and"] = f"(event_time.gte.{since},event_time.lt.{until})"
+        elif since:
+            params["event_time"] = f"gte.{since}"
+        elif until:
+            params["event_time"] = f"lt.{until}"
+        q = urllib.parse.urlencode(params)
+        req = urllib.request.Request(
+            f"{url}/rest/v1/trade_events?{q}",
+            headers={"apikey": key, "Authorization": f"Bearer {key}"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                rows = json.loads(resp.read())
+        except Exception as e:
+            return jsonify({"error": f"query failed: {e}"}), 500
+
+        lats = [float(r["tv_latency_seconds"]) for r in rows
+                if r.get("tv_latency_seconds") is not None]
+        if not lats:
+            return jsonify({
+                "ticker": ticker, "strategy": strategy,
+                "window": {"since": since, "until": until},
+                "count": 0, "stats": None,
+                "recent": [],
+            })
+        sorted_l = sorted(lats)
+        n = len(sorted_l)
+        avg = sum(sorted_l) / n
+        median = sorted_l[n // 2] if n % 2 == 1 else (sorted_l[n // 2 - 1] + sorted_l[n // 2]) / 2
+        p95_idx = max(0, min(n - 1, int(0.95 * n)))
+        return jsonify({
+            "ticker": ticker, "strategy": strategy,
+            "window": {"since": since, "until": until},
+            "count": n,
+            "stats": {
+                "avg_seconds": round(avg, 3),
+                "median_seconds": round(median, 3),
+                "p95_seconds": round(sorted_l[p95_idx], 3),
+                "max_seconds": round(sorted_l[-1], 3),
+                "min_seconds": round(sorted_l[0], 3),
+            },
+            "recent": [{
+                "event_time": r.get("event_time"),
+                "webhook_received_at": r.get("webhook_received_at"),
+                "tv_latency_seconds": r.get("tv_latency_seconds"),
+                "reason": r.get("reason"),
+            } for r in rows[:25]],
+        })
+
     @app.route("/api/risk/missed-signal-alert", methods=["GET", "PUT", "POST"])
     def api_risk_missed_signal_alert():
         """Manage + run the missed-signal alert.
@@ -3733,6 +3825,39 @@ def create_app():
                 data["reason"] = direction  # preserve original label
             direction = _PINE_DIR_MAP[direction]
 
+        # TV → bot latency (Tier 2 #9): capture webhook arrival time and
+        # the most-recent closed bar at that moment so we can compute
+        # latency = (received_at − bar_close_at). Bar close = bar_open
+        # + 120s for 2m bars. Stored on the queued order; threaded into
+        # the diary's INTENT_OPEN row by ibkr-sync.
+        from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+        webhook_received_at = _dt.now(_tz.utc)
+        tv_latency_seconds = None
+        if direction in ("BUY", "SELL") and ticker:
+            try:
+                import redis as _r
+                rdb = _r.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+                raw = rdb.get(f"ibkr:bars:{ticker}:2m")
+                if raw:
+                    cached = json.loads(raw)
+                    bars = cached.get("bars", []) or []
+                    if bars:
+                        last_bar = bars[-1]
+                        t = last_bar.get("time", 0)
+                        if isinstance(t, (int, float)):
+                            bar_open = _dt.fromtimestamp(int(t), tz=_tz.utc)
+                        else:
+                            bar_open = _dt.fromisoformat(str(t).replace("Z", "+00:00"))
+                        bar_close = bar_open + _td(seconds=120)
+                        # If the bar Pine "saw" was actually the prior one
+                        # (delivery slack means a bar may still be forming
+                        # when the webhook arrives), clip non-negative.
+                        tv_latency_seconds = round(
+                            max(0.0, (webhook_received_at - bar_close).total_seconds()), 3,
+                        )
+            except Exception:
+                tv_latency_seconds = None
+
         # ─── LEVELS SYNC PATH — store TV levels for comparison dashboard ───
         if strategy == "tv_levels_sync":
             rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
@@ -3937,6 +4062,11 @@ def create_app():
             ):
                 if fld in data:
                     order[fld] = data[fld]
+            # Latency telemetry — threaded into the diary's INTENT_OPEN row
+            # by ibkr-sync.
+            order["webhook_received_at"] = webhook_received_at.isoformat()
+            if tv_latency_seconds is not None:
+                order["tv_latency_seconds"] = tv_latency_seconds
             rdb.setex(f"ibkr:order:pending:{order_id}", 86400, json.dumps(order))
             # 30s dedup — only protects against accidental webhook retries from TV
             # itself. Pine's `alert.freq_once_per_bar_close` already ensures one
