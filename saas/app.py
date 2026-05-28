@@ -2475,7 +2475,7 @@ def create_app():
         sync_key = request.headers.get("X-Sync-Key", "")
         if sync_key != os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026"):
             return jsonify({"error": "unauthorized"}), 401
-        from lumisignals.diary import query_events
+        from lumisignals.diary import query_events, fetch_events_by_broker_ids
         strategy = request.args.get("strategy") or None
         ticker = (request.args.get("ticker") or "").upper().strip() or None
         since = request.args.get("since") or None
@@ -2486,6 +2486,29 @@ def create_app():
             limit = 500
         rows = query_events(strategy_id=strategy, ticker=ticker,
                             since=since, until=until, limit=limit)
+
+        # Enrich CLOSED rows with entry_time + entry_price from the matching
+        # OPEN event. Entries on overnight trades often happen outside the
+        # requested window, so a fresh query by broker_trade_id is needed.
+        closed_ids = [r.get("broker_trade_id") for r in rows
+                      if r.get("state") == "CLOSED" and r.get("broker_trade_id")]
+        if closed_ids:
+            opens = fetch_events_by_broker_ids(closed_ids, state="OPEN")
+            open_by_id: dict = {}
+            for o in opens:
+                tid = o.get("broker_trade_id")
+                if tid and tid not in open_by_id:
+                    open_by_id[tid] = o
+            for r in rows:
+                if r.get("state") == "CLOSED":
+                    tid = r.get("broker_trade_id")
+                    m = open_by_id.get(tid)
+                    if m:
+                        r["entry_time"] = m.get("event_time")
+                        # If the CLOSED row didn't carry the entry price
+                        # itself, fall back to the OPEN's fill price.
+                        if r.get("entry_price") is None and m.get("entry_price") is not None:
+                            r["entry_price"] = m.get("entry_price")
 
         # Annotate each row with a "direction" parsed out of `reason`.
         # The reason field carries the TV-side signal label ("TV BUY [2n20]",

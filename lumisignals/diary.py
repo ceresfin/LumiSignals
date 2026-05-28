@@ -382,6 +382,32 @@ def query_events(*, strategy_id: Optional[str] = None,
     return data if isinstance(data, list) else []
 
 
+def fetch_events_by_broker_ids(broker_ids: list, state: Optional[str] = None) -> list:
+    """Fetch trade_events rows for a specific set of broker_trade_ids.
+
+    Used to enrich the /api/strategies/signals output: when the date-range
+    query returns CLOSED events, we look up their matching OPEN events
+    (which may have happened outside the requested window) so the UI can
+    show entry+exit times on one row.
+    """
+    if not broker_ids or not _service_key():
+        return []
+    # Drop None/empty, cap to 1000 IDs to keep the URL reasonable.
+    ids = [str(x) for x in broker_ids if x][:1000]
+    if not ids:
+        return []
+    params = {
+        "select": "event_time,state,broker_trade_id,entry_price",
+        "broker_trade_id": f"in.({','.join(ids)})",
+        "order": "event_time.asc",
+        "limit": "5000",
+    }
+    if state:
+        params["state"] = f"eq.{state}"
+    data = _rest_request("GET", "trade_events", params=params)
+    return data if isinstance(data, list) else []
+
+
 def list_live(strategy_id: str, ticker: str, user_id: Optional[str] = None) -> list:
     """List trades currently in a live state (INTENT_OPEN/OPEN/INTENT_CLOSE)
     for one strategy+ticker. Used by the reconciler to compare against

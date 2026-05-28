@@ -20,6 +20,7 @@ type SignalEvent = {
   stop_price: number | null;
   realized_pl: number | null;
   broker_trade_id: string | null;
+  entry_time?: string | null;   // server enriches CLOSED rows with the matching OPEN's time
 };
 
 type Range = 'today' | 'wtd' | 'mtd' | 'all';
@@ -65,6 +66,35 @@ function fmtTime(iso: string): string {
     });
   } catch {
     return iso;
+  }
+}
+
+// Short HH:MM AM/PM for the entry stamp on CLOSED rows.
+function fmtTimeShort(iso: string): string {
+  try {
+    return new Date(iso).toLocaleString('en-US', {
+      timeZone: 'America/New_York',
+      hour: 'numeric', minute: '2-digit', hour12: true,
+    });
+  } catch {
+    return iso;
+  }
+}
+
+// Duration in compact form: "23s", "4m", "1h 12m".
+function fmtDuration(fromIso: string, toIso: string): string {
+  try {
+    const ms = new Date(toIso).getTime() - new Date(fromIso).getTime();
+    if (!Number.isFinite(ms) || ms < 0) return '';
+    const secs = Math.round(ms / 1000);
+    if (secs < 90) return `${secs}s`;
+    const mins = Math.round(secs / 60);
+    if (mins < 60) return `${mins}m`;
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    return m === 0 ? `${h}h` : `${h}h ${m}m`;
+  } catch {
+    return '';
   }
 }
 
@@ -222,6 +252,7 @@ export default function SignalsScreen() {
           ItemSeparatorComponent={() => <View style={styles.sep} />}
           renderItem={({ item }) => {
             const pill = statePillStyle(item.state, item.direction);
+            const isClosed = item.state === 'CLOSED';
             return (
               <View style={styles.row}>
                 <View style={styles.rowTopLine}>
@@ -231,7 +262,14 @@ export default function SignalsScreen() {
                     </Text>
                   </View>
                   <Text style={styles.tickerText}>{item.ticker}</Text>
-                  <Text style={styles.timeText}>{fmtTime(item.event_time)}</Text>
+                  <View style={styles.timeBlock}>
+                    <Text style={styles.timeText}>{fmtTime(item.event_time)}</Text>
+                    {isClosed && item.entry_time ? (
+                      <Text style={styles.entryTimeText}>
+                        opened {fmtTimeShort(item.entry_time)} ({fmtDuration(item.entry_time, item.event_time)})
+                      </Text>
+                    ) : null}
+                  </View>
                 </View>
                 {(item.entry_price != null || item.exit_price != null
                   || item.stop_price != null || item.realized_pl != null) && (
@@ -298,7 +336,9 @@ const styles = StyleSheet.create({
   statePill: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 4 },
   stateText: { fontSize: 11, fontWeight: '600' },
   tickerText: { fontSize: 12, color: Colors.dark, fontWeight: '600' },
-  timeText: { fontSize: 11, color: Colors.textLight, marginLeft: 'auto' },
+  timeBlock: { marginLeft: 'auto', alignItems: 'flex-end' },
+  timeText: { fontSize: 11, color: Colors.textLight },
+  entryTimeText: { fontSize: 10, color: Colors.textLight, marginTop: 1, fontStyle: 'italic' },
   rowPrices: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: 6 },
   priceCell: { fontSize: 11, color: Colors.textMedium, fontVariant: ['tabular-nums'] },
   reasonText: { fontSize: 11, color: Colors.textLight, marginTop: 4, fontStyle: 'italic' },
