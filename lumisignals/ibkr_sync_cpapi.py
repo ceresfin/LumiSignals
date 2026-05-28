@@ -402,6 +402,8 @@ def _lookup_signal_metadata(signal_log: dict, trade_id: str, instrument: str,
 
 _last_mes_bars_push = 0
 MES_BARS_PUSH_INTERVAL = 60  # seconds
+_last_missed_signal_check = 0
+MISSED_SIGNAL_CHECK_INTERVAL = 300  # 5 minutes
 
 
 def push_mes_bars_to_server(client):
@@ -3147,6 +3149,7 @@ def main():
     consecutive_errors = 0
     alerted_for_streak = False
     first_pass_complete = False
+    global _last_missed_signal_check
 
     while True:
         try:
@@ -3307,6 +3310,20 @@ def main():
                     logger.info("First sync+reconcile pass complete — webhooks unlocked")
             except Exception as _e:
                 logger.debug("reconcile_gate mark_ok failed: %s", _e)
+
+            # Missed-signal alerting (Tier 1 #3): every 5 min, run the 2n20
+            # replay over the last 30 min and Telegram if Pine fired signals
+            # we never received. Cheap when there's nothing to alert.
+            now_secs = time.time()
+            if now_secs - _last_missed_signal_check >= MISSED_SIGNAL_CHECK_INTERVAL:
+                _last_missed_signal_check = now_secs
+                try:
+                    from .missed_signal_alert import check_and_alert
+                    res = check_and_alert()
+                    if res.get("new_alerts"):
+                        logger.warning("missed-signal check: %s", res)
+                except Exception as _e:
+                    logger.debug("missed_signal_alert.check_and_alert failed: %s", _e)
 
         except Exception as e:
             logger.exception("Sync error: %s", e)  # include traceback — past silent failures wasted hours

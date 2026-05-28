@@ -2609,6 +2609,31 @@ def create_app():
         state = kill_switch.check_and_trip()
         return jsonify({"config": cfg, "state": state})
 
+    @app.route("/api/risk/missed-signal-alert", methods=["GET", "PUT", "POST"])
+    def api_risk_missed_signal_alert():
+        """Manage + run the missed-signal alert.
+
+        GET  → { config, last_run }   — read current config + last result.
+        PUT  → body: any subset of config; returns merged config.
+        POST → run check_and_alert() right now (manual trigger). Useful
+               for sanity-checking that the alert path works without
+               waiting for the 5-min cron.
+        Auth: X-Sync-Key header.
+        """
+        sync_key = request.headers.get("X-Sync-Key", "")
+        if sync_key != os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026"):
+            return jsonify({"error": "unauthorized"}), 401
+        from lumisignals import missed_signal_alert
+        if request.method == "PUT":
+            body = request.get_json(silent=True) or {}
+            cfg = missed_signal_alert.set_config(body)
+            return jsonify({"config": cfg})
+        if request.method == "POST":
+            result = missed_signal_alert.check_and_alert()
+            return jsonify({"config": missed_signal_alert.get_config(),
+                            "result": result})
+        return jsonify({"config": missed_signal_alert.get_config()})
+
     @app.route("/api/risk/reconcile-state", methods=["GET"])
     def api_risk_reconcile_state():
         """Read the restart-safety gate state. Mobile polls this every few
