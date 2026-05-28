@@ -123,6 +123,29 @@ function modelKey(raw: string): ModelKey {
   return 'scalp'; // sensible default
 }
 
+// True iff a trade opened during regular trading hours: 9:30 AM – 4:00 PM ET, Mon–Fri.
+// We anchor on opened_at (the moment the strategy fired) — closed_at can fall in a
+// different session if the trade carries across, but the regime at entry is what matters.
+function isRthOpen(t: Trade): boolean {
+  const iso = t.opened_at;
+  if (!iso) return false;
+  // Use Intl in America/New_York to handle DST automatically — avoids hardcoding UTC offsets.
+  const d = new Date(iso);
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    weekday: 'short',
+    hour: 'numeric',
+    minute: 'numeric',
+    hour12: false,
+  }).formatToParts(d);
+  const wd = parts.find(p => p.type === 'weekday')?.value || '';
+  const hh = parseInt(parts.find(p => p.type === 'hour')?.value || '0', 10);
+  const mm = parseInt(parts.find(p => p.type === 'minute')?.value || '0', 10);
+  if (wd === 'Sat' || wd === 'Sun') return false;
+  const minOfDay = hh * 60 + mm;
+  return minOfDay >= 9 * 60 + 30 && minOfDay < 16 * 60;
+}
+
 // Build the subtitle label from the SELECTED date range, not the
 // min/max of trade timestamps. That way "Today" always says "Today",
 // "MTD" always says "MTD: May 1 — May 12", etc.
@@ -351,6 +374,8 @@ export default function Dashboard() {
   const [activeTab, setActiveTab] = useState('forex');
   const [refreshing, setRefreshing] = useState(false);
   const [dateRange, setDateRange] = useState<'today' | 'wtd' | 'mtd' | 'qtd' | 'ytd' | 'all'>('mtd');
+  // Session filter: RTH = 9:30 AM – 4:00 PM ET Mon–Fri. Overnight = everything else.
+  const [sessionFilter, setSessionFilter] = useState<'all' | 'rth' | 'overnight'>('all');
 
   // Compute the start-of-range ISO timestamp for the user's selection.
   // The trades table stores UTC, so we always return a UTC ISO string.
@@ -368,22 +393,31 @@ export default function Dashboard() {
     if (range === 'all') return null;
     const now = new Date();
     if (range === 'today') {
-      // 6 PM NY (UTC-4 EDT or UTC-5 EST). Detect which via the date's
-      // own NY tz formatter and subtract.
+      // Session-aware "Today":
+      //   Day        → most recent 9:30 AM ET (today's if past 9:30, else yesterday's)
+      //   Overnight  → most recent 4:00 PM ET (today's if past 4 PM, else yesterday's)
+      //   All Hours  → calendar midnight ET → now
+      // This way Day stats reset at 9:30 AM and Overnight stats reset at 4 PM —
+      // each session card tracks the most-recent (or in-progress) instance.
       const tzShort = now.toLocaleString('en-US', {
         timeZone: 'America/New_York', timeZoneName: 'short',
       });
       const offsetHours = tzShort.includes('EDT') ? 4 : 5;
-      // 18:00 NY = (18 + offsetHours) UTC, same UTC day if offset >= 6
-      // (always true here), so set on the current UTC date first.
-      const utc6PM_ET = new Date(now);
-      utc6PM_ET.setUTCHours(18 + offsetHours, 0, 0, 0);
-      // If we're before today's NY 6 PM, the active session started
-      // YESTERDAY at NY 6 PM. Step back one UTC day.
-      if (now < utc6PM_ET) {
-        utc6PM_ET.setUTCDate(utc6PM_ET.getUTCDate() - 1);
+      let etStartHour = 0;
+      let etStartMin = 0;
+      if (sessionFilter === 'rth') {
+        etStartHour = 9; etStartMin = 30;
+      } else if (sessionFilter === 'overnight') {
+        etStartHour = 16; etStartMin = 0;
       }
-      return utc6PM_ET.toISOString();
+      // Build the target instant in UTC: today's date with hour = (target_ET + offset).
+      const startUTC = new Date(now);
+      startUTC.setUTCHours(etStartHour + offsetHours, etStartMin, 0, 0);
+      // If we haven't reached today's boundary yet, roll back one day.
+      if (now < startUTC) {
+        startUTC.setUTCDate(startUTC.getUTCDate() - 1);
+      }
+      return startUTC.toISOString();
     }
     const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());  // local midnight
     if (range === 'wtd') {
@@ -461,8 +495,9 @@ export default function Dashboard() {
   };
 
   useEffect(() => { loadData(); }, [user]);
-  // Reload when date range changes
-  useEffect(() => { if (user) loadData(dateRange); }, [dateRange]);
+  // Reload when date range OR session filter changes — the "Today" start
+  // anchors to 9:30 AM (Day), 4 PM (Overnight), or midnight (All Hours) ET.
+  useEffect(() => { if (user) loadData(dateRange); }, [dateRange, sessionFilter]);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -471,13 +506,22 @@ export default function Dashboard() {
   };
 
   const tab = TABS.find(t => t.key === activeTab)!;
-  const filtered = allTrades.filter(tab.filter);
-  const filteredPositions = allPositions.filter(p =>
-    tab.filter({
+  const sessionPass = (t: Trade) => {
+    if (sessionFilter === 'all') return true;
+    if (!t.opened_at) return false; // missing timestamp → exclude from session-specific buckets
+    const rth = isRthOpen(t);
+    return sessionFilter === 'rth' ? rth : !rth;
+  };
+  const filtered = allTrades.filter(t => tab.filter(t) && sessionPass(t));
+  const filteredPositions = allPositions.filter(p => {
+    const matchTab = tab.filter({
       asset_type: p.asset_type,
       instrument: p.instrument,
       broker: p.broker,
-    } as Trade));
+    } as Trade);
+    if (!matchTab) return false;
+    return sessionPass({ opened_at: p.opened_at } as Trade);
+  });
   const stats = calcStats(filtered);
   const strategies = calcStrategiesByModel(filtered, filteredPositions, dateRange);
   const pairs = calcPairs(filtered);
@@ -546,6 +590,25 @@ export default function Dashboard() {
               onPress={() => setDateRange(k)}
             >
               <Text style={[dateRangeStyles.chipText, dateRange === k && dateRangeStyles.chipTextActive]}>
+                {label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        {/* Session Filter — All Hours / Day (9:30-4 ET) / Overnight */}
+        <View style={dateRangeStyles.bar}>
+          {([
+            ['all', 'All Hours'],
+            ['rth', 'Day'],
+            ['overnight', 'Overnight'],
+          ] as const).map(([k, label]) => (
+            <TouchableOpacity
+              key={k}
+              style={[dateRangeStyles.chip, sessionFilter === k && dateRangeStyles.chipActive]}
+              onPress={() => setSessionFilter(k)}
+            >
+              <Text style={[dateRangeStyles.chipText, sessionFilter === k && dateRangeStyles.chipTextActive]}>
                 {label}
               </Text>
             </TouchableOpacity>
