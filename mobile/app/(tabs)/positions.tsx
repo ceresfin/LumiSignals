@@ -28,7 +28,8 @@ function defaultChartTf(strategy?: string, model?: string): string {
 }
 function buildChartUrl(p: { instrument: string; entry_price?: number;
                             direction?: string; stop_loss?: number;
-                            contracts?: number; strategy?: string; },
+                            contracts?: number; strategy?: string;
+                            opened_at?: string; },
                        tf: string): string {
   const params = new URLSearchParams({
     ticker: p.instrument,
@@ -40,6 +41,10 @@ function buildChartUrl(p: { instrument: string; entry_price?: number;
   if (p.stop_loss)    params.set('stop', String(p.stop_loss));
   if (p.contracts)    params.set('units', String(p.contracts));
   if (p.strategy)     params.set('strategy', p.strategy);
+  if (p.opened_at) {
+    const ts = Math.floor(new Date(p.opened_at).getTime() / 1000);
+    if (Number.isFinite(ts) && ts > 0) params.set('entry_ts', String(ts));
+  }
   return `${CHART_API_BASE}/chart?${params.toString()}`;
 }
 const INLINE_CHART_TFS = ['2m', '5m', '15m', '1h', '4h', '1d'];
@@ -486,6 +491,7 @@ function PositionRow({ position, onChartPress, onClose, closing, livePrice,
               stop_loss: position.stop_loss,
               contracts: position.contracts,
               strategy: position.strategy,
+              opened_at: position.opened_at,
             }, chartTf) }}
             style={styles.inlineChartWebview}
             javaScriptEnabled

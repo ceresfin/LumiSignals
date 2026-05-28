@@ -42,6 +42,9 @@
     // drops a triangle marker on the bar where price first entered the
     // zone band. Optional; ignored if not provided.
     const ACTIVATED_AT = params.get('activated_at') ? parseFloat(params.get('activated_at')) : null;
+    // Entry timestamp (unix seconds UTC) — drops a BUY/SELL triangle on the
+    // bar where the trade opened. Optional; ignored if not provided.
+    const ENTRY_TS = params.get('entry_ts') ? parseFloat(params.get('entry_ts')) : null;
 
     // Strategy display rules
     const IS_2N20 = STRATEGY.includes('2n20') || STRATEGY.includes('vwap');
@@ -229,6 +232,17 @@
               }
               window._vwapSeries.setData(vw);
             }
+            // Redraw EMA20 if it was added.
+            if (typeof window._ema20Series !== 'undefined' && window._ema20Series) {
+              const N = 20, kk = 2 / (N + 1);
+              const ed = [];
+              let e = null;
+              for (let i = 0; i < _uniq.length; i++) {
+                e = e == null ? _uniq[i].close : (_uniq[i].close * kk + e * (1 - kk));
+                if (i >= N - 1) ed.push({ time: _uniq[i].time, value: e });
+              }
+              window._ema20Series.setData(ed);
+            }
           } catch (e) {
             // Silent — refresh errors shouldn't break the chart.
           }
@@ -259,6 +273,31 @@
           // Expose so the auto-refresh poller can redraw VWAP on every
           // new candle batch. Scope is the chart page only.
           window._vwapSeries = vwapSeries;
+        }
+
+        // EMA20 — light grey line, same look as TradingView's default 20 EMA.
+        // Standard exponential smoothing with multiplier 2/(N+1) = 2/21.
+        {
+          const N = 20;
+          const k = 2 / (N + 1);
+          const emaData = [];
+          let ema = null;
+          for (let i = 0; i < unique.length; i++) {
+            const c = unique[i].close;
+            ema = ema == null ? c : (c * k + ema * (1 - k));
+            // Skip the first N-1 bars where EMA hasn't fully seeded —
+            // avoids a flat line at the start of the dataset.
+            if (i >= N - 1) emaData.push({ time: unique[i].time, value: ema });
+          }
+          const emaSeries = chart.addLineSeries({
+            color: 'rgba(200, 200, 200, 0.85)',
+            lineWidth: 2,
+            title: 'EMA 20',
+            priceLineVisible: false,
+            lastValueVisible: false,
+          });
+          emaSeries.setData(emaData);
+          window._ema20Series = emaSeries;  // for auto-refresh poller
         }
 
         // Fetch and overlay S/R levels (only for HTF strategies, not 2n20)
@@ -753,7 +792,7 @@
         // replaced — lightweight-charts setMarkers REPLACES). For
         // Tidewater zone charts this is the only marker, no conflict.
         if (ACTIVATED_AT && !IS_H1_ZONE) {
-          const ts = Math.floor(ACTIVATED_AT) + ET_OFFSET;
+          const ts = Math.floor(ACTIVATED_AT);
           candleSeries.setMarkers([{
             time: ts,
             position: 'belowBar',
@@ -761,6 +800,23 @@
             shape: 'arrowUp',
             text: 'activated',
             size: 1,
+          }]);
+        }
+
+        // Entry triangle — BUY (lime, below bar) or SELL (red, above bar)
+        // on the candle where the trade opened. Mirrors TradingView's
+        // built-in plotshape markers. Skipped on H1Zone (those have
+        // their own fill markers) and on charts that already painted
+        // an activation triangle.
+        if (HAS_TRADE && ENTRY_TS && !IS_H1_ZONE && !ACTIVATED_AT) {
+          const isLong = DIRECTION === 'BUY' || DIRECTION === 'LONG';
+          candleSeries.setMarkers([{
+            time: Math.floor(ENTRY_TS),
+            position: isLong ? 'belowBar' : 'aboveBar',
+            color: isLong ? '#00e676' : '#ff1744',
+            shape: isLong ? 'arrowUp' : 'arrowDown',
+            text: isLong ? 'BUY' : 'SELL',
+            size: 2,
           }]);
         }
 
@@ -828,7 +884,7 @@
             if (z.fills && z.fills.length) {
               const markers = z.fills.map((f) => {
                 let ts = 0;
-                try { ts = Math.floor(new Date(f.time).getTime() / 1000) + ET_OFFSET; }
+                try { ts = Math.floor(new Date(f.time).getTime() / 1000); }
                 catch (e) { ts = 0; }
                 const isClose = f.reason && f.reason !== 'LIMIT_ORDER';
                 return {
@@ -910,7 +966,7 @@
         // indicators (entry/SL/target lines) when their prices fell
         // outside the auto-scaled price range of the visible window.
         chart.applyOptions({
-            timeScale: { rightOffset: 4, barSpacing: 8 },
+            timeScale: { rightOffset: 4, barSpacing: 14 },
         });
         chart.timeScale().fitContent();
 
