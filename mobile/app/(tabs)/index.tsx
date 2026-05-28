@@ -396,26 +396,31 @@ export default function Dashboard() {
       // Session-aware "Today":
       //   Day        → most recent 9:30 AM ET (today's if past 9:30, else yesterday's)
       //   Overnight  → most recent 4:00 PM ET (today's if past 4 PM, else yesterday's)
-      //   All Hours  → calendar midnight ET → now
-      // This way Day stats reset at 9:30 AM and Overnight stats reset at 4 PM —
-      // each session card tracks the most-recent (or in-progress) instance.
+      //   All Hours  → min(Day start, Overnight start) so Day + Overnight == All Hours
+      //
+      // The trading day becomes a continuous window: 9:30 AM today onwards
+      // (post-RTH), or 4 PM yesterday onwards (during RTH the next day). Each
+      // session card tracks the most-recent (or in-progress) instance.
       const tzShort = now.toLocaleString('en-US', {
         timeZone: 'America/New_York', timeZoneName: 'short',
       });
       const offsetHours = tzShort.includes('EDT') ? 4 : 5;
-      let etStartHour = 0;
-      let etStartMin = 0;
+      const mostRecent = (etHour: number, etMin: number) => {
+        const t = new Date(now);
+        t.setUTCHours(etHour + offsetHours, etMin, 0, 0);
+        if (now < t) t.setUTCDate(t.getUTCDate() - 1);
+        return t;
+      };
+      const dayStart = mostRecent(9, 30);
+      const overnightStart = mostRecent(16, 0);
+      let startUTC: Date;
       if (sessionFilter === 'rth') {
-        etStartHour = 9; etStartMin = 30;
+        startUTC = dayStart;
       } else if (sessionFilter === 'overnight') {
-        etStartHour = 16; etStartMin = 0;
-      }
-      // Build the target instant in UTC: today's date with hour = (target_ET + offset).
-      const startUTC = new Date(now);
-      startUTC.setUTCHours(etStartHour + offsetHours, etStartMin, 0, 0);
-      // If we haven't reached today's boundary yet, roll back one day.
-      if (now < startUTC) {
-        startUTC.setUTCDate(startUTC.getUTCDate() - 1);
+        startUTC = overnightStart;
+      } else {
+        // All Hours = earlier of the two so the window covers both segments.
+        startUTC = dayStart < overnightStart ? dayStart : overnightStart;
       }
       return startUTC.toISOString();
     }
