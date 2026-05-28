@@ -7,7 +7,7 @@
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { background: #1a1a2e; overflow: hidden; font-family: -apple-system, sans-serif; }
-    #chart { width: 100vw; height: 100vh; }
+    #chart { width: 100vw; height: 100vh; position: relative; }
     #loading {
       position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
       color: #888; font-size: 14px;
@@ -16,10 +16,34 @@
       position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
       color: #c0392b; font-size: 14px; text-align: center; padding: 20px; display: none;
     }
+    /* TradingView-style contract + bar-close countdown badge.
+       Position floats on the right of the chart at the latest-price level
+       (set dynamically in JS via priceToCoordinate). */
+    #contractBadge {
+      position: absolute;
+      right: 56px;          /* clear the price-scale labels */
+      pointer-events: none;
+      background: #3E7F6B;  /* green by default, updated to red when down */
+      color: #fff;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      line-height: 1.2;
+      font-weight: 600;
+      text-align: center;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+      display: none;
+      z-index: 10;
+      min-width: 64px;
+    }
+    #contractBadge .sym { font-size: 10px; opacity: 0.95; }
+    #contractBadge .cd  { font-size: 11px; font-variant-numeric: tabular-nums; margin-top: 1px; }
   </style>
 </head>
 <body>
-  <div id="chart"></div>
+  <div id="chart">
+    <div id="contractBadge"><div class="sym"></div><div class="cd"></div></div>
+  </div>
   <div id="loading">Loading chart...</div>
   <div id="error"></div>
 
@@ -969,6 +993,110 @@
             timeScale: { rightOffset: 4, barSpacing: 14 },
         });
         chart.timeScale().fitContent();
+
+        // ─── CONTRACT + BAR-CLOSE COUNTDOWN BADGE ───
+        // Floats next to the latest-price label on the right edge of the chart.
+        // Top line = contract symbol (e.g. MESM2026), bottom line = countdown
+        // to next bar close. Mirrors TradingView's right-edge price chip.
+        (function setupContractBadge() {
+          // Determine bar duration in seconds from the TIMESPAN string.
+          const BAR_SECS = ({
+            '1m': 60, '2m': 120, '5m': 300, '15m': 900, '30m': 1800,
+            '1h': 3600, '4h': 14400, '1d': 86400, '1w': 604800, '1mo': 2592000,
+          })[TIMESPAN] || 120;
+
+          // Compute CME front-month code for the current date.
+          // Index futures (ES/MES/NQ/MNQ/RTY/M2K/YM/MYM) roll quarterly: H/M/U/Z.
+          // Other CME futures (MGC/MCL/MES energies/grains) use monthly codes.
+          function frontMonthCode(ticker, now) {
+            const MONTHS = ['F','G','H','J','K','M','N','Q','U','V','X','Z'];
+            const QUARTERLY = ['H','M','U','Z'];
+            const isIndex = /^(ES|MES|NQ|MNQ|RTY|M2K|YM|MYM)$/i.test(ticker);
+            // Roll ~1 week before 3rd Friday of expiry month — approximate
+            // by rolling on the 10th of the contract month.
+            const day = now.getUTCDate();
+            const month = now.getUTCMonth();         // 0-indexed
+            const year = now.getUTCFullYear();
+            let m = month, y = year;
+            // If we're past the 10th of the current contract month, advance.
+            const codes = isIndex ? QUARTERLY : MONTHS;
+            // Find first valid month >= now (advancing past current if day > 10)
+            let candidate = null;
+            for (let i = 0; i < 14; i++) {
+              const probeMonth = (month + i) % 12;
+              const probeYear = year + Math.floor((month + i) / 12);
+              const monthCode = MONTHS[probeMonth];
+              if (!codes.includes(monthCode)) continue;
+              const isSameMonth = (probeMonth === month && probeYear === year);
+              if (isSameMonth && day > 10) continue;  // already rolled past this contract
+              candidate = { code: monthCode, year: probeYear };
+              break;
+            }
+            if (!candidate) return ticker;
+            return ticker + candidate.code + candidate.year;
+          }
+
+          const badge = document.getElementById('contractBadge');
+          const symEl = badge.querySelector('.sym');
+          const cdEl  = badge.querySelector('.cd');
+
+          // Set contract symbol once. FX pairs and stocks just show TICKER.
+          const isFutures = /^(MES|MNQ|MGC|MCL|ES|NQ|MGC|GC|CL|RTY|YM|MYM|M2K|MES)$/i.test(TICKER);
+          symEl.textContent = isFutures ? frontMonthCode(TICKER, new Date()) : TICKER;
+
+          function fmtCountdown(secs) {
+            if (secs < 0) secs = 0;
+            const m = Math.floor(secs / 60);
+            const s = secs % 60;
+            return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+          }
+
+          function latestPrice() {
+            // Pull from the candle series itself — auto-refresh poller
+            // updates this on each tick.
+            try {
+              const ld = candleSeries.dataByIndex
+                ? candleSeries.dataByIndex(candleSeries.data().length - 1)
+                : null;
+              return ld ? ld.close : null;
+            } catch (e) { return null; }
+          }
+
+          function priceColor(price, prevClose) {
+            if (price == null || prevClose == null) return '#3E7F6B';
+            return price >= prevClose ? '#3E7F6B' : '#C26A6A';
+          }
+
+          function updateBadge() {
+            const nowSec = Math.floor(Date.now() / 1000);
+            const elapsed = nowSec % BAR_SECS;
+            const remaining = BAR_SECS - elapsed;
+            cdEl.textContent = fmtCountdown(remaining);
+
+            // Position vertically next to the latest candle's close price.
+            const series = candleSeries;
+            const data = series.data ? series.data() : [];
+            if (data.length < 2) { badge.style.display = 'none'; return; }
+            const last = data[data.length - 1];
+            const prev = data[data.length - 2];
+            const y = chart.priceScale('right').priceToCoordinate
+                    ? null  // fallback: priceToCoordinate isn't on price scale
+                    : null;
+            // Use the series API instead.
+            const yPx = series.priceToCoordinate(last.close);
+            if (yPx == null) { badge.style.display = 'none'; return; }
+            badge.style.top = (yPx - badge.offsetHeight / 2) + 'px';
+            badge.style.background = priceColor(last.close, prev.close);
+            badge.style.display = 'block';
+          }
+
+          updateBadge();
+          // 1-second tick for the countdown + price-position refresh.
+          const _badgeTimer = setInterval(updateBadge, 1000);
+          document.addEventListener('visibilitychange', () => {
+            if (document.hidden) clearInterval(_badgeTimer);
+          });
+        })();
 
         // Resize handler
         new ResizeObserver(() => {
