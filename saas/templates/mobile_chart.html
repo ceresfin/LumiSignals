@@ -267,6 +267,11 @@
               }
               window._ema20Series.setData(ed);
             }
+            // Re-place the entry triangle so it snaps to the entry bar
+            // once IB's lagging history feed catches up to that bar.
+            if (typeof window._placeEntryMarker === 'function') {
+              window._placeEntryMarker();
+            }
           } catch (e) {
             // Silent — refresh errors shouldn't break the chart.
           }
@@ -832,10 +837,23 @@
         // built-in plotshape markers. Skipped on H1Zone (those have
         // their own fill markers) and on charts that already painted
         // an activation triangle.
-        if (HAS_TRADE && ENTRY_TS && !IS_H1_ZONE && !ACTIVATED_AT) {
+        //
+        // Snap to the bar boundary so the marker aligns exactly with the
+        // bar whose timespan contains the entry. Re-runnable so the
+        // auto-refresh poller can re-place the marker as new bars arrive
+        // — important because IB's history API can lag 10+ min on
+        // accounts without CME real-time data; the entry bar may not
+        // exist when the chart first loads.
+        function placeEntryMarker() {
+          if (!(HAS_TRADE && ENTRY_TS && !IS_H1_ZONE && !ACTIVATED_AT)) return;
+          const BAR_SECS = ({
+            '1m': 60, '2m': 120, '5m': 300, '15m': 900, '30m': 1800,
+            '1h': 3600, '4h': 14400, '1d': 86400, '1w': 604800, '1mo': 2592000,
+          })[TIMESPAN] || 120;
+          const snappedTs = Math.floor(ENTRY_TS / BAR_SECS) * BAR_SECS;
           const isLong = DIRECTION === 'BUY' || DIRECTION === 'LONG';
           candleSeries.setMarkers([{
-            time: Math.floor(ENTRY_TS),
+            time: snappedTs,
             position: isLong ? 'belowBar' : 'aboveBar',
             color: isLong ? '#00e676' : '#ff1744',
             shape: isLong ? 'arrowUp' : 'arrowDown',
@@ -843,6 +861,8 @@
             size: 2,
           }]);
         }
+        placeEntryMarker();
+        window._placeEntryMarker = placeEntryMarker;
 
         // H1 Zone Scalp: fetch live bundles + trend + fills, overlay T1/T2/T3/T4
         // per active bundle, an ADX badge in the corner, and fill markers on
