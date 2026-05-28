@@ -2587,6 +2587,38 @@ def create_app():
         )
         return html, 200, {"Content-Type": "text/html; charset=utf-8"}
 
+    @app.route("/api/risk/kill-switch", methods=["GET", "PUT"])
+    def api_risk_kill_switch():
+        """Read or update the daily-loss kill switch.
+
+        GET  → { config, state }
+        PUT  → body: any subset of { enabled, threshold_usd, reset_hour_et,
+                                      reset_minute_et }
+                returns the new merged config + recomputed state.
+        Auth: X-Sync-Key header.
+        """
+        sync_key = request.headers.get("X-Sync-Key", "")
+        if sync_key != os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026"):
+            return jsonify({"error": "unauthorized"}), 401
+        from lumisignals import kill_switch
+        if request.method == "PUT":
+            body = request.get_json(silent=True) or {}
+            cfg = kill_switch.set_config(body)
+        else:
+            cfg = kill_switch.get_config()
+        state = kill_switch.check_and_trip()
+        return jsonify({"config": cfg, "state": state})
+
+    @app.route("/api/risk/kill-switch/reset", methods=["POST"])
+    def api_risk_kill_switch_reset():
+        """Manually clear a tripped state. Day P&L stays as is."""
+        sync_key = request.headers.get("X-Sync-Key", "")
+        if sync_key != os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026"):
+            return jsonify({"error": "unauthorized"}), 401
+        from lumisignals import kill_switch
+        state = kill_switch.manual_reset()
+        return jsonify({"state": state})
+
     @app.route("/api/strategies/expected-signals")
     def api_strategies_expected_signals():
         """Replay 2n20 entry+exit logic on cached bars to surface what Pine
@@ -3546,6 +3578,34 @@ def create_app():
         if trade_type == "futures":
             rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
             today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+            # Daily-loss kill switch — only blocks new ENTRIES. Closes still
+            # process so existing positions can exit normally. The bracket SL
+            # at IB is the per-trade safety net; this is the per-day ceiling.
+            if direction in ("BUY", "SELL"):
+                try:
+                    from lumisignals import kill_switch
+                    if kill_switch.is_blocking_entry():
+                        st = kill_switch.get_state()
+                        cfg = kill_switch.get_config()
+                        logger.warning(
+                            "kill switch BLOCKED %s %s: day_pnl=$%.2f threshold=-$%.2f",
+                            direction, ticker, st.get("day_pnl", 0.0),
+                            cfg.get("threshold_usd", 250.0),
+                        )
+                        return jsonify({
+                            "status": "skipped",
+                            "reason": "kill_switch_tripped",
+                            "day_pnl": round(st.get("day_pnl", 0.0), 2),
+                            "threshold_usd": cfg.get("threshold_usd", 250.0),
+                            "tripped_at": st.get("tripped_at"),
+                            "ticker": ticker, "direction": direction,
+                        }), 200
+                except Exception as e:
+                    # Don't let a kill-switch failure block trading. Log and
+                    # continue — fail-open is the safer default given the
+                    # bracket SL is still in place per-trade.
+                    logger.warning("kill switch check failed (fail-open): %s", e)
 
             # Refuse to queue if IB sync is offline. Better to skip the trade
             # than to pile up stale orders that fire on reconnect. User's pref:

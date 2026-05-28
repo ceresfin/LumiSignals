@@ -54,6 +54,17 @@ export default function Settings() {
   const [reauthing, setReauthing] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [ibStatus, setIbStatus] = useState<{ connected: boolean; age_seconds?: number; nav?: number } | null>(null);
+  // Daily-loss kill switch — config + live state.
+  const [killCfg, setKillCfg] = useState<{
+    enabled: boolean; threshold_usd: number;
+    reset_hour_et: number; reset_minute_et: number;
+  }>({ enabled: true, threshold_usd: 250, reset_hour_et: 9, reset_minute_et: 30 });
+  const [killState, setKillState] = useState<{
+    tripped: boolean; tripped_at: string | null; day_pnl: number;
+    day_start: string | null; reason: string | null;
+  }>({ tripped: false, tripped_at: null, day_pnl: 0, day_start: null, reason: null });
+  const [killSaving, setKillSaving] = useState(false);
+  const [killResetting, setKillResetting] = useState(false);
 
   const loadProfile = async () => {
     if (!user) return;
@@ -72,7 +83,61 @@ export default function Settings() {
     }
   };
 
-  useEffect(() => { loadProfile(); loadIbStatus(); }, [user]);
+  const loadKillSwitch = async () => {
+    try {
+      const syncKey = process.env.EXPO_PUBLIC_LUMI_SYNC_KEY || '';
+      const r = await fetch('https://bot.lumitrade.ai/api/risk/kill-switch', {
+        headers: { 'X-Sync-Key': syncKey },
+      });
+      if (!r.ok) return;
+      const d = await r.json();
+      if (d?.config) setKillCfg(d.config);
+      if (d?.state) setKillState(d.state);
+    } catch {
+      // best-effort; keep current values
+    }
+  };
+
+  const saveKillSwitch = async (patch: Partial<typeof killCfg>) => {
+    setKillSaving(true);
+    try {
+      const next = { ...killCfg, ...patch };
+      setKillCfg(next); // optimistic
+      const syncKey = process.env.EXPO_PUBLIC_LUMI_SYNC_KEY || '';
+      const r = await fetch('https://bot.lumitrade.ai/api/risk/kill-switch', {
+        method: 'PUT',
+        headers: { 'X-Sync-Key': syncKey, 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const d = await r.json();
+      if (d?.config) setKillCfg(d.config);
+      if (d?.state) setKillState(d.state);
+    } catch (e: any) {
+      Alert.alert('Kill switch save failed', String(e?.message || e));
+    } finally {
+      setKillSaving(false);
+    }
+  };
+
+  const resetKillSwitch = async () => {
+    setKillResetting(true);
+    try {
+      const syncKey = process.env.EXPO_PUBLIC_LUMI_SYNC_KEY || '';
+      const r = await fetch('https://bot.lumitrade.ai/api/risk/kill-switch/reset', {
+        method: 'POST',
+        headers: { 'X-Sync-Key': syncKey },
+      });
+      const d = await r.json();
+      if (d?.state) setKillState(d.state);
+    } catch (e: any) {
+      Alert.alert('Reset failed', String(e?.message || e));
+    } finally {
+      setKillResetting(false);
+    }
+  };
+
+  useEffect(() => { loadProfile(); loadIbStatus(); loadKillSwitch(); }, [user]);
   // Refresh IB status every 30s
   useEffect(() => {
     const interval = setInterval(loadIbStatus, 30000);
@@ -93,7 +158,7 @@ export default function Settings() {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadProfile();
+    await Promise.all([loadProfile(), loadIbStatus(), loadKillSwitch()]);
     setRefreshing(false);
   };
 
@@ -324,6 +389,103 @@ export default function Settings() {
                 onChange={v => update('futures_contracts', v)} min={1} step={1} />
             </Field>
           </View>
+        </Section>
+
+        {/* Daily-Loss Kill Switch */}
+        <Section title="6. Daily Loss Kill Switch">
+          <View style={styles.row}>
+            <Text style={styles.fieldLabel}>Enabled</Text>
+            <Switch
+              value={killCfg.enabled}
+              onValueChange={v => saveKillSwitch({ enabled: v })}
+              disabled={killSaving}
+              trackColor={{ true: Colors.green }}
+            />
+          </View>
+          <View style={styles.modelRow}>
+            <Field label="Threshold $" hint="Bot refuses new entries when day P&L ≤ −threshold">
+              <TextInput
+                style={styles.input}
+                value={String(killCfg.threshold_usd ?? 250)}
+                onChangeText={t => setKillCfg({ ...killCfg, threshold_usd: parseFloat(t) || 0 })}
+                onEndEditing={() => saveKillSwitch({ threshold_usd: killCfg.threshold_usd })}
+                keyboardType="decimal-pad"
+                editable={!killSaving}
+              />
+            </Field>
+            <Field label="Reset at (ET)" hint="Hour:minute when day P&L resets">
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                <TextInput
+                  style={[styles.input, { flex: 1 }]}
+                  value={String(killCfg.reset_hour_et ?? 9)}
+                  onChangeText={t => setKillCfg({ ...killCfg, reset_hour_et: parseInt(t, 10) || 0 })}
+                  onEndEditing={() => saveKillSwitch({ reset_hour_et: killCfg.reset_hour_et })}
+                  keyboardType="number-pad"
+                  editable={!killSaving}
+                />
+                <Text style={{ fontSize: 16 }}>:</Text>
+                <TextInput
+                  style={[styles.input, { flex: 1 }]}
+                  value={String(killCfg.reset_minute_et ?? 30).padStart(2, '0')}
+                  onChangeText={t => setKillCfg({ ...killCfg, reset_minute_et: parseInt(t, 10) || 0 })}
+                  onEndEditing={() => saveKillSwitch({ reset_minute_et: killCfg.reset_minute_et })}
+                  keyboardType="number-pad"
+                  editable={!killSaving}
+                />
+              </View>
+            </Field>
+          </View>
+          <View style={[styles.row, { marginTop: 4 }]}>
+            <Text style={styles.fieldLabel}>Today's realized P&L</Text>
+            <Text style={[
+              styles.fieldValue,
+              { color: killState.day_pnl >= 0 ? Colors.green : Colors.red, fontWeight: '600' },
+            ]}>
+              {killState.day_pnl >= 0 ? '+' : '-'}${Math.abs(killState.day_pnl).toFixed(2)}
+            </Text>
+          </View>
+          <View style={styles.row}>
+            <Text style={styles.fieldLabel}>Status</Text>
+            <Text style={[
+              styles.fieldValue,
+              { color: killState.tripped ? Colors.red : (killCfg.enabled ? Colors.green : Colors.textMedium),
+                fontWeight: '600' },
+            ]}>
+              {killState.tripped ? 'TRIPPED — new entries blocked'
+                : killCfg.enabled ? 'Armed' : 'Disabled'}
+            </Text>
+          </View>
+          {killState.tripped && killState.reason ? (
+            <Text style={[styles.fieldHint, { color: Colors.red, marginTop: 4 }]}>
+              {killState.reason}
+            </Text>
+          ) : null}
+          {killState.tripped ? (
+            <TouchableOpacity
+              style={[styles.ibAuthButton, { backgroundColor: Colors.red, marginTop: 12 },
+                      killResetting && { opacity: 0.5 }]}
+              onPress={() =>
+                Alert.alert(
+                  'Reset kill switch?',
+                  'New entries will resume immediately. Day P&L stays at its current value — next loss can re-trip.',
+                  [
+                    { text: 'Cancel', style: 'cancel' },
+                    { text: 'Reset', style: 'destructive', onPress: resetKillSwitch },
+                  ],
+                )
+              }
+              disabled={killResetting}
+            >
+              <Text style={styles.ibAuthText}>
+                {killResetting ? 'Resetting…' : 'Reset kill switch'}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
+          <Text style={styles.fieldHint}>
+            Blocks new BUY/SELL entries when day P&L crosses the threshold.
+            Closes still process so existing positions exit normally.
+            Bracket SL at IB stays in place as the per-trade safety net.
+          </Text>
         </Section>
 
         {/* Sign Out */}
