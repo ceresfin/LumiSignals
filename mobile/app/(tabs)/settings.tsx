@@ -402,39 +402,37 @@ export default function Settings() {
               trackColor={{ true: Colors.green }}
             />
           </View>
-          <View style={styles.modelRow}>
-            <Field label="Threshold $" hint="Bot refuses new entries when day P&L ≤ −threshold">
+          <Field label="Threshold $" hint="Bot refuses new entries when day P&L ≤ −threshold">
+            <TextInput
+              style={styles.input}
+              value={String(killCfg.threshold_usd ?? 250)}
+              onChangeText={t => setKillCfg({ ...killCfg, threshold_usd: parseFloat(t) || 0 })}
+              onEndEditing={() => saveKillSwitch({ threshold_usd: killCfg.threshold_usd })}
+              keyboardType="decimal-pad"
+              editable={!killSaving}
+            />
+          </Field>
+          <Field label="Reset at (ET)" hint="Hour:minute when day P&L resets">
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
               <TextInput
-                style={styles.input}
-                value={String(killCfg.threshold_usd ?? 250)}
-                onChangeText={t => setKillCfg({ ...killCfg, threshold_usd: parseFloat(t) || 0 })}
-                onEndEditing={() => saveKillSwitch({ threshold_usd: killCfg.threshold_usd })}
-                keyboardType="decimal-pad"
+                style={[styles.input, { width: 64, textAlign: 'center' }]}
+                value={String(killCfg.reset_hour_et ?? 9)}
+                onChangeText={t => setKillCfg({ ...killCfg, reset_hour_et: parseInt(t, 10) || 0 })}
+                onEndEditing={() => saveKillSwitch({ reset_hour_et: killCfg.reset_hour_et })}
+                keyboardType="number-pad"
                 editable={!killSaving}
               />
-            </Field>
-            <Field label="Reset at (ET)" hint="Hour:minute when day P&L resets">
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                <TextInput
-                  style={[styles.input, { flex: 1 }]}
-                  value={String(killCfg.reset_hour_et ?? 9)}
-                  onChangeText={t => setKillCfg({ ...killCfg, reset_hour_et: parseInt(t, 10) || 0 })}
-                  onEndEditing={() => saveKillSwitch({ reset_hour_et: killCfg.reset_hour_et })}
-                  keyboardType="number-pad"
-                  editable={!killSaving}
-                />
-                <Text style={{ fontSize: 16 }}>:</Text>
-                <TextInput
-                  style={[styles.input, { flex: 1 }]}
-                  value={String(killCfg.reset_minute_et ?? 30).padStart(2, '0')}
-                  onChangeText={t => setKillCfg({ ...killCfg, reset_minute_et: parseInt(t, 10) || 0 })}
-                  onEndEditing={() => saveKillSwitch({ reset_minute_et: killCfg.reset_minute_et })}
-                  keyboardType="number-pad"
-                  editable={!killSaving}
-                />
-              </View>
-            </Field>
-          </View>
+              <Text style={{ fontSize: 16, color: Colors.dark }}>:</Text>
+              <TextInput
+                style={[styles.input, { width: 64, textAlign: 'center' }]}
+                value={String(killCfg.reset_minute_et ?? 30).padStart(2, '0')}
+                onChangeText={t => setKillCfg({ ...killCfg, reset_minute_et: parseInt(t, 10) || 0 })}
+                onEndEditing={() => saveKillSwitch({ reset_minute_et: killCfg.reset_minute_et })}
+                keyboardType="number-pad"
+                editable={!killSaving}
+              />
+            </View>
+          </Field>
           <View style={[styles.row, { marginTop: 4 }]}>
             <Text style={styles.fieldLabel}>Today's realized P&L</Text>
             <Text style={[
