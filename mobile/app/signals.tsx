@@ -23,6 +23,7 @@ type SignalEvent = {
 };
 
 type Range = 'today' | 'wtd' | 'mtd' | 'all';
+type StateFilter = 'all' | 'entries' | 'closed';
 
 // Build start/end of the selected window. "Today" anchors at the most-recent
 // 9:30 AM ET — matches the trading-day boundary the dashboard already uses.
@@ -101,6 +102,7 @@ export default function SignalsScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [range, setRange] = useState<Range>('today');
+  const [stateFilter, setStateFilter] = useState<StateFilter>('all');
   const [refreshing, setRefreshing] = useState(false);
 
   const load = async () => {
@@ -137,6 +139,19 @@ export default function SignalsScreen() {
     return c;
   }, [events]);
 
+  const visibleEvents = useMemo(() => {
+    if (stateFilter === 'all') return events;
+    if (stateFilter === 'entries') {
+      return events.filter(e => e.state === 'INTENT_OPEN' || e.state === 'OPEN');
+    }
+    return events.filter(e => e.state === 'CLOSED');
+  }, [events, stateFilter]);
+
+  const totalPl = useMemo(() => {
+    if (stateFilter !== 'closed') return null;
+    return visibleEvents.reduce((acc, e) => acc + (e.realized_pl || 0), 0);
+  }, [visibleEvents, stateFilter]);
+
   const onRefresh = () => { setRefreshing(true); load(); };
 
   return (
@@ -145,9 +160,14 @@ export default function SignalsScreen() {
       <View style={styles.header}>
         <Text style={styles.title}>{strategyName}</Text>
         <Text style={styles.subtitle}>
-          {ticker ? `${ticker} · ` : ''}{events.length} events
-          {counts.INTENT_OPEN ? `  ·  ${counts.INTENT_OPEN} entries` : ''}
-          {counts.CLOSED ? `  ·  ${counts.CLOSED} closed` : ''}
+          {ticker ? `${ticker} · ` : ''}
+          {stateFilter === 'closed'
+            ? `${visibleEvents.length} closed trades${totalPl != null ? `  ·  ${totalPl >= 0 ? '+' : ''}$${totalPl.toFixed(2)}` : ''}`
+            : stateFilter === 'entries'
+              ? `${visibleEvents.length} entry signals`
+              : `${events.length} events`
+                + (counts.INTENT_OPEN ? `  ·  ${counts.INTENT_OPEN} entries` : '')
+                + (counts.CLOSED ? `  ·  ${counts.CLOSED} closed` : '')}
         </Text>
       </View>
 
@@ -160,6 +180,24 @@ export default function SignalsScreen() {
           >
             <Text style={[styles.pillText, range === k && styles.pillTextActive]}>
               {k === 'today' ? 'Today' : k === 'wtd' ? 'WTD' : k === 'mtd' ? 'MTD' : 'All'}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      <View style={styles.pillBar}>
+        {([
+          ['all', 'All Events'],
+          ['entries', 'Entries'],
+          ['closed', 'Closed'],
+        ] as const).map(([k, label]) => (
+          <TouchableOpacity
+            key={k}
+            style={[styles.pill, stateFilter === k && styles.pillActive]}
+            onPress={() => setStateFilter(k)}
+          >
+            <Text style={[styles.pillText, stateFilter === k && styles.pillTextActive]}>
+              {label}
             </Text>
           </TouchableOpacity>
         ))}
@@ -178,7 +216,7 @@ export default function SignalsScreen() {
         </View>
       ) : (
         <FlatList
-          data={events}
+          data={visibleEvents}
           keyExtractor={(e, i) => `${e.event_time}-${e.state}-${i}`}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
           ItemSeparatorComponent={() => <View style={styles.sep} />}
@@ -225,10 +263,14 @@ export default function SignalsScreen() {
           }}
           ListEmptyComponent={
             <View style={styles.center}>
-              <Text style={styles.emptyText}>No signals in this range</Text>
+              <Text style={styles.emptyText}>
+                {events.length === 0
+                  ? 'No signals in this range'
+                  : `No ${stateFilter === 'closed' ? 'closed trades' : 'entries'} in this range`}
+              </Text>
             </View>
           }
-          contentContainerStyle={events.length === 0 ? { flex: 1 } : undefined}
+          contentContainerStyle={visibleEvents.length === 0 ? { flex: 1 } : undefined}
         />
       )}
     </SafeAreaView>
