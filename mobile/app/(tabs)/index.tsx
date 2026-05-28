@@ -471,23 +471,7 @@ export default function Dashboard() {
         const tag = `${t.model || ''} ${t.strategy || ''}`.toLowerCase();
         return isFx && tag.includes('2n20');
       };
-      // Anything in this strategy that opened before its live-from cutoff is
-      // pre-live debug noise — exclude from dashboard math. Edit the cutoff
-      // to re-baseline performance going forward.
-      const STRATEGY_LIVE_FROM: Record<string, string> = {
-        futures_2n20: '2026-05-27T18:14:00Z',
-      };
-      const isPreLive = (t: Trade) => {
-        const isFutures = t.broker !== 'oanda' && t.asset_type !== 'forex';
-        const tag = `${t.model || ''} ${t.strategy || ''}`.toLowerCase();
-        // v2 is brand new — every v2 trade is real, no cutoff applies.
-        if (isFutures && tag.includes('2n20') && !tag.includes('v2')) {
-          const ts = t.opened_at || t.closed_at || '';
-          return !!ts && ts < STRATEGY_LIVE_FROM.futures_2n20;
-        }
-        return false;
-      };
-      if (tradesRes.data) setAllTrades((tradesRes.data as Trade[]).filter(t => !isFx2n20(t) && !isPreLive(t)));
+      if (tradesRes.data) setAllTrades((tradesRes.data as Trade[]).filter(t => !isFx2n20(t)));
       if (posRes.data) setAllPositions(posRes.data);
     } catch (e) {
       console.error('Stats load error:', e);
