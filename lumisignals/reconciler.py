@@ -397,6 +397,29 @@ def run_pass(
                           "source_order_ref": order_ref or None,
                           "decoded_strategy": decoded_strategy},
                 )
+                # Also create a Redis strat_pos so downstream code (mobile
+                # UI mismatch warning, close path, check_stop_fills, etc.)
+                # sees the position as "tracked" under the adopted strategy.
+                # Without this the mobile shows "ALL ORPHAN" forever and
+                # closes go through the [untracked] fallback path.
+                # Lazy import to avoid a circular reconciler ↔ ibkr_sync
+                # cycle at module load time.
+                try:
+                    from .ibkr_sync_cpapi import save_strat_pos
+                    save_strat_pos(
+                        ticker=ticker,
+                        strategy=strat,
+                        direction="BUY" if broker_qty > 0 else "SELL",
+                        contracts=abs(int(broker_qty)),
+                        entry_price=float(last_price or 0),
+                        perm_id=str(last_order_id or ""),
+                        caller="reconciler_adopt",
+                    )
+                except Exception as _e:
+                    logger.warning(
+                        "RECONCILE adopt: strat_pos save failed for %s/%s: %s",
+                        ticker, strat, _e,
+                    )
                 _telegram(
                     title,
                     f"`{ticker}` qty=`{broker_qty:+d}` adopted under `{strat}` "
