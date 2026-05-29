@@ -1814,38 +1814,95 @@ def check_order_requests(client):
                         # is missing (orphan, untracked, or pre-Phase-3 legacy
                         # position). The TP child, when present, is cancelled
                         # explicitly either way.
+                        # Hard #3: atomic close failure handling.
+                        # - modify_order can fail silently (returns error dict
+                        #   instead of raising). Validate using the same helper
+                        #   as place_order and retry once.
+                        # - If atomic fails AND fallback cancel also fails, the
+                        #   safest action is to NOT place a fresh close MKT
+                        #   (would risk a double-stop). Alert and skip instead.
                         atomic_close_used = False
                         trade_result = None
                         if targeted_stop:
-                            try:
-                                logger.info("Atomic close: modify STP %s → MKT for [%s]",
-                                            targeted_stop, strategy_name)
-                                trade_result = client.modify_order(
-                                    targeted_stop,
-                                    conid=fut_conid,
-                                    side=close_action,
-                                    quantity=contracts,
-                                    order_type="MKT",
-                                    tif="GTC",
-                                )
-                                atomic_close_used = True
-                            except Exception as e:
-                                logger.warning(
-                                    "Atomic STP→MKT modify failed for %s — falling back to cancel+close: %s",
-                                    targeted_stop, e,
+                            for _mod_attempt in range(2):  # original + 1 retry
+                                try:
+                                    logger.info(
+                                        "Atomic close: modify STP %s → MKT for [%s] (attempt %d)",
+                                        targeted_stop, strategy_name, _mod_attempt + 1,
+                                    )
+                                    trade_result = client.modify_order(
+                                        targeted_stop,
+                                        conid=fut_conid,
+                                        side=close_action,
+                                        quantity=contracts,
+                                        order_type="MKT",
+                                        tif="GTC",
+                                    )
+                                    _is_fail, _fail_reason = _validate_place_order_result(trade_result)
+                                    if not _is_fail:
+                                        atomic_close_used = True
+                                        break
+                                    logger.warning(
+                                        "Atomic STP→MKT modify rejected (attempt %d): %s",
+                                        _mod_attempt + 1, _fail_reason,
+                                    )
+                                except Exception as e:
+                                    logger.warning(
+                                        "Atomic STP→MKT modify raised (attempt %d): %s",
+                                        _mod_attempt + 1, e,
+                                    )
+                                if _mod_attempt == 0:
+                                    time.sleep(0.5)
+                            if not atomic_close_used:
+                                logger.error(
+                                    "Atomic close FAILED after 2 attempts for [%s] — "
+                                    "falling back to cancel+close",
+                                    strategy_name,
                                 )
 
                         if not atomic_close_used:
                             # Legacy path: explicit cancel before placing close.
+                            # If cancel of the TRACKED stop fails, refuse to
+                            # place the fresh close — both could fill and we'd
+                            # double-stop. Telegram + skip instead.
+                            cancel_failed_hard = False
                             if targeted_stop:
                                 try:
-                                    client.cancel_order(targeted_stop)
-                                    cancelled_stops = 1
-                                    logger.info("Cancelled SL %s for [%s] before close",
-                                                targeted_stop, strategy_name)
+                                    cancel_result = client.cancel_order(targeted_stop)
+                                    cancel_err = (
+                                        cancel_result.get("error")
+                                        if isinstance(cancel_result, dict)
+                                        else None
+                                    )
+                                    if cancel_err:
+                                        logger.error(
+                                            "Cancel SL %s REJECTED by IB: %s — refusing fresh close to avoid double-stop",
+                                            targeted_stop, cancel_err,
+                                        )
+                                        cancel_failed_hard = True
+                                    else:
+                                        cancelled_stops = 1
+                                        logger.info("Cancelled SL %s for [%s] before close",
+                                                    targeted_stop, strategy_name)
                                 except Exception as e:
-                                    logger.warning("Cancel SL %s failed (may be already filled): %s",
-                                                    targeted_stop, e)
+                                    logger.error(
+                                        "Cancel SL %s raised: %s — refusing fresh close to avoid double-stop",
+                                        targeted_stop, e,
+                                    )
+                                    cancel_failed_hard = True
+                                if cancel_failed_hard:
+                                    try:
+                                        _send_telegram_alert(
+                                            f"🚨 Close FAILED: {ticker} [{strategy_name}]",
+                                            f"{direction} {ticker}: atomic STP→MKT modify "
+                                            f"failed AND explicit cancel of stop "
+                                            f"{targeted_stop} also failed.\n\n"
+                                            f"Refusing to place fresh close MKT — would risk "
+                                            f"a double-stop fill. Manually flatten via IB.",
+                                        )
+                                    except Exception:
+                                        pass
+                                    continue  # skip this order
                             else:
                                 # Cancel matching orphan stops as protection.
                                 try:
