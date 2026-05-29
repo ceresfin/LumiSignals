@@ -106,22 +106,76 @@ def get_state() -> dict:
     boundary = _current_boundary_utc()
     raw = _rdb().get(STATE_KEY)
     if not raw:
-        return _empty_state(boundary)
+        state = _empty_state(boundary)
+    else:
+        try:
+            saved = json.loads(raw)
+            saved_start = saved.get("day_start")
+            if saved_start:
+                try:
+                    if datetime.fromisoformat(saved_start.replace("Z", "+00:00")) < boundary:
+                        state = _empty_state(boundary)
+                    else:
+                        saved.setdefault("day_start", boundary.isoformat())
+                        saved.setdefault("trades_today", 0)
+                        saved.setdefault("consecutive_losses", 0)
+                        state = saved
+                except Exception:
+                    state = _empty_state(boundary)
+            else:
+                state = _empty_state(boundary)
+        except Exception:
+            state = _empty_state(boundary)
+    _ensure_seeded_from_diary(state, boundary)
+    return state
+
+
+def _ensure_seeded_from_diary(state: dict, boundary: datetime) -> None:
+    """Backfill trades_today + consecutive_losses from the diary the first
+    time we run in a given day_start window.
+
+    Idempotent via a `seeded:<day_start>` sentinel in the saved state.
+    Without this, deploying the guard mid-day would show trades_today=0
+    even though the diary has dozens of INTENT_OPEN rows in the window —
+    confusing UX and worse, the trip logic wouldn't see the trade-count
+    history accurately."""
+    if state.get("seeded_for") == state.get("day_start"):
+        return
     try:
-        saved = json.loads(raw)
-        saved_start = saved.get("day_start")
-        if saved_start:
-            try:
-                if datetime.fromisoformat(saved_start.replace("Z", "+00:00")) < boundary:
-                    return _empty_state(boundary)
-            except Exception:
-                return _empty_state(boundary)
-        saved.setdefault("day_start", boundary.isoformat())
-        saved.setdefault("trades_today", 0)
-        saved.setdefault("consecutive_losses", 0)
-        return saved
-    except Exception:
-        return _empty_state(boundary)
+        from .diary import query_events
+        events = query_events(strategy_id=None, ticker=None,
+                              since=boundary.isoformat(),
+                              until=None, limit=5000) or []
+    except Exception as e:
+        logger.debug("runaway_guard seed: diary query failed: %s", e)
+        return
+    intent_opens = [e for e in events if e.get("state") == "INTENT_OPEN"]
+    state["trades_today"] = len(intent_opens)
+    # Consecutive losses: walk CLOSED events newest-first, count negatives
+    # until we hit the first winner.
+    closed_desc = sorted(
+        [e for e in events if e.get("state") == "CLOSED"
+         and e.get("realized_pl") is not None],
+        key=lambda e: e.get("event_time", ""), reverse=True,
+    )
+    streak = 0
+    for c in closed_desc:
+        try:
+            pl = float(c.get("realized_pl"))
+        except (TypeError, ValueError):
+            continue
+        if pl < 0:
+            streak += 1
+        else:
+            break
+    state["consecutive_losses"] = streak
+    state["seeded_for"] = state["day_start"]
+    _save(state)
+    logger.info(
+        "runaway_guard: seeded from diary — trades_today=%d, "
+        "consecutive_losses=%d (day_start=%s)",
+        state["trades_today"], state["consecutive_losses"], state["day_start"],
+    )
 
 
 def _save(state: dict) -> None:
