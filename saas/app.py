@@ -2632,6 +2632,19 @@ def create_app():
         state = kill_switch.check_and_trip()
         return jsonify({"config": cfg, "state": state})
 
+    @app.route("/api/risk/account-type")
+    def api_risk_account_type():
+        """Return the IB account type the bot is currently connected to.
+
+        Mobile dashboard reads this on mount to filter trades/positions
+        queries by account_type, so paper history never bleeds into live
+        stats once the bot is funded.
+
+        Public — no auth — so the mobile app can fetch it before login.
+        """
+        from lumisignals.account_type import current_account_type
+        return jsonify({"account_type": current_account_type()})
+
     @app.route("/api/strategies/slippage")
     def api_strategies_slippage():
         """Slippage stats per strategy/ticker over a window.

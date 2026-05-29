@@ -377,6 +377,10 @@ export default function Dashboard() {
   const [dateRange, setDateRange] = useState<'today' | 'wtd' | 'mtd' | 'qtd' | 'ytd' | 'all'>('mtd');
   // Session filter: RTH = 9:30 AM – 4:00 PM ET Mon–Fri. Overnight = everything else.
   const [sessionFilter, setSessionFilter] = useState<'all' | 'rth' | 'overnight'>('all');
+  // Account type — tracks the bot's currently-connected IB account so
+  // paper history doesn't bleed into live stats once funded. Fetched
+  // once on mount from /api/risk/account-type (Redis-backed).
+  const [accountType, setAccountType] = useState<'paper' | 'live'>('paper');
 
   // Compute the start-of-range ISO timestamp for the user's selection.
   // The trades table stores UTC, so we always return a UTC ISO string.
@@ -452,13 +456,26 @@ export default function Dashboard() {
   const loadData = async (range = dateRange) => {
     if (!user) return;
     try {
+      // Re-fetch the bot's current account type on every refresh so the
+      // dashboard always reflects which IB account is live. Default
+      // 'paper' on any failure (safest — never accidentally show live).
+      try {
+        const r = await fetch('https://bot.lumitrade.ai/api/risk/account-type');
+        if (r.ok) {
+          const d = await r.json();
+          const t = (d?.account_type === 'live') ? 'live' : 'paper';
+          setAccountType(t);
+        }
+      } catch { /* keep previous */ }
+
       const startIso = getRangeStartIso(range);
       // Trades query — filter by closed_at if a range is set, order desc so
       // newest come first within the 1000-row Supabase default limit.
       let tradesQ = supabase
         .from('trades')
-        .select('realized_pl, pips, won, strategy, model, broker, asset_type, instrument, opened_at, closed_at')
+        .select('realized_pl, pips, won, strategy, model, broker, asset_type, instrument, opened_at, closed_at, account_type')
         .eq('user_id', user.id)
+        .eq('account_type', accountType)
         .order('closed_at', { ascending: false })
         .limit(5000);
       if (startIso) tradesQ = tradesQ.gte('closed_at', startIso);
@@ -467,8 +484,9 @@ export default function Dashboard() {
         tradesQ,
         supabase
           .from('positions')
-          .select('strategy, asset_type, instrument, broker, model, broker_trade_id, direction, entry_price, stop_loss, take_profit, opened_at')
-          .eq('user_id', user.id),
+          .select('strategy, asset_type, instrument, broker, model, broker_trade_id, direction, entry_price, stop_loss, take_profit, opened_at, account_type')
+          .eq('user_id', user.id)
+          .eq('account_type', accountType),
       ]);
       // Drop retired FX 2n20 trades from all dashboard math — strategy is
       // no longer running, the legacy fills distort performance breakdowns.
@@ -543,7 +561,20 @@ export default function Dashboard() {
       <ScrollView refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
         {/* Header */}
         <View style={styles.header}>
-          <Text style={styles.headerTitle}>LumiSignals</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Text style={styles.headerTitle}>LumiSignals</Text>
+            <View style={[
+              styles.acctBadge,
+              accountType === 'live' ? styles.acctBadgeLive : styles.acctBadgePaper,
+            ]}>
+              <Text style={[
+                styles.acctBadgeText,
+                accountType === 'live' ? styles.acctBadgeTextLive : styles.acctBadgeTextPaper,
+              ]}>
+                {accountType.toUpperCase()}
+              </Text>
+            </View>
+          </View>
           <Text style={styles.headerSubtitle}>Trading Dashboard</Text>
         </View>
 
@@ -882,6 +913,15 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.cream },
   header: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: 8 },
   headerTitle: { fontSize: 28, fontWeight: '300', color: Colors.dark },
+  acctBadge: {
+    paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4,
+    alignSelf: 'center',
+  },
+  acctBadgePaper: { backgroundColor: '#eceff1' },
+  acctBadgeLive: { backgroundColor: '#fdecea', borderWidth: 1, borderColor: Colors.red },
+  acctBadgeText: { fontSize: 10, fontWeight: '700', letterSpacing: 0.5 },
+  acctBadgeTextPaper: { color: Colors.textMedium },
+  acctBadgeTextLive: { color: Colors.red },
   headerSubtitle: { fontSize: 12, color: Colors.textLight, letterSpacing: 1, textTransform: 'uppercase', marginTop: 2 },
   // Tabs
   tabBar: {
