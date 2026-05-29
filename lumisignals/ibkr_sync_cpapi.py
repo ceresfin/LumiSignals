@@ -406,6 +406,52 @@ _last_missed_signal_check = 0
 MISSED_SIGNAL_CHECK_INTERVAL = 300  # 5 minutes
 
 
+def _validate_place_order_result(result):
+    """Inspect the CPAPI place_order response to detect failure.
+
+    On a successful bracket POST, CPAPI returns a list of 2-3 dicts (entry
+    + sl + optional tp), each carrying an order_id. On failure it can
+    return:
+      - {"error": "..."} (no account_id, request error, auth failure)
+      - {"error_message": "..."} or similar on rejection
+      - A list whose first element has an error key, or no order_id
+      - An empty list / None
+
+    Returns (is_failure, reason_string). When True, the caller should
+    mark the diary intent as CANCELLED, alert, and skip the rest of the
+    entry flow rather than building a phantom strat_pos.
+    """
+    if not result:
+        return True, "empty response"
+    if isinstance(result, dict):
+        err = result.get("error") or result.get("error_message")
+        if err:
+            return True, str(err)[:200]
+        if not result.get("order_id"):
+            return True, "no order_id in dict response"
+        return False, ""
+    if isinstance(result, list):
+        if not result:
+            return True, "empty result list"
+        first = result[0] if isinstance(result[0], dict) else None
+        if first is None:
+            return True, f"non-dict first element: {type(result[0]).__name__}"
+        err = (first.get("error") or first.get("error_message")
+               or first.get("text") or "")
+        # CPAPI sometimes echoes confirmation prompts via "id" without a
+        # real order_id; rule that out.
+        if err:
+            err_lower = str(err).lower()
+            if any(tok in err_lower for tok in ("reject", "error", "insufficient",
+                                                 "invalid", "denied", "not allowed",
+                                                 "halted", "closed")):
+                return True, str(err)[:200]
+        if not first.get("order_id"):
+            return True, f"no order_id in first element (got keys {list(first.keys())})"
+        return False, ""
+    return True, f"unexpected response type: {type(result).__name__}"
+
+
 def push_mes_bars_to_server(client):
     """Pull 2-min MES bars from IB via CPAPI and POST them to the server's
     Redis cache. The /api/candles/MES endpoint (used by mobile_chart.html)
@@ -2188,7 +2234,75 @@ def check_order_requests(client):
                         except Exception as _de:
                             logger.debug("diary INTENT_OPEN write failed: %s", _de)
 
+                        # Hard #4: re-tickle CPAPI session right before placing
+                        # the order. ensure_session() raises ConnectionError if
+                        # the session can't be recovered without a browser
+                        # login. Mark the intent CANCELLED + alert in that case
+                        # so reconciler doesn't see a phantom INTENT_OPEN forever.
+                        try:
+                            client.ensure_session()
+                        except ConnectionError as _se:
+                            logger.error(
+                                "CPAPI session dead — refusing entry %s %s [%s]: %s",
+                                direction, ticker, strategy_name, _se,
+                            )
+                            try:
+                                diary.record_event(
+                                    broker="ib",
+                                    strategy_id=diary_strategy_id,
+                                    ticker=ticker,
+                                    state=diary.State.CANCELLED,
+                                    reason="CPAPI session expired before place_order",
+                                    client_intent_id=diary_intent_id,
+                                    expected_qty=0,
+                                )
+                            except Exception as _de:
+                                logger.warning("diary CANCELLED (session) write failed: %s", _de)
+                            try:
+                                _send_telegram_alert(
+                                    f"🚧 Entry refused: CPAPI session dead",
+                                    f"{direction} {ticker} [{strategy_name}] signal arrived but "
+                                    f"CPAPI session has expired and could not auto-reauth.\n\n"
+                                    f"Open bot.lumitrade.ai/ib-auth and re-authenticate.",
+                                )
+                            except Exception:
+                                pass
+                            continue
+
                         trade_result = client.place_order(bracket_payload)
+
+                        # Hard #1: validate the response. CPAPI can return
+                        # error dicts that we'd otherwise parse as empty
+                        # order_ids and silently proceed. Detect failure here
+                        # — mark diary CANCELLED, alert, skip the rest.
+                        _is_fail, _fail_reason = _validate_place_order_result(trade_result)
+                        if _is_fail:
+                            logger.error(
+                                "place_order REJECTED %s %s [%s]: %s | response=%r",
+                                direction, ticker, strategy_name, _fail_reason, trade_result,
+                            )
+                            try:
+                                diary.record_event(
+                                    broker="ib",
+                                    strategy_id=diary_strategy_id,
+                                    ticker=ticker,
+                                    state=diary.State.CANCELLED,
+                                    reason=f"place_order failed: {_fail_reason}",
+                                    client_intent_id=diary_intent_id,
+                                    expected_qty=0,
+                                )
+                            except Exception as _de:
+                                logger.warning("diary CANCELLED (place_order) write failed: %s", _de)
+                            try:
+                                _send_telegram_alert(
+                                    f"❌ Entry rejected by IB: {ticker} [{strategy_name}]",
+                                    f"{direction} {ticker} bracket REJECTED.\n"
+                                    f"Reason: {_fail_reason}\n\n"
+                                    f"No position opened. Check IB account state.",
+                                )
+                            except Exception:
+                                pass
+                            continue
 
                         # Response is an array of result objects in the same
                         # order as the orders we posted: [entry, sl, tp?].
