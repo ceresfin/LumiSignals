@@ -1782,10 +1782,20 @@ def check_order_requests(client):
                             or (diary_live or {}).get("broker_trade_id")
                             or None
                         )
+                        # Untracked / orphan / manual_close path: we have no
+                        # perm_id to thread, so generate a fresh intent_id
+                        # for this close lifecycle. Without one, the diary
+                        # CHECK constraint (broker_trade_id OR client_intent_id
+                        # must be set) rejects the row with HTTP 400 and we
+                        # lose the audit trail of the close event.
+                        diary_close_intent_id = None
+                        if not diary_perm_id:
+                            diary_close_intent_id = diary.new_intent_id()
                         try:
                             diary.record_event(
                                 broker="ib",
                                 broker_trade_id=diary_perm_id,
+                                client_intent_id=diary_close_intent_id,
                                 strategy_id=diary_strategy_id,
                                 ticker=ticker,
                                 state=diary.State.INTENT_CLOSE,
@@ -2058,6 +2068,7 @@ def check_order_requests(client):
                                 diary.record_event(
                                     broker="ib",
                                     broker_trade_id=diary_perm_id,
+                                    client_intent_id=diary_close_intent_id,
                                     strategy_id=diary_strategy_id,
                                     ticker=ticker,
                                     state=diary.State.CLOSED,
