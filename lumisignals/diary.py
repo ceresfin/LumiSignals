@@ -157,6 +157,16 @@ def _service_key() -> str:
     return os.environ.get("SUPABASE_SERVICE_KEY", "")
 
 
+def _current_account_type() -> str:
+    """Resolve the current IB account type. Lazy-imports the helper to
+    avoid a hard module dep when diary.py is used outside the bot."""
+    try:
+        from .account_type import current_account_type
+        return current_account_type()
+    except Exception:
+        return "paper"
+
+
 def _rest_request(method: str, path: str, *, body=None, params=None,
                   prefer: Optional[str] = None) -> Optional[list]:
     """Minimal PostgREST client. Returns parsed JSON list or None on failure."""
@@ -210,6 +220,7 @@ def record_event(
     signal_price: Optional[float] = None,
     webhook_received_at: Optional[str] = None,
     tv_latency_seconds: Optional[float] = None,
+    account_type: Optional[str] = None,
     broker_snapshot: Optional[dict] = None,
     meta: Optional[dict] = None,
 ) -> Optional[str]:
@@ -251,6 +262,9 @@ def record_event(
         "signal_price": signal_price,
         "webhook_received_at": webhook_received_at,
         "tv_latency_seconds": tv_latency_seconds,
+        # Auto-resolve account_type from Redis if caller didn't pass it
+        # explicitly. Falls back to 'paper' if Redis is empty (safest).
+        "account_type": account_type or _current_account_type(),
         "broker_snapshot": broker_snapshot,
         "meta": meta,
     }

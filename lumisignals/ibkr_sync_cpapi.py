@@ -3370,6 +3370,17 @@ def main():
 
     logger.info("Connected to CPAPI — syncing every %ds to %s", SYNC_INTERVAL, SERVER_URL)
 
+    # Detect paper vs live from the IB account id and persist to Redis so
+    # the saas service / diary writes can tag every new row. Paper account
+    # ids start with "DU"; everything else is live.
+    try:
+        from .account_type import detect_from_account_id, set_account_type
+        acct_type = detect_from_account_id(client.account_id or "")
+        set_account_type(acct_type)
+        logger.info("IB account_type=%s (account_id=%s)", acct_type, client.account_id)
+    except Exception as _e:
+        logger.warning("account_type detection failed: %s", _e)
+
     # Crash-loop alerting: fire one Telegram after N consecutive exceptions
     # so the next "could not convert string to float" doesn't go silent for
     # 22 hours. Rate-limit to one alert per error-streak (cleared on first

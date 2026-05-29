@@ -60,10 +60,23 @@ def record_closed_trade(user_id: str, trade: dict):
         broker = trade.get("broker", "oanda")
         broker_trade_id = str(trade.get("id", trade.get("broker_trade_id", "")))
 
+        # Resolve account_type from caller's row first, then from Redis,
+        # finally default 'paper'. Paper-vs-live separation depends on
+        # every write being tagged, so we do this even if the caller
+        # forgot.
+        acct_type = trade.get("account_type")
+        if not acct_type:
+            try:
+                from .account_type import current_account_type
+                acct_type = current_account_type()
+            except Exception:
+                acct_type = "paper"
+
         row = {
             "user_id": user_id,
             "broker": broker,
             "broker_trade_id": broker_trade_id,
+            "account_type": acct_type,
             "instrument": trade.get("instrument", ""),
             "asset_type": trade.get("asset_type", "forex"),
             "direction": trade.get("direction", ""),
@@ -133,10 +146,18 @@ def upsert_position(user_id: str, position: dict):
     if not sb:
         return
     try:
+        acct_type = position.get("account_type")
+        if not acct_type:
+            try:
+                from .account_type import current_account_type
+                acct_type = current_account_type()
+            except Exception:
+                acct_type = "paper"
         row = {
             "user_id": user_id,
             "broker": position.get("broker", "oanda"),
             "broker_trade_id": str(position.get("id", position.get("broker_trade_id", ""))),
+            "account_type": acct_type,
             "instrument": position.get("instrument", ""),
             "asset_type": position.get("asset_type", "forex"),
             "direction": position.get("direction", ""),
