@@ -35,7 +35,12 @@ STATE_KEY = "risk:runaway_guard:state"
 
 DEFAULT_CONFIG = {
     "enabled": True,
-    "max_trades_per_day": 20,         # 0 = no cap
+    # 40 covers normal MES 2n20 days — empirically 30-36 trades over a
+    # session on choppy markets, with headroom for outlier days. The
+    # consecutive-loss circuit breaker (max_consecutive_losses) is the
+    # tighter defense against runaway streaks; this cap is a backstop
+    # for the case where Pine fires 50+ alerts in an hour from a bug.
+    "max_trades_per_day": 40,         # 0 = no cap
     "max_consecutive_losses": 3,      # 0 = no cap
     "reset_hour_et": 9,
     "reset_minute_et": 30,
