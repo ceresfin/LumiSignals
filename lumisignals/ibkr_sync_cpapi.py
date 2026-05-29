@@ -303,7 +303,7 @@ def check_stop_fills(client):
                     meta={"fired": fired, "survivor_cancelled": survivor_id or None},
                 )
             except Exception as _de:
-                logger.debug("diary STOP_FIRED write failed: %s", _de)
+                logger.warning("diary STOP_FIRED write failed: %s", _de)
 
             logger.info(
                 "STRAT_POS clear  %s/%s: reason=child-fill(%s) survivor=%s",
@@ -1775,7 +1775,7 @@ def check_order_requests(client):
                                 expected_qty=0,
                             )
                         except Exception as _de:
-                            logger.debug("diary INTENT_CLOSE write failed: %s", _de)
+                            logger.warning("diary INTENT_CLOSE write failed: %s", _de)
                         if not entry_price:
                             for item in client.get_positions():
                                 if item.get("symbol") == ticker and item.get("sec_type") == "FUT":
@@ -2050,7 +2050,7 @@ def check_order_requests(client):
                                     realized_pl=pnl,
                                 )
                             except Exception as _de:
-                                logger.debug("diary CLOSED write failed: %s", _de)
+                                logger.warning("diary CLOSED write failed: %s", _de)
                             # Push notification: trade closed.
                             try:
                                 from .supabase_client import notify_trade_closed
@@ -2289,7 +2289,7 @@ def check_order_requests(client):
                                 meta={"quote_source": quote_source} if quote_source else None,
                             )
                         except Exception as _de:
-                            logger.debug("diary INTENT_OPEN write failed: %s", _de)
+                            logger.warning("diary INTENT_OPEN write failed: %s", _de)
 
                         # Hard #4: re-tickle CPAPI session right before placing
                         # the order. ensure_session() raises ConnectionError if
@@ -2525,7 +2525,7 @@ def check_order_requests(client):
                                     expected_qty=0,
                                 )
                             except Exception as _de:
-                                logger.debug("diary CANCELLED write failed: %s", _de)
+                                logger.warning("diary CANCELLED write failed: %s", _de)
                             continue
 
                         # Read THIS order's fill price by order ID — not the
@@ -2569,7 +2569,7 @@ def check_order_requests(client):
                                     expected_qty=0,
                                 )
                             except Exception as _de:
-                                logger.debug("diary CANCELLED (no fill) write failed: %s", _de)
+                                logger.warning("diary CANCELLED (no fill) write failed: %s", _de)
                             continue
 
                         # Per-strategy position state — lets independent
@@ -2643,7 +2643,7 @@ def check_order_requests(client):
                                             prior_btid, perm_id,
                                         )
                                     except Exception as _de:
-                                        logger.debug("diary close-prior write failed: %s", _de)
+                                        logger.warning("diary close-prior write failed: %s", _de)
 
                         # Diary: OPEN — bind broker_trade_id to the intent so
                         # the trigger retires the orphan INTENT_OPEN row.
@@ -2669,7 +2669,7 @@ def check_order_requests(client):
                                 },
                             )
                         except Exception as _de:
-                            logger.debug("diary OPEN write failed: %s", _de)
+                            logger.warning("diary OPEN write failed: %s", _de)
 
                         # Push + Telegram notification with the full plan
                         # (entry/target/stop/risk/reward) when Pine supplied it.
