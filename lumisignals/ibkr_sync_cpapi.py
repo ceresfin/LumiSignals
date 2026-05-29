@@ -304,6 +304,14 @@ def check_stop_fills(client):
                 )
             except Exception as _de:
                 logger.warning("diary STOP_FIRED write failed: %s", _de)
+            # Runaway guard: a bracket SL fire is a loss event by
+            # definition for the stop path (the TP path produces a win).
+            # Feed the streak counter from the actual realized P&L.
+            try:
+                from .runaway_guard import record_close
+                record_close(float(pnl or 0))
+            except Exception as _rg:
+                logger.warning("runaway_guard record_close (STOP_FIRED) failed: %s", _rg)
 
             logger.info(
                 "STRAT_POS clear  %s/%s: reason=child-fill(%s) survivor=%s",
@@ -2051,6 +2059,14 @@ def check_order_requests(client):
                                 )
                             except Exception as _de:
                                 logger.warning("diary CLOSED write failed: %s", _de)
+                            # Runaway guard: feed the consecutive-loss streak
+                            # counter. Resets to 0 on any winner; trips when
+                            # streak crosses the configured cap.
+                            try:
+                                from .runaway_guard import record_close
+                                record_close(float(pnl or 0))
+                            except Exception as _rg:
+                                logger.warning("runaway_guard record_close (CLOSED) failed: %s", _rg)
                             # Push notification: trade closed.
                             try:
                                 from .supabase_client import notify_trade_closed

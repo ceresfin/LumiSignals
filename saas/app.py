@@ -2910,6 +2910,37 @@ def create_app():
         state = reconcile_gate.manual_reset()
         return jsonify({"state": state})
 
+    @app.route("/api/risk/runaway-guard", methods=["GET", "PUT"])
+    def api_risk_runaway_guard():
+        """Read or update the runaway guard (max-trades-per-day +
+        consecutive-loss circuit breaker).
+
+        GET  → { config, state }
+        PUT  → body: any subset of { enabled, max_trades_per_day,
+                                      max_consecutive_losses,
+                                      reset_hour_et, reset_minute_et }
+        Auth: X-Sync-Key.
+        """
+        sync_key = request.headers.get("X-Sync-Key", "")
+        if sync_key != os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026"):
+            return jsonify({"error": "unauthorized"}), 401
+        from lumisignals import runaway_guard
+        if request.method == "PUT":
+            body = request.get_json(silent=True) or {}
+            cfg = runaway_guard.set_config(body)
+        else:
+            cfg = runaway_guard.get_config()
+        return jsonify({"config": cfg, "state": runaway_guard.get_state()})
+
+    @app.route("/api/risk/runaway-guard/reset", methods=["POST"])
+    def api_risk_runaway_guard_reset():
+        sync_key = request.headers.get("X-Sync-Key", "")
+        if sync_key != os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026"):
+            return jsonify({"error": "unauthorized"}), 401
+        from lumisignals import runaway_guard
+        state = runaway_guard.manual_reset()
+        return jsonify({"state": state})
+
     @app.route("/api/risk/position-guard", methods=["GET", "PUT"])
     def api_risk_position_guard():
         """Read or update the position size guard.
@@ -4019,6 +4050,34 @@ def create_app():
                     # bracket SL is still in place per-trade.
                     logger.warning("kill switch check failed (fail-open): %s", e)
 
+            # Runaway guard — caps total accepted entries per day AND
+            # consecutive losses streak. Independent of kill switch ($ loss
+            # threshold) — guards against signal-frequency runaway and
+            # whipsaw bleed. Closes are never blocked.
+            if direction in ("BUY", "SELL"):
+                try:
+                    from lumisignals import runaway_guard
+                    if runaway_guard.is_blocking_entry():
+                        st = runaway_guard.get_state()
+                        cfg = runaway_guard.get_config()
+                        logger.warning(
+                            "runaway_guard BLOCKED %s %s: %s",
+                            direction, ticker, st.get("trip_reason"),
+                        )
+                        return jsonify({
+                            "status": "skipped",
+                            "reason": "runaway_guard_tripped",
+                            "trip_reason": st.get("trip_reason"),
+                            "trades_today": st.get("trades_today"),
+                            "consecutive_losses": st.get("consecutive_losses"),
+                            "max_trades_per_day": cfg.get("max_trades_per_day"),
+                            "max_consecutive_losses": cfg.get("max_consecutive_losses"),
+                            "tripped_at": st.get("tripped_at"),
+                            "ticker": ticker, "direction": direction,
+                        }), 200
+                except Exception as e:
+                    logger.warning("runaway_guard check failed (fail-open): %s", e)
+
             # Position size guard — refuse entries that would push projected
             # net contracts past the configured ceiling. Defense against
             # runaway loops or duplicate signals from stacking too many
@@ -4125,6 +4184,14 @@ def create_app():
             if tv_latency_seconds is not None:
                 order["tv_latency_seconds"] = tv_latency_seconds
             rdb.setex(f"ibkr:order:pending:{order_id}", 86400, json.dumps(order))
+            # Runaway guard: increment the daily trade counter after a
+            # successful entry queue. This is what trips the cap when
+            # Pine fires too many signals.
+            try:
+                from lumisignals import runaway_guard
+                runaway_guard.record_entry()
+            except Exception as _e:
+                logger.warning("runaway_guard record_entry failed: %s", _e)
             # 30s dedup — only protects against accidental webhook retries from TV
             # itself. Pine's `alert.freq_once_per_bar_close` already ensures one
             # alert per bar (every 2 min), so anything past 30s is a legitimate
