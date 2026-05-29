@@ -2910,6 +2910,83 @@ def create_app():
         state = reconcile_gate.manual_reset()
         return jsonify({"state": state})
 
+    @app.route("/api/risk/flatten-all", methods=["POST"])
+    def api_risk_flatten_all():
+        """Emergency: queue a MKT close for every currently-open futures
+        position. Returns the list of orders queued so the caller can
+        verify each leg.
+
+        Designed for the "bot is misbehaving and I need to be flat
+        NOW" workflow: user opens mobile Settings → Flatten All, taps,
+        confirms. Each open futures contract gets a MKT close queued
+        to ibkr:order:pending — same path as a normal TV close webhook.
+
+        Bypasses the futures BUY/SELL gate stack since closes are
+        always safer than holding. Still goes through ibkr-sync, which
+        validates against IB state and uses the atomic STP→MKT modify
+        when possible to avoid double-stop fills.
+
+        Auth: X-Sync-Key header.
+        """
+        sync_key = request.headers.get("X-Sync-Key", "")
+        if sync_key != os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026"):
+            return jsonify({"error": "unauthorized"}), 401
+        import redis as _redis
+        import uuid
+        rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+
+        # Read current IB positions from the sync's cached snapshot.
+        raw = rdb.get("ibkr:data:1")
+        if not raw:
+            return jsonify({
+                "status": "error",
+                "reason": "no_ibkr_data_in_cache",
+                "detail": "ibkr-sync has not pushed positions yet — try again in a few seconds",
+            }), 503
+        try:
+            data = json.loads(raw)
+            positions = data.get("positions", []) or []
+        except Exception as e:
+            return jsonify({"status": "error", "reason": str(e)}), 500
+
+        queued = []
+        skipped = []
+        for p in positions:
+            qty = int(p.get("position", 0))
+            if qty == 0:
+                continue
+            sym = (p.get("symbol") or p.get("contractDesc") or "").upper()
+            if not sym:
+                skipped.append({"reason": "no_symbol", "position": p})
+                continue
+            # Direction = opposite of current net. Long N → SELL N; Short N → BUY N.
+            close_dir = "CLOSE_LONG" if qty > 0 else "CLOSE_SHORT"
+            order_id = str(uuid.uuid4())[:8]
+            order = {
+                "order_id": order_id,
+                "queued_at": datetime.now(timezone.utc).isoformat(),
+                "user_id": 1,
+                "ticker": sym,
+                "type": "futures",
+                "direction": close_dir,
+                "strategy": "emergency_flatten",
+                "reason": "Emergency Flatten All",
+                "contracts": abs(qty),
+                "status": "queued",
+            }
+            rdb.setex(f"ibkr:order:pending:{order_id}", 86400, json.dumps(order))
+            queued.append({"ticker": sym, "qty": qty, "direction": close_dir,
+                          "order_id": order_id})
+
+        logger.warning("FLATTEN ALL: queued %d close order(s), skipped %d",
+                       len(queued), len(skipped))
+        return jsonify({
+            "status": "queued",
+            "queued": queued,
+            "skipped": skipped,
+            "count": len(queued),
+        })
+
     @app.route("/api/risk/cooldown", methods=["GET", "PUT"])
     def api_risk_cooldown():
         """Read or update the per-(strategy, ticker) cooldown config.

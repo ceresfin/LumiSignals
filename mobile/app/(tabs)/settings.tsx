@@ -80,6 +80,7 @@ export default function Settings() {
   }>({ status: 'ok', duration_seconds: null, last_heartbeat: null, reason: null });
   const [rgLocked, setRgLocked] = useState(false);
   const [rgResetting, setRgResetting] = useState(false);
+  const [flattening, setFlattening] = useState(false);
 
   const loadProfile = async () => {
     if (!user) return;
@@ -216,6 +217,33 @@ export default function Settings() {
       Alert.alert('Reset failed', String(e?.message || e));
     } finally {
       setRgResetting(false);
+    }
+  };
+
+  const flattenAll = async () => {
+    setFlattening(true);
+    try {
+      const syncKey = process.env.EXPO_PUBLIC_LUMI_SYNC_KEY || '';
+      const r = await fetch('https://bot.lumitrade.ai/api/risk/flatten-all', {
+        method: 'POST',
+        headers: { 'X-Sync-Key': syncKey },
+      });
+      const d = await r.json();
+      if (r.ok && d?.status === 'queued') {
+        const lines = (d.queued || []).map(
+          (o: any) => `${o.ticker} ${o.qty > 0 ? 'long' : 'short'} ${Math.abs(o.qty)}`,
+        ).join('\n');
+        Alert.alert(
+          `Flatten queued: ${d.count} position(s)`,
+          lines || 'Already flat — no positions to close.',
+        );
+      } else {
+        Alert.alert('Flatten failed', d?.detail || d?.reason || `HTTP ${r.status}`);
+      }
+    } catch (e: any) {
+      Alert.alert('Flatten failed', String(e?.message || e));
+    } finally {
+      setFlattening(false);
     }
   };
 
@@ -667,6 +695,35 @@ export default function Settings() {
             acting on stale strat_pos / diary state before the bot has
             re-synced with the broker.
           </Text>
+        </Section>
+
+        {/* Emergency Flatten All */}
+        <Section title="9. Emergency">
+          <Text style={styles.fieldHint}>
+            Queues a MKT close for every currently-open futures position.
+            Use when the bot is misbehaving and you need to be flat now.
+            Closes always pass through bot gates; reconciler still runs.
+          </Text>
+          <TouchableOpacity
+            style={[styles.ibAuthButton, { backgroundColor: Colors.red, marginTop: 12 },
+                    flattening && { opacity: 0.5 }]}
+            onPress={() =>
+              Alert.alert(
+                'Flatten ALL open positions?',
+                'This queues a MKT close for every open futures contract at IB. '
+                + 'Bracket SLs / TPs will be cancelled. You will be FLAT in seconds.',
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: 'Flatten All', style: 'destructive', onPress: flattenAll },
+                ],
+              )
+            }
+            disabled={flattening}
+          >
+            <Text style={styles.ibAuthText}>
+              {flattening ? 'Queuing…' : '⚠️  Flatten All Positions'}
+            </Text>
+          </TouchableOpacity>
         </Section>
 
         {/* Sign Out */}
