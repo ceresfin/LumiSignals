@@ -573,6 +573,20 @@ class CPAPIClient:
 
         exit_side = "SELL" if entry_side == "BUY" else "BUY"
 
+        # Children get their own cOIDs derived from the parent's by glob-ing
+        # a role marker into the trailing hash. Without this, SL/TP fills
+        # come back from /iserver/account/trades with order_ref="" (an
+        # IB-generated value, not our lumi tag) and the reconciler can't
+        # decode the strategy from the fill — every bracket SL fire creates
+        # an apparent orphan that mobile shows as "ALL ORPHAN".
+        # Format chosen so the existing reconciler hash-stripping parser
+        # (rsplit on '_', take the head) still decodes the strategy:
+        #   parent:  lumi_futures_2n20_<hash>
+        #   sl:      lumi_futures_2n20_<hash>sl
+        #   tp:      lumi_futures_2n20_<hash>tp
+        sl_coid = f"{entry_coid}sl"
+        tp_coid = f"{entry_coid}tp"
+
         parent = {
             "cOID": entry_coid,
             "conid": conid,
@@ -585,6 +599,7 @@ class CPAPIClient:
             parent["price"] = entry_price
 
         sl = {
+            "cOID": sl_coid,
             "parentId": entry_coid,
             "conid": conid,
             "orderType": "STP",
@@ -597,6 +612,7 @@ class CPAPIClient:
         orders = [parent, sl]
         if target_price and target_price > 0:
             tp = {
+                "cOID": tp_coid,
                 "parentId": entry_coid,
                 "conid": conid,
                 "orderType": "LMT",

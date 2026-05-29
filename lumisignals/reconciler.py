@@ -397,6 +397,53 @@ def run_pass(
                           "source_order_ref": order_ref or None,
                           "decoded_strategy": decoded_strategy},
                 )
+                # Find a matching bracket SL in the open-orders snapshot —
+                # opposite side, STP orderType, same ticker. Linking it via
+                # stop_order_id lets check_stop_fills monitor the adopted
+                # position properly so an SL fire clears strat_pos cleanly
+                # instead of triggering another orphan cycle on next loop.
+                # Best-effort: empty stop_order_id is also fine, the bot
+                # falls back to "IB_QTY disappeared" detection.
+                exit_side = "SELL" if broker_qty > 0 else "BUY"
+                discovered_sl_id = ""
+                discovered_sl_price = 0.0
+                discovered_tp_id = ""
+                discovered_tp_price = 0.0
+                for _ord in (order_status_by_id or {}).values():
+                    if not isinstance(_ord, dict):
+                        continue
+                    o_ticker = (_ord.get("ticker") or "").upper()
+                    if o_ticker and o_ticker != ticker.upper():
+                        continue
+                    o_side = (_ord.get("side") or "").upper()
+                    if o_side != exit_side:
+                        continue
+                    o_status = (_ord.get("status") or "").lower()
+                    if o_status in ("filled", "cancelled"):
+                        continue
+                    o_type = (_ord.get("orderType") or "").upper()
+                    if o_type in ("STP", "STOP", "STOP_LIMIT") and not discovered_sl_id:
+                        discovered_sl_id = str(_ord.get("orderId") or "")
+                        try:
+                            discovered_sl_price = float(
+                                _ord.get("stop_price") or _ord.get("price") or 0
+                            )
+                        except (TypeError, ValueError):
+                            discovered_sl_price = 0.0
+                    elif o_type in ("LMT", "LIMIT") and not discovered_tp_id:
+                        discovered_tp_id = str(_ord.get("orderId") or "")
+                        try:
+                            discovered_tp_price = float(_ord.get("price") or 0)
+                        except (TypeError, ValueError):
+                            discovered_tp_price = 0.0
+                if discovered_sl_id or discovered_tp_id:
+                    logger.info(
+                        "RECONCILE adopt: bracket children linked for %s — "
+                        "sl=%s @ %.2f tp=%s @ %.2f",
+                        ticker, discovered_sl_id or "-", discovered_sl_price,
+                        discovered_tp_id or "-", discovered_tp_price,
+                    )
+
                 # Also create a Redis strat_pos so downstream code (mobile
                 # UI mismatch warning, close path, check_stop_fills, etc.)
                 # sees the position as "tracked" under the adopted strategy.
@@ -413,6 +460,10 @@ def run_pass(
                         contracts=abs(int(broker_qty)),
                         entry_price=float(last_price or 0),
                         perm_id=str(last_order_id or ""),
+                        stop_order_id=discovered_sl_id,
+                        stop_price=discovered_sl_price,
+                        target_order_id=discovered_tp_id,
+                        target_price=discovered_tp_price,
                         caller="reconciler_adopt",
                     )
                 except Exception as _e:
