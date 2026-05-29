@@ -1195,6 +1195,29 @@ def create_app():
         """Queue a spread order for the IB sync script to place."""
         import redis as _redis
         import uuid
+        # Hard #5 (audit): restart-safety gate. Refuse mobile-initiated
+        # orders until ibkr-sync has completed at least one reconcile pass
+        # — same gate applied to the TV webhook futures path. Without this,
+        # a spread order submitted from mobile right after a bot restart
+        # could land on top of stale strat_pos / diary state.
+        try:
+            from lumisignals import reconcile_gate
+            if reconcile_gate.is_locked():
+                state = reconcile_gate.get_state()
+                logger.warning("reconcile_gate BLOCKED mobile spread order: status=%s",
+                               state.get("status"))
+                return jsonify({
+                    "status": "skipped",
+                    "reason": "reconcile_gate_locked",
+                    "gate_status": state.get("status"),
+                    "gate_reason": state.get("reason"),
+                }), 503
+        except Exception as e:
+            logger.warning("reconcile_gate check failed (fail-closed): %s", e)
+            return jsonify({
+                "status": "skipped",
+                "reason": "reconcile_gate_check_failed",
+            }), 503
         rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
         data = request.get_json()
         order_id = str(uuid.uuid4())[:8]
@@ -3881,6 +3904,27 @@ def create_app():
         # targets, OR context, VIX, reversal flag). Hand off to the dedicated
         # state machine in orb_butterfly_handler.
         if strategy == "orb_butterfly":
+            # Hard #5 (audit): restart-safety gate. Refuse butterflies
+            # until ibkr-sync has reconciled — same as the futures path.
+            try:
+                from lumisignals import reconcile_gate
+                if reconcile_gate.is_locked():
+                    state = reconcile_gate.get_state()
+                    logger.warning("reconcile_gate BLOCKED orb_butterfly %s: status=%s",
+                                   ticker, state.get("status"))
+                    return jsonify({
+                        "status": "skipped",
+                        "reason": "reconcile_gate_locked",
+                        "gate_status": state.get("status"),
+                        "ticker": ticker,
+                    }), 503
+            except Exception as e:
+                logger.warning("reconcile_gate check failed (fail-closed): %s", e)
+                return jsonify({
+                    "status": "skipped",
+                    "reason": "reconcile_gate_check_failed",
+                    "ticker": ticker,
+                }), 503
             rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
             # Verify required fields up front so we don't queue garbage
             required = ("long_strike", "body_strike", "wing_strike", "direction")
@@ -4097,6 +4141,29 @@ def create_app():
             return jsonify({"status": "queued", "ticker": ticker, "direction": direction, "strategy": strategy, "contracts": override_contracts or 1})
 
         # ─── OPTIONS PATH ───
+        # Hard #5 (audit): restart-safety gate. Refuse options until ibkr-sync
+        # has reconciled — same as the futures path. Bot crash mid-trade
+        # could leave stale options strat_pos that the gate prevents acting on.
+        try:
+            from lumisignals import reconcile_gate
+            if reconcile_gate.is_locked():
+                state = reconcile_gate.get_state()
+                logger.warning("reconcile_gate BLOCKED options %s %s: status=%s",
+                               direction, ticker, state.get("status"))
+                return jsonify({
+                    "status": "skipped",
+                    "reason": "reconcile_gate_locked",
+                    "gate_status": state.get("status"),
+                    "ticker": ticker, "direction": direction,
+                }), 503
+        except Exception as e:
+            logger.warning("reconcile_gate check failed (fail-closed): %s", e)
+            return jsonify({
+                "status": "skipped",
+                "reason": "reconcile_gate_check_failed",
+                "ticker": ticker, "direction": direction,
+            }), 503
+
         # 0DTE exit rules: tighter than swing
         if dte == 0:
             default_tp = 35
