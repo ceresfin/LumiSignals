@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Alert } from 'react-native';
 import { Colors } from '@/constants/theme';
 
 const API_BASE = 'https://bot.lumitrade.ai';
@@ -18,6 +18,40 @@ type ReconcileState = {
 export default function ReconcileBanner() {
   const [state, setState] = useState<ReconcileState | null>(null);
   const [locked, setLocked] = useState(false);
+  const [resetting, setResetting] = useState(false);
+
+  const onResetTap = () => {
+    Alert.alert(
+      'Reset reconcile gate?',
+      'Webhooks will resume immediately. Only do this if you have verified broker positions match the bot state.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reset', style: 'destructive', onPress: async () => {
+            setResetting(true);
+            try {
+              const syncKey = process.env.EXPO_PUBLIC_LUMI_SYNC_KEY || '';
+              const r = await fetch('https://bot.lumitrade.ai/api/risk/reconcile-state/reset', {
+                method: 'POST',
+                headers: { 'X-Sync-Key': syncKey },
+              });
+              if (r.ok) {
+                setLocked(false);
+                const d = await r.json();
+                if (d?.state) setState(d.state);
+              } else {
+                Alert.alert('Reset failed', `HTTP ${r.status}`);
+              }
+            } catch (e: any) {
+              Alert.alert('Reset failed', String(e?.message || e));
+            } finally {
+              setResetting(false);
+            }
+          },
+        },
+      ],
+    );
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -70,12 +104,22 @@ export default function ReconcileBanner() {
           </Text>
           <Text style={styles.subtitle}>
             {isTimedOut
-              ? 'New trades refused with 503. Open Settings → Reconcile gate → Reset to resume.'
+              ? 'New trades refused with 503. Tap Reset to resume once you have verified broker state.'
               : isReconciling
                 ? 'Webhooks are being refused with 503 until the first sync pass finishes.'
                 : (state.reason || 'No recent heartbeat from ibkr-sync. Waiting for it to come back up.')}
           </Text>
         </View>
+        {isTimedOut ? (
+          <TouchableOpacity
+            style={[styles.resetBtn, resetting && { opacity: 0.5 }]}
+            onPress={onResetTap}
+            disabled={resetting}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Text style={styles.resetBtnText}>{resetting ? '…' : 'Reset'}</Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
     </View>
   );
@@ -100,4 +144,11 @@ const styles = StyleSheet.create({
   titleWarn: { color: Colors.amber },
   titleError: { color: Colors.red },
   subtitle: { color: Colors.dark, fontSize: 11, marginTop: 2 },
+  resetBtn: {
+    backgroundColor: Colors.red,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  resetBtnText: { color: Colors.white, fontSize: 12, fontWeight: '600' },
 });

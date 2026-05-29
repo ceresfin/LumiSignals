@@ -8,6 +8,7 @@ import { useAuth } from '@/contexts/auth';
 import { Colors } from '@/constants/theme';
 import IbStatusBanner from '@/components/ib-status-banner';
 import ReconcileBanner from '@/components/reconcile-banner';
+import BotStatusCard from '@/components/bot-status-card';
 
 type Trade = {
   realized_pl: number | null;
@@ -580,6 +581,7 @@ export default function Dashboard() {
 
         <ReconcileBanner />
         <IbStatusBanner />
+        <BotStatusCard />
 
         {/* Broker Tabs */}
         <View style={styles.tabBar}>
