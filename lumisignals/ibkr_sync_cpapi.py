@@ -2326,29 +2326,69 @@ def check_order_requests(client):
                         # This populates the diary's stop_order_id field so
                         # check_stop_fills() can detect stop fires within
                         # ~2s — critical for 30-second scalps. Task #3.
+                        #
+                        # Hard #2: CPAPI sometimes hasn't published the
+                        # children yet when the bracket POST returns.
+                        # Poll up to 5 times (0.5 s apart, ~2.5 s total) —
+                        # uses the existing ~2 s settle window before
+                        # strat_pos is created. If SL still missing after
+                        # polling AND we have a parent order_id, the
+                        # position is at IB but we have no SL to monitor;
+                        # fire a high-priority Telegram so the user knows
+                        # the bracket is broken.
                         if entry_order_id and (not sl_order_id or not tp_order_id):
-                            try:
-                                open_orders = client.get_open_orders() or []
-                                children = [
-                                    o for o in open_orders
-                                    if str(o.get("parentId") or "") == entry_order_id
-                                ]
-                                for c in children:
-                                    ot = (c.get("orderType") or "").upper()
-                                    cid = str(c.get("orderId") or "")
-                                    if not cid:
-                                        continue
-                                    if not sl_order_id and ot in ("STP", "STOP", "STOP_LIMIT"):
-                                        sl_order_id = cid
-                                    elif not tp_order_id and ot in ("LMT", "LIMIT", "LIMIT_ON_CLOSE"):
-                                        tp_order_id = cid
-                                if children and (sl_order_id or tp_order_id):
-                                    logger.info(
-                                        "Bracket children discovered for entry %s: sl=%s tp=%s",
-                                        entry_order_id, sl_order_id or "-", tp_order_id or "-",
+                            for _attempt in range(5):
+                                try:
+                                    open_orders = client.get_open_orders() or []
+                                    children = [
+                                        o for o in open_orders
+                                        if str(o.get("parentId") or "") == entry_order_id
+                                    ]
+                                    for c in children:
+                                        ot = (c.get("orderType") or "").upper()
+                                        cid = str(c.get("orderId") or "")
+                                        if not cid:
+                                            continue
+                                        if not sl_order_id and ot in ("STP", "STOP", "STOP_LIMIT"):
+                                            sl_order_id = cid
+                                        elif not tp_order_id and ot in ("LMT", "LIMIT", "LIMIT_ON_CLOSE"):
+                                            tp_order_id = cid
+                                except Exception as _e:
+                                    logger.debug("bracket child discovery failed: %s", _e)
+                                # Stop polling once SL is found (TP is
+                                # optional — never wait for it alone).
+                                if sl_order_id:
+                                    break
+                                if _attempt < 4:
+                                    time.sleep(0.5)
+                            if sl_order_id:
+                                logger.info(
+                                    "Bracket children discovered for entry %s: sl=%s tp=%s",
+                                    entry_order_id, sl_order_id or "-", tp_order_id or "-",
+                                )
+                            else:
+                                # Position is (likely) live at IB but the SL
+                                # never surfaced. Either CPAPI didn't accept
+                                # the child or it's still propagating. Either
+                                # way, check_stop_fills can't monitor it and
+                                # the user needs to know NOW.
+                                logger.error(
+                                    "BRACKET SL MISSING after %d polls for entry %s "
+                                    "(%s %s [%s]) — position may be NAKED. Reconciler "
+                                    "will retry on next pass.",
+                                    5, entry_order_id, direction, ticker, strategy_name,
+                                )
+                                try:
+                                    _send_telegram_alert(
+                                        f"⚠️ Naked entry risk: {ticker} [{strategy_name}]",
+                                        f"{direction} {ticker} bracket parent placed "
+                                        f"(order {entry_order_id}) but SL child did not "
+                                        f"surface after 2.5 s of polling.\n\n"
+                                        f"Position may be unprotected. Check IB and "
+                                        f"consider manual SL placement.",
                                     )
-                            except Exception as _e:
-                                logger.debug("bracket child discovery failed: %s", _e)
+                                except Exception:
+                                    pass
 
                         logger.info(
                             "Bracket %s %s %dx — entry=%s, sl=%s @ %.2f (%s), tp=%s",
