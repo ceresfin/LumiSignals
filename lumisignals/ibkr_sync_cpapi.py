@@ -312,6 +312,16 @@ def check_stop_fills(client):
                 record_close(float(pnl or 0))
             except Exception as _rg:
                 logger.warning("runaway_guard record_close (STOP_FIRED) failed: %s", _rg)
+            # Cooldown: a stop-out triggers a pause on this (strategy,
+            # ticker) so the webhook handler refuses the next signal
+            # while the cooldown TTL is alive. TP fills do NOT cool down
+            # — only true stop-outs (fired == "stop").
+            if fired == "stop":
+                try:
+                    from .cooldown import start as cooldown_start
+                    cooldown_start(strategy, ticker)
+                except Exception as _cd:
+                    logger.warning("cooldown start failed: %s", _cd)
 
             logger.info(
                 "STRAT_POS clear  %s/%s: reason=child-fill(%s) survivor=%s",
@@ -3171,6 +3181,13 @@ def weekend_flatten_futures(client):
     the window. Sets ibkr:weekend_lockout (TTL through Sunday 17:55 ET)
     so check_order_requests can refuse any TV-fired futures entries until
     the next regular session.
+
+    Soft #10: respect the reconcile gate. If reconciliation is in
+    progress, don't try to issue close orders — the bot doesn't yet
+    know what's actually open at IB. The lockout flag still gets set,
+    so new entries are refused; we just skip the actual close orders
+    until the next loop iteration when reconcile completes. Idempotency
+    via ibkr:weekend_flatten:done covers the retry.
     """
     try:
         now_et = _et_now()
@@ -3187,6 +3204,22 @@ def weekend_flatten_futures(client):
         rdb = _rdb()
         if rdb is None:
             return
+
+        # Don't flatten during reconciliation — we'd issue closes against
+        # state we haven't validated yet. The lockout flag gets set below
+        # regardless (so new entries refuse) but the actual closes wait.
+        try:
+            from .reconcile_gate import is_locked as _rg_locked
+            if _rg_locked():
+                logger.info(
+                    "weekend_flatten skipped: reconcile gate locked. "
+                    "Will retry on next loop iteration."
+                )
+                # Still set the lockout flag so new entries refuse.
+                rdb.setex("ibkr:weekend_lockout", 49 * 3600, "1")
+                return
+        except Exception as _e:
+            logger.warning("weekend_flatten reconcile gate check failed: %s", _e)
 
         # Set lockout flag for the whole weekend. CME reopens Sunday 18:00
         # ET; we lift the flag at Sunday 17:55 so the bot is ready when

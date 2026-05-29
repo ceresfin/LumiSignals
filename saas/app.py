@@ -2910,6 +2910,40 @@ def create_app():
         state = reconcile_gate.manual_reset()
         return jsonify({"state": state})
 
+    @app.route("/api/risk/cooldown", methods=["GET", "PUT"])
+    def api_risk_cooldown():
+        """Read or update the per-(strategy, ticker) cooldown config.
+
+        GET  → { config }
+        PUT  → body: { enabled?, cooldown_secs? }
+        Auth: X-Sync-Key.
+        """
+        sync_key = request.headers.get("X-Sync-Key", "")
+        if sync_key != os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026"):
+            return jsonify({"error": "unauthorized"}), 401
+        from lumisignals import cooldown
+        if request.method == "PUT":
+            body = request.get_json(silent=True) or {}
+            cfg = cooldown.set_config(body)
+        else:
+            cfg = cooldown.get_config()
+        return jsonify({"config": cfg})
+
+    @app.route("/api/risk/cooldown/clear", methods=["POST"])
+    def api_risk_cooldown_clear():
+        """Manually clear an active cooldown. Body: { strategy, ticker }."""
+        sync_key = request.headers.get("X-Sync-Key", "")
+        if sync_key != os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026"):
+            return jsonify({"error": "unauthorized"}), 401
+        from lumisignals import cooldown
+        body = request.get_json(silent=True) or {}
+        strategy = body.get("strategy", "")
+        ticker = body.get("ticker", "")
+        if not strategy or not ticker:
+            return jsonify({"error": "strategy and ticker required"}), 400
+        cleared = cooldown.clear(strategy, ticker)
+        return jsonify({"cleared": cleared, "strategy": strategy, "ticker": ticker})
+
     @app.route("/api/risk/runaway-guard", methods=["GET", "PUT"])
     def api_risk_runaway_guard():
         """Read or update the runaway guard (max-trades-per-day +
@@ -4050,6 +4084,31 @@ def create_app():
                     # bracket SL is still in place per-trade.
                     logger.warning("kill switch check failed (fail-open): %s", e)
 
+            # CME futures maintenance window: 17:00–18:00 ET daily, all
+            # weekdays. Pine's 2n20 script gates this server-side too
+            # (`inSession`), but a TV alert with a stale chart timezone
+            # or a misconfigured strategy could still fire into the
+            # window. Refusing here is belt + suspenders. Soft #11.
+            if direction in ("BUY", "SELL"):
+                try:
+                    from zoneinfo import ZoneInfo as _ZI
+                    _now_et = datetime.now(timezone.utc).astimezone(_ZI("America/New_York"))
+                    if _now_et.hour == 17:
+                        logger.warning(
+                            "CME maintenance window — refusing %s %s at %s ET",
+                            direction, ticker, _now_et.strftime("%H:%M"),
+                        )
+                        return jsonify({
+                            "status": "skipped",
+                            "reason": "cme_maintenance_window",
+                            "et_time": _now_et.strftime("%H:%M"),
+                            "ticker": ticker, "direction": direction,
+                        }), 503
+                except Exception as _e:
+                    # If timezone lookup fails for some reason, fall
+                    # through — don't block trading on a tz library bug.
+                    logger.warning("CME maintenance check failed: %s", _e)
+
             # Runaway guard — caps total accepted entries per day AND
             # consecutive losses streak. Independent of kill switch ($ loss
             # threshold) — guards against signal-frequency runaway and
@@ -4077,6 +4136,30 @@ def create_app():
                         }), 200
                 except Exception as e:
                     logger.warning("runaway_guard check failed (fail-open): %s", e)
+
+            # Per-(strategy, ticker) cooldown — set by ibkr-sync when a
+            # bracket SL fires. Refuses re-entry on the same level for the
+            # configured cooldown period (default 2 min ~ 1 bar on a 2m
+            # chart). Mirrors discretionary trader behaviour of waiting
+            # after a stop before re-entering.
+            if direction in ("BUY", "SELL"):
+                try:
+                    from lumisignals import cooldown
+                    if cooldown.is_active(strategy, ticker):
+                        ttl = cooldown.ttl(strategy, ticker)
+                        logger.warning(
+                            "cooldown BLOCKED %s %s [%s]: %ds remaining",
+                            direction, ticker, strategy, ttl,
+                        )
+                        return jsonify({
+                            "status": "skipped",
+                            "reason": "cooldown_active",
+                            "ttl_seconds": ttl,
+                            "ticker": ticker, "direction": direction,
+                            "strategy": strategy,
+                        }), 200
+                except Exception as e:
+                    logger.warning("cooldown check failed (fail-open): %s", e)
 
             # Position size guard — refuse entries that would push projected
             # net contracts past the configured ceiling. Defense against
