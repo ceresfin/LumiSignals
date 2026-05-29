@@ -81,6 +81,20 @@ export default function Settings() {
   const [rgLocked, setRgLocked] = useState(false);
   const [rgResetting, setRgResetting] = useState(false);
   const [flattening, setFlattening] = useState(false);
+  // Runaway guard — caps daily trade count + consecutive losses.
+  const [rgwCfg, setRgwCfg] = useState<{
+    enabled: boolean; max_trades_per_day: number;
+    max_consecutive_losses: number;
+    reset_hour_et: number; reset_minute_et: number;
+  }>({ enabled: true, max_trades_per_day: 65, max_consecutive_losses: 3,
+       reset_hour_et: 9, reset_minute_et: 30 });
+  const [rgwState, setRgwState] = useState<{
+    tripped: boolean; tripped_at: string | null; trip_reason: string | null;
+    trades_today: number; consecutive_losses: number;
+  }>({ tripped: false, tripped_at: null, trip_reason: null,
+       trades_today: 0, consecutive_losses: 0 });
+  const [rgwSaving, setRgwSaving] = useState(false);
+  const [rgwResetting, setRgwResetting] = useState(false);
 
   const loadProfile = async () => {
     if (!user) return;
@@ -247,8 +261,63 @@ export default function Settings() {
     }
   };
 
+  const loadRunawayGuard = async () => {
+    try {
+      const syncKey = process.env.EXPO_PUBLIC_LUMI_SYNC_KEY || '';
+      const r = await fetch('https://bot.lumitrade.ai/api/risk/runaway-guard', {
+        headers: { 'X-Sync-Key': syncKey },
+      });
+      if (!r.ok) return;
+      const d = await r.json();
+      if (d?.config) setRgwCfg(d.config);
+      if (d?.state) setRgwState(d.state);
+    } catch {
+      // best-effort
+    }
+  };
+
+  const saveRunawayGuard = async (patch: Partial<typeof rgwCfg>) => {
+    setRgwSaving(true);
+    try {
+      const next = { ...rgwCfg, ...patch };
+      setRgwCfg(next); // optimistic
+      const syncKey = process.env.EXPO_PUBLIC_LUMI_SYNC_KEY || '';
+      const r = await fetch('https://bot.lumitrade.ai/api/risk/runaway-guard', {
+        method: 'PUT',
+        headers: { 'X-Sync-Key': syncKey, 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const d = await r.json();
+      if (d?.config) setRgwCfg(d.config);
+      if (d?.state) setRgwState(d.state);
+    } catch (e: any) {
+      Alert.alert('Runaway guard save failed', String(e?.message || e));
+    } finally {
+      setRgwSaving(false);
+    }
+  };
+
+  const resetRunawayGuard = async () => {
+    setRgwResetting(true);
+    try {
+      const syncKey = process.env.EXPO_PUBLIC_LUMI_SYNC_KEY || '';
+      const r = await fetch('https://bot.lumitrade.ai/api/risk/runaway-guard/reset', {
+        method: 'POST',
+        headers: { 'X-Sync-Key': syncKey },
+      });
+      const d = await r.json();
+      if (d?.state) setRgwState(d.state);
+    } catch (e: any) {
+      Alert.alert('Reset failed', String(e?.message || e));
+    } finally {
+      setRgwResetting(false);
+    }
+  };
+
   useEffect(() => {
-    loadProfile(); loadIbStatus(); loadKillSwitch(); loadPositionGuard(); loadReconcileGate();
+    loadProfile(); loadIbStatus(); loadKillSwitch();
+    loadPositionGuard(); loadReconcileGate(); loadRunawayGuard();
   }, [user]);
   // Poll reconcile gate every 5s so the Settings screen reflects state quickly.
   useEffect(() => {
@@ -275,7 +344,10 @@ export default function Settings() {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await Promise.all([loadProfile(), loadIbStatus(), loadKillSwitch(), loadPositionGuard()]);
+    await Promise.all([
+      loadProfile(), loadIbStatus(), loadKillSwitch(),
+      loadPositionGuard(), loadReconcileGate(), loadRunawayGuard(),
+    ]);
     setRefreshing(false);
   };
 
@@ -638,6 +710,103 @@ export default function Settings() {
             Reversals (e.g. BUY signal while short) project to ±limit and pass.
             Closes never blocked. Set per-instrument overrides via the API if
             different limits are needed per ticker (default applies to all).
+          </Text>
+        </Section>
+
+        {/* Runaway Guard */}
+        <Section title="7b. Runaway Guard">
+          <View style={styles.row}>
+            <Text style={styles.fieldLabel}>Enabled</Text>
+            <Switch
+              value={rgwCfg.enabled}
+              onValueChange={v => saveRunawayGuard({ enabled: v })}
+              disabled={rgwSaving}
+              trackColor={{ true: Colors.green }}
+            />
+          </View>
+          <Field label="Max trades / day" hint="Bot refuses new entries when daily count crosses this. 0 = no cap.">
+            <TextInput
+              style={styles.input}
+              value={String(rgwCfg.max_trades_per_day ?? 65)}
+              onChangeText={t => setRgwCfg({ ...rgwCfg, max_trades_per_day: parseInt(t, 10) || 0 })}
+              onEndEditing={() => saveRunawayGuard({ max_trades_per_day: rgwCfg.max_trades_per_day })}
+              keyboardType="number-pad"
+              editable={!rgwSaving}
+            />
+          </Field>
+          <Field label="Max consecutive losses" hint="Circuit breaker: pause after N losing trades in a row. 0 = no cap.">
+            <TextInput
+              style={styles.input}
+              value={String(rgwCfg.max_consecutive_losses ?? 3)}
+              onChangeText={t => setRgwCfg({ ...rgwCfg, max_consecutive_losses: parseInt(t, 10) || 0 })}
+              onEndEditing={() => saveRunawayGuard({ max_consecutive_losses: rgwCfg.max_consecutive_losses })}
+              keyboardType="number-pad"
+              editable={!rgwSaving}
+            />
+          </Field>
+          <View style={[styles.row, { marginTop: 4 }]}>
+            <Text style={styles.fieldLabel}>Trades today</Text>
+            <Text style={[styles.fieldValue, { fontWeight: '600' }]}>
+              {rgwState.trades_today} / {rgwCfg.max_trades_per_day || '∞'}
+            </Text>
+          </View>
+          <View style={styles.row}>
+            <Text style={styles.fieldLabel}>Consecutive losses</Text>
+            <Text style={[
+              styles.fieldValue,
+              { fontWeight: '600',
+                color: rgwState.consecutive_losses >= rgwCfg.max_consecutive_losses
+                  ? Colors.red
+                  : rgwState.consecutive_losses >= Math.max(1, rgwCfg.max_consecutive_losses - 1)
+                    ? Colors.amber
+                    : Colors.dark },
+            ]}>
+              {rgwState.consecutive_losses} / {rgwCfg.max_consecutive_losses || '∞'}
+            </Text>
+          </View>
+          <View style={styles.row}>
+            <Text style={styles.fieldLabel}>Status</Text>
+            <Text style={[
+              styles.fieldValue,
+              { fontWeight: '600',
+                color: rgwState.tripped ? Colors.red
+                  : rgwCfg.enabled ? Colors.green : Colors.textMedium },
+            ]}>
+              {rgwState.tripped ? 'TRIPPED — new entries blocked'
+                : rgwCfg.enabled ? 'Armed' : 'Disabled'}
+            </Text>
+          </View>
+          {rgwState.tripped && rgwState.trip_reason ? (
+            <Text style={[styles.fieldHint, { color: Colors.red, marginTop: 4 }]}>
+              {rgwState.trip_reason}
+            </Text>
+          ) : null}
+          {rgwState.tripped ? (
+            <TouchableOpacity
+              style={[styles.ibAuthButton, { backgroundColor: Colors.red, marginTop: 12 },
+                      rgwResetting && { opacity: 0.5 }]}
+              onPress={() =>
+                Alert.alert(
+                  'Reset runaway guard?',
+                  'New entries will resume immediately. Trade count and loss streak stay at their current values; next trip happens when limits are crossed again.',
+                  [
+                    { text: 'Cancel', style: 'cancel' },
+                    { text: 'Reset', style: 'destructive', onPress: resetRunawayGuard },
+                  ],
+                )
+              }
+              disabled={rgwResetting}
+            >
+              <Text style={styles.ibAuthText}>
+                {rgwResetting ? 'Resetting…' : 'Reset runaway guard'}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
+          <Text style={styles.fieldHint}>
+            Two independent triggers. Resets at the same 9:30 AM ET daily
+            boundary as the kill switch. The loss-streak circuit breaker
+            triggers regardless of running P&L — designed to catch
+            catastrophic Monday-open whipsaws.
           </Text>
         </Section>
 
