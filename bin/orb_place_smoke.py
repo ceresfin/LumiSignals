@@ -125,17 +125,23 @@ def main():
         client.ensure_session()
     print(f"account_id: {client.account_id}")
 
-    # Build the OCC + look up the conid
+    # Build the OCC + look up the conid for the single-leg base
     expiry = _next_business_day_yyyymmdd()
     root = OPTION_ROOT_MAP.get("SPX", "SPXW")
     occ = build_occ_symbol(root, expiry, FAR_OTM_RIGHT, FAR_OTM_STRIKE)
     print(f"target option: {occ} (expiry {expiry}, strike {FAR_OTM_STRIKE} {FAR_OTM_RIGHT})")
 
     conid = _lookup_option_conid(client, "SPX", expiry, FAR_OTM_STRIKE, FAR_OTM_RIGHT)
-    print(f"conid: {conid}")
+    print(f"long-leg conid: {conid}")
     if not conid:
         print("ERROR: conid lookup failed; can't continue")
         return
+
+    # Build a second conid 5 strikes higher for spread variants. SPX is
+    # 5-pt strike intervals.
+    short_conid = _lookup_option_conid(client, "SPX", expiry,
+                                       FAR_OTM_STRIKE + 5, FAR_OTM_RIGHT)
+    print(f"short-leg conid (K+5): {short_conid}")
 
     base_order = {
         "conid": conid,
@@ -146,8 +152,14 @@ def main():
         "tif": "DAY",
     }
 
+    # ─── SINGLE-LEG VARIANTS (legacy diagnostic) ─────────────────────
+    # These test the production single-leg payload that intermittently
+    # fails with "Combo key is not complete". Kept for reference; the
+    # cutover to atomic spread orders (Phase 10b) eliminates the need
+    # for any of this once the combo variants below validate.
+
     # Variant 1: baseline (production payload)
-    _try_payload(client, {"orders": [dict(base_order)]}, "1. BASELINE")
+    _try_payload(client, {"orders": [dict(base_order)]}, "1. BASELINE single-leg")
 
     # Variant 2: baseline twice back-to-back (the production failure scenario)
     _try_payload(client, {"orders": [dict(base_order)]}, "2. BASELINE rapid (no gap)")
@@ -176,10 +188,57 @@ def main():
     p8 = dict(base_order); p8["cOID"] = f"lumi_smoke_{int(time.time())}"
     _try_payload(client, {"orders": [p8]}, "8. WITH cOID")
 
+    # ─── COMBO / SPREAD VARIANTS (Phase 10a target) ──────────────────
+    # These are the real prize. If any of these return an order_id,
+    # atomic-spread placement is unblocked and we cut over the handler
+    # (Phase 10b) to eliminate partial-fill tail risk.
+    if not short_conid:
+        print("\nSkipping combo variants — short-leg conid unavailable")
+    else:
+        # Variant 9: production-format combo via build_combo_order helper
+        combo = client.build_combo_order(
+            legs=[(conid, "BUY", 1), (short_conid, "SELL", 1)],
+            quantity=QTY, limit_price=LIMIT_PRICE,
+            order_type="LMT", tif="DAY", currency="USD",
+            coid=f"lumi_smoke_combo_{int(time.time())}",
+        )
+        _try_payload(client, combo,
+                     "9. COMBO via build_combo_order (signed ratios +1/-1, USD prefix)")
+
+        # Variant 10: unsigned positive ratios (some CPAPI versions
+        # want plain "1" instead of "+1"; IB campus docs uses unsigned)
+        v10 = client.build_combo_order(
+            legs=[(conid, "BUY", 1), (short_conid, "SELL", 1)],
+            quantity=QTY, limit_price=LIMIT_PRICE,
+        )
+        v10["orders"][0]["conidex"] = v10["orders"][0]["conidex"].replace(
+            "/+1", "/1"  # drop the leading + on the BUY leg
+        )
+        _try_payload(client, v10, "10. COMBO unsigned positive ratio (/1 vs /+1)")
+
+        # Variant 11: drop outsideRTH field entirely (some CPAPI
+        # versions reject unknown fields on combo orders)
+        v11 = client.build_combo_order(
+            legs=[(conid, "BUY", 1), (short_conid, "SELL", 1)],
+            quantity=QTY, limit_price=LIMIT_PRICE,
+        )
+        v11["orders"][0].pop("outsideRTH", None)
+        _try_payload(client, v11, "11. COMBO without outsideRTH field")
+
+        # Variant 12: explicit manualIndicator: false (ibind defaults
+        # set this; might be required for some gateways)
+        v12 = client.build_combo_order(
+            legs=[(conid, "BUY", 1), (short_conid, "SELL", 1)],
+            quantity=QTY, limit_price=LIMIT_PRICE,
+        )
+        v12["orders"][0]["manualIndicator"] = False
+        _try_payload(client, v12, "12. COMBO with manualIndicator=false")
+
     print("\n=== SMOKE COMPLETE ===")
     print("Look for: which variant(s) returned an order_id vs which failed,")
-    print("and what the specific error string was for failures. The first")
-    print("variant to fail under repeated runs tells us where the boundary is.")
+    print("and what the specific error string was for failures.")
+    print("Variants 9-12 are the Phase 10b unlock — if any succeed,")
+    print("atomic spread orders are viable and partial-fill risk goes away.")
 
 
 if __name__ == "__main__":

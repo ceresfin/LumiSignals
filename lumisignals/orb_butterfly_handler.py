@@ -153,7 +153,15 @@ def _0dte_expiry() -> str:
 
 
 def _lookup_option_conid(client, symbol: str, expiry: str, strike: float, right: str):
-    """SPX is an INDEX. search_contract returns it under either IND or STK."""
+    """SPX is an INDEX. search_contract returns it under either IND or STK.
+
+    For SPX specifically, prefer tradingClass=SPXW (the PM-settled
+    weekly series, which is what trades 0DTE every day). The plain SPX
+    class is AM-settled and only exists on 3rd-Friday expirations —
+    picking it by accident on a 3rd Friday would give a settlement
+    value computed at the open instead of the close, breaking the
+    strategy's premise. On non-3rd-Fridays SPXW is the only option, so
+    the preference is a no-op."""
     try:
         results = client.search_contract(symbol, "IND") or []
     except Exception:
@@ -169,13 +177,24 @@ def _lookup_option_conid(client, symbol: str, expiry: str, strike: float, right:
         "conid": underlying_conid, "sectype": "OPT",
         "month": expiry[:6], "strike": strike, "right": right, "exchange": "SMART",
     })
-    if isinstance(sec_def, list) and sec_def:
+    if not (isinstance(sec_def, list) and sec_def):
+        return None
+    preferred_class = "SPXW" if symbol == "SPX" else None
+    # First pass: exact date+strike+preferred-class match
+    if preferred_class:
         for opt in sec_def:
-            if (str(opt.get("maturityDate","")).replace("-","") == expiry
-                    and float(opt.get("strike",0)) == strike):
+            if (str(opt.get("maturityDate", "")).replace("-", "") == expiry
+                    and float(opt.get("strike", 0)) == strike
+                    and opt.get("tradingClass") == preferred_class):
                 return opt.get("conid")
-        return sec_def[0].get("conid")
-    return None
+    # Second pass: any match on date+strike (no class filter)
+    for opt in sec_def:
+        if (str(opt.get("maturityDate", "")).replace("-", "") == expiry
+                and float(opt.get("strike", 0)) == strike):
+            return opt.get("conid")
+    # Last resort: first row (legacy behavior — should never hit if
+    # the strike actually exists)
+    return sec_def[0].get("conid")
 
 
 def _extract_error_text(result):
