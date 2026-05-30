@@ -4100,6 +4100,73 @@ def create_app():
                     "reason": "reconcile_gate_check_failed",
                     "ticker": ticker,
                 }), 503
+
+            # Phase 9 — risk gates parity with futures path. Each gate is
+            # fail-open (logger.warning + continue) so a Redis/Supabase
+            # blip can't block trading. Position-guard is intentionally
+            # skipped for ORB: butterfly exposure is vega/gamma, not the
+            # linear delta count position_guard caps.
+            try:
+                from lumisignals import kill_switch
+                if kill_switch.is_blocking_entry():
+                    st = kill_switch.get_state()
+                    cfg = kill_switch.get_config()
+                    logger.warning(
+                        "kill switch BLOCKED orb_butterfly %s: day_pnl=$%.2f threshold=-$%.2f",
+                        ticker, st.get("day_pnl", 0.0),
+                        cfg.get("threshold_usd", 250.0),
+                    )
+                    return jsonify({
+                        "status": "skipped",
+                        "reason": "kill_switch_tripped",
+                        "day_pnl": round(st.get("day_pnl", 0.0), 2),
+                        "threshold_usd": cfg.get("threshold_usd", 250.0),
+                        "tripped_at": st.get("tripped_at"),
+                        "ticker": ticker, "strategy": "orb_butterfly",
+                    }), 200
+            except Exception as e:
+                logger.warning("kill switch check failed for ORB (fail-open): %s", e)
+
+            try:
+                from lumisignals import runaway_guard
+                if runaway_guard.is_blocking_entry():
+                    st = runaway_guard.get_state()
+                    cfg = runaway_guard.get_config()
+                    logger.warning(
+                        "runaway_guard BLOCKED orb_butterfly %s: %s",
+                        ticker, st.get("trip_reason"),
+                    )
+                    return jsonify({
+                        "status": "skipped",
+                        "reason": "runaway_guard_tripped",
+                        "trip_reason": st.get("trip_reason"),
+                        "trades_today": st.get("trades_today"),
+                        "consecutive_losses": st.get("consecutive_losses"),
+                        "ticker": ticker, "strategy": "orb_butterfly",
+                    }), 200
+            except Exception as e:
+                logger.warning("runaway_guard check failed for ORB (fail-open): %s", e)
+
+            # ORB cooldown is per-strategy/ticker; uses its own Redis key
+            # so it doesn't collide with the futures-side cooldown that
+            # ibkr-sync sets when a 2n20 bracket SL fires.
+            try:
+                from lumisignals import cooldown
+                if cooldown.is_active("orb_butterfly", ticker):
+                    ttl = cooldown.ttl("orb_butterfly", ticker)
+                    logger.warning(
+                        "cooldown BLOCKED orb_butterfly %s: %ds remaining",
+                        ticker, ttl,
+                    )
+                    return jsonify({
+                        "status": "skipped",
+                        "reason": "cooldown_active",
+                        "ttl_seconds": ttl,
+                        "ticker": ticker, "strategy": "orb_butterfly",
+                    }), 200
+            except Exception as e:
+                logger.warning("cooldown check failed for ORB (fail-open): %s", e)
+
             rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
             # Verify required fields up front so we don't queue garbage
             required = ("long_strike", "body_strike", "wing_strike", "direction")
@@ -4109,6 +4176,14 @@ def create_app():
             try:
                 from lumisignals.orb_butterfly_handler import queue_butterfly
                 bid = queue_butterfly(rdb, data)
+                # Count this acceptance against the runaway cap so an
+                # ORB-spam Pine bug trips the same cap a 2n20-spam bug
+                # would. Shared state on purpose — both strategies bleed
+                # the same account if either runs away.
+                try:
+                    runaway_guard.record_entry()
+                except Exception:
+                    pass
                 return jsonify({"status": "queued",
                                 "strategy": "orb_butterfly",
                                 "butterfly_id": bid,

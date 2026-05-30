@@ -91,6 +91,63 @@ def _quiet(text: str):
     logger.info("[butterfly] %s", text.replace("\n", " | "))
 
 
+def _diary_event(bid, leg_label, state, leg_state, *,
+                 broker_trade_id=None, client_intent_id=None,
+                 expected_qty=None, entry_price=None, exit_price=None,
+                 realized_pl=None, reason=""):
+    """Best-effort diary event tagged with butterfly_id + leg label.
+
+    Failures are logged but never propagate — diary writes are async
+    in the bot's main queue (see lumisignals/diary.py _drain_loop) so
+    a Supabase outage can't block the placement state machine.
+
+    The meta dict carries all four strikes + direction so the diary
+    row is self-contained for forensic queries without joining back
+    to the Redis blob (which is 24h-TTL and may be gone)."""
+    try:
+        from . import diary
+        return diary.record_event(
+            broker="ib",
+            strategy_id="orb_butterfly",
+            ticker=state.get("ticker", "SPX"),
+            state=leg_state,
+            broker_trade_id=broker_trade_id,
+            client_intent_id=client_intent_id,
+            expected_qty=expected_qty,
+            entry_price=entry_price,
+            exit_price=exit_price,
+            realized_pl=realized_pl,
+            reason=reason,
+            meta={
+                "butterfly_id": bid,
+                "leg": leg_label,
+                "long_strike": state.get("long_strike"),
+                "body_strike": state.get("body_strike"),
+                "wing_strike": state.get("wing_strike"),
+                "direction": state.get("direction"),
+                "spread_type": state.get("spread_type"),
+                "expiry": state.get("expiry"),
+            },
+        )
+    except Exception as e:
+        logger.warning(
+            "orb diary event failed (%s leg=%s state=%s): %s",
+            bid, leg_label, leg_state, e,
+        )
+        return None
+
+
+def _diary_seen(state, milestone: str) -> bool:
+    """Idempotency gate: True if this diary milestone was already
+    written for this butterfly. State machine ticks repeatedly; we
+    must only emit each diary transition once."""
+    return milestone in state.get("diary_milestones", [])
+
+
+def _diary_mark(state, milestone: str) -> None:
+    state.setdefault("diary_milestones", []).append(milestone)
+
+
 def _0dte_expiry() -> str:
     return (datetime.now(timezone.utc) + timedelta(hours=-4)).strftime("%Y%m%d")
 
@@ -261,6 +318,14 @@ def queue_butterfly(rdb, payload: dict) -> str:
         "credit_legged_at": None,
         "credit_fill_price": None,
         "credit_current_step": 0,
+        # Diary integration: one client_intent_id per leg (assigned
+        # lazily on first INTENT_OPEN), milestones list to dedupe state
+        # transitions across tick re-entries.
+        "debit_long_intent_id": None,
+        "debit_short_intent_id": None,
+        "credit_long_intent_id": None,
+        "credit_short_intent_id": None,
+        "diary_milestones": [],
     }
     _save(rdb, bid, state)
     _quiet(
@@ -367,6 +432,24 @@ def _phase_queued(client, rdb, state):
     }
 
     qty = state["contracts"]
+    # INTENT_OPEN to diary before the first placement attempt. Idempotent
+    # via diary_milestones so tick re-entries don't double-write.
+    from . import diary as _diary
+    if not _diary_seen(state, "debit_long_intent"):
+        state["debit_long_intent_id"] = _diary.new_intent_id()
+        _diary_event(bid, "debit_long", state, _diary.State.INTENT_OPEN,
+                     client_intent_id=state["debit_long_intent_id"],
+                     expected_qty=qty, entry_price=long_price,
+                     reason=f"debit_long {mode}")
+        _diary_mark(state, "debit_long_intent")
+    if not _diary_seen(state, "debit_short_intent"):
+        state["debit_short_intent_id"] = _diary.new_intent_id()
+        _diary_event(bid, "debit_short", state, _diary.State.INTENT_OPEN,
+                     client_intent_id=state["debit_short_intent_id"],
+                     expected_qty=qty, entry_price=short_price,
+                     reason=f"debit_short {mode}")
+        _diary_mark(state, "debit_short_intent")
+
     # 250ms gap between consecutive CPAPI place_order calls — hypothesis
     # for the intermittent "Combo key is not complete" CPAPI rejection
     # is rapid-fire state carry-over between requests. Cheap mitigation
@@ -395,6 +478,11 @@ def _phase_queued(client, rdb, state):
                 f"🦋 *Abandoned* — leg placement permanent error "
                 f"(`{permanent_err[:80]}`)"
             )
+            for leg, intent_key in (("debit_long", "debit_long_intent_id"),
+                                    ("debit_short", "debit_short_intent_id")):
+                _diary_event(bid, leg, state, _diary.State.CANCELLED,
+                             client_intent_id=state.get(intent_key),
+                             reason=f"permanent CPAPI error: {permanent_err[:80]}")
             try:
                 from .ibkr_sync_cpapi import _send_telegram_alert
                 _send_telegram_alert(
@@ -414,6 +502,11 @@ def _phase_queued(client, rdb, state):
                 state["phase"] = "ABANDONED"
                 state["abandon_reason"] = "place_order transient failure (twice)"
                 _quiet(f"🦋 *Abandoned* — leg placement transient failure × 2")
+                for leg, intent_key in (("debit_long", "debit_long_intent_id"),
+                                        ("debit_short", "debit_short_intent_id")):
+                    _diary_event(bid, leg, state, _diary.State.CANCELLED,
+                                 client_intent_id=state.get(intent_key),
+                                 reason="placement transient failure x 2")
         _save(rdb, bid, state)
         return
 
@@ -455,6 +548,20 @@ def _phase_debit_legged(client, rdb, state):
         state["debit_short_filled"] = sp
         state["debit_fill_price"] = round(lp - sp, 2)
         state["phase"] = "WATCHING"
+        from . import diary as _diary
+        qty = state["contracts"]
+        if not _diary_seen(state, "debit_long_open"):
+            _diary_event(bid, "debit_long", state, _diary.State.OPEN,
+                         broker_trade_id=state["debit_long_oid"],
+                         client_intent_id=state.get("debit_long_intent_id"),
+                         expected_qty=qty, entry_price=lp)
+            _diary_mark(state, "debit_long_open")
+        if not _diary_seen(state, "debit_short_open"):
+            _diary_event(bid, "debit_short", state, _diary.State.OPEN,
+                         broker_trade_id=state["debit_short_oid"],
+                         client_intent_id=state.get("debit_short_intent_id"),
+                         expected_qty=qty, entry_price=sp)
+            _diary_mark(state, "debit_short_open")
         _save(rdb, bid, state)
         _telegram(
             f"✅ *Debit filled* — long `${lp:.2f}` short `${sp:.2f}` = net `${state['debit_fill_price']:.2f}`\n"
@@ -471,16 +578,52 @@ def _phase_debit_legged(client, rdb, state):
 
     # Partial fill (one side picked off, the other won't): always handle after 30s
     if (long_filled or short_filled) and elapsed > LEG_FILL_TIMEOUT_S:
+        from . import diary as _diary
         if long_filled and not short_filled:
             try: client.cancel_order(state["debit_short_oid"])
             except Exception: pass
+            # Record the orphan fill, then the immediate-close lifecycle.
+            lp = float(lf.get("avg_price") or state["debit_long_price"])
+            _diary_event(bid, "debit_long", state, _diary.State.OPEN,
+                         broker_trade_id=state["debit_long_oid"],
+                         client_intent_id=state.get("debit_long_intent_id"),
+                         expected_qty=qty, entry_price=lp)
+            _diary_event(bid, "debit_short", state, _diary.State.CANCELLED,
+                         client_intent_id=state.get("debit_short_intent_id"),
+                         reason="partial fill: short never filled, cancelled")
+            close_intent = _diary.new_intent_id()
+            _diary_event(bid, "debit_long_close", state, _diary.State.INTENT_CLOSE,
+                         client_intent_id=close_intent,
+                         broker_trade_id=state["debit_long_oid"],
+                         reason="orphan: close filled long leg at market")
             _close_leg_at_market(client, long_conid, "SELL", qty)
+            _diary_event(bid, "debit_long_close", state, _diary.State.CLOSED,
+                         client_intent_id=close_intent,
+                         broker_trade_id=state["debit_long_oid"],
+                         reason="orphan market close")
             state["abandon_reason"] = "partial fill: only long filled, closed at market"
             _quiet(f"🦋 *Partial fill* — only long filled, sold at market")
         else:
             try: client.cancel_order(state["debit_long_oid"])
             except Exception: pass
+            sp = float(sf.get("avg_price") or state["debit_short_price"])
+            _diary_event(bid, "debit_short", state, _diary.State.OPEN,
+                         broker_trade_id=state["debit_short_oid"],
+                         client_intent_id=state.get("debit_short_intent_id"),
+                         expected_qty=qty, entry_price=sp)
+            _diary_event(bid, "debit_long", state, _diary.State.CANCELLED,
+                         client_intent_id=state.get("debit_long_intent_id"),
+                         reason="partial fill: long never filled, cancelled")
+            close_intent = _diary.new_intent_id()
+            _diary_event(bid, "debit_short_close", state, _diary.State.INTENT_CLOSE,
+                         client_intent_id=close_intent,
+                         broker_trade_id=state["debit_short_oid"],
+                         reason="orphan: close filled short leg at market")
             _close_leg_at_market(client, short_conid, "BUY", qty)
+            _diary_event(bid, "debit_short_close", state, _diary.State.CLOSED,
+                         client_intent_id=close_intent,
+                         broker_trade_id=state["debit_short_oid"],
+                         reason="orphan market close")
             state["abandon_reason"] = "partial fill: only short filled, closed at market"
             _quiet(f"🦋 *Partial fill* — only short filled, bought back at market")
         state["phase"] = "ABANDONED"
@@ -499,6 +642,12 @@ def _phase_debit_legged(client, rdb, state):
             if state["debit_retries"] >= DEBIT_RETRY_MAX:
                 state["phase"] = "ABANDONED"
                 state["abandon_reason"] = "marketable order didn't fill (twice)"
+                from . import diary as _diary
+                for leg, intent_key in (("debit_long", "debit_long_intent_id"),
+                                        ("debit_short", "debit_short_intent_id")):
+                    _diary_event(bid, leg, state, _diary.State.CANCELLED,
+                                 client_intent_id=state.get(intent_key),
+                                 reason="marketable order didn't fill (twice)")
                 _save(rdb, bid, state)
                 _quiet(f"🦋 *Abandoned* — marketable order didn't fill in {LEG_FILL_TIMEOUT_S}s, twice")
             else:
@@ -517,6 +666,12 @@ def _phase_debit_legged(client, rdb, state):
         state["abandon_reason"] = (
             f"patient limit @ net ${state.get('debit_target_net', 0):.2f} never filled by {DEBIT_CUTOFF_ET} ET"
         )
+        from . import diary as _diary
+        for leg, intent_key in (("debit_long", "debit_long_intent_id"),
+                                ("debit_short", "debit_short_intent_id")):
+            _diary_event(bid, leg, state, _diary.State.CANCELLED,
+                         client_intent_id=state.get(intent_key),
+                         reason=f"patient limit never filled by {DEBIT_CUTOFF_ET} ET")
         _save(rdb, bid, state)
         _quiet(
             f"🦋 *Abandoned* — patient `${state.get('debit_target_net',0):.2f}` "
@@ -598,6 +753,22 @@ def _phase_watching(client, rdb, state, spx_price):
         return  # next tick will check again as quotes move
 
     qty = state["contracts"]
+    # INTENT_OPEN for credit legs. Unlike debit, we assign per-attempt
+    # — if the credit retry fires later, that's a NEW intent. (No
+    # idempotency milestone gate here because credit-leg attempts are
+    # genuinely separate retry events tick-to-tick.)
+    from . import diary as _diary
+    state["credit_short_intent_id"] = _diary.new_intent_id()
+    state["credit_long_intent_id"] = _diary.new_intent_id()
+    _diary_event(bid, "credit_short", state, _diary.State.INTENT_OPEN,
+                 client_intent_id=state["credit_short_intent_id"],
+                 expected_qty=qty, entry_price=sb,
+                 reason=f"credit_short SPX={spx_price:.2f}")
+    _diary_event(bid, "credit_long", state, _diary.State.INTENT_OPEN,
+                 client_intent_id=state["credit_long_intent_id"],
+                 expected_qty=qty, entry_price=la,
+                 reason=f"credit_long SPX={spx_price:.2f}")
+
     # 250ms gap — same rationale as debit-side. Credit-side has no
     # retry counter (just falls through to next tick) so a permanent
     # error here would silently re-fire every tick until SALVAGE
@@ -614,6 +785,14 @@ def _phase_watching(client, rdb, state, spx_price):
         if long_oid:
             try: client.cancel_order(long_oid)
             except Exception: pass
+        # Mark this attempt's INTENTs as cancelled. Next tick will
+        # generate fresh intent_ids if it retries.
+        _diary_event(bid, "credit_short", state, _diary.State.CANCELLED,
+                     client_intent_id=state["credit_short_intent_id"],
+                     reason="credit placement failed; retry next tick")
+        _diary_event(bid, "credit_long", state, _diary.State.CANCELLED,
+                     client_intent_id=state["credit_long_intent_id"],
+                     reason="credit placement failed; retry next tick")
         return  # next tick retries
 
     state["credit_short_oid"] = short_oid
@@ -646,6 +825,20 @@ def _phase_credit_legged(client, rdb, state):
         state["credit_long_filled"] = lp
         state["credit_fill_price"] = round(sp - lp, 2)
         state["phase"] = "COMPLETE"
+        from . import diary as _diary
+        qty = state["contracts"]
+        if not _diary_seen(state, "credit_short_open"):
+            _diary_event(bid, "credit_short", state, _diary.State.OPEN,
+                         broker_trade_id=state["credit_short_oid"],
+                         client_intent_id=state.get("credit_short_intent_id"),
+                         expected_qty=qty, entry_price=sp)
+            _diary_mark(state, "credit_short_open")
+        if not _diary_seen(state, "credit_long_open"):
+            _diary_event(bid, "credit_long", state, _diary.State.OPEN,
+                         broker_trade_id=state["credit_long_oid"],
+                         client_intent_id=state.get("credit_long_intent_id"),
+                         expected_qty=qty, entry_price=lp)
+            _diary_mark(state, "credit_long_open")
         _save(rdb, bid, state)
         net_credit = state["credit_fill_price"] - (state.get("debit_fill_price") or 0)
         _telegram(
@@ -711,10 +904,29 @@ def _phase_salvage(client, rdb, state):
     long_conid = state["debit_conids"]["long"]
     short_conid = state["debit_conids"]["short"]
     qty = state["contracts"]
+    from . import diary as _diary
     if long_conid:
+        close_intent = _diary.new_intent_id()
+        _diary_event(bid, "debit_long_salvage", state, _diary.State.INTENT_CLOSE,
+                     client_intent_id=close_intent,
+                     broker_trade_id=state.get("debit_long_oid"),
+                     reason="salvage: close debit long at market")
         _close_leg_at_market(client, long_conid, "SELL", qty)
+        _diary_event(bid, "debit_long_salvage", state, _diary.State.CLOSED,
+                     client_intent_id=close_intent,
+                     broker_trade_id=state.get("debit_long_oid"),
+                     reason="salvage market close")
     if short_conid:
+        close_intent = _diary.new_intent_id()
+        _diary_event(bid, "debit_short_salvage", state, _diary.State.INTENT_CLOSE,
+                     client_intent_id=close_intent,
+                     broker_trade_id=state.get("debit_short_oid"),
+                     reason="salvage: close debit short at market")
         _close_leg_at_market(client, short_conid, "BUY", qty)
+        _diary_event(bid, "debit_short_salvage", state, _diary.State.CLOSED,
+                     client_intent_id=close_intent,
+                     broker_trade_id=state.get("debit_short_oid"),
+                     reason="salvage market close")
     state["phase"] = "ABANDONED"
     state["abandon_reason"] = "credit never filled — closed debit at market"
     _save(rdb, bid, state)

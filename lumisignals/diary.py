@@ -129,6 +129,7 @@ STRATEGY_SLUG = {
     "htf_levels_swing":     "htf_levels_swing",
     "tidewater_swing":      "htf_levels_swing",
     "options_credit":       "options_credit",
+    "orb_butterfly":        "orb_butterfly",
 }
 
 
