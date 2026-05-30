@@ -125,15 +125,28 @@ def _lookup_option_conid(client, symbol: str, expiry: str, strike: float, right:
 def _fetch_quote(client, conid: int):
     """Get (bid, ask) for a conid. CPAPI snapshot needs warm-up polls —
     first call to a non-subscribed conid returns empty fields. Up to 6
-    attempts with 500ms gap (3s max wait)."""
+    attempts with 500ms gap (3s max wait).
+
+    Refuses delayed quotes (6509 starts with 'D') when ORB_REFUSE_DELAYED
+    is set. Defensive guard for the moment we flip from delayed paper
+    feed to real-time — a 24h-propagation hiccup or accidentally-
+    revoked share toggle won't silently put us back on stale prices."""
+    refuse_delayed = os.environ.get("ORB_REFUSE_DELAYED", "0") == "1"
     for attempt in range(6):
         try:
             r = client._request("GET", "/iserver/marketdata/snapshot",
-                                params={"conids": str(conid), "fields": "84,86"})
+                                params={"conids": str(conid),
+                                        "fields": "84,86,6509"})
         except Exception:
             r = None
         if isinstance(r, list) and r:
             row = r[0]
+            if refuse_delayed and str(row.get("6509", "")).startswith("D"):
+                logger.warning(
+                    "orb: conid %s quote refused — delayed (6509=%s)",
+                    conid, row.get("6509"),
+                )
+                return None, None
             bid_raw = row.get("84", 0)
             ask_raw = row.get("86", 0)
             try:

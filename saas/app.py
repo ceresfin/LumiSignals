@@ -989,6 +989,26 @@ def create_app():
             "trading_timeframe": current_user.trading_timeframe,
         })
 
+    @app.route("/api/schwab/status")
+    @login_required
+    def api_schwab_status():
+        """Dedicated status endpoint for the Schwab refresh-token wall.
+        Returns {connected, expires_at, hours_remaining, reason}. Reads
+        the per-user token file first, falls back to the global one (the
+        bot's own). Seeds the eventual mobile reconnect button."""
+        from lumisignals.schwab_client import token_status
+        for tf in (
+            f"/opt/lumisignals/schwab_tokens_user_{current_user.id}.json",
+            "/opt/lumisignals/schwab_tokens.json",
+        ):
+            if os.path.exists(tf):
+                return jsonify({**token_status(tf), "token_file": tf})
+        return jsonify({
+            "connected": False, "expires_at": None,
+            "hours_remaining": None, "reason": "no token file",
+            "token_file": None,
+        })
+
     @app.route("/api/bot/start", methods=["POST"])
     @login_required
     def api_start_bot():
