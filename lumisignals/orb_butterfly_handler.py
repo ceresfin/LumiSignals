@@ -36,7 +36,6 @@ Phases:
 import json
 import logging
 import os
-import time
 from datetime import datetime, timezone, timedelta
 
 logger = logging.getLogger(__name__)
@@ -120,55 +119,6 @@ def _lookup_option_conid(client, symbol: str, expiry: str, strike: float, right:
                 return opt.get("conid")
         return sec_def[0].get("conid")
     return None
-
-
-def _fetch_quote(client, conid: int):
-    """Get (bid, ask) for a conid. CPAPI snapshot needs warm-up polls —
-    first call to a non-subscribed conid returns empty fields. Up to 6
-    attempts with 500ms gap (3s max wait).
-
-    Refuses delayed quotes (6509 starts with 'D') when ORB_REFUSE_DELAYED
-    is set. Defensive guard for the moment we flip from delayed paper
-    feed to real-time — a 24h-propagation hiccup or accidentally-
-    revoked share toggle won't silently put us back on stale prices."""
-    refuse_delayed = os.environ.get("ORB_REFUSE_DELAYED", "0") == "1"
-    for attempt in range(6):
-        try:
-            r = client._request("GET", "/iserver/marketdata/snapshot",
-                                params={"conids": str(conid),
-                                        "fields": "84,86,6509"})
-        except Exception:
-            r = None
-        if isinstance(r, list) and r:
-            row = r[0]
-            if refuse_delayed and str(row.get("6509", "")).startswith("D"):
-                logger.warning(
-                    "orb: conid %s quote refused — delayed (6509=%s)",
-                    conid, row.get("6509"),
-                )
-                return None, None
-            bid_raw = row.get("84", 0)
-            ask_raw = row.get("86", 0)
-            try:
-                bid = float(bid_raw) if bid_raw else 0
-                ask = float(ask_raw) if ask_raw else 0
-            except (TypeError, ValueError):
-                bid = ask = 0
-            if bid > 0 and ask > 0:
-                return bid, ask
-        time.sleep(0.5)
-    return None, None
-
-
-def _warm_quotes(client, conids: list):
-    """Single batched snapshot call to start IBeam data subscription on
-    multiple conids at once. Call before _fetch_quote per-conid."""
-    try:
-        client._request("GET", "/iserver/marketdata/snapshot",
-                        params={"conids": ",".join(str(c) for c in conids),
-                                "fields": "84,86"})
-    except Exception:
-        pass
 
 
 def _place_leg(client, conid: int, side: str, qty: int, price: float):
@@ -289,11 +239,19 @@ def _phase_queued(client, rdb, state):
         return
     state["debit_conids"] = {"long": long_conid, "short": short_conid}
 
-    # Warm both subscriptions in one call so the subsequent per-conid
-    # quotes are ready immediately
-    _warm_quotes(client, [long_conid, short_conid])
-    long_bid, long_ask = _fetch_quote(client, long_conid)
-    short_bid, short_ask = _fetch_quote(client, short_conid)
+    # Quote pricing goes through the pluggable source (Schwab during the
+    # bridge window, IB CPAPI after real-time data sharing propagates,
+    # Tastytrade if/when that account opens). Order placement still uses
+    # the IB conid above — we look up both because the quote source
+    # builds its own native identifier (OCC for Schwab, conid for IB).
+    from .orb_quote_source import get_quote_source
+    qs = get_quote_source(client=client, rdb=rdb)
+    long_bid, long_ask = qs.get_option_quote(
+        state["ticker"], expiry, state["long_strike"], right
+    )
+    short_bid, short_ask = qs.get_option_quote(
+        state["ticker"], expiry, state["body_strike"], right
+    )
     if not all([long_bid, long_ask, short_bid, short_ask]):
         state["debit_retries"] += 1
         logger.info("Butterfly %s: quote fetch incomplete (try %d/%d)",
@@ -531,9 +489,12 @@ def _phase_watching(client, rdb, state, spx_price):
         return
     state["credit_conids"] = {"short": short_conid, "long": long_conid}
 
-    _warm_quotes(client, [short_conid, long_conid])
-    sb, sa = _fetch_quote(client, short_conid)
-    lb, la = _fetch_quote(client, long_conid)
+    from .orb_quote_source import get_quote_source
+    qs = get_quote_source(client=client, rdb=rdb)
+    sb, sa = qs.get_option_quote(state["ticker"], expiry,
+                                 state["body_strike"], right)
+    lb, la = qs.get_option_quote(state["ticker"], expiry,
+                                 state["wing_strike"], right)
     if not all([sb, sa, lb, la]):
         logger.info("Butterfly %s: credit quote fetch incomplete", bid)
         return
