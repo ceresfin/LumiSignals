@@ -65,6 +65,10 @@ def _fetch_spx_price_polygon():
         import urllib.request as _ur, urllib.parse as _up, json as _j
         key = os.environ.get("MASSIVE_API_KEY", "")
         if not key:
+            logger.warning(
+                "orb: MASSIVE_API_KEY env var is empty; Polygon SPX "
+                "path unavailable. Set it in /etc/lumisignals/ibkr-sync.env"
+            )
             return None
         url = (
             f"https://api.polygon.io/v3/snapshot/indices"
@@ -84,21 +88,36 @@ def _fetch_spx_price_polygon():
 def _fetch_spx_price_ib(client):
     """IB CPAPI fallback for SPX index price. Refuses to return delayed
     quotes (field 6509 starts with 'D'). Default conid 416904 is
-    overridable via IBKR_SPX_CONID."""
+    overridable via IBKR_SPX_CONID.
+
+    Uses the same 6-attempt 500ms warmup-retry pattern as the option-
+    leg quote fetcher — IBeam's first snapshot call to a non-subscribed
+    conid returns only {conid, conidEx} metadata; the quote fields
+    appear on subsequent polls once the data subscription warms up."""
     if client is None:
         return None
+    import time as _time
     try:
         conid = int(os.environ.get("IBKR_SPX_CONID", "416904"))
-        data = client.get_snapshot([conid], fields=["31", "6509"])
-        row = data.get(conid) or data.get(str(conid)) or {}
-        avail = str(row.get("6509", ""))
-        if avail.startswith("D"):
-            return None
-        v = row.get("31")
-        if v is None:
-            return None
-        s = str(v).lstrip("CHLA").strip()
-        return float(s) if s else None
+        for _ in range(6):
+            data = client.get_market_snapshot(
+                [conid], fields=["31", "6509"]
+            )
+            row = data.get(conid) or data.get(str(conid)) or {}
+            avail = str(row.get("6509", ""))
+            if avail.startswith("D"):
+                logger.warning(
+                    "orb: IB SPX quote delayed (6509=%s); refusing",
+                    avail,
+                )
+                return None
+            v = row.get("31")
+            if v is not None:
+                s = str(v).lstrip("CHLA").strip()
+                if s:
+                    return float(s)
+            _time.sleep(0.5)
+        return None
     except Exception as e:
         logger.warning("orb: SPX price from IB failed: %s", e)
         return None
