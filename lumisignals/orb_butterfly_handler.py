@@ -121,8 +121,38 @@ def _lookup_option_conid(client, symbol: str, expiry: str, strike: float, right:
     return None
 
 
+def _extract_error_text(result):
+    """Pull a human-readable error string out of whatever CPAPI returned.
+    Handles the common shapes: dict {'error': '...'}, list of dicts each
+    with 'error' or 'message', empty/None. Returns None when the response
+    doesn't look like an error (caller should treat as transient)."""
+    if result is None:
+        return None
+    candidates = result if isinstance(result, list) else [result]
+    for item in candidates:
+        if not isinstance(item, dict):
+            continue
+        for key in ("error", "errorMessage", "message"):
+            v = item.get(key)
+            if v:
+                return str(v)
+    return None
+
+
 def _place_leg(client, conid: int, side: str, qty: int, price: float):
-    """Single-leg LMT order. Walks confirmation prompts. Returns order_id or None."""
+    """Single-leg LMT order. Walks confirmation prompts. Returns
+    (order_id, err_msg) tuple.
+
+    Return shapes:
+      ("12345", None)               — placement succeeded
+      (None, "Combo key is not...") — permanent CPAPI rejection; caller
+                                       should fast-abandon, not retry
+      (None, None)                  — transient (exception/network);
+                                       caller may retry
+
+    Every failure logs payload + raw response at WARN so a future log
+    diff between successful and failed placements has the diagnostic
+    context needed to identify what trips the intermittent failures."""
     payload = {"orders": [{
         "conid": conid, "orderType": "LMT", "side": side,
         "quantity": qty, "price": round(price, 2), "tif": "DAY",
@@ -130,19 +160,34 @@ def _place_leg(client, conid: int, side: str, qty: int, price: float):
     try:
         result = client.place_order(payload)
     except Exception as e:
-        logger.warning("place_leg %s %s failed: %s", side, conid, e)
-        return None
+        logger.warning(
+            "place_leg %s conid=%s qty=%s price=%s EXCEPTION: %s | payload=%s",
+            side, conid, qty, price, e, payload,
+        )
+        return (None, None)
+    # Walk any remaining confirmation prompts that place_order's
+    # internal loop didn't auto-handle.
     while isinstance(result, list) and result and "id" in result[0] and "order_id" not in result[0]:
         try:
             result = client._request("POST", "/iserver/reply/" + result[0]["id"],
                                      json_data={"confirmed": True})
-        except Exception:
-            return None
+        except Exception as e:
+            logger.warning(
+                "place_leg %s conid=%s reply-walk EXCEPTION: %s | payload=%s",
+                side, conid, e, payload,
+            )
+            return (None, None)
     if isinstance(result, list) and result and result[0].get("order_id"):
-        return str(result[0]["order_id"])
+        return (str(result[0]["order_id"]), None)
     if isinstance(result, dict) and result.get("order_id"):
-        return str(result["order_id"])
-    return None
+        return (str(result["order_id"]), None)
+    err = _extract_error_text(result)
+    logger.warning(
+        "place_leg %s conid=%s qty=%s price=%s no order_id | "
+        "err=%r | payload=%s | response=%s",
+        side, conid, qty, price, err, payload, result,
+    )
+    return (None, err)
 
 
 def _close_leg_at_market(client, conid: int, side: str, qty: int):
@@ -156,8 +201,24 @@ def _close_leg_at_market(client, conid: int, side: str, qty: int):
         while isinstance(result, list) and result and "id" in result[0] and "order_id" not in result[0]:
             result = client._request("POST", "/iserver/reply/" + result[0]["id"],
                                      json_data={"confirmed": True})
+        # Surface failures so an orphan-close-that-didn't-close is
+        # visible. Caller has no return value to check.
+        success = (
+            (isinstance(result, list) and result and result[0].get("order_id"))
+            or (isinstance(result, dict) and result.get("order_id"))
+        )
+        if not success:
+            err = _extract_error_text(result)
+            logger.warning(
+                "close_leg_at_market %s conid=%s qty=%s no order_id | "
+                "err=%r | response=%s",
+                side, conid, qty, err, result,
+            )
     except Exception as e:
-        logger.warning("close_leg_at_market %s failed: %s", conid, e)
+        logger.warning(
+            "close_leg_at_market %s conid=%s qty=%s EXCEPTION: %s",
+            side, conid, qty, e,
+        )
 
 
 def queue_butterfly(rdb, payload: dict) -> str:
@@ -306,8 +367,14 @@ def _phase_queued(client, rdb, state):
     }
 
     qty = state["contracts"]
-    long_oid = _place_leg(client, long_conid, "BUY", qty, long_price)
-    short_oid = _place_leg(client, short_conid, "SELL", qty, short_price)
+    # 250ms gap between consecutive CPAPI place_order calls — hypothesis
+    # for the intermittent "Combo key is not complete" CPAPI rejection
+    # is rapid-fire state carry-over between requests. Cheap mitigation
+    # that doesn't materially affect leg-in slippage.
+    import time as _time
+    long_oid, long_err = _place_leg(client, long_conid, "BUY", qty, long_price)
+    _time.sleep(0.25)
+    short_oid, short_err = _place_leg(client, short_conid, "SELL", qty, short_price)
     if not (long_oid and short_oid):
         # Cancel partial placement
         if long_oid:
@@ -316,11 +383,37 @@ def _phase_queued(client, rdb, state):
         if short_oid:
             try: client.cancel_order(short_oid)
             except Exception: pass
-        state["debit_retries"] += 1
-        if state["debit_retries"] >= DEBIT_RETRY_MAX:
+        permanent_err = long_err or short_err
+        if permanent_err:
+            # CPAPI returned a structured error (not a network/timeout
+            # blip). Retrying will fail the same way. Fast-abandon +
+            # Telegram with the diagnostic context — saves the 30s of
+            # wasted retries and surfaces actionable info.
             state["phase"] = "ABANDONED"
-            state["abandon_reason"] = "place_order failed for one or both legs"
-            _quiet(f"🦋 *Abandoned* — leg placement failed")
+            state["abandon_reason"] = f"permanent CPAPI error: {permanent_err}"
+            _quiet(
+                f"🦋 *Abandoned* — leg placement permanent error "
+                f"(`{permanent_err[:80]}`)"
+            )
+            try:
+                from .ibkr_sync_cpapi import _send_telegram_alert
+                _send_telegram_alert(
+                    "❌ ORB butterfly placement rejected",
+                    f"{bid} debit leg permanent CPAPI error: "
+                    f"`{permanent_err}`. Strikes "
+                    f"K1={state.get('long_strike')} "
+                    f"K2={state.get('body_strike')} "
+                    f"K3={state.get('wing_strike')}. "
+                    f"See bot log for full payload.",
+                )
+            except Exception:
+                pass
+        else:
+            state["debit_retries"] += 1
+            if state["debit_retries"] >= DEBIT_RETRY_MAX:
+                state["phase"] = "ABANDONED"
+                state["abandon_reason"] = "place_order transient failure (twice)"
+                _quiet(f"🦋 *Abandoned* — leg placement transient failure × 2")
         _save(rdb, bid, state)
         return
 
@@ -505,8 +598,15 @@ def _phase_watching(client, rdb, state, spx_price):
         return  # next tick will check again as quotes move
 
     qty = state["contracts"]
-    short_oid = _place_leg(client, short_conid, "SELL", qty, sb)
-    long_oid = _place_leg(client, long_conid, "BUY", qty, la)
+    # 250ms gap — same rationale as debit-side. Credit-side has no
+    # retry counter (just falls through to next tick) so a permanent
+    # error here would silently re-fire every tick until SALVAGE
+    # window at 15:30 ET; the WARN-level logging in _place_leg makes
+    # those visible in the bot log for diagnosis.
+    import time as _time
+    short_oid, _short_err = _place_leg(client, short_conid, "SELL", qty, sb)
+    _time.sleep(0.25)
+    long_oid, _long_err = _place_leg(client, long_conid, "BUY", qty, la)
     if not (short_oid and long_oid):
         if short_oid:
             try: client.cancel_order(short_oid)
