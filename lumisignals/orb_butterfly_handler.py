@@ -472,6 +472,32 @@ def _phase_watching(client, rdb, state, spx_price):
         state["threshold_px"] = round(threshold, 2)
         _save(rdb, bid, state)
 
+    # Stuck-WATCHING watchdog: alert once if the butterfly has been
+    # waiting > 30 min without the threshold being hit (or quote feed
+    # being available). Catches the silent-feed-failure case the way
+    # bf_6e42bd320e went unnoticed for 2 hours on 2026-05-29.
+    debit_legged_at = state.get("debit_legged_at")
+    if debit_legged_at and not state.get("watching_alert_sent"):
+        try:
+            elapsed = (datetime.now(timezone.utc)
+                       - datetime.fromisoformat(debit_legged_at)).total_seconds()
+            if elapsed > 30 * 60:
+                from .ibkr_sync_cpapi import _send_telegram_alert
+                _send_telegram_alert(
+                    "⚠️ ORB butterfly stuck in WATCHING",
+                    f"{bid} has been waiting for SPX to cross "
+                    f"{state.get('threshold_px')} for {elapsed/60:.0f} min. "
+                    f"Strikes K1={state.get('long_strike')} "
+                    f"K2={state.get('body_strike')} "
+                    f"K3={state.get('wing_strike')}, "
+                    f"direction={state.get('direction')}. "
+                    f"Last SPX price seen: {spx_price}.",
+                )
+                state["watching_alert_sent"] = True
+                _save(rdb, bid, state)
+        except Exception:
+            pass
+
     if not spx_price:
         return
 
@@ -621,8 +647,66 @@ def _phase_salvage(client, rdb, state):
     _telegram(f"🦋 *Salvage* sold debit spread at market")
 
 
+_startup_cleanup_done = False
+
+
+def cleanup_expired_butterflies(rdb):
+    """One-shot at process startup: mark any non-terminal butterfly whose
+    0DTE expiry day is in the past as EXPIRED_UNRESOLVED. Prevents the
+    worker from continuing to tick on stale WATCHING/QUEUED state after
+    a restart spans an expiry boundary."""
+    global _startup_cleanup_done
+    if _startup_cleanup_done:
+        return
+    _startup_cleanup_done = True
+    try:
+        today_et = (datetime.now(timezone.utc)
+                    + timedelta(hours=-4)).strftime("%Y%m%d")
+        keys = list(rdb.scan_iter(PHASE_KEY_PREFIX + "*"))
+    except Exception as e:
+        logger.warning("butterfly cleanup scan failed: %s", e)
+        return
+    for key in keys:
+        try:
+            raw = rdb.get(key)
+            if not raw:
+                continue
+            state = json.loads(raw)
+            phase = state.get("phase", "")
+            if phase in ("COMPLETE", "ABANDONED", "EXPIRED_UNRESOLVED"):
+                continue
+            queued_at = state.get("queued_at", "")
+            if not queued_at:
+                continue
+            queued_et = (datetime.fromisoformat(queued_at.replace("Z", "+00:00"))
+                         + timedelta(hours=-4))
+            queued_day = queued_et.strftime("%Y%m%d")
+            if queued_day >= today_et:
+                continue
+            state["phase"] = "EXPIRED_UNRESOLVED"
+            state["abandon_reason"] = (
+                f"startup cleanup: queued {queued_day} but today is "
+                f"{today_et}; 0DTE has already settled"
+            )
+            _save(rdb, state["butterfly_id"], state)
+            try:
+                from .ibkr_sync_cpapi import _send_telegram_alert
+                _send_telegram_alert(
+                    "🧹 ORB butterfly auto-cleaned",
+                    f"Worker restart found stale butterfly "
+                    f"{state['butterfly_id']} in phase {phase}, queued "
+                    f"{queued_day}. Marked EXPIRED_UNRESOLVED. Check IB "
+                    f"for residual positions from this butterfly.",
+                )
+            except Exception:
+                pass
+        except Exception as e:
+            logger.warning("butterfly cleanup error on %s: %s", key, e)
+
+
 def process_butterflies(client, rdb, spx_price_fn=None):
     """Drive every active butterfly one tick forward."""
+    cleanup_expired_butterflies(rdb)
     try:
         keys = list(rdb.scan_iter(PHASE_KEY_PREFIX + "*"))
     except Exception as e:

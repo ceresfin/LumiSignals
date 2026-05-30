@@ -51,6 +51,82 @@ SYNC_INTERVAL = 2  # was 10 — bookkeeping race window shrinks 5x.
 
 _redis_client = None
 
+# ORB butterfly SPX feed health — incremented per consecutive failure of
+# Polygon + IB fallback. Telegram alert at 5 (~50s on a 10s tick). Reset
+# to 0 on any successful fetch. Lives at module scope so the counter
+# survives across ticks of the same process.
+_spx_feed_consecutive_fails = 0
+
+
+def _fetch_spx_price_polygon():
+    """Polygon SPX index price. Returns float on success, None on any
+    error (logged at warning so silent feed deaths don't recur)."""
+    try:
+        import urllib.request as _ur, urllib.parse as _up, json as _j
+        key = os.environ.get("MASSIVE_API_KEY", "")
+        if not key:
+            return None
+        url = (
+            f"https://api.polygon.io/v3/snapshot/indices"
+            f"?ticker=I:SPX&apiKey={_up.quote(key)}"
+        )
+        with _ur.urlopen(url, timeout=5) as r:
+            d = _j.load(r)
+        for row in d.get("results", []):
+            v = row.get("value") or row.get("session", {}).get("close")
+            if v:
+                return float(v)
+    except Exception as e:
+        logger.warning("orb: SPX price from Polygon failed: %s", e)
+    return None
+
+
+def _fetch_spx_price_ib(client):
+    """IB CPAPI fallback for SPX index price. Refuses to return delayed
+    quotes (field 6509 starts with 'D'). Default conid 416904 is
+    overridable via IBKR_SPX_CONID."""
+    if client is None:
+        return None
+    try:
+        conid = int(os.environ.get("IBKR_SPX_CONID", "416904"))
+        data = client.get_snapshot([conid], fields=["31", "6509"])
+        row = data.get(conid) or data.get(str(conid)) or {}
+        avail = str(row.get("6509", ""))
+        if avail.startswith("D"):
+            return None
+        v = row.get("31")
+        if v is None:
+            return None
+        s = str(v).lstrip("CHLA").strip()
+        return float(s) if s else None
+    except Exception as e:
+        logger.warning("orb: SPX price from IB failed: %s", e)
+        return None
+
+
+def _spx_price_with_fallback(client):
+    """Polygon → IB fallback chain for ORB SPX index price. Telegram
+    alerts after 5 consecutive complete failures so we don't repeat the
+    11-hour silent-WATCHING incident."""
+    global _spx_feed_consecutive_fails
+    price = _fetch_spx_price_polygon()
+    if price is None:
+        price = _fetch_spx_price_ib(client)
+    if price is None:
+        _spx_feed_consecutive_fails += 1
+        if _spx_feed_consecutive_fails >= 5:
+            _send_telegram_alert(
+                "⚠️ ORB SPX feed silent",
+                f"SPX index price unavailable from both Polygon and IB for "
+                f"{_spx_feed_consecutive_fails} consecutive ticks. Any "
+                f"active butterflies in WATCHING phase will stall until "
+                f"the feed recovers. Check MASSIVE_API_KEY and IBeam "
+                f"session.",
+            )
+        return None
+    _spx_feed_consecutive_fails = 0
+    return price
+
 
 def _send_telegram_alert(title: str, body: str) -> bool:
     """Best-effort Telegram alert. Pulls TELEGRAM_BOT_TOKEN +
@@ -3551,25 +3627,12 @@ def main():
             # -> CREDIT_OPEN -> COMPLETE / SALVAGE / ABANDONED).
             try:
                 from .orb_butterfly_handler import process_butterflies
-                def _spx_price():
-                    try:
-                        import urllib.request as _ur, urllib.parse as _up, json as _j
-                        key = os.environ.get("MASSIVE_API_KEY", "")
-                        if not key:
-                            return None
-                        url = f"https://api.polygon.io/v3/snapshot/indices?ticker=I:SPX&apiKey={_up.quote(key)}"
-                        with _ur.urlopen(url, timeout=5) as r:
-                            d = _j.load(r)
-                        for row in d.get("results", []):
-                            v = row.get("value") or row.get("session", {}).get("close")
-                            if v:
-                                return float(v)
-                    except Exception:
-                        return None
-                    return None
-                process_butterflies(client, _rdb(), spx_price_fn=_spx_price)
+                process_butterflies(
+                    client, _rdb(),
+                    spx_price_fn=lambda: _spx_price_with_fallback(client),
+                )
             except Exception as e:
-                logger.debug("butterfly processor error: %s", e)
+                logger.warning("butterfly processor error: %s", e)
 
             # Push 2-min MES bars to the server's Redis cache so the mobile
             # /chart page (and the 2n20 strategy bar reader) has data. Bars
