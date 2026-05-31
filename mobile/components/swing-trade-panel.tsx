@@ -22,14 +22,20 @@ import { Colors } from '@/constants/theme';
 
 const SUPPORTED_TICKERS = ['SPY', 'QQQ', 'IWM', 'SPX', 'NDX'] as const;
 const MODES = ['scalp', 'intraday', 'swing'] as const;
-const TIMEFRAMES = ['1h', '1d', '1w'] as const;
 const TF_LABELS: Record<string, string> = {
   '5m': '5M', '15m': '15M', '1h': '1H',
   '1d': 'Daily', '1w': 'Weekly', '1mo': 'Monthly',
 };
-// Default chart timeframe per mode (user can override)
-const DEFAULT_CHART_TF: Record<string, typeof TIMEFRAMES[number]> = {
-  scalp: '1h', intraday: '1d', swing: '1w',
+// Chart timeframe options per mode — mirrors the analyzer's Russian-
+// doll TF stack so the chart matches the trade horizon. Default is the
+// middle TF (the "main" timeframe for the mode).
+const MODE_TIMEFRAMES: Record<string, string[]> = {
+  scalp:    ['5m',  '15m', '1h'],
+  intraday: ['15m', '1h',  '1d'],
+  swing:    ['1d',  '1w',  '1mo'],
+};
+const DEFAULT_CHART_TF: Record<string, string> = {
+  scalp: '15m', intraday: '1h', swing: '1w',
 };
 
 const API_BASE = 'https://bot.lumitrade.ai';
@@ -70,7 +76,7 @@ export function SwingTradePanel() {
 
   const [ticker, setTicker] = useState<typeof SUPPORTED_TICKERS[number]>('SPX');
   const [mode, setMode] = useState<typeof MODES[number]>('swing');
-  const [chartTf, setChartTf] = useState<typeof TIMEFRAMES[number]>('1w');
+  const [chartTf, setChartTf] = useState<string>('1w');
   const [setup, setSetup] = useState<Setup | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -178,9 +184,10 @@ export function SwingTradePanel() {
         ))}
       </View>
 
-      {/* Timeframe (chart display only) */}
+      {/* Timeframe (chart display only) — mode-aware: SCALP→5M/15M/1H,
+          INTRADAY→15M/1H/Daily, SWING→Daily/Weekly/Monthly. */}
       <View style={styles.tfRow}>
-        {TIMEFRAMES.map((tf) => (
+        {MODE_TIMEFRAMES[mode].map((tf) => (
           <TouchableOpacity key={tf}
             onPress={() => setChartTf(tf)}
             style={[styles.tfCircle, chartTf === tf && styles.tfCircleActive]}>
