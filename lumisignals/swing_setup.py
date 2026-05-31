@@ -62,6 +62,40 @@ MODE_CONFIG = {
     "swing":    _ModeCfg("swing",    11, 7,  14, 10, 15),
 }
 
+# Per-mode timeframe stack — sourced from levels_strategy.TARGET_TFS_BY_MODEL.
+# Ordered bottom-to-top (shortest first). The pattern across modes is
+# uniform "Russian dolls": each mode shows trigger TF + 2 higher TFs.
+#   SCALP    → 5m  / 15m / 1h
+#   INTRADAY → 15m / 1h  / 1d
+#   SWING    → 1d  / 1w  / 1mo
+# Direction logic: the top-two TFs are the BIAS (weighted same as
+# Monthly+Weekly were for swing); the bottom TF is the COUNTER-MOVE
+# trigger ("Daily must pull back" generalizes to "bottom TF must
+# counter-move against the bias").
+MODE_TFS = {
+    "scalp":    ["5m",  "15m", "1h"],
+    "intraday": ["15m", "1h",  "1d"],
+    "swing":    ["1d",  "1w",  "1mo"],
+}
+
+# Bar count per TF — enough for ADX(14) to be stable, with headroom.
+# Intraday TFs need more bars (active hours only). Higher TFs need
+# fewer total bars but more calendar history.
+BAR_COUNT_PER_TF = {
+    "5m":  300,   # ~2-3 trading days
+    "15m": 200,   # ~6-7 trading days
+    "1h":  200,   # ~30 trading days
+    "1d":  200,   # ~10 months
+    "1w":  104,   # 2 years
+    "1mo": 36,    # 3 years
+}
+
+# Human-readable labels (matches TF_LABELS in levels_strategy.py).
+TF_LABELS = {
+    "5m":  "5M",  "15m": "15M", "1h":  "1H",
+    "1d":  "Daily", "1w":  "Weekly", "1mo": "Monthly",
+}
+
 
 # ─── TUNING THRESHOLDS ───────────────────────────────────────────────
 # All marked TUNING — adjust after seeing live behavior.
@@ -119,46 +153,67 @@ def compute_setup(ticker: str, mode: str,
     except Exception as e:
         return _skip(ticker, mode, f"massive client init failed: {e}")
 
-    # 1. Pull bars on all three timeframes.
-    # Indexes need the "I:" prefix on Polygon; ETFs/stocks use the
-    # bare ticker. _polygon_ticker handles that translation.
-    # Monthly bar count = 36 (3 years) so N=15 swing-structure pivot
-    # detection has enough data; with 12 bars we'd never find pivots.
+    # 1. Pull bars on the three timeframes for this mode.
+    # Each mode has its own TF stack (Russian dolls — see MODE_TFS):
+    #   SCALP    → 5m  /15m /1h
+    #   INTRADAY → 15m /1h  /1d
+    #   SWING    → 1d  /1w  /1mo
+    # Ordered bottom-to-top. The top-two are the BIAS (M+W-style
+    # weighted direction); the bottom is the COUNTER-MOVE trigger.
+    tfs = MODE_TFS[mode]
+    tf_bot, tf_mid, tf_top = tfs[0], tfs[1], tfs[2]
     poly_t = _polygon_ticker(ticker)
     try:
-        monthly = massive.get_candles(poly_t, "1mo", count=36) or []
-        weekly = massive.get_candles(poly_t, "1w", count=104) or []
-        daily = massive.get_candles(poly_t, "1d", count=200) or []
+        bars_bot = massive.get_candles(poly_t, tf_bot,
+                                       count=BAR_COUNT_PER_TF[tf_bot]) or []
+        bars_mid = massive.get_candles(poly_t, tf_mid,
+                                       count=BAR_COUNT_PER_TF[tf_mid]) or []
+        bars_top = massive.get_candles(poly_t, tf_top,
+                                       count=BAR_COUNT_PER_TF[tf_top]) or []
     except Exception as e:
         return _skip(ticker, mode, f"bar fetch failed: {e}")
 
-    if len(monthly) < 18 or len(weekly) < 32 or len(daily) < 20:
-        return _skip(ticker, mode,
-                     f"insufficient bars (m={len(monthly)}, w={len(weekly)}, d={len(daily)})")
+    # Each TF needs at least enough bars for ADX(14) to be stable
+    # (we use 30 as a safe floor — 14 warmup + 14 smoothing + slack).
+    min_bars = 30
+    if len(bars_bot) < min_bars or len(bars_mid) < min_bars or len(bars_top) < min_bars:
+        return _skip(
+            ticker, mode,
+            f"insufficient bars ({tf_bot}={len(bars_bot)}, "
+            f"{tf_mid}={len(bars_mid)}, {tf_top}={len(bars_top)})"
+        )
 
-    current_price = daily[-1].close
+    current_price = bars_bot[-1].close
     if current_price <= 0:
         return _skip(ticker, mode, "no current price")
 
-    # 2. Trend assessment on all three timeframes.
-    trends, strengths = _trends(monthly, weekly, daily, ticker)
+    # 2. Trend assessment on all three timeframes via Pine ADX.
+    trends, strengths = _trends_by_tf(bars_top, bars_mid, bars_bot,
+                                       tf_top, tf_mid, tf_bot)
 
-    # 3. Direction + momentum from M+W weighting.
-    direction_dir, momentum, skip = _resolve_direction(trends, strengths)
+    # 3. Direction + momentum from top+mid weighting (the BIAS pair).
+    direction_dir, momentum, skip = _resolve_bias_direction(
+        trends[tf_top], trends[tf_mid]
+    )
     if skip:
         return _skip(ticker, mode, skip,
                      trends=trends, underlying_price=current_price)
 
-    # 4. Daily counter-move required.
+    # 4. Bottom TF must counter-move against the bias (pullback for
+    # long setups, rally for shorts).
     expected_counter = "DOWN" if direction_dir == "UP" else "UP"
-    if trends["daily"] != expected_counter:
-        return _skip(ticker, mode,
-                     f"daily not counter-moving ({trends['daily']}); no pullback entry yet",
-                     trends=trends, underlying_price=current_price)
+    if trends[tf_bot] != expected_counter:
+        return _skip(
+            ticker, mode,
+            f"{TF_LABELS.get(tf_bot, tf_bot)} not counter-moving "
+            f"({trends[tf_bot]}); no pullback entry yet",
+            trends=trends, underlying_price=current_price,
+        )
 
-    # 5. Trigger level from nearest monthly zone.
+    # 5. Trigger level from nearest untouched zone on the TOP TF
+    # (the highest-TF level price is approaching).
     trigger_level, level_skip = _pick_trigger_level(
-        monthly, current_price, direction_dir
+        bars_top, current_price, direction_dir
     )
     if level_skip:
         return _skip(ticker, mode, level_skip,
@@ -177,9 +232,12 @@ def compute_setup(ticker: str, mode: str,
         api_key, ticker, current_price, cfg, direction, spread_type, max_risk_usd
     )
 
-    # 7. Shares plan (alternative vehicle if user toggles).
+    # 7. Shares plan (alternative vehicle if user toggles). ATR for
+    # stop sizing comes from the bottom TF — the same TF that drives
+    # the counter-move trigger, so the stop scale matches the chart
+    # the user is watching for entry.
     shares_spec = _pick_shares_plan(
-        daily, current_price, trigger_level, direction, max_risk_usd
+        bars_bot, current_price, trigger_level, direction, max_risk_usd
     )
 
     warnings = []
@@ -205,31 +263,45 @@ def compute_setup(ticker: str, mode: str,
 
 # ─── INTERNALS ───────────────────────────────────────────────────────
 
-def _trends(monthly, weekly, daily, ticker: str) -> Tuple[dict, dict]:
-    """Trend direction on M / W / D using Pine ADX dashboard logic.
+def _trends_by_tf(bars_top, bars_mid, bars_bot,
+                  tf_top: str, tf_mid: str, tf_bot: str) -> Tuple[dict, dict]:
+    """Pine ADX direction on each of the mode's three timeframes.
+    Returns trends + ADX strength values, both keyed by TF identifier
+    (e.g. "1mo", "1w", "1d" for swing; "5m", "15m", "1h" for scalp).
 
-    Mirrors pinescripts/adx_dashboard.pine — `ta.dmi(14, 14)` produces
-    [+DI, -DI, ADX]; direction = +DI > -DI + 2 (UP) / +DI < -DI - 2
-    (DOWN) / SIDE otherwise. Same ±2 buffer the user already uses on
-    her TradingView dashboard.
+    Pine ADX (ta.dmi(14, 14)) for all three TFs — same engine the
+    user's TradingView dashboard uses. The COUNTER-MOVE check on the
+    bottom TF intentionally uses Pine ADX here too (vs the older
+    "5-bar close-change" approach) so the trend reads are consistent
+    across all three timeframes."""
+    top_dir, top_adx = _pine_adx_direction(bars_top, period=14)
+    mid_dir, mid_adx = _pine_adx_direction(bars_mid, period=14)
+    bot_dir, bot_adx = _pine_adx_direction(bars_bot, period=14)
+    trends = {tf_top: top_dir, tf_mid: mid_dir, tf_bot: bot_dir}
+    strengths = {tf_top: top_adx, tf_mid: mid_adx, tf_bot: bot_adx}
+    return trends, strengths
 
-    Why not use untouched_levels.calculate_adx_direction: it has a bug
-    in the ADX smoothing (Wilder TR-smooth formula applied to DX values
-    inflates the result ~14×). The direction reads correctly but the
-    strength label is broken. Rather than patch the shared function
-    (used by other strategies — regression risk), implement a clean
-    Pine-equivalent locally. Bug fix in untouched_levels is a separate
-    chore.
 
-    Daily counter-move stays as a simple close-vs-N-bars-back check
-    — that's a different question ("is there a pullback NOW?") not
-    a multi-week trend assessment."""
-    m_dir, m_str = _pine_adx_direction(monthly, period=14)
-    w_dir, w_str = _pine_adx_direction(weekly, period=14)
-    d_dir, d_str = _daily_counter_direction(daily)
+def _resolve_bias_direction(top_dir: str, mid_dir: str):
+    """Apply the M+W weighting rule, generalized to "top+mid" so it
+    works for any mode.
 
-    return ({"monthly": m_dir, "weekly": w_dir, "daily": d_dir},
-            {"monthly": m_str, "weekly": w_str, "daily": d_str})
+    Returns (direction_dir, momentum_label, skip_reason).
+      Both agree (non-SIDE) → Strong
+      One SIDE, other has dir → Weak (other carries)
+      Both have dir but disagree → bias to top, Weak
+      Both SIDE → skip
+    """
+    if top_dir == "SIDE" and mid_dir == "SIDE":
+        return None, None, "both higher timeframes are sideways; no directional bias"
+    if top_dir != "SIDE" and mid_dir != "SIDE" and top_dir == mid_dir:
+        return top_dir, "Strong", None
+    if top_dir != "SIDE" and mid_dir == "SIDE":
+        return top_dir, "Weak", None
+    if mid_dir != "SIDE" and top_dir == "SIDE":
+        return mid_dir, "Weak", None
+    # Both have direction but disagree — top wins
+    return top_dir, "Weak", None
 
 
 def _pine_adx_dmi(candles, period: int = 14) -> Tuple[float, float, float]:
@@ -329,57 +401,6 @@ def adx_momentum_label(adx_value: float) -> str:
     if adx_value >= 15: return "Weak"
     if adx_value >= 10: return "Very Weak"
     return "No to Very Weak"
-
-
-def _daily_counter_direction(daily) -> Tuple[str, float]:
-    """Short-term daily direction for the counter-move check.
-
-    Compares the most recent close to the close DAILY_COUNTER_BARS
-    bars ago. Returns "UP", "DOWN", or "SIDE" + a confidence proxy
-    (price-change as a fraction of recent ATR, clipped to 0-100).
-
-    The noise threshold (0.3 × ATR-5) prevents the analyzer from
-    flapping SIDE↔UP↔DOWN on flat days. If the move is smaller than
-    that buffer, we call it SIDE."""
-    if len(daily) < DAILY_COUNTER_BARS + 2:
-        return "SIDE", 0.0
-    recent = daily[-DAILY_COUNTER_BARS - 1:]
-    # ATR-5 for noise floor
-    atrs = []
-    for i in range(1, len(recent)):
-        c, p = recent[i], recent[i - 1]
-        tr = max(c.high - c.low, abs(c.high - p.close), abs(c.low - p.close))
-        atrs.append(tr)
-    atr = sum(atrs) / len(atrs) if atrs else 0
-    noise_floor = atr * 0.3
-
-    change = daily[-1].close - daily[-DAILY_COUNTER_BARS].close
-    if abs(change) < noise_floor:
-        return "SIDE", 0.0
-    strength = min(100.0, abs(change) / max(atr, 1e-9) * 33.0)
-    return ("UP" if change > 0 else "DOWN"), strength
-
-
-def _resolve_direction(trends: dict, strengths: dict):
-    """Apply the M+W weighting rule from the user's description.
-
-    Returns (direction_dir, momentum_label, skip_reason).
-    direction_dir is "UP" or "DOWN"; momentum is "Strong" or "Weak";
-    skip_reason is None on success or a string on skip."""
-    m, w = trends["monthly"], trends["weekly"]
-    if m == "SIDE" and w == "SIDE":
-        return None, None, "both monthly and weekly are sideways; no directional bias"
-    if m != "SIDE" and w != "SIDE" and m == w:
-        # Both agree
-        return m, "Strong", None
-    if m != "SIDE" and w == "SIDE":
-        return m, "Weak", None
-    if w != "SIDE" and m == "SIDE":
-        return w, "Weak", None
-    # M and W both have direction but disagree — bias to M
-    if m != w:
-        return m, "Weak", None
-    return None, None, "trend resolution failed"
 
 
 def _pick_trigger_level(monthly_candles, current_price: float,
