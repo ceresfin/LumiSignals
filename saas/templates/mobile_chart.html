@@ -1066,6 +1066,10 @@
           }
 
           const badge = document.getElementById('contractBadge');
+          // Suppress when dashboard=0 (the dashboard swing-trade panel
+          // sets this — it doesn't want any of the floating chart
+          // overlays since the same info is rendered in the panel above).
+          if (!SHOW_DASHBOARD) return;
           const symEl = badge.querySelector('.sym');
           const cdEl  = badge.querySelector('.cd');
 
