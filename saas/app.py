@@ -799,6 +799,10 @@ def create_app():
 
         # Map display names to Polygon tickers
         TICKER_MAP = {"GOLD": "C:XAUUSD", "OIL": "C:WTICOUSD"}
+        # Cash indexes need Polygon's "I:" prefix. Plain SPX/NDX/RUT
+        # return 0 bars without it (used by the dashboard Swing Trade
+        # Panel for index option setups).
+        INDEX_SYMBOLS = {"SPX", "NDX", "RUT", "VIX", "DJI"}
         poly_ticker = TICKER_MAP.get(ticker_upper, ticker_upper)
 
         # Detect ticker type and format for Polygon.
@@ -813,6 +817,8 @@ def create_app():
         )
         if is_forex:
             poly_ticker = f"C:{ticker_upper.replace('_', '')}"
+        elif ticker_upper in INDEX_SYMBOLS:
+            poly_ticker = f"I:{ticker_upper}"
 
         try:
             candle_data = massive.get_candles(poly_ticker, timespan, count)
