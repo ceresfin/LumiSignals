@@ -125,6 +125,9 @@ export function SwingTradePanel() {
     return () => { cancelled = true; };
   }, [ticker, mode]);
 
+  const opt = setup?.options;
+  const sh = setup?.shares;
+
   const chartUrl = useMemo(() => {
     const params: string[] = [
       `ticker=${encodeURIComponent(ticker)}`,
@@ -145,9 +148,6 @@ export function SwingTradePanel() {
     if (setup?.direction) params.push(`direction=${setup.direction}`);
     return `${API_BASE}/chart?${params.join('&')}`;
   }, [ticker, chartTf, setup, opt]);
-
-  const opt = setup?.options;
-  const sh = setup?.shares;
   const tradeReady = setup?.direction != null && (opt?.contracts ?? 0) > 0;
 
   // Derive the RETURN / RISK / R:R view per vehicle. Shares uses
