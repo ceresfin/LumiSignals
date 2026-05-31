@@ -1144,6 +1144,366 @@ def create_app():
 
         return jsonify(response)
 
+    # ─── DASHBOARD SWING-TRADE PANEL ENDPOINTS ─────────────────────────
+    # Three endpoints powering the bottom-of-Dashboard trade-setup panel:
+    #   GET  /api/swing-setup           → compute setup (analysis)
+    #   POST /api/option-spread/order   → place IB combo (action)
+    #   POST /api/option-spread/close   → close IB combo (action)
+    # All login_required (Flask session). Both order endpoints gated on
+    # Redis key `equity:orders_enabled=1` (off by default until verified).
+
+    @app.route("/api/swing-setup")
+    @login_required
+    def api_swing_setup():
+        """Compute a front-side options debit-spread setup.
+
+        Query params:
+          ticker        — SPY / QQQ / IWM / SPX / NDX
+          mode          — scalp | intraday | swing
+          max_risk_usd  — optional; defaults to user's stop_loss_usd
+                          for swing_setup strategy, else 200
+
+        Returns the rich setup dict from lumisignals.swing_setup.
+        Cached server-side via Redis for 60s per (user, ticker, mode)
+        to avoid hammering Polygon + Schwab on rapid mode switches.
+        """
+        ticker = (request.args.get("ticker") or "").upper()
+        mode = (request.args.get("mode") or "swing").lower()
+        if not ticker:
+            return jsonify({"error": "ticker required"}), 400
+        if mode not in ("scalp", "intraday", "swing"):
+            return jsonify({"error": f"unknown mode {mode!r}"}), 400
+
+        # Resolve max_risk_usd: explicit param > user setting > default
+        max_risk_usd = request.args.get("max_risk_usd")
+        if max_risk_usd:
+            try:
+                max_risk_usd = float(max_risk_usd)
+            except ValueError:
+                return jsonify({"error": "max_risk_usd must be numeric"}), 400
+        else:
+            # Default; mobile passes explicit value once user sets it
+            # in Settings (future v1.1 will wire user_strategy_settings).
+            max_risk_usd = 200.0
+
+        # 60s Redis cache by (user, ticker, mode, max_risk_usd)
+        import redis as _redis, hashlib
+        rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+        cache_key = "swing_setup:" + hashlib.sha1(
+            f"{current_user.id}:{ticker}:{mode}:{max_risk_usd}".encode()
+        ).hexdigest()[:16]
+        cached = rdb.get(cache_key)
+        if cached:
+            return jsonify(json.loads(cached))
+
+        try:
+            from lumisignals.swing_setup import compute_setup
+            setup = compute_setup(ticker, mode, max_risk_usd)
+        except Exception as e:
+            logger.error("swing_setup compute failed: %s", e)
+            return jsonify({"error": f"setup compute failed: {e}"}), 500
+
+        # Bundle the chart URL so mobile can render the WebView directly
+        # without re-deriving the params (entry/stop/target only present
+        # in the shares spec; for options we overlay strikes + breakeven).
+        chart_overlay = {}
+        if setup.get("options"):
+            opt = setup["options"]
+            chart_overlay = {
+                "long_strike": opt.get("long_strike"),
+                "short_strike": opt.get("short_strike"),
+                "breakeven": opt.get("breakeven"),
+                "trigger_level": setup.get("trigger_level"),
+            }
+        setup["chart_overlay"] = chart_overlay
+
+        rdb.setex(cache_key, 60, json.dumps(setup, default=str))
+        return jsonify(setup)
+
+    @app.route("/api/option-spread/order", methods=["POST"])
+    @login_required
+    def api_option_spread_order():
+        """Place an atomic options debit spread via IB CPAPI combo.
+
+        Body: {
+          ticker, direction ("BUY"|"SELL"), spread_type ("call_debit"|"put_debit"),
+          expiry ("YYYY-MM-DD"), long_strike, short_strike, contracts,
+          limit_price (net debit), max_risk_usd
+        }
+
+        Gated on Redis `equity:orders_enabled=1` (off by default).
+        Risk gates in order: reconcile_gate → kill_switch → runaway_guard
+        → cooldown. Then looks up conids, builds the combo, submits.
+        """
+        import redis as _redis
+        rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+
+        # Feature flag
+        if not rdb.get("equity:orders_enabled"):
+            return jsonify({
+                "status": "skipped", "reason": "equity_orders_disabled",
+            }), 503
+
+        body = request.get_json(silent=True) or {}
+        ticker = (body.get("ticker") or "").upper()
+        direction = (body.get("direction") or "").upper()
+        spread_type = body.get("spread_type") or ""
+        expiry = body.get("expiry") or ""
+        long_strike = body.get("long_strike")
+        short_strike = body.get("short_strike")
+        contracts = int(body.get("contracts") or 0)
+        limit_price = body.get("limit_price")
+        max_risk_usd = float(body.get("max_risk_usd") or 200)
+
+        missing = [k for k, v in (
+            ("ticker", ticker), ("direction", direction),
+            ("spread_type", spread_type), ("expiry", expiry),
+            ("long_strike", long_strike), ("short_strike", short_strike),
+            ("contracts", contracts), ("limit_price", limit_price),
+        ) if not v]
+        if missing:
+            return jsonify({"error": "missing fields: " + ",".join(missing)}), 400
+
+        # Risk gates (mirror ORB Phase 9 pattern; share state with futures)
+        try:
+            from lumisignals import reconcile_gate
+            if reconcile_gate.is_locked():
+                return jsonify({"status": "skipped",
+                                "reason": "reconcile_gate_locked"}), 503
+        except Exception as e:
+            logger.warning("reconcile_gate check failed (fail-closed): %s", e)
+            return jsonify({"status": "skipped",
+                            "reason": "reconcile_gate_check_failed"}), 503
+
+        try:
+            from lumisignals import kill_switch
+            if kill_switch.is_blocking_entry():
+                st = kill_switch.get_state()
+                return jsonify({
+                    "status": "skipped", "reason": "kill_switch_tripped",
+                    "day_pnl": round(st.get("day_pnl", 0.0), 2),
+                }), 200
+        except Exception as e:
+            logger.warning("kill switch check failed (fail-open): %s", e)
+
+        try:
+            from lumisignals import runaway_guard
+            if runaway_guard.is_blocking_entry():
+                st = runaway_guard.get_state()
+                return jsonify({
+                    "status": "skipped", "reason": "runaway_guard_tripped",
+                    "trip_reason": st.get("trip_reason"),
+                }), 200
+        except Exception as e:
+            logger.warning("runaway_guard check failed (fail-open): %s", e)
+
+        try:
+            from lumisignals import cooldown
+            if cooldown.is_active("swing_setup", ticker):
+                return jsonify({
+                    "status": "skipped", "reason": "cooldown_active",
+                    "ttl_seconds": cooldown.ttl("swing_setup", ticker),
+                }), 200
+        except Exception as e:
+            logger.warning("cooldown check failed (fail-open): %s", e)
+
+        # Look up conids for both option legs via IB CPAPI
+        try:
+            from lumisignals.ibkr_cpapi import CPAPIClient
+            client = CPAPIClient()
+            client.ensure_session()
+        except Exception as e:
+            return jsonify({"error": f"CPAPI session failed: {e}"}), 503
+
+        right = "C" if spread_type == "call_debit" else "P"
+        long_conid = _lookup_option_conid_simple(client, ticker, expiry, long_strike, right)
+        short_conid = _lookup_option_conid_simple(client, ticker, expiry, short_strike, right)
+        if not (long_conid and short_conid):
+            return jsonify({
+                "error": "conid lookup failed",
+                "long_conid": long_conid, "short_conid": short_conid,
+            }), 502
+
+        # Build the atomic combo: long leg BUY +1, short leg SELL -1.
+        # Positive limit_price = pay debit.
+        import uuid as _uuid
+        coid = f"lumi_swing_{_uuid.uuid4().hex[:12]}"
+        payload = client.build_combo_order(
+            legs=[(long_conid, "BUY", 1), (short_conid, "SELL", 1)],
+            quantity=contracts,
+            limit_price=abs(float(limit_price)),
+            order_type="LMT", tif="DAY", coid=coid,
+        )
+
+        # Diary INTENT_OPEN per leg before submit (best-effort)
+        try:
+            from lumisignals import diary
+            for leg_label, conid, side, strike in (
+                ("long",  long_conid,  "BUY",  long_strike),
+                ("short", short_conid, "SELL", short_strike),
+            ):
+                diary.record_event(
+                    broker="ib", strategy_id="swing_setup", ticker=ticker,
+                    state=diary.State.INTENT_OPEN,
+                    client_intent_id=f"{coid}_{leg_label}",
+                    expected_qty=contracts,
+                    meta={"coid": coid, "leg": leg_label, "conid": conid,
+                          "strike": strike, "side": side,
+                          "expiry": expiry, "spread_type": spread_type},
+                )
+        except Exception as e:
+            logger.warning("diary INTENT_OPEN failed: %s", e)
+
+        try:
+            result = client.place_order(payload)
+        except Exception as e:
+            logger.error("swing combo place_order error: %s", e)
+            return jsonify({"error": f"place_order failed: {e}",
+                            "payload": payload}), 502
+
+        # Extract order_id (combo single order, may need reply-walk)
+        order_id = None
+        if isinstance(result, list) and result:
+            row = result[0]
+            order_id = row.get("order_id") or row.get("orderId")
+        elif isinstance(result, dict):
+            order_id = result.get("order_id") or result.get("orderId")
+
+        if not order_id:
+            return jsonify({"status": "rejected",
+                            "response": result,
+                            "payload_coid": coid}), 502
+
+        # Count this against the shared runaway cap (same as 2n20/ORB)
+        try:
+            runaway_guard.record_entry()
+        except Exception:
+            pass
+
+        return jsonify({
+            "status": "queued", "strategy": "swing_setup",
+            "ticker": ticker, "direction": direction,
+            "spread_type": spread_type,
+            "contracts": contracts,
+            "long_strike": long_strike, "short_strike": short_strike,
+            "limit_price": limit_price,
+            "expiry": expiry,
+            "order_id": str(order_id),
+            "coid": coid,
+        })
+
+    @app.route("/api/option-spread/close", methods=["POST"])
+    @login_required
+    def api_option_spread_close():
+        """Close an open option spread at market via reverse combo.
+
+        Body: {
+          ticker, spread_type, expiry, long_strike, short_strike,
+          contracts, coid (original)
+        }
+        """
+        body = request.get_json(silent=True) or {}
+        ticker = (body.get("ticker") or "").upper()
+        spread_type = body.get("spread_type") or ""
+        expiry = body.get("expiry") or ""
+        long_strike = body.get("long_strike")
+        short_strike = body.get("short_strike")
+        contracts = int(body.get("contracts") or 0)
+        orig_coid = body.get("coid") or ""
+
+        if not all([ticker, spread_type, expiry, long_strike, short_strike, contracts]):
+            return jsonify({"error": "missing fields"}), 400
+
+        try:
+            from lumisignals.ibkr_cpapi import CPAPIClient
+            client = CPAPIClient()
+            client.ensure_session()
+        except Exception as e:
+            return jsonify({"error": f"CPAPI session failed: {e}"}), 503
+
+        right = "C" if spread_type == "call_debit" else "P"
+        long_conid = _lookup_option_conid_simple(client, ticker, expiry, long_strike, right)
+        short_conid = _lookup_option_conid_simple(client, ticker, expiry, short_strike, right)
+        if not (long_conid and short_conid):
+            return jsonify({"error": "conid lookup failed for close"}), 502
+
+        # Reverse the legs (SELL the long, BUY the short) at MKT
+        import uuid as _uuid
+        close_coid = f"lumi_swing_close_{_uuid.uuid4().hex[:12]}"
+        payload = client.build_combo_order(
+            legs=[(long_conid, "SELL", 1), (short_conid, "BUY", 1)],
+            quantity=contracts, limit_price=0.0,
+            order_type="MKT", tif="DAY", coid=close_coid,
+        )
+
+        try:
+            from lumisignals import diary
+            diary.record_event(
+                broker="ib", strategy_id="swing_setup", ticker=ticker,
+                state=diary.State.INTENT_CLOSE,
+                client_intent_id=close_coid,
+                meta={"orig_coid": orig_coid, "expiry": expiry,
+                      "spread_type": spread_type, "contracts": contracts},
+            )
+        except Exception:
+            pass
+
+        try:
+            result = client.place_order(payload)
+        except Exception as e:
+            return jsonify({"error": f"close place_order failed: {e}"}), 502
+
+        order_id = None
+        if isinstance(result, list) and result:
+            order_id = result[0].get("order_id") or result[0].get("orderId")
+        elif isinstance(result, dict):
+            order_id = result.get("order_id") or result.get("orderId")
+
+        return jsonify({
+            "status": "queued" if order_id else "rejected",
+            "order_id": str(order_id) if order_id else None,
+            "coid": close_coid,
+            "response": result if not order_id else None,
+        })
+
+    def _lookup_option_conid_simple(client, ticker, expiry_iso, strike, right):
+        """Find an option conid via IB CPAPI /iserver/secdef/info.
+
+        expiry_iso: "YYYY-MM-DD". Prefers SPXW class for SPX (avoids the
+        AM-settled 3rd-Friday SPX). Returns int conid or None."""
+        try:
+            results = client.search_contract(ticker, "IND") or []
+        except Exception:
+            results = []
+        if not results:
+            results = client.search_contract(ticker, "STK") or []
+        if not results:
+            return None
+        underlying_conid = results[0].get("conid")
+        if not underlying_conid:
+            return None
+        expiry_compact = expiry_iso.replace("-", "")  # YYYYMMDD
+        month = expiry_compact[:6]
+        sec_def = client._request("GET", "/iserver/secdef/info", params={
+            "conid": underlying_conid, "sectype": "OPT",
+            "month": month, "strike": strike, "right": right,
+            "exchange": "SMART",
+        })
+        if not (isinstance(sec_def, list) and sec_def):
+            return None
+        preferred = "SPXW" if ticker == "SPX" else None
+        if preferred:
+            for opt in sec_def:
+                if (str(opt.get("maturityDate", "")).replace("-", "") == expiry_compact
+                        and float(opt.get("strike", 0)) == float(strike)
+                        and opt.get("tradingClass") == preferred):
+                    return opt.get("conid")
+        for opt in sec_def:
+            if (str(opt.get("maturityDate", "")).replace("-", "") == expiry_compact
+                    and float(opt.get("strike", 0)) == float(strike)):
+                return opt.get("conid")
+        return sec_def[0].get("conid")
+
     @app.route("/api/ibkr/analyze/status/<request_id>")
     @login_required
     def api_options_status(request_id):
