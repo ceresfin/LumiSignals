@@ -758,50 +758,103 @@ class CPAPIClient:
 
         return {"orders": orders}
 
+    # CPAPI combo-order prefix conids per quote currency. Used as the
+    # leading segment of the conidex string when placing multi-leg
+    # orders. USD covers SPX/SPY/equity options. Extend as new
+    # currencies become relevant.
+    #
+    # Reference: ibind issue #110 (https://github.com/Voyz/ibind/issues/110),
+    # production user salsasepp's working SPXW butterfly payload
+    # confirmed atomic fill 2025-06-04. Same SPREAD_CONID table is in
+    # ibind/examples/rest_06_options_chain.py.
+    # Cherry-picked from orb-debug Phase 10a (commit b63a1ce) for the
+    # dashboard options-spread placement path.
+    SPREAD_CONID = {
+        "USD": "28812380", "GBP": "58666491", "JPY": "61227069",
+        "CAD": "61227082", "CHF": "61227087", "AUD": "61227077",
+        "HKD": "61227072", "SGD": "426116555", "CNH": "136000441",
+        "INR": "136000444", "KRW": "136000424", "MXN": "136000449",
+        "SEK": "136000429",
+    }
+
+    @staticmethod
+    def build_combo_order(legs, quantity: int, limit_price: float,
+                          order_type: str = "LMT", tif: str = "DAY",
+                          currency: str = "USD", coid: str = None,
+                          outside_rth: bool = False) -> dict:
+        """Build an N-leg combo (spread/butterfly/condor) order payload.
+
+        This is the correct CPAPI conidex format — the previous builders
+        in this file got it wrong on three counts (missing spread_conid
+        prefix, bare conid pairs separated by ';;;' instead of
+        comma-joined conid/ratio legs, and an extra 'legs' array that
+        confused the parser into returning 'Combo key is not complete').
+
+        Args:
+            legs: list of (conid, side, ratio). side is "BUY" or "SELL",
+                  ratio is a positive int (quantity multiplier per leg).
+            quantity: number of combos to place.
+            limit_price: net price of the combo. POSITIVE = pay debit
+                  (you're the buyer of the spread), NEGATIVE = receive
+                  credit (you're the seller). IB negates appropriately
+                  on the wire.
+            order_type: "LMT" or "MKT". Combos cannot be STP.
+            tif: "DAY" (recommended for 0DTE) or "GTC".
+            currency: selects the SPREAD_CONID prefix.
+            coid: optional customer order id for reconciler tagging.
+            outside_rth: include extended-hours fills.
+
+        Returns a {"orders": [...]} payload ready for place_order().
+
+        Format:
+          conidex = "{spread_conid};;;{conid1}/{±r1},{conid2}/{±r2}[,...]"
+          e.g. "28812380;;;783634289/+1,783941066/-2,783941086/+1"
+                for a 1x long K1, 2x short K2, 1x long K3 butterfly.
+        """
+        spread_conid = CPAPIClient.SPREAD_CONID[currency]
+        leg_parts = []
+        for conid, side, ratio in legs:
+            if side not in ("BUY", "SELL"):
+                raise ValueError(f"leg side must be BUY/SELL, got {side!r}")
+            signed = ratio if side == "BUY" else -ratio
+            leg_parts.append(f"{conid}/{signed:+d}")
+        conidex = f"{spread_conid};;;{','.join(leg_parts)}"
+
+        order = {
+            "conidex": conidex,        # mutually exclusive with `conid`
+            "orderType": order_type,
+            "side": "BUY",             # combos: always BUY; price sign = direction
+            "quantity": int(quantity),
+            "tif": tif,
+            "outsideRTH": bool(outside_rth),
+        }
+        if order_type == "LMT":
+            order["price"] = round(float(limit_price), 2)
+        if coid:
+            order["cOID"] = coid
+        return {"orders": [order]}
+
     @staticmethod
     def build_spread_order(sell_conid: int, buy_conid: int, quantity: int,
                            limit_price: float, is_credit: bool,
-                           tif: str = "GTC") -> dict:
-        """Build a vertical spread (combo) order payload.
-
-        Args:
-            sell_conid: conId of the short leg
-            buy_conid: conId of the long leg
-            quantity: Number of spreads
-            limit_price: Absolute price (will be negated for credits)
-            is_credit: True for credit spreads
-            tif: Time in force
-        """
+                           tif: str = "DAY", coid: str = None) -> dict:
+        """Vertical 2-leg spread. Wraps build_combo_order for backward
+        compatibility with older call sites that pass leg conids
+        positionally. limit_price is given as a positive number;
+        is_credit=True negates it on the wire."""
         price = -abs(limit_price) if is_credit else abs(limit_price)
-        return {
-            "orders": [{
-                "conidex": f"{sell_conid};;;{buy_conid}",
-                "orderType": "LMT",
-                "side": "BUY",
-                "quantity": quantity,
-                "price": round(price, 2),
-                "tif": tif,
-                "legs": [
-                    {"conid": sell_conid, "side": "SELL", "ratio": 1},
-                    {"conid": buy_conid, "side": "BUY", "ratio": 1},
-                ],
-            }]
-        }
+        return CPAPIClient.build_combo_order(
+            legs=[(buy_conid, "BUY", 1), (sell_conid, "SELL", 1)],
+            quantity=quantity, limit_price=price,
+            order_type="LMT", tif=tif, coid=coid,
+        )
 
     @staticmethod
     def build_close_spread_order(long_conid: int, short_conid: int,
-                                  quantity: int) -> dict:
-        """Build a market order to close an existing spread."""
-        return {
-            "orders": [{
-                "conidex": f"{long_conid};;;{short_conid}",
-                "orderType": "MKT",
-                "side": "BUY",
-                "quantity": quantity,
-                "tif": "DAY",
-                "legs": [
-                    {"conid": long_conid, "side": "SELL", "ratio": 1},
-                    {"conid": short_conid, "side": "BUY", "ratio": 1},
-                ],
-            }]
-        }
+                                  quantity: int, coid: str = None) -> dict:
+        """Market close of an existing vertical spread. Reverses each leg."""
+        return CPAPIClient.build_combo_order(
+            legs=[(long_conid, "SELL", 1), (short_conid, "BUY", 1)],
+            quantity=quantity, limit_price=0.0,
+            order_type="MKT", tif="DAY", coid=coid,
+        )
