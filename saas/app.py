@@ -1153,18 +1153,22 @@ def create_app():
     # Redis key `equity:orders_enabled=1` (off by default until verified).
 
     @app.route("/api/swing-setup")
-    @login_required
     def api_swing_setup():
         """Compute a front-side options debit-spread setup.
+
+        Public read endpoint (no auth) — matches the pattern of other
+        mobile-callable bot endpoints like /api/risk/account-type. The
+        underlying analyzer only reads market data (Polygon + Schwab)
+        and returns a setup spec; it doesn't touch user-scoped state
+        or place orders.
 
         Query params:
           ticker        — SPY / QQQ / IWM / SPX / NDX
           mode          — scalp | intraday | swing
-          max_risk_usd  — optional; defaults to user's stop_loss_usd
-                          for swing_setup strategy, else 200
+          max_risk_usd  — optional; defaults to 200 (mobile passes
+                          user's per-symbol risk once Settings wires it)
 
-        Returns the rich setup dict from lumisignals.swing_setup.
-        Cached server-side via Redis for 60s per (user, ticker, mode)
+        Cached server-side via Redis for 60s per (ticker, mode, risk)
         to avoid hammering Polygon + Schwab on rapid mode switches.
         """
         ticker = (request.args.get("ticker") or "").upper()
@@ -1174,7 +1178,6 @@ def create_app():
         if mode not in ("scalp", "intraday", "swing"):
             return jsonify({"error": f"unknown mode {mode!r}"}), 400
 
-        # Resolve max_risk_usd: explicit param > user setting > default
         max_risk_usd = request.args.get("max_risk_usd")
         if max_risk_usd:
             try:
@@ -1182,15 +1185,12 @@ def create_app():
             except ValueError:
                 return jsonify({"error": "max_risk_usd must be numeric"}), 400
         else:
-            # Default; mobile passes explicit value once user sets it
-            # in Settings (future v1.1 will wire user_strategy_settings).
             max_risk_usd = 200.0
 
-        # 60s Redis cache by (user, ticker, mode, max_risk_usd)
         import redis as _redis, hashlib
         rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
         cache_key = "swing_setup:" + hashlib.sha1(
-            f"{current_user.id}:{ticker}:{mode}:{max_risk_usd}".encode()
+            f"{ticker}:{mode}:{max_risk_usd}".encode()
         ).hexdigest()[:16]
         cached = rdb.get(cache_key)
         if cached:
@@ -1221,9 +1221,11 @@ def create_app():
         return jsonify(setup)
 
     @app.route("/api/option-spread/order", methods=["POST"])
-    @login_required
     def api_option_spread_order():
         """Place an atomic options debit spread via IB CPAPI combo.
+
+        Auth: X-Sync-Key header (matches /api/positions/close pattern;
+        mobile passes EXPO_PUBLIC_LUMI_SYNC_KEY env).
 
         Body: {
           ticker, direction ("BUY"|"SELL"), spread_type ("call_debit"|"put_debit"),
@@ -1235,6 +1237,10 @@ def create_app():
         Risk gates in order: reconcile_gate → kill_switch → runaway_guard
         → cooldown. Then looks up conids, builds the combo, submits.
         """
+        sync_key = request.headers.get("X-Sync-Key", "")
+        if sync_key != os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026"):
+            return jsonify({"error": "unauthorized"}), 401
+
         import redis as _redis
         rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
 
@@ -1393,15 +1399,20 @@ def create_app():
         })
 
     @app.route("/api/option-spread/close", methods=["POST"])
-    @login_required
     def api_option_spread_close():
         """Close an open option spread at market via reverse combo.
+
+        Auth: X-Sync-Key header (matches the order endpoint).
 
         Body: {
           ticker, spread_type, expiry, long_strike, short_strike,
           contracts, coid (original)
         }
         """
+        sync_key = request.headers.get("X-Sync-Key", "")
+        if sync_key != os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026"):
+            return jsonify({"error": "unauthorized"}), 401
+
         body = request.get_json(silent=True) or {}
         ticker = (body.get("ticker") or "").upper()
         spread_type = body.get("spread_type") or ""

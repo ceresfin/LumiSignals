@@ -9,6 +9,7 @@ import { Colors } from '@/constants/theme';
 import IbStatusBanner from '@/components/ib-status-banner';
 import ReconcileBanner from '@/components/reconcile-banner';
 import BotStatusCard from '@/components/bot-status-card';
+import { SwingTradePanel } from '@/components/swing-trade-panel';
 
 type Trade = {
   realized_pl: number | null;
@@ -871,6 +872,8 @@ export default function Dashboard() {
             )}
           </View>
         )}
+
+        <SwingTradePanel />
 
         <View style={{ height: 40 }} />
       </ScrollView>
