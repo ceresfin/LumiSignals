@@ -42,6 +42,9 @@ const API_BASE = 'https://bot.lumitrade.ai';
 const SYNC_KEY = process.env.EXPO_PUBLIC_LUMI_SYNC_KEY ?? '';
 const ENABLED = process.env.EXPO_PUBLIC_SWING_PANEL_ENABLED === '1';
 
+const fmtMoney = (n: number | null | undefined) =>
+  n == null ? '—' : `$${n.toFixed(2)}`;
+
 type Setup = {
   ticker: string;
   mode: string;
@@ -67,8 +70,30 @@ type Setup = {
     long_delta: number | null;
     short_delta: number | null;
   } | null;
+  shares: {
+    entry: number | null;
+    stop: number | null;
+    target: number | null;
+    qty: number;
+    qty_reason: string | null;
+    risk_per_share: number | null;
+  } | null;
   warnings: string[];
   chart_overlay?: Record<string, number | null>;
+};
+
+// Render values for the RETURN / RISK / R:R cards, abstracted per
+// vehicle so the same JSX renders both options and shares views.
+type ReturnRiskView = {
+  labelEntry: string;    labelTarget: string;
+  labelUnit: string;     labelPerUnit: string;
+  entry: number | null;  target: number | null;
+  profitPerUnit: number | null;
+  potentialProfit: number | null;
+  stop: number | null;
+  riskPerUnit: number | null;
+  potentialLoss: number | null;
+  rrRatio: number | null;
 };
 
 export function SwingTradePanel() {
@@ -76,6 +101,7 @@ export function SwingTradePanel() {
 
   const [ticker, setTicker] = useState<typeof SUPPORTED_TICKERS[number]>('SPX');
   const [mode, setMode] = useState<typeof MODES[number]>('swing');
+  const [vehicle, setVehicle] = useState<'options' | 'shares'>('options');
   const [chartTf, setChartTf] = useState<string>('1w');
   const [setup, setSetup] = useState<Setup | null>(null);
   const [loading, setLoading] = useState(false);
@@ -118,7 +144,51 @@ export function SwingTradePanel() {
   }, [ticker, chartTf, setup]);
 
   const opt = setup?.options;
+  const sh = setup?.shares;
   const tradeReady = setup?.direction != null && (opt?.contracts ?? 0) > 0;
+
+  // Derive the RETURN / RISK / R:R view per vehicle. Shares uses
+  // entry / target / stop directly; options maps net_debit→entry,
+  // max_profit→target, and the spread itself defines the loss.
+  const rrView: ReturnRiskView = useMemo(() => {
+    if (vehicle === 'shares' && sh && sh.entry != null && sh.stop != null && sh.target != null) {
+      const profitPerShare = sh.target - sh.entry;
+      const riskPerShare = sh.risk_per_share ?? (sh.entry - sh.stop);
+      return {
+        labelEntry: 'Entry', labelTarget: 'Target',
+        labelUnit: 'Share', labelPerUnit: '/ Share',
+        entry: sh.entry, target: sh.target,
+        profitPerUnit: profitPerShare,
+        potentialProfit: profitPerShare * sh.qty,
+        stop: sh.stop,
+        riskPerUnit: riskPerShare,
+        potentialLoss: riskPerShare * sh.qty,
+        rrRatio: riskPerShare > 0 ? profitPerShare / riskPerShare : null,
+      };
+    }
+    if (vehicle === 'options' && opt && opt.net_debit_estimate != null) {
+      const profitPerContract = opt.max_profit_per_spread ?? 0;
+      const riskPerContract = opt.max_loss_per_spread ?? 0;
+      return {
+        labelEntry: 'Net Debit', labelTarget: 'Max Profit at',
+        labelUnit: 'Contract', labelPerUnit: '/ Contract',
+        entry: opt.net_debit_estimate,
+        target: opt.short_strike,        // strike where max profit is achieved at expiry
+        profitPerUnit: profitPerContract,
+        potentialProfit: profitPerContract * opt.contracts,
+        stop: opt.breakeven,             // breakeven price below which spread loses
+        riskPerUnit: riskPerContract,
+        potentialLoss: riskPerContract * opt.contracts,
+        rrRatio: riskPerContract > 0 ? profitPerContract / riskPerContract : null,
+      };
+    }
+    return {
+      labelEntry: 'Entry', labelTarget: 'Target',
+      labelUnit: 'Unit', labelPerUnit: '/ Unit',
+      entry: null, target: null, profitPerUnit: null, potentialProfit: null,
+      stop: null, riskPerUnit: null, potentialLoss: null, rrRatio: null,
+    };
+  }, [vehicle, opt, sh]);
   const directionLabel = setup?.direction === 'BUY' ? 'LONG ▲'
     : setup?.direction === 'SELL' ? 'SHORT ▼' : '—';
 
@@ -172,6 +242,19 @@ export function SwingTradePanel() {
             onPress={() => setTicker(t)}
             style={[styles.chip, ticker === t && styles.chipActive]}>
             <Text style={[styles.chipText, ticker === t && styles.chipTextActive]}>{t}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      {/* Vehicle toggle (Options is primary; Shares for ETF trades) */}
+      <View style={styles.vehicleRow}>
+        {(['options', 'shares'] as const).map((v) => (
+          <TouchableOpacity key={v}
+            onPress={() => setVehicle(v)}
+            style={[styles.vehicleChip, vehicle === v && styles.vehicleChipActive]}>
+            <Text style={[styles.vehicleText, vehicle === v && styles.vehicleTextActive]}>
+              {v === 'options' ? 'Options' : 'Shares'}
+            </Text>
           </TouchableOpacity>
         ))}
       </View>
@@ -264,14 +347,16 @@ export function SwingTradePanel() {
             <Text style={styles.value}>{setup?.momentum ?? '—'}</Text>
           </View>
           <View style={styles.gridCell}>
-            <Text style={styles.label}>Contracts</Text>
-            <Text style={styles.value}>{opt?.contracts ?? '—'}</Text>
+            <Text style={styles.label}>{vehicle === 'shares' ? 'Shares' : 'Contracts'}</Text>
+            <Text style={styles.value}>
+              {(vehicle === 'shares' ? sh?.qty : opt?.contracts) ?? '—'}
+            </Text>
           </View>
         </View>
       </View>
 
       {/* Spread spec — only when options vehicle */}
-      {opt && opt.long_strike && (
+      {vehicle === 'options' && opt && opt.long_strike && (
         <View style={styles.specCard}>
           <Text style={styles.cardTitle}>SPREAD</Text>
           <Text style={styles.specLine}>
@@ -287,6 +372,72 @@ export function SwingTradePanel() {
           </Text>
           <Text style={styles.specLine}>
             Breakeven {opt.breakeven?.toFixed(2)} · Expiry {opt.expiry}
+          </Text>
+        </View>
+      )}
+
+      {/* RETURN / RISK side-by-side cards */}
+      <View style={styles.rrRow}>
+        <View style={[styles.rrCard, styles.rrCardReturn]}>
+          <Text style={styles.cardTitleGreen}>RETURN</Text>
+          <View style={styles.rrLineRow}>
+            <Text style={styles.rrLabel}>{rrView.labelEntry}</Text>
+            <Text style={styles.rrValue}>{fmtMoney(rrView.entry)}</Text>
+          </View>
+          <View style={styles.rrLineRow}>
+            <Text style={styles.rrLabel}>{rrView.labelTarget}</Text>
+            <Text style={styles.rrValue}>{fmtMoney(rrView.target)}</Text>
+          </View>
+          <View style={styles.rrLineRow}>
+            <Text style={styles.rrLabel}>Profit {rrView.labelPerUnit}</Text>
+            <Text style={styles.rrValue}>{fmtMoney(rrView.profitPerUnit)}</Text>
+          </View>
+          <View style={styles.rrLineRow}>
+            <Text style={styles.rrLabel}>Potential Profit</Text>
+            <Text style={[styles.rrValue, { color: Colors.green }]}>
+              {fmtMoney(rrView.potentialProfit)}
+            </Text>
+          </View>
+        </View>
+        <View style={[styles.rrCard, styles.rrCardRisk]}>
+          <Text style={styles.cardTitleRed}>RISK</Text>
+          <View style={styles.rrLineRow}>
+            <Text style={styles.rrLabel}>{rrView.labelEntry}</Text>
+            <Text style={styles.rrValue}>{fmtMoney(rrView.entry)}</Text>
+          </View>
+          <View style={styles.rrLineRow}>
+            <Text style={styles.rrLabel}>{vehicle === 'shares' ? 'Stop Loss' : 'Breakeven'}</Text>
+            <Text style={styles.rrValue}>{fmtMoney(rrView.stop)}</Text>
+          </View>
+          <View style={styles.rrLineRow}>
+            <Text style={styles.rrLabel}>Risk {rrView.labelPerUnit}</Text>
+            <Text style={styles.rrValue}>{fmtMoney(rrView.riskPerUnit)}</Text>
+          </View>
+          <View style={styles.rrLineRow}>
+            <Text style={styles.rrLabel}>Potential Loss</Text>
+            <Text style={[styles.rrValue, { color: Colors.red }]}>
+              {fmtMoney(rrView.potentialLoss)}
+            </Text>
+          </View>
+        </View>
+      </View>
+
+      {/* RETURN TO RISK RATIO card */}
+      {rrView.rrRatio != null && (
+        <View style={styles.rrRatioCard}>
+          <Text style={styles.cardTitleCenter}>RETURN TO RISK RATIO</Text>
+          <Text style={styles.rrRatioBig}>{rrView.rrRatio.toFixed(2)}</Text>
+          <Text style={styles.rrRatioLabel}>REWARD : RISK</Text>
+          <View style={styles.rrBarTrack}>
+            <View style={[styles.rrBarReward, {
+              flex: Math.max(0.001, rrView.profitPerUnit ?? 0),
+            }]} />
+            <View style={[styles.rrBarRisk, {
+              flex: Math.max(0.001, rrView.riskPerUnit ?? 0),
+            }]} />
+          </View>
+          <Text style={styles.rrFootnote}>
+            make ${(rrView.rrRatio).toFixed(2)} for every $1.00 risked
           </Text>
         </View>
       )}
@@ -400,4 +551,38 @@ const styles = StyleSheet.create({
   chartContainer: { height: 400, borderRadius: 12, overflow: 'hidden',
                     backgroundColor: Colors.white },
   chart: { flex: 1 },
+  vehicleRow: { flexDirection: 'row', gap: 6, marginBottom: 10 },
+  vehicleChip: { flex: 1, paddingVertical: 8, borderRadius: 12,
+                 backgroundColor: Colors.cream, alignItems: 'center',
+                 borderWidth: 1, borderColor: Colors.cream },
+  vehicleChipActive: { backgroundColor: Colors.olive, borderColor: Colors.olive },
+  vehicleText: { fontSize: 13, fontWeight: '500', color: Colors.textLight },
+  vehicleTextActive: { color: Colors.gold },
+  rrRow: { flexDirection: 'row', gap: 8, marginBottom: 10 },
+  rrCard: { flex: 1, backgroundColor: Colors.white, borderRadius: 12,
+            padding: 12, borderTopWidth: 3 },
+  rrCardReturn: { borderTopColor: Colors.green },
+  rrCardRisk: { borderTopColor: Colors.red },
+  cardTitleGreen: { fontSize: 10, fontWeight: '600', letterSpacing: 0.5,
+                    color: Colors.green, marginBottom: 8 },
+  cardTitleRed: { fontSize: 10, fontWeight: '600', letterSpacing: 0.5,
+                  color: Colors.red, marginBottom: 8 },
+  cardTitleCenter: { fontSize: 10, fontWeight: '600', letterSpacing: 0.5,
+                     color: Colors.textLight, marginBottom: 8,
+                     textAlign: 'center' },
+  rrLineRow: { flexDirection: 'row', justifyContent: 'space-between',
+               paddingVertical: 3 },
+  rrLabel: { fontSize: 11, color: Colors.textLight, flexShrink: 1 },
+  rrValue: { fontSize: 12, fontWeight: '600', color: Colors.dark },
+  rrRatioCard: { backgroundColor: Colors.white, borderRadius: 12,
+                 padding: 16, marginBottom: 10, alignItems: 'center' },
+  rrRatioBig: { fontSize: 36, fontWeight: '300', color: Colors.dark,
+                marginVertical: 4 },
+  rrRatioLabel: { fontSize: 10, fontWeight: '500', letterSpacing: 1,
+                  color: Colors.textLight, marginBottom: 8 },
+  rrBarTrack: { flexDirection: 'row', width: '100%', height: 10,
+                borderRadius: 5, overflow: 'hidden', marginBottom: 6 },
+  rrBarReward: { backgroundColor: Colors.green },
+  rrBarRisk: { backgroundColor: Colors.red },
+  rrFootnote: { fontSize: 11, color: Colors.textLight },
 });
