@@ -62,6 +62,12 @@
     const UNITS = params.get('units') ? parseFloat(params.get('units')) : null;
     const DIRECTION = params.get('direction') || '';
     const STRATEGY = params.get('strategy') || '';
+    // Pass dashboard=0 to suppress the in-chart DASHBOARD overlay panel
+    // (Direction/Entry/Target/Stop/Risk/Reward/R:R table). The dashboard
+    // swing-trade panel duplicates that info above the chart, so the
+    // overlay covers candles without adding info. Other callers
+    // (positions tab, trades nav) keep the overlay by default.
+    const SHOW_DASHBOARD = params.get('dashboard') !== '0';
     // Watchlist zone "activated" timestamp (unix seconds). When set,
     // drops a triangle marker on the bar where price first entered the
     // zone band. Optional; ignored if not provided.
@@ -688,11 +694,14 @@
           }
 
           // ── Render ───────────────────────────────────────────────────
+          // Suppress per SHOW_DASHBOARD URL flag (?dashboard=0). Used by
+          // the dashboard swing-trade panel which shows the same info
+          // above the chart and doesn't want the in-chart overlay.
+          const oldDashCard = document.getElementById('adx-dashboard');
+          if (oldDashCard) oldDashCard.remove();
+          if (!SHOW_DASHBOARD) return;
           const panel = document.createElement('div');
           panel.id = 'adx-dashboard';
-          // Remove old panel if present (TF switches re-run this)
-          const old = document.getElementById('adx-dashboard');
-          if (old) old.remove();
           panel.style.cssText =
             'position:absolute;top:8px;right:8px;background:rgba(30,30,30,0.92);' +
             'padding:8px 10px;border-radius:8px;border:1px solid #555;' +
