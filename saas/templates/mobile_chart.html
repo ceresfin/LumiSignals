@@ -819,15 +819,36 @@
             drawBand(lo, hi, 'rgba(39, 174, 96, 0.18)', null);
           }
           // Max-loss zone (red-tinted band):
-          //   call debit: below long_strike (down to chart bottom area)
-          //   put  debit: above long_strike (up to chart top area)
-          // Approximate "infinity" with current price ± 5% from the strike
-          // — wide enough to show clearly without dominating the chart.
+          //   call debit: below long_strike (extends past chart bottom)
+          //   put  debit: above long_strike (extends past chart top)
+          // We compute chart extents from the actual candle data and
+          // extend the band past the visible range so there's no hard
+          // edge — max loss is the same anywhere past the long strike.
           if (LONG_STRIKE) {
-            const span = LONG_STRIKE * 0.05;
-            const lo = isCall ? LONG_STRIKE - span : LONG_STRIKE;
-            const hi = isCall ? LONG_STRIKE       : LONG_STRIKE + span;
+            const lows  = unique.map(b => b.low).filter(v => v != null);
+            const highs = unique.map(b => b.high).filter(v => v != null);
+            const chartMin = lows.length  ? Math.min(...lows)  : LONG_STRIKE * 0.9;
+            const chartMax = highs.length ? Math.max(...highs) : LONG_STRIKE * 1.1;
+            // Pad past visible range so the band has no visible terminus
+            const lo = isCall ? Math.min(LONG_STRIKE - 1, chartMin - chartMin * 0.05)
+                              : LONG_STRIKE;
+            const hi = isCall ? LONG_STRIKE
+                              : Math.max(LONG_STRIKE + 1, chartMax + chartMax * 0.05);
             drawBand(lo, hi, 'rgba(192, 57, 43, 0.14)', null);
+          }
+          // Similarly extend the green profit band past the short strike
+          // — above the short strike (calls) the spread is also at max
+          // profit, so the green should continue, not stop at the line.
+          if (SHORT_STRIKE) {
+            const lows  = unique.map(b => b.low).filter(v => v != null);
+            const highs = unique.map(b => b.high).filter(v => v != null);
+            const chartMin = lows.length  ? Math.min(...lows)  : SHORT_STRIKE * 0.9;
+            const chartMax = highs.length ? Math.max(...highs) : SHORT_STRIKE * 1.1;
+            const lo = isCall ? SHORT_STRIKE
+                              : Math.min(SHORT_STRIKE - 1, chartMin - chartMin * 0.05);
+            const hi = isCall ? Math.max(SHORT_STRIKE + 1, chartMax + chartMax * 0.05)
+                              : SHORT_STRIKE;
+            drawBand(lo, hi, 'rgba(39, 174, 96, 0.22)', null);
           }
           // LONG strike — bold gold line with $ label
           candleSeries.createPriceLine({

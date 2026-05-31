@@ -481,7 +481,30 @@ export function SwingTradePanel() {
         </TouchableOpacity>
       </View>
 
-      {/* Chart */}
+      {/* Chart header — info button explains the overlays */}
+      <View style={styles.chartHeader}>
+        <Text style={styles.chartTitle}>Chart</Text>
+        <TouchableOpacity
+          style={styles.infoBtn}
+          onPress={() => Alert.alert(
+            'Chart markers',
+            vehicle === 'options'
+              ? 'LONG (amber) — strike you BUY. Below this at expiry = max loss.\n\n' +
+                'SHORT (teal) — strike you SELL. Above this at expiry = max profit.\n\n' +
+                'BE (yellow dashed) — breakeven. Price needs to reach here to recover the debit.\n\n' +
+                'TRIGGER (magenta dotted) — the higher-TF zone the bias is built on.\n\n' +
+                'Green band — profit zone (between breakeven and short strike + everywhere past short).\n\n' +
+                'Red band — max-loss zone (anywhere past the long strike at expiry).'
+              : 'ENTRY (teal/red) — where the trade enters.\n\n' +
+                'STOP — where the trade exits at max loss.\n\n' +
+                'TARGET — first profit target.\n\n' +
+                'TRIGGER (magenta dotted) — the higher-TF zone the bias is built on.'
+          )}
+          accessibilityRole="button"
+          accessibilityLabel="Chart legend">
+          <Text style={styles.infoBtnText}>i</Text>
+        </TouchableOpacity>
+      </View>
       <View style={styles.chartContainer}>
         <WebView
           source={{ uri: chartUrl }}
@@ -551,6 +574,18 @@ const styles = StyleSheet.create({
   closeText: { fontSize: 14, fontWeight: '600', color: Colors.textLight },
   buttonDisabled: { opacity: 0.4 },
   disabledText: {},
+  chartHeader: { flexDirection: 'row', alignItems: 'center',
+                 justifyContent: 'space-between', marginBottom: 6,
+                 marginTop: 4, paddingHorizontal: 2 },
+  chartTitle: { fontSize: 14, fontWeight: '500', color: Colors.textLight,
+                letterSpacing: 0.5, textTransform: 'uppercase' },
+  infoBtn: { width: 22, height: 22, borderRadius: 11,
+             backgroundColor: Colors.cream, alignItems: 'center',
+             justifyContent: 'center', borderWidth: 1,
+             borderColor: Colors.textLight },
+  infoBtnText: { fontSize: 12, fontWeight: '600',
+                 color: Colors.textLight, fontStyle: 'italic',
+                 fontFamily: 'serif' },
   chartContainer: { height: 400, borderRadius: 12, overflow: 'hidden',
                     backgroundColor: Colors.white },
   chart: { flex: 1 },
