@@ -262,98 +262,89 @@ def _pick_trigger_level(monthly_candles, current_price: float,
 def _pick_options_spread(api_key: str, ticker: str, underlying_price: float,
                          cfg: _ModeCfg, direction: str, spread_type: str,
                          max_risk_usd: float) -> Tuple[dict, Optional[str]]:
-    """Build the options debit-spread spec.
+    """Build the options debit-spread spec via Schwab /chains.
+
+    Schwab is the chosen options-pricing source for the dashboard until
+    Tastytrade is funded (per user direction). Schwab returns greeks
+    (delta + IV) in the chain response, so we can pick the long leg by
+    actual delta rather than OTM-distance heuristics.
 
     Long leg picked at target delta (TARGET_DELTA = 0.30). Width
     starts at cfg.width_default; falls back to cfg.width_fallback if
     the initial debit/width ratio exceeds DEBIT_RATIO_FALLBACK.
 
-    Returns (spec_dict, warning_or_None).
+    Returns (spec_dict, warning_or_None). api_key is unused (kept for
+    signature compatibility with the prior Polygon path).
     """
-    from .polygon_options import PolygonOptionsClient
-    pc = PolygonOptionsClient(api_key=api_key)
+    chain, err = _fetch_schwab_chain(ticker, cfg, spread_type)
+    if err:
+        return _empty_options_spec(cfg, err), err
+    if not chain:
+        return _empty_options_spec(cfg, "empty chain"), \
+               "Schwab returned no options data"
 
-    # Fetch chain for ticker in the mode's DTE window.
+    # Pick the expiration nearest cfg.dte_target from those returned.
+    expiries = sorted({c["expiry"] for c in chain})
     today = datetime.now(timezone.utc).date()
-    exp_gte = (today + timedelta(days=cfg.dte_min)).strftime("%Y-%m-%d")
-    exp_lte = (today + timedelta(days=cfg.dte_max)).strftime("%Y-%m-%d")
+    def _dte_of(e):
+        try:
+            return (datetime.strptime(e, "%Y-%m-%d").date() - today).days
+        except Exception:
+            return -1
+    in_range = [(e, _dte_of(e)) for e in expiries
+                if cfg.dte_min <= _dte_of(e) <= cfg.dte_max]
+    if in_range:
+        expiry = min(in_range, key=lambda ed: abs(ed[1] - cfg.dte_target))[0]
+    else:
+        # Fall back to the closest expiry overall, even if outside the window.
+        expiry = min(((e, _dte_of(e)) for e in expiries),
+                     key=lambda ed: abs(ed[1] - cfg.dte_target))[0]
 
-    right = "call" if spread_type == "call_debit" else "put"
+    in_expiry = [c for c in chain if c["expiry"] == expiry]
+    if not in_expiry:
+        return _empty_options_spec(cfg, f"no contracts at expiry {expiry}"), \
+               "Schwab chain missing target expiry"
 
-    try:
-        snaps = pc.get_option_snapshots(ticker, exp_gte=exp_gte, exp_lte=exp_lte) or []
-    except Exception as e:
-        return _empty_options_spec(cfg, f"options chain fetch failed: {e}"), \
-               "options chain unavailable"
-
-    # Filter by right + reasonable proximity to current price (within 10%)
-    candidates = [s for s in snaps
-                  if (s.get("contract_type") or s.get("right") or "").lower().startswith(right[0])
-                  and abs((s.get("strike") or 0) - underlying_price) / underlying_price < 0.10]
-    if not candidates:
-        return _empty_options_spec(cfg, "no chain candidates"), \
-               f"no {right} strikes within 10% of price"
-
-    # Pick long-leg strike: closest to TARGET_DELTA. Snapshot delta
-    # may live under different keys depending on Polygon plan; try a
-    # few common locations.
-    def _delta_of(snap):
-        for path in (("greeks", "delta"), ("delta",), ("details", "delta")):
-            v = snap
-            for k in path:
-                if isinstance(v, dict):
-                    v = v.get(k)
-                else:
-                    v = None
-                    break
-            if isinstance(v, (int, float)):
-                return abs(v)
-        return None
-
-    with_delta = [(s, _delta_of(s)) for s in candidates]
-    with_delta = [(s, d) for s, d in with_delta if d is not None]
-    if not with_delta:
-        # Fall back to OTM-by-strike-distance heuristic.
-        # For calls: long_strike = round(underlying * 1.005 / 5) * 5 (~0.5% OTM, 5-pt grid).
-        # For puts: long_strike = round(underlying * 0.995 / 5) * 5.
-        # (Refinement opportunity later — pull greeks from Schwab once cherry-picked.)
-        if right == "call":
+    # Pick long strike: closest |delta| to TARGET_DELTA. Schwab returns
+    # signed delta (positive for calls, negative for puts) — abs() it.
+    by_delta = [(c, abs(c["delta"])) for c in in_expiry if c["delta"] != 0]
+    if not by_delta:
+        # Greeks present but all zero (rare — usually a Schwab data hiccup).
+        # Fall back to OTM heuristic so we at least produce a spec.
+        if spread_type == "call_debit":
             long_strike = round(underlying_price * 1.005 / 5) * 5
         else:
             long_strike = round(underlying_price * 0.995 / 5) * 5
-        warning = "delta unavailable on chain; used OTM heuristic for long strike"
+        warning = "Schwab chain returned zero deltas; used OTM heuristic"
     else:
-        # Sort by closeness to TARGET_DELTA and pick the best.
-        best = min(with_delta, key=lambda sd: abs(sd[1] - TARGET_DELTA))
-        long_strike = float(best[0].get("strike"))
+        best = min(by_delta, key=lambda cd: abs(cd[1] - TARGET_DELTA))
+        long_strike = best[0]["strike"]
         warning = None
 
-    # Pick short-leg strike: long ± width on the trend direction.
-    # Call debit: short higher (further OTM) so short_strike > long_strike.
-    # Put debit: short lower (further OTM) so short_strike < long_strike.
+    # Pick short strike: long ± width on the trend-OTM direction.
+    # Call debit: short HIGHER (further OTM up) so short_strike > long_strike.
+    # Put  debit: short LOWER  (further OTM down) so short_strike < long_strike.
     def _build(width):
         ss = long_strike + width if spread_type == "call_debit" else long_strike - width
-        # Find the actual snapshot for short_strike to get a debit estimate
-        short_snap = next((s for s in candidates if float(s.get("strike") or 0) == ss), None)
-        long_snap = next((s for s in candidates if float(s.get("strike") or 0) == long_strike), None)
+        long_row = next((c for c in in_expiry if c["strike"] == long_strike), None)
+        short_row = next((c for c in in_expiry if c["strike"] == ss), None)
         net_debit = None
-        if long_snap and short_snap:
-            long_ask = _quote_ask(long_snap)
-            short_bid = _quote_bid(short_snap)
-            if long_ask and short_bid:
+        if long_row and short_row:
+            long_ask = long_row.get("ask", 0)
+            short_bid = short_row.get("bid", 0)
+            if long_ask > 0 and short_bid > 0:
                 net_debit = round(long_ask - short_bid, 2)
-        return ss, net_debit
+        return ss, net_debit, long_row, short_row
 
-    short_strike, net_debit = _build(cfg.width_default)
+    short_strike, net_debit, long_row, short_row = _build(cfg.width_default)
     width = cfg.width_default
 
     if net_debit and net_debit / cfg.width_default > DEBIT_RATIO_FALLBACK:
-        ss2, nd2 = _build(cfg.width_fallback)
+        ss2, nd2, lr2, sr2 = _build(cfg.width_fallback)
         if nd2 is not None:
-            short_strike, net_debit, width = ss2, nd2, cfg.width_fallback
-
-    # Pick expiry (first available in window, closest to dte_target).
-    expiry = _pick_nearest_expiry(snaps, cfg)
+            short_strike, net_debit = ss2, nd2
+            long_row, short_row = lr2, sr2
+            width = cfg.width_fallback
 
     max_loss = (net_debit or 0) * 100
     max_profit = ((width - (net_debit or 0)) * 100) if net_debit else None
@@ -369,9 +360,11 @@ def _pick_options_spread(api_key: str, ticker: str, underlying_price: float,
     spec = {
         "expiry": expiry,
         "dte_target": cfg.dte_target,
-        "right": right,
+        "right": "call" if spread_type == "call_debit" else "put",
         "long_strike": float(long_strike),
         "short_strike": float(short_strike),
+        "long_delta": long_row.get("delta") if long_row else None,
+        "short_delta": short_row.get("delta") if short_row else None,
         "spread_type": spread_type,
         "width_points": width,
         "net_debit_estimate": net_debit,
@@ -380,11 +373,84 @@ def _pick_options_spread(api_key: str, ticker: str, underlying_price: float,
         "contracts": contracts,
         "contracts_reason": contracts_reason,
         # Underlying price at the moment of breakeven at expiry.
-        # For call debit:  breakeven = long_strike + net_debit
-        # For put debit:   breakeven = long_strike - net_debit
+        # Call debit: breakeven = long_strike + net_debit
+        # Put  debit: breakeven = long_strike - net_debit
         "breakeven": _breakeven(long_strike, net_debit, spread_type),
     }
     return spec, warning
+
+
+def _fetch_schwab_chain(ticker: str, cfg: _ModeCfg,
+                        spread_type: str) -> Tuple[Optional[List[dict]], Optional[str]]:
+    """Pull the options chain from Schwab for the ticker + DTE window.
+
+    Returns (chain, error). chain is a flat list of dicts:
+        [{expiry, strike, delta, bid, ask, oi, iv}, ...]
+    error is None on success or a short string on skip.
+
+    Reuses the SchwabMarketData class that's been on main for months
+    (also used by lumisignals/options_analyzer.py at saas/app.py:1050+).
+    """
+    try:
+        from .schwab_client import SchwabAuth, SchwabMarketData
+    except Exception as e:
+        return None, f"Schwab client import failed: {e}"
+
+    client_id = os.environ.get("SCHWAB_CLIENT_ID", "")
+    client_secret = os.environ.get("SCHWAB_CLIENT_SECRET", "")
+    if not client_id or not client_secret:
+        return None, "SCHWAB_CLIENT_ID/SECRET not set"
+
+    token_file = os.environ.get("SCHWAB_TOKEN_FILE",
+                                 "/opt/lumisignals/schwab_tokens.json")
+    auth = SchwabAuth(client_id, client_secret, token_file=token_file)
+    if not auth.is_authenticated:
+        return None, "Schwab not authenticated — run schwab_auth.py"
+
+    md = SchwabMarketData(auth)
+    today = datetime.now(timezone.utc).date()
+    from_date = (today + timedelta(days=cfg.dte_min)).strftime("%Y-%m-%d")
+    to_date = (today + timedelta(days=cfg.dte_max)).strftime("%Y-%m-%d")
+
+    contract_type = "CALL" if spread_type == "call_debit" else "PUT"
+
+    try:
+        resp = md._request("/chains", params={
+            "symbol": ticker,
+            "contractType": contract_type,
+            "strikeCount": 40,
+            "range": "ALL",
+            "fromDate": from_date,
+            "toDate": to_date,
+        })
+    except Exception as e:
+        return None, f"Schwab /chains call failed: {e}"
+
+    if not isinstance(resp, dict):
+        return None, "Schwab /chains returned non-dict"
+
+    # Schwab response shape: callExpDateMap (or putExpDateMap) =
+    # {"YYYY-MM-DD:DTE": {"strike_str": [{opt_data}]}}
+    map_key = "callExpDateMap" if contract_type == "CALL" else "putExpDateMap"
+    exp_map = resp.get(map_key) or {}
+    flat = []
+    for exp_str, strikes in exp_map.items():
+        exp_date = exp_str.split(":")[0]
+        for strike_str, opt_list in strikes.items():
+            opt = opt_list[0] if isinstance(opt_list, list) else opt_list
+            try:
+                flat.append({
+                    "expiry": exp_date,
+                    "strike": float(strike_str),
+                    "delta": float(opt.get("delta") or 0),
+                    "bid": float(opt.get("bid") or 0),
+                    "ask": float(opt.get("ask") or 0),
+                    "iv": float(opt.get("volatility") or 0),
+                    "oi": int(opt.get("openInterest") or 0),
+                })
+            except (TypeError, ValueError):
+                continue
+    return flat, None
 
 
 def _pick_shares_plan(daily_candles, current_price: float,
@@ -435,56 +501,6 @@ def _pick_shares_plan(daily_candles, current_price: float,
 
 
 # ─── SMALL HELPERS ───────────────────────────────────────────────────
-
-def _quote_bid(snap) -> Optional[float]:
-    for path in (("last_quote", "bid"), ("bid",), ("details", "bid")):
-        v = snap
-        for k in path:
-            if isinstance(v, dict):
-                v = v.get(k)
-            else:
-                v = None; break
-        if isinstance(v, (int, float)) and v > 0:
-            return float(v)
-    return None
-
-
-def _quote_ask(snap) -> Optional[float]:
-    for path in (("last_quote", "ask"), ("ask",), ("details", "ask")):
-        v = snap
-        for k in path:
-            if isinstance(v, dict):
-                v = v.get(k)
-            else:
-                v = None; break
-        if isinstance(v, (int, float)) and v > 0:
-            return float(v)
-    return None
-
-
-def _pick_nearest_expiry(snaps, cfg: _ModeCfg) -> Optional[str]:
-    exps = set()
-    for s in snaps:
-        e = (s.get("details") or {}).get("expiration_date") or s.get("expiration_date")
-        if e:
-            exps.add(e)
-    if not exps:
-        return None
-    today = datetime.now(timezone.utc).date()
-    def _dte(e):
-        try:
-            d = datetime.strptime(e, "%Y-%m-%d").date()
-            return (d - today).days
-        except Exception:
-            return -1
-    valid = [(e, _dte(e)) for e in exps]
-    in_range = [(e, d) for e, d in valid if cfg.dte_min <= d <= cfg.dte_max]
-    if in_range:
-        # Closest to target
-        return min(in_range, key=lambda ed: abs(ed[1] - cfg.dte_target))[0]
-    # Fall back to closest overall
-    return min(valid, key=lambda ed: abs(ed[1] - cfg.dte_target))[0] if valid else None
-
 
 def _breakeven(long_strike: float, net_debit: Optional[float],
                spread_type: str) -> Optional[float]:
