@@ -626,6 +626,139 @@ class CPAPIClient:
         return {"orders": orders}
 
     @staticmethod
+    def build_stock_order(conid: int, action: str, quantity: int,
+                          order_type: str = "LMT", price: float = None,
+                          tif: str = "DAY",
+                          parent_id: str = None,
+                          coid: str = None) -> dict:
+        """Build a single-leg equity order payload.
+
+        Mirrors build_futures_order — the CPAPI payload schema is
+        identical for stocks vs futures (IB infers secType from the
+        conid). Default TIF is DAY (vs GTC for futures) because swing
+        equity positions held overnight rely on the bracket SL for
+        gap protection rather than the order itself persisting.
+
+        Args:
+            conid: Equity conid (e.g. SPY = 756733).
+            action: "BUY" or "SELL".
+            quantity: Number of shares.
+            order_type: "MKT" or "LMT" (STP also accepted but unusual
+                for equity entries; brackets are how we protect).
+            price: Required for LMT and STP.
+            tif: "DAY" (default) or "GTC".
+            parent_id: Optional parent cOID — makes this order a
+                bracket child (same OCA semantics as futures).
+            coid: Optional customer order id for reconciler tagging.
+        """
+        order = {
+            "conid": conid,
+            "orderType": order_type,
+            "side": action,
+            "quantity": quantity,
+            "tif": tif,
+        }
+        if price is not None and order_type in ("LMT", "STP"):
+            order["price"] = price
+        if parent_id:
+            order["parentId"] = str(parent_id)
+        if coid:
+            order["cOID"] = coid
+        return {"orders": [order]}
+
+    @staticmethod
+    def build_stock_bracket(conid: int, entry_side: str, quantity: int,
+                            stop_price: float,
+                            entry_type: str = "LMT",
+                            entry_price: float = None,
+                            target_price: float = None,
+                            tif: str = "DAY",
+                            entry_coid: str = None) -> dict:
+        """Atomic 3-order equity bracket (parent + SL + optional TP).
+
+        Same OCA semantics as build_futures_bracket — children stay
+        PreSubmitted until the parent fills, then activate as an OCA
+        group. Position is never unprotected.
+
+        Equity-specific notes vs the futures version:
+          - Default entry_type is LMT (not MKT). Swing equity setups
+            have a target entry price from the analyzer; we don't
+            market-chase. Pass entry_type="MKT" only if you've decided
+            slippage tolerance is high.
+          - Default TIF is DAY. Overnight equity gap risk is handled
+            by the SL child (IB triggers at next open if gapped
+            through), not by the order persisting GTC.
+          - No child_quantity flip-trick parameter — equity dashboard
+            entries are simple fresh positions, not close-and-reverse.
+
+        cOID naming follows the futures bracket convention so the
+        existing reconciler hash-stripping parser can decode the
+        strategy from any leg's fill: parent = lumi_<strategy>_<hash>,
+        sl = ...<hash>sl, tp = ...<hash>tp.
+
+        Args:
+            conid: Equity conid.
+            entry_side: "BUY" (going long) or "SELL" (going short).
+            quantity: Shares.
+            stop_price: Absolute price for the SL child.
+            entry_type: "LMT" (default) or "MKT".
+            entry_price: Required when entry_type=="LMT".
+            target_price: When > 0, include a TP child (LMT). None or
+                0 = no TP (rare for swing equity; usually you want one).
+            tif: TIF for all three orders.
+            entry_coid: Customer order id for the parent. Auto-
+                generated if omitted (format: lumi_<uuid12>).
+
+        Returns:
+            dict for place_order(): {"orders": [parent, sl, tp?]}.
+        """
+        import uuid as _uuid
+        if entry_coid is None:
+            entry_coid = f"lumi_{_uuid.uuid4().hex[:12]}"
+        exit_side = "SELL" if entry_side == "BUY" else "BUY"
+
+        sl_coid = f"{entry_coid}sl"
+        tp_coid = f"{entry_coid}tp"
+
+        parent = {
+            "cOID": entry_coid,
+            "conid": conid,
+            "orderType": entry_type,
+            "side": entry_side,
+            "quantity": quantity,
+            "tif": tif,
+        }
+        if entry_type == "LMT" and entry_price is not None:
+            parent["price"] = entry_price
+
+        sl = {
+            "cOID": sl_coid,
+            "parentId": entry_coid,
+            "conid": conid,
+            "orderType": "STP",
+            "side": exit_side,
+            "quantity": quantity,
+            "price": stop_price,
+            "tif": tif,
+        }
+
+        orders = [parent, sl]
+        if target_price and target_price > 0:
+            tp = {
+                "cOID": tp_coid,
+                "parentId": entry_coid,
+                "conid": conid,
+                "orderType": "LMT",
+                "side": exit_side,
+                "quantity": quantity,
+                "price": target_price,
+                "tif": tif,
+            }
+            orders.append(tp)
+
+        return {"orders": orders}
+
+    @staticmethod
     def build_spread_order(sell_conid: int, buy_conid: int, quantity: int,
                            limit_price: float, is_credit: bool,
                            tif: str = "GTC") -> dict:
