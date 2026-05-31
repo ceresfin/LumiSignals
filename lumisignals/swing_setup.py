@@ -72,6 +72,19 @@ DEBIT_RATIO_FALLBACK = 0.30        # TUNING: if net_debit/width > 30%, try wider
 ADX_STRONG_TREND_THRESHOLD = 25    # TUNING: ADX >= this on M or W = Strong
 DAILY_COUNTER_BARS = 5             # TUNING: look at last 5 daily bars for counter-move
 
+# Polygon serves index data under the "I:" prefix (cash indexes like
+# SPX, NDX, RUT, VIX, DJI). Plain SPY/QQQ/IWM (ETFs) use the regular
+# ticker. Schwab's /chains endpoint takes the bare underlying symbol
+# either way, so this translation only applies to the Polygon bars call.
+_POLYGON_INDEX_SYMBOLS = {"SPX", "NDX", "RUT", "VIX", "DJI"}
+
+
+def _polygon_ticker(ticker: str) -> str:
+    """Translate to Polygon's I:-prefixed symbol for cash indexes."""
+    if ticker.upper() in _POLYGON_INDEX_SYMBOLS:
+        return f"I:{ticker.upper()}"
+    return ticker
+
 
 # ─── PUBLIC API ──────────────────────────────────────────────────────
 
@@ -107,10 +120,13 @@ def compute_setup(ticker: str, mode: str,
         return _skip(ticker, mode, f"massive client init failed: {e}")
 
     # 1. Pull bars on all three timeframes.
+    # Indexes need the "I:" prefix on Polygon; ETFs/stocks use the
+    # bare ticker. _polygon_ticker handles that translation.
+    poly_t = _polygon_ticker(ticker)
     try:
-        monthly = massive.get_candles(ticker, "1mo", count=12) or []
-        weekly = massive.get_candles(ticker, "1w", count=52) or []
-        daily = massive.get_candles(ticker, "1d", count=200) or []
+        monthly = massive.get_candles(poly_t, "1mo", count=12) or []
+        weekly = massive.get_candles(poly_t, "1w", count=52) or []
+        daily = massive.get_candles(poly_t, "1d", count=200) or []
     except Exception as e:
         return _skip(ticker, mode, f"bar fetch failed: {e}")
 
