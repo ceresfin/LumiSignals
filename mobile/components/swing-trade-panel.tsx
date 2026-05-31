@@ -493,8 +493,10 @@ export function SwingTradePanel() {
                 'SHORT (teal) — strike you SELL. Above this at expiry = max profit.\n\n' +
                 'BE (yellow dashed) — breakeven. Price needs to reach here to recover the debit.\n\n' +
                 'TRIGGER (magenta dotted) — the higher-TF zone the bias is built on.\n\n' +
-                'Green band — profit zone (between breakeven and short strike + everywhere past short).\n\n' +
-                'Red band — max-loss zone (anywhere past the long strike at expiry).'
+                'Light green — profit ramps from $0 to max as price moves from BE to SHORT.\n\n' +
+                'Bright green band — max profit zone past the short strike.\n\n' +
+                'Red band — max loss zone past the long strike.\n\n' +
+                'The green and red bands are sized proportionally to the dollar amounts — green is taller than red by the reward:risk ratio.'
               : 'ENTRY (teal/red) — where the trade enters.\n\n' +
                 'STOP — where the trade exits at max loss.\n\n' +
                 'TARGET — first profit target.\n\n' +

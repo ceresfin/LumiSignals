@@ -813,10 +813,27 @@
           // Profit zone (green-tinted band):
           //   call debit: between breakeven and short_strike
           //   put  debit: between short_strike and breakeven
+          // Visual R:R: size max-profit and max-loss bands so their
+          // vertical extents on the chart are proportional to the $
+          // amounts, not the strike prices. The ratio of green height
+          // to red height then equals the actual reward:risk ratio.
+          // Anchor: larger of MAX_PROFIT/MAX_LOSS maps to 35% of the
+          // candle range; the smaller scales down by ratio.
+          const rrLows  = unique.map(b => b.low).filter(v => v != null);
+          const rrHighs = unique.map(b => b.high).filter(v => v != null);
+          const rrCandleMin = rrLows.length  ? Math.min(...rrLows)  : LONG_STRIKE * 0.95;
+          const rrCandleMax = rrHighs.length ? Math.max(...rrHighs) : SHORT_STRIKE * 1.05;
+          const rrCandleRange = rrCandleMax - rrCandleMin;
+          const rrMaxDollar = Math.max(MAX_PROFIT || 0, MAX_LOSS || 0);
+          const rrMaxBandPts = rrCandleRange * 0.35;
+          const ptsPerDollar = rrMaxDollar > 0 ? rrMaxBandPts / rrMaxDollar : 0;
+
+          // Profit-ramp zone (BE to SHORT). Real price width, not scaled
+          // by dollars: this is where P&L grows linearly from $0 to max.
           if (BREAKEVEN && SHORT_STRIKE) {
             const lo = Math.min(BREAKEVEN, SHORT_STRIKE);
             const hi = Math.max(BREAKEVEN, SHORT_STRIKE);
-            drawBand(lo, hi, 'rgba(39, 174, 96, 0.18)', null);
+            drawBand(lo, hi, 'rgba(39, 174, 96, 0.13)', null);
           }
           // Max-loss zone (red-tinted band):
           //   call debit: below long_strike (extends past chart bottom)
@@ -824,31 +841,27 @@
           // We compute chart extents from the actual candle data and
           // extend the band past the visible range so there's no hard
           // edge — max loss is the same anywhere past the long strike.
-          if (LONG_STRIKE) {
-            const lows  = unique.map(b => b.low).filter(v => v != null);
-            const highs = unique.map(b => b.high).filter(v => v != null);
-            const chartMin = lows.length  ? Math.min(...lows)  : LONG_STRIKE * 0.9;
-            const chartMax = highs.length ? Math.max(...highs) : LONG_STRIKE * 1.1;
-            // Pad past visible range so the band has no visible terminus
-            const lo = isCall ? Math.min(LONG_STRIKE - 1, chartMin - chartMin * 0.05)
-                              : LONG_STRIKE;
-            const hi = isCall ? LONG_STRIKE
-                              : Math.max(LONG_STRIKE + 1, chartMax + chartMax * 0.05);
-            drawBand(lo, hi, 'rgba(192, 57, 43, 0.14)', null);
+          // Max-loss zone (red): from LONG_STRIKE outward, sized
+          // proportionally to MAX_LOSS dollars. Anything past the
+          // long strike at expiry = same max loss.
+          if (MAX_LOSS && ptsPerDollar > 0) {
+            const lossHeight = MAX_LOSS * ptsPerDollar;
+            const lo = isCall ? LONG_STRIKE - lossHeight : LONG_STRIKE;
+            const hi = isCall ? LONG_STRIKE              : LONG_STRIKE + lossHeight;
+            drawBand(lo, hi, 'rgba(192, 57, 43, 0.25)', null);
           }
           // Similarly extend the green profit band past the short strike
           // — above the short strike (calls) the spread is also at max
           // profit, so the green should continue, not stop at the line.
-          if (SHORT_STRIKE) {
-            const lows  = unique.map(b => b.low).filter(v => v != null);
-            const highs = unique.map(b => b.high).filter(v => v != null);
-            const chartMin = lows.length  ? Math.min(...lows)  : SHORT_STRIKE * 0.9;
-            const chartMax = highs.length ? Math.max(...highs) : SHORT_STRIKE * 1.1;
-            const lo = isCall ? SHORT_STRIKE
-                              : Math.min(SHORT_STRIKE - 1, chartMin - chartMin * 0.05);
-            const hi = isCall ? Math.max(SHORT_STRIKE + 1, chartMax + chartMax * 0.05)
-                              : SHORT_STRIKE;
-            drawBand(lo, hi, 'rgba(39, 174, 96, 0.22)', null);
+          // Max-profit zone (bright green): from SHORT_STRIKE outward,
+          // sized proportionally to MAX_PROFIT dollars. Anything past
+          // the short strike at expiry = same max profit. The visual
+          // ratio of this band to the red band matches the R:R.
+          if (MAX_PROFIT && ptsPerDollar > 0) {
+            const profitHeight = MAX_PROFIT * ptsPerDollar;
+            const lo = isCall ? SHORT_STRIKE                : SHORT_STRIKE - profitHeight;
+            const hi = isCall ? SHORT_STRIKE + profitHeight : SHORT_STRIKE;
+            drawBand(lo, hi, 'rgba(39, 174, 96, 0.30)', null);
           }
           // LONG strike — bold gold line with $ label
           candleSeries.createPriceLine({
