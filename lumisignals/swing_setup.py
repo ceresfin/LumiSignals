@@ -122,15 +122,17 @@ def compute_setup(ticker: str, mode: str,
     # 1. Pull bars on all three timeframes.
     # Indexes need the "I:" prefix on Polygon; ETFs/stocks use the
     # bare ticker. _polygon_ticker handles that translation.
+    # Monthly bar count = 36 (3 years) so N=15 swing-structure pivot
+    # detection has enough data; with 12 bars we'd never find pivots.
     poly_t = _polygon_ticker(ticker)
     try:
-        monthly = massive.get_candles(poly_t, "1mo", count=12) or []
-        weekly = massive.get_candles(poly_t, "1w", count=52) or []
+        monthly = massive.get_candles(poly_t, "1mo", count=36) or []
+        weekly = massive.get_candles(poly_t, "1w", count=104) or []
         daily = massive.get_candles(poly_t, "1d", count=200) or []
     except Exception as e:
         return _skip(ticker, mode, f"bar fetch failed: {e}")
 
-    if len(monthly) < 6 or len(weekly) < 8 or len(daily) < 20:
+    if len(monthly) < 18 or len(weekly) < 32 or len(daily) < 20:
         return _skip(ticker, mode,
                      f"insufficient bars (m={len(monthly)}, w={len(weekly)}, d={len(daily)})")
 
@@ -204,16 +206,61 @@ def compute_setup(ticker: str, mode: str,
 # ─── INTERNALS ───────────────────────────────────────────────────────
 
 def _trends(monthly, weekly, daily, ticker: str) -> Tuple[dict, dict]:
-    """Run calculate_trend_direction on each timeframe.
-    Daily is only the recent slice (last DAILY_COUNTER_BARS bars) so
-    we're measuring the current pullback/rally, not the multi-month
-    direction."""
-    from .untouched_levels import calculate_trend_direction
-    m_dir, m_str = calculate_trend_direction(monthly, ticker)
-    w_dir, w_str = calculate_trend_direction(weekly, ticker)
-    d_dir, d_str = calculate_trend_direction(daily[-DAILY_COUNTER_BARS:], ticker)
+    """Trend direction on M / W / D.
+
+    Uses calculate_structure_direction (N=15 Dow-Theory swing pivots)
+    for monthly + weekly — same approach the FX H1 Zone Scalp strategy
+    uses on its trend TF. Matches the user's trader-intuition of
+    "higher highs + higher lows = UP", and avoids ADX's susceptibility
+    to single-bar volatility spikes that pull +DI/-DI the wrong way.
+
+    The N=15 detector needs 2N+2 = 32 bars to find the two pivots
+    required for an HH-vs-HL comparison. Monthly fetch is bumped to
+    36 bars (3 years) to support this; weekly to 104 (2 years).
+
+    Daily counter-move is a different question — "is there a pullback
+    RIGHT NOW?" — and a 5-bar swing-structure check isn't meaningful.
+    Use a simple last-close vs N-bars-back close-price comparison,
+    with a noise threshold of 0.3 × ATR(5) to avoid SIDE-flapping on
+    barely-moved bars."""
+    from .untouched_levels import calculate_structure_direction
+
+    m_dir, m_str = calculate_structure_direction(monthly, n=15)
+    w_dir, w_str = calculate_structure_direction(weekly, n=15)
+
+    d_dir, d_str = _daily_counter_direction(daily)
+
     return ({"monthly": m_dir, "weekly": w_dir, "daily": d_dir},
             {"monthly": m_str, "weekly": w_str, "daily": d_str})
+
+
+def _daily_counter_direction(daily) -> Tuple[str, float]:
+    """Short-term daily direction for the counter-move check.
+
+    Compares the most recent close to the close DAILY_COUNTER_BARS
+    bars ago. Returns "UP", "DOWN", or "SIDE" + a confidence proxy
+    (price-change as a fraction of recent ATR, clipped to 0-100).
+
+    The noise threshold (0.3 × ATR-5) prevents the analyzer from
+    flapping SIDE↔UP↔DOWN on flat days. If the move is smaller than
+    that buffer, we call it SIDE."""
+    if len(daily) < DAILY_COUNTER_BARS + 2:
+        return "SIDE", 0.0
+    recent = daily[-DAILY_COUNTER_BARS - 1:]
+    # ATR-5 for noise floor
+    atrs = []
+    for i in range(1, len(recent)):
+        c, p = recent[i], recent[i - 1]
+        tr = max(c.high - c.low, abs(c.high - p.close), abs(c.low - p.close))
+        atrs.append(tr)
+    atr = sum(atrs) / len(atrs) if atrs else 0
+    noise_floor = atr * 0.3
+
+    change = daily[-1].close - daily[-DAILY_COUNTER_BARS].close
+    if abs(change) < noise_floor:
+        return "SIDE", 0.0
+    strength = min(100.0, abs(change) / max(atr, 1e-9) * 33.0)
+    return ("UP" if change > 0 else "DOWN"), strength
 
 
 def _resolve_direction(trends: dict, strengths: dict):
