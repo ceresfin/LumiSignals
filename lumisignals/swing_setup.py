@@ -206,38 +206,129 @@ def compute_setup(ticker: str, mode: str,
 # ─── INTERNALS ───────────────────────────────────────────────────────
 
 def _trends(monthly, weekly, daily, ticker: str) -> Tuple[dict, dict]:
-    """Trend direction on M / W / D.
+    """Trend direction on M / W / D using Pine ADX dashboard logic.
 
-    Uses calculate_structure_direction (N=15 Dow-Theory swing pivots)
-    for monthly + weekly — same approach the FX H1 Zone Scalp strategy
-    uses on its trend TF. Matches the user's trader-intuition of
-    "higher highs + higher lows = UP", and avoids ADX's susceptibility
-    to single-bar volatility spikes that pull +DI/-DI the wrong way.
+    Mirrors pinescripts/adx_dashboard.pine — `ta.dmi(14, 14)` produces
+    [+DI, -DI, ADX]; direction = +DI > -DI + 2 (UP) / +DI < -DI - 2
+    (DOWN) / SIDE otherwise. Same ±2 buffer the user already uses on
+    her TradingView dashboard.
 
-    The N=15 detector needs 2N+2 = 32 bars to find the two pivots
-    required for an HH-vs-HL comparison. Monthly fetch is bumped to
-    36 bars (3 years) to support this; weekly to 104 (2 years).
+    Why not use untouched_levels.calculate_adx_direction: it has a bug
+    in the ADX smoothing (Wilder TR-smooth formula applied to DX values
+    inflates the result ~14×). The direction reads correctly but the
+    strength label is broken. Rather than patch the shared function
+    (used by other strategies — regression risk), implement a clean
+    Pine-equivalent locally. Bug fix in untouched_levels is a separate
+    chore.
 
-    Daily counter-move is a different question — "is there a pullback
-    RIGHT NOW?" — and a 5-bar swing-structure check isn't meaningful.
-    Use a simple last-close vs N-bars-back close-price comparison,
-    with a noise threshold of 0.3 × ATR(5) to avoid SIDE-flapping on
-    barely-moved bars."""
-    from .untouched_levels import calculate_structure_direction
-
-    # Monthly uses N=3: with 36 monthly bars and the natural-trend
-    # rarity of N=15 pivots on a smooth monthly chart, N=15 returns
-    # SIDE for every major equity. N=3 still respects the same Dow
-    # Theory engine but fits the sparser monthly timeframe. Empirically
-    # verified Sun 2026-05-31: SPX/SPY/QQQ/IWM/NDX all read UP at N=3
-    # (matches ADX direction without ADX's strength-overflow weirdness).
-    m_dir, m_str = calculate_structure_direction(monthly, n=3)
-    w_dir, w_str = calculate_structure_direction(weekly, n=15)
-
+    Daily counter-move stays as a simple close-vs-N-bars-back check
+    — that's a different question ("is there a pullback NOW?") not
+    a multi-week trend assessment."""
+    m_dir, m_str = _pine_adx_direction(monthly, period=14)
+    w_dir, w_str = _pine_adx_direction(weekly, period=14)
     d_dir, d_str = _daily_counter_direction(daily)
 
     return ({"monthly": m_dir, "weekly": w_dir, "daily": d_dir},
             {"monthly": m_str, "weekly": w_str, "daily": d_str})
+
+
+def _pine_adx_dmi(candles, period: int = 14) -> Tuple[float, float, float]:
+    """Compute (+DI, -DI, ADX) the same way Pine's ta.dmi(period, period)
+    does. All three values are 0-100.
+
+    Formula (per TradingView reference):
+      TR    = max(high-low, |high-prev_close|, |low-prev_close|)
+      +DM   = high - prev_high   IF (high-prev_high) > (prev_low-low) AND > 0
+              else 0
+      -DM   = prev_low - low     IF (prev_low-low) > (high-prev_high) AND > 0
+              else 0
+
+      Wilder RMA (period=N):
+        initial = mean of first N values
+        next    = (prev * (N-1) + current) / N
+
+      +DI = 100 * rma(+DM, N) / rma(TR, N)
+      -DI = 100 * rma(-DM, N) / rma(TR, N)
+      DX  = 100 * |+DI - -DI| / (+DI + -DI)
+      ADX = rma(DX, N)
+    """
+    n = period
+    if len(candles) < 2 * n + 1:
+        return 0.0, 0.0, 0.0
+
+    tr_list, plus_dm_list, minus_dm_list = [], [], []
+    for i in range(1, len(candles)):
+        h, l = candles[i].high, candles[i].low
+        ph, pl, pc = candles[i - 1].high, candles[i - 1].low, candles[i - 1].close
+        tr = max(h - l, abs(h - pc), abs(l - pc))
+        up_move, down_move = h - ph, pl - l
+        plus_dm = up_move if (up_move > down_move and up_move > 0) else 0.0
+        minus_dm = down_move if (down_move > up_move and down_move > 0) else 0.0
+        tr_list.append(tr)
+        plus_dm_list.append(plus_dm)
+        minus_dm_list.append(minus_dm)
+
+    def _rma(values, n):
+        """Wilder RMA: initial = simple mean of first N, then
+        next = (prev*(N-1) + current) / N. Returns full series."""
+        if len(values) < n:
+            return []
+        first = sum(values[:n]) / n
+        out = [first]
+        for v in values[n:]:
+            out.append((out[-1] * (n - 1) + v) / n)
+        return out
+
+    atr = _rma(tr_list, n)
+    plus_dm_s = _rma(plus_dm_list, n)
+    minus_dm_s = _rma(minus_dm_list, n)
+    if not atr or atr[-1] == 0:
+        return 0.0, 0.0, 0.0
+
+    plus_di_series = [100 * pdm / a if a > 0 else 0
+                      for pdm, a in zip(plus_dm_s, atr)]
+    minus_di_series = [100 * mdm / a if a > 0 else 0
+                       for mdm, a in zip(minus_dm_s, atr)]
+
+    dx_series = []
+    for pdi, mdi in zip(plus_di_series, minus_di_series):
+        denom = pdi + mdi
+        if denom > 0:
+            dx_series.append(100 * abs(pdi - mdi) / denom)
+        else:
+            dx_series.append(0.0)
+
+    adx_series = _rma(dx_series, n)
+    adx_val = adx_series[-1] if adx_series else 0.0
+    return plus_di_series[-1], minus_di_series[-1], adx_val
+
+
+def _pine_adx_direction(candles, period: int = 14,
+                        buffer: float = 2.0) -> Tuple[str, float]:
+    """Pine adx_dashboard.pine direction logic. Returns (direction, adx).
+
+    direction = UP   if +DI > -DI + buffer
+              = DOWN if +DI < -DI - buffer
+              = SIDE otherwise
+    adx       = 0-100 ADX value (drives the momentum label downstream)
+    """
+    plus_di, minus_di, adx = _pine_adx_dmi(candles, period=period)
+    if plus_di > minus_di + buffer:
+        return "UP", round(adx, 2)
+    if plus_di < minus_di - buffer:
+        return "DOWN", round(adx, 2)
+    return "SIDE", round(adx, 2)
+
+
+def adx_momentum_label(adx_value: float) -> str:
+    """Pine adx_dashboard.pine momentum label by ADX strength."""
+    if adx_value >= 50: return "Unusually Very Strong"
+    if adx_value >= 30: return "Very Strong"
+    if adx_value >= 25: return "Strong"
+    if adx_value >= 20: return "Moderate"
+    if adx_value >= 15: return "Weak"
+    if adx_value >= 10: return "Very Weak"
+    return "No to Very Weak"
 
 
 def _daily_counter_direction(daily) -> Tuple[str, float]:
