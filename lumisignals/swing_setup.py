@@ -225,7 +225,13 @@ def _trends(monthly, weekly, daily, ticker: str) -> Tuple[dict, dict]:
     barely-moved bars."""
     from .untouched_levels import calculate_structure_direction
 
-    m_dir, m_str = calculate_structure_direction(monthly, n=15)
+    # Monthly uses N=3: with 36 monthly bars and the natural-trend
+    # rarity of N=15 pivots on a smooth monthly chart, N=15 returns
+    # SIDE for every major equity. N=3 still respects the same Dow
+    # Theory engine but fits the sparser monthly timeframe. Empirically
+    # verified Sun 2026-05-31: SPX/SPY/QQQ/IWM/NDX all read UP at N=3
+    # (matches ADX direction without ADX's strength-overflow weirdness).
+    m_dir, m_str = calculate_structure_direction(monthly, n=3)
     w_dir, w_str = calculate_structure_direction(weekly, n=15)
 
     d_dir, d_str = _daily_counter_direction(daily)
