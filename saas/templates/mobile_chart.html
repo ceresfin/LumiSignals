@@ -68,6 +68,19 @@
     // overlay covers candles without adding info. Other callers
     // (positions tab, trades nav) keep the overlay by default.
     const SHOW_DASHBOARD = params.get('dashboard') !== '0';
+
+    // Swing-trade-panel specific overlays (when strategy=swing_setup).
+    // The panel passes the option-spread spec via these params so the
+    // chart can render trade-aware lines + bands instead of the generic
+    // S/R clutter the HTF strategies use.
+    const LONG_STRIKE   = params.get('long_strike')   ? parseFloat(params.get('long_strike'))   : null;
+    const SHORT_STRIKE  = params.get('short_strike')  ? parseFloat(params.get('short_strike'))  : null;
+    const BREAKEVEN     = params.get('breakeven')     ? parseFloat(params.get('breakeven'))     : null;
+    const MAX_PROFIT    = params.get('max_profit')    ? parseFloat(params.get('max_profit'))    : null;
+    const MAX_LOSS      = params.get('max_loss')      ? parseFloat(params.get('max_loss'))      : null;
+    const TRIGGER_LEVEL = params.get('trigger_level') ? parseFloat(params.get('trigger_level')) : null;
+    const SPREAD_TYPE   = params.get('spread_type') || '';
+    const IS_SWING_SETUP = STRATEGY === 'swing_setup';
     // Watchlist zone "activated" timestamp (unix seconds). When set,
     // drops a triangle marker on the bar where price first entered the
     // zone band. Optional; ignored if not provided.
@@ -87,7 +100,9 @@
     // own zone overlay — and Polygon's published levels can disagree
     // (e.g. 1H S1 from Polygon vs the strategy's own untouched-supply
     // detector). Showing both is confusing. Suppress on H1Zone.
-    const SHOW_LEVELS = !IS_2N20 && !IS_ORB && !IS_H1_ZONE;
+    // Swing setup renders its own trade-aware lines + P&L bands and
+    // doesn't want the generic Polygon S/R clutter on top.
+    const SHOW_LEVELS = !IS_2N20 && !IS_ORB && !IS_H1_ZONE && !IS_SWING_SETUP;
     const SHOW_VWAP = IS_2N20;  // VWAP only for 2n20 strategy
     const HAS_TRADE = ENTRY_PRICE !== null;  // Only show entry/exit/stop if it's an actual trade
 
@@ -787,6 +802,80 @@
             axisLabelVisible: true,
             title: 'Entry',
           });
+        }
+
+        // ─── Swing-setup specific overlay ────────────────────────────
+        // Trade-aware lines + P&L bands for the options debit spread.
+        // Only renders when strategy=swing_setup AND the panel passed
+        // the option-spread params (long_strike / short_strike / etc).
+        if (IS_SWING_SETUP && LONG_STRIKE && SHORT_STRIKE) {
+          const isCall = SPREAD_TYPE === 'call_debit';
+          // Profit zone (green-tinted band):
+          //   call debit: between breakeven and short_strike
+          //   put  debit: between short_strike and breakeven
+          if (BREAKEVEN && SHORT_STRIKE) {
+            const lo = Math.min(BREAKEVEN, SHORT_STRIKE);
+            const hi = Math.max(BREAKEVEN, SHORT_STRIKE);
+            drawBand(lo, hi, 'rgba(39, 174, 96, 0.18)', null);
+          }
+          // Max-loss zone (red-tinted band):
+          //   call debit: below long_strike (down to chart bottom area)
+          //   put  debit: above long_strike (up to chart top area)
+          // Approximate "infinity" with current price ± 5% from the strike
+          // — wide enough to show clearly without dominating the chart.
+          if (LONG_STRIKE) {
+            const span = LONG_STRIKE * 0.05;
+            const lo = isCall ? LONG_STRIKE - span : LONG_STRIKE;
+            const hi = isCall ? LONG_STRIKE       : LONG_STRIKE + span;
+            drawBand(lo, hi, 'rgba(192, 57, 43, 0.14)', null);
+          }
+          // LONG strike — bold gold line with $ label
+          candleSeries.createPriceLine({
+            price: LONG_STRIKE,
+            color: '#FFC107',     // bold amber
+            lineWidth: 3,
+            lineStyle: LightweightCharts.LineStyle.Solid,
+            axisLabelVisible: true,
+            axisLabelTextColor: '#000',
+            title: 'LONG ' + LONG_STRIKE.toFixed(0) +
+                   (MAX_LOSS ? ' · -$' + Math.round(MAX_LOSS) : ''),
+          });
+          // SHORT strike — bold teal/green for calls, red for puts
+          candleSeries.createPriceLine({
+            price: SHORT_STRIKE,
+            color: isCall ? '#3E7F6B' : '#C26A6A',
+            lineWidth: 3,
+            lineStyle: LightweightCharts.LineStyle.Solid,
+            axisLabelVisible: true,
+            axisLabelTextColor: '#fff',
+            title: 'SHORT ' + SHORT_STRIKE.toFixed(0) +
+                   (MAX_PROFIT ? ' · +$' + Math.round(MAX_PROFIT) : ''),
+          });
+          // Breakeven — dashed yellow
+          if (BREAKEVEN) {
+            candleSeries.createPriceLine({
+              price: BREAKEVEN,
+              color: '#FFEB3B',
+              lineWidth: 2,
+              lineStyle: LightweightCharts.LineStyle.Dashed,
+              axisLabelVisible: true,
+              axisLabelTextColor: '#000',
+              title: 'BE ' + BREAKEVEN.toFixed(2),
+            });
+          }
+          // Trigger level (the higher-TF zone we entered off) —
+          // dashed magenta, thinner. Different role from the strikes.
+          if (TRIGGER_LEVEL) {
+            candleSeries.createPriceLine({
+              price: TRIGGER_LEVEL,
+              color: '#E91E63',
+              lineWidth: 1,
+              lineStyle: LightweightCharts.LineStyle.Dotted,
+              axisLabelVisible: true,
+              axisLabelTextColor: '#fff',
+              title: 'TRIGGER ' + TRIGGER_LEVEL.toFixed(2),
+            });
+          }
         }
 
         // Target: solid line + one-sided shaded "meat" band on the ENTRY

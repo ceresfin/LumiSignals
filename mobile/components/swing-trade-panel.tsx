@@ -135,13 +135,16 @@ export function SwingTradePanel() {
       // blocks price action.
       `dashboard=0`,
     ];
-    const overlay = setup?.chart_overlay;
-    if (overlay?.long_strike) params.push(`entry=${overlay.long_strike}`);
-    if (overlay?.short_strike) params.push(`exit=${overlay.short_strike}`);
-    if (overlay?.trigger_level) params.push(`stop=${overlay.trigger_level}`);
+    if (opt?.long_strike) params.push(`long_strike=${opt.long_strike}`);
+    if (opt?.short_strike) params.push(`short_strike=${opt.short_strike}`);
+    if (opt?.breakeven) params.push(`breakeven=${opt.breakeven}`);
+    if (opt?.max_profit_per_spread) params.push(`max_profit=${opt.max_profit_per_spread}`);
+    if (opt?.max_loss_per_spread) params.push(`max_loss=${opt.max_loss_per_spread}`);
+    if (opt?.spread_type) params.push(`spread_type=${opt.spread_type}`);
+    if (setup?.trigger_level) params.push(`trigger_level=${setup.trigger_level}`);
     if (setup?.direction) params.push(`direction=${setup.direction}`);
     return `${API_BASE}/chart?${params.join('&')}`;
-  }, [ticker, chartTf, setup]);
+  }, [ticker, chartTf, setup, opt]);
 
   const opt = setup?.options;
   const sh = setup?.shares;
