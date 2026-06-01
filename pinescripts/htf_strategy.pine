@@ -193,6 +193,10 @@ if syncLevels
     string h4DemStr = not na(h4Demand) ? str.tostring(h4Demand, format.mintick) : "null"
     string h1SupStr = not na(h1Supply) ? str.tostring(h1Supply, format.mintick) : "null"
     string h1DemStr = not na(h1Demand) ? str.tostring(h1Demand, format.mintick) : "null"
+    string m30SupStr = not na(m30Supply) ? str.tostring(m30Supply, format.mintick) : "null"
+    string m30DemStr = not na(m30Demand) ? str.tostring(m30Demand, format.mintick) : "null"
+    string m15SupStr = not na(m15Supply) ? str.tostring(m15Supply, format.mintick) : "null"
+    string m15DemStr = not na(m15Demand) ? str.tostring(m15Demand, format.mintick) : "null"
     string qSupStr = not na(qSupply) ? str.tostring(qSupply, format.mintick) : "null"
     string qDemStr = not na(qDemand) ? str.tostring(qDemand, format.mintick) : "null"
     string mSup2Str = not na(mSupply2) ? str.tostring(mSupply2, format.mintick) : "null"
@@ -205,6 +209,10 @@ if syncLevels
     string h4Dem2Str = not na(h4Demand2) ? str.tostring(h4Demand2, format.mintick) : "null"
     string h1Sup2Str = not na(h1Supply2) ? str.tostring(h1Supply2, format.mintick) : "null"
     string h1Dem2Str = not na(h1Demand2) ? str.tostring(h1Demand2, format.mintick) : "null"
+    string m30Sup2Str = not na(m30Supply2) ? str.tostring(m30Supply2, format.mintick) : "null"
+    string m30Dem2Str = not na(m30Demand2) ? str.tostring(m30Demand2, format.mintick) : "null"
+    string m15Sup2Str = not na(m15Supply2) ? str.tostring(m15Supply2, format.mintick) : "null"
+    string m15Dem2Str = not na(m15Demand2) ? str.tostring(m15Demand2, format.mintick) : "null"
     string qSup2Str = not na(qSupply2) ? str.tostring(qSupply2, format.mintick) : "null"
     string qDem2Str = not na(qDemand2) ? str.tostring(qDemand2, format.mintick) : "null"
 
@@ -214,19 +222,25 @@ if syncLevels
     syncJson += '"W":{"supply":' + wSupStr + ',"supply2":' + wSup2Str + ',"demand":' + wDemStr + ',"demand2":' + wDem2Str + '},'
     syncJson += '"D":{"supply":' + dSupStr + ',"supply2":' + dSup2Str + ',"demand":' + dDemStr + ',"demand2":' + dDem2Str + '},'
     syncJson += '"4H":{"supply":' + h4SupStr + ',"supply2":' + h4Sup2Str + ',"demand":' + h4DemStr + ',"demand2":' + h4Dem2Str + '},'
-    syncJson += '"1H":{"supply":' + h1SupStr + ',"supply2":' + h1Sup2Str + ',"demand":' + h1DemStr + ',"demand2":' + h1Dem2Str + '}},'
+    syncJson += '"1H":{"supply":' + h1SupStr + ',"supply2":' + h1Sup2Str + ',"demand":' + h1DemStr + ',"demand2":' + h1Dem2Str + '},'
+    syncJson += '"30M":{"supply":' + m30SupStr + ',"supply2":' + m30Sup2Str + ',"demand":' + m30DemStr + ',"demand2":' + m30Dem2Str + '},'
+    syncJson += '"15M":{"supply":' + m15SupStr + ',"supply2":' + m15Sup2Str + ',"demand":' + m15DemStr + ',"demand2":' + m15Dem2Str + '}},'
     string qAdxStr = not na(qAdx) ? str.tostring(qAdx, "#.#") : "0"
     string mAdxStr = not na(mAdx) ? str.tostring(mAdx, "#.#") : "0"
     string wAdxStr = not na(wAdx) ? str.tostring(wAdx, "#.#") : "0"
     string dAdxStr = not na(dAdx) ? str.tostring(dAdx, "#.#") : "0"
     string h4AdxStr = not na(h4Adx) ? str.tostring(h4Adx, "#.#") : "0"
     string h1AdxStr = not na(h1Adx) ? str.tostring(h1Adx, "#.#") : "0"
+    string m30AdxStr = not na(m30Adx) ? str.tostring(m30Adx, "#.#") : "0"
+    string m15AdxStr = not na(m15Adx) ? str.tostring(m15Adx, "#.#") : "0"
     syncJson += '"trends":{"Q":{"dir":"' + dirStr(qDir) + '","adx":' + qAdxStr + '},'
     syncJson += '"M":{"dir":"' + dirStr(mDir) + '","adx":' + mAdxStr + '},'
     syncJson += '"W":{"dir":"' + dirStr(wDir) + '","adx":' + wAdxStr + '},'
     syncJson += '"D":{"dir":"' + dirStr(dDir) + '","adx":' + dAdxStr + '},'
     syncJson += '"4H":{"dir":"' + dirStr(h4Dir) + '","adx":' + h4AdxStr + '},'
-    syncJson += '"1H":{"dir":"' + dirStr(h1Dir) + '","adx":' + h1AdxStr + '}}}'
+    syncJson += '"1H":{"dir":"' + dirStr(h1Dir) + '","adx":' + h1AdxStr + '},'
+    syncJson += '"30M":{"dir":"' + dirStr(m30Dir) + '","adx":' + m30AdxStr + '},'
+    syncJson += '"15M":{"dir":"' + dirStr(m15Dir) + '","adx":' + m15AdxStr + '}}}'
 
     alert(syncJson, alert.freq_once_per_bar_close)
 
