@@ -128,7 +128,9 @@ def compute_setup(ticker: str, mode: str,
     """Compute a front-side trade setup for `ticker` in `mode`.
 
     Args:
-        ticker: SPX / SPY / QQQ / IWM / NDX.
+        ticker: any US equity or ETF (SPY, QQQ, NVDA, TSLA, etc.) or
+            cash index (SPX/NDX/RUT/VIX/DJI — Polygon I: prefix is
+            applied automatically). Liquid weekly chains recommended.
         mode:   "scalp" | "intraday" | "swing"
         max_risk_usd: User's stop_loss_usd setting (from
             user_strategy_settings). Used to size contracts/shares.

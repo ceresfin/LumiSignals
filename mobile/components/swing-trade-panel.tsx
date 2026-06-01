@@ -14,13 +14,22 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  ActivityIndicator, Alert, StyleSheet, Text, TouchableOpacity, View,
+  ActivityIndicator, Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View,
 } from 'react-native';
 import { WebView } from 'react-native-webview';
 
 import { Colors } from '@/constants/theme';
 
-const SUPPORTED_TICKERS = ['SPY', 'QQQ', 'IWM', 'SPX', 'NDX'] as const;
+// Two groups so the UI can render a section label per row.
+// Stocks chosen for: liquid weekly chains, sane strike intervals
+// ($1-2.50), and enough IV to make 30-delta verticals worth the
+// debit. Alphabetized within group for findability.
+const INDEX_TICKERS = ['SPY', 'QQQ', 'IWM', 'SPX', 'NDX'] as const;
+const STOCK_TICKERS = [
+  'AAPL', 'AMD', 'AMZN', 'AVGO', 'GOOG', 'JPM', 'LLY', 'META',
+  'MSFT', 'MU', 'NFLX', 'NVDA', 'TSLA', 'WMT', 'XOM',
+] as const;
+const SUPPORTED_TICKERS = [...INDEX_TICKERS, ...STOCK_TICKERS] as const;
 const MODES = ['scalp', 'intraday', 'swing'] as const;
 const TF_LABELS: Record<string, string> = {
   '5m': '5M', '15m': '15M', '1h': '1H',
@@ -238,16 +247,33 @@ export function SwingTradePanel() {
     <View style={styles.section}>
       <Text style={styles.sectionTitle}>Swing Trade Setup</Text>
 
-      {/* Symbol picker (curated chip row) */}
-      <View style={styles.chipRow}>
-        {SUPPORTED_TICKERS.map((t) => (
+      {/* Symbol picker — two horizontally-scrollable rows: indexes + stocks */}
+      <Text style={styles.pickerLabel}>INDEXES</Text>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.chipScrollRow}>
+        {INDEX_TICKERS.map((t) => (
           <TouchableOpacity key={t}
             onPress={() => setTicker(t)}
             style={[styles.chip, ticker === t && styles.chipActive]}>
             <Text style={[styles.chipText, ticker === t && styles.chipTextActive]}>{t}</Text>
           </TouchableOpacity>
         ))}
-      </View>
+      </ScrollView>
+      <Text style={styles.pickerLabel}>STOCKS</Text>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.chipScrollRow}>
+        {STOCK_TICKERS.map((t) => (
+          <TouchableOpacity key={t}
+            onPress={() => setTicker(t)}
+            style={[styles.chip, ticker === t && styles.chipActive]}>
+            <Text style={[styles.chipText, ticker === t && styles.chipTextActive]}>{t}</Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
 
       {/* Vehicle toggle (Options is primary; Shares for ETF trades) */}
       <View style={styles.vehicleRow}>
@@ -522,7 +548,10 @@ export function SwingTradePanel() {
 const styles = StyleSheet.create({
   section: { marginHorizontal: 12, marginTop: 20 },
   sectionTitle: { fontSize: 16, fontWeight: '500', color: Colors.dark, marginBottom: 12 },
-  chipRow: { flexDirection: 'row', gap: 6, marginBottom: 10 },
+  chipScrollRow: { flexDirection: 'row', gap: 6, paddingVertical: 2,
+                   paddingRight: 12 },
+  pickerLabel: { fontSize: 11, fontWeight: '500', color: Colors.textLight,
+                 letterSpacing: 0.6, marginTop: 6, marginBottom: 4 },
   chip: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 12,
           backgroundColor: Colors.cream, borderWidth: 1, borderColor: Colors.cream },
   chipActive: { backgroundColor: Colors.olive, borderColor: Colors.olive },
