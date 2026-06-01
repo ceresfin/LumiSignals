@@ -3923,6 +3923,9 @@ def create_app():
             from lumisignals.untouched_levels import find_untouched_levels, calculate_adx_direction
             massive = MassiveClient(massive_key)
 
+        # Cash indexes need Polygon's "I:" prefix or they return 0 bars
+        INDEX_SYMBOLS = {"SPX", "NDX", "RUT", "VIX", "DJI", "XSP", "XND"}
+
         results = []
         for ticker in tickers:
             item = {"ticker": ticker, "server": {}, "tradingview": {}, "tv_trends": {}, "server_trends": {}, "tv_updated": ""}
@@ -3933,6 +3936,8 @@ def create_app():
             if massive:
                 if is_forex:
                     poly_ticker = f"C:{ticker}"
+                elif ticker in INDEX_SYMBOLS:
+                    poly_ticker = f"I:{ticker}"
                 else:
                     poly_ticker = ticker
 
@@ -4025,7 +4030,7 @@ def create_app():
         import redis as _redis
         rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
 
-        tickers = request.args.get("tickers", "SPY,QQQ,NVDA,EURUSD,GBPUSD,USDJPY").upper().split(",")
+        tickers = request.args.get("tickers", "SPY,QQQ,NVDA,SPX,NDX,XSP,EURUSD,GBPUSD,USDJPY").upper().split(",")
         tickers = [t.strip() for t in tickers if t.strip()]
 
         snr_base_url = "https://app.lumitrade.ai/api/v1"
@@ -4044,6 +4049,9 @@ def create_app():
             from lumisignals.untouched_levels import find_untouched_levels, calculate_adx_direction
             massive = MassiveClient(massive_key)
 
+        # Cash indexes need Polygon's "I:" prefix or they return 0 bars
+        INDEX_SYMBOLS = {"SPX", "NDX", "RUT", "VIX", "DJI", "XSP", "XND"}
+
         results = []
         for ticker in tickers:
             item = {"ticker": ticker, "server": {}, "tradingview": {}, "tv_trends": {}, "server_trends": {}, "tv_updated": ""}
@@ -4051,7 +4059,12 @@ def create_app():
                         and ticker not in ("GOOGL",))
 
             if massive:
-                poly_ticker = f"C:{ticker}" if is_forex else ticker
+                if is_forex:
+                    poly_ticker = f"C:{ticker}"
+                elif ticker in INDEX_SYMBOLS:
+                    poly_ticker = f"I:{ticker}"
+                else:
+                    poly_ticker = ticker
                 for tf, tf_label in interval_to_tf.items():
                     try:
                         count = 30 if tf in ("3mo", "1mo", "1w") else 50
