@@ -3908,8 +3908,9 @@ def create_app():
         snr_api_key = current_user.lumitrade_api_key or os.environ.get("LUMITRADE_API_KEY", "")
 
         # SNR Frequency API interval names → display labels
-        interval_to_tf = {"3mo": "Q", "1mo": "M", "1w": "W", "1d": "D", "4h": "4H", "1h": "1H"}
-        snr_intervals = ["3mo", "1mo", "1w", "1d", "4h", "1h"]
+        interval_to_tf = {"3mo": "Q", "1mo": "M", "1w": "W", "1d": "D",
+                          "4h": "4H", "1h": "1H", "30m": "30M", "15m": "15M"}
+        snr_intervals = ["3mo", "1mo", "1w", "1d", "4h", "1h", "30m", "15m"]
         # Trade-builder for trend data
         freq_to_tf = {"quarterly": "Q", "monthly": "M", "weekly": "W", "daily": "D", "fourhour": "4H", "hourly": "1H"}
         frequencies = ["quarterly", "monthly", "weekly", "daily", "fourhour", "hourly"]
@@ -4030,8 +4031,9 @@ def create_app():
         snr_base_url = "https://app.lumitrade.ai/api/v1"
         snr_api_key = os.environ.get("LUMITRADE_API_KEY", "")
 
-        interval_to_tf = {"3mo": "Q", "1mo": "M", "1w": "W", "1d": "D", "4h": "4H", "1h": "1H"}
-        snr_intervals = ["3mo", "1mo", "1w", "1d", "4h", "1h"]
+        interval_to_tf = {"3mo": "Q", "1mo": "M", "1w": "W", "1d": "D",
+                          "4h": "4H", "1h": "1H", "30m": "30M", "15m": "15M"}
+        snr_intervals = ["3mo", "1mo", "1w", "1d", "4h", "1h", "30m", "15m"]
         freq_to_tf = {"quarterly": "Q", "monthly": "M", "weekly": "W", "daily": "D", "fourhour": "4H", "hourly": "1H"}
         frequencies = ["quarterly", "monthly", "weekly", "daily", "fourhour", "hourly"]
 
