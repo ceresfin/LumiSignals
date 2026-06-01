@@ -1,0 +1,127 @@
+// Prop Sell Signal w/ Market Internals — Pine Script port from ThinkOrSwim
+// Source: TOS Scripts/Prop Sell Signal W Market Internals.rtf
+// Fires "verybearishsignal" only when ALL 5 layers are true:
+//   1. Symbol bearish_signal: close < VWAP, < EMA20, < EMA45, bearish engulfing
+//   2. NYSE breadth bearish: $DECN/$ADVN > 3:1  OR  $VOLD 20-EMA falling & < 0
+//   3. Cumulative $TICK (since 9:30 ET) negative AND falling
+//   4. $ADD 20-EMA falling AND < 0
+//   5. distributionToDeceleration: VWMA(8) < VWMA(21) < VWMA(34) AND close <= VMA
+//@version=6
+indicator("Prop Sell Signal w/ Internals", overlay=true)
+
+// ─── INPUTS ───
+avgLength1 = input.int(20, "EMA Length 1",       minval=1, group="Moving Averages")
+avgLength2 = input.int(45, "EMA Length 2",       minval=1, group="Moving Averages")
+avgOffset  = input.int(0,  "MA Offset (bars)",   minval=0, group="Moving Averages")
+vwapAnchor = input.string("Day", "VWAP Anchor", options=["Day", "Week", "Month"], group="VWAP")
+vmaLength  = input.int(10, "VMA Length",         minval=2, group="Distribution")
+
+advnSym = input.symbol("USI:ADV",   "$ADVN symbol", group="Market Internals")
+decnSym = input.symbol("USI:DECL",  "$DECN symbol", group="Market Internals")
+voldSym = input.symbol("USI:VOLD",  "$VOLD symbol", group="Market Internals")
+tickSym = input.symbol("INDEX:TICK","$TICK symbol", group="Market Internals")
+addSym  = input.symbol("USI:ADD",   "$ADD symbol",  group="Market Internals")
+
+showMAs   = input.bool(true, "Plot VWAP & EMAs", group="Display")
+showArrow = input.bool(true, "Show Sell Arrow",  group="Display")
+
+// ─── ANCHORED VWAP ───
+anchor = switch vwapAnchor
+    "Day"   => timeframe.change("D")
+    "Week"  => timeframe.change("W")
+    "Month" => timeframe.change("M")
+    =>         timeframe.change("D")
+
+vwap1 = ta.vwap(hlc3, anchor)
+
+// ─── EMAs ───
+avg1Raw = ta.ema(close, avgLength1)
+avg2Raw = ta.ema(close, avgLength2)
+avg1 = avgOffset > 0 ? avg1Raw[avgOffset] : avg1Raw
+avg2 = avgOffset > 0 ? avg2Raw[avgOffset] : avg2Raw
+
+// ─── ENGULFING + BASE BEARISH SIGNAL ───
+bodyMin   = math.min(open, close)
+prevGreen = close[1] > open[1]
+redIsEngulfing = bodyMin < bodyMin[1] and prevGreen
+bearishSignal = close < vwap1 and close < avg1 and close < avg2 and redIsEngulfing
+
+// ─── MARKET INTERNALS ───
+advn = request.security(advnSym, timeframe.period, close)
+decn = request.security(decnSym, timeframe.period, close)
+vold = request.security(voldSym, timeframe.period, close)
+tickVal = request.security(tickSym, timeframe.period, (high + low + close) / 3)
+addLine = request.security(addSym,  timeframe.period, close)
+
+adr = advn > decn ? math.round(advn / decn) : math.round(-decn / advn)
+
+voldAvg = ta.ema(vold, avgLength1)
+voldAvgPlot = avgOffset > 0 ? voldAvg[avgOffset] : voldAvg
+voldDown = voldAvgPlot < voldAvgPlot[1] and voldAvgPlot < 0
+
+// ADR negative = strong negative breadth (3:1+ decliners) OR VOLD trending down
+adrN = adr < -3 or voldDown
+
+// Cumulative $TICK since 9:30 ET
+inSession = hour(time, "America/New_York") * 100 + minute(time, "America/New_York") >= 930 and hour(time, "America/New_York") * 100 + minute(time, "America/New_York") < 1600
+var float cumTick = 0.0
+isNewDay = ta.change(time("D")) != 0
+if isNewDay
+    cumTick := 0.0
+if inSession
+    cumTick := cumTick + tickVal
+
+strongNegCum = cumTick < 0 and cumTick < cumTick[1]
+
+// $ADD 20-EMA falling
+addAvg = ta.ema(addLine, avgLength1)
+addAvgPlot = avgOffset > 0 ? addAvg[avgOffset] : addAvg
+adDown = addAvgPlot < addAvgPlot[1] and addAvgPlot < 0
+
+// ─── DISTRIBUTION TO DECELERATION (VMA + VWMA stack) ───
+priceVma = close
+tmp1 = priceVma > priceVma[1] ? priceVma - priceVma[1] : 0.0
+tmp2 = priceVma[1] > priceVma ? priceVma[1] - priceVma : 0.0
+d2 = math.sum(tmp1, vmaLength)
+d4 = math.sum(tmp2, vmaLength)
+ad3 = (d2 + d4) == 0 ? 0.0 : (d2 - d4) / (d2 + d4) * 100
+coeff = 2.0 / (vmaLength + 1) * math.abs(ad3) / 100
+var float vma = na
+vma := coeff * priceVma + (na(vma[1]) ? 0.0 : vma[1]) * (1 - coeff)
+
+vwma8  = ta.vwma(close, 8)
+vwma21 = ta.vwma(close, 21)
+vwma34 = ta.vwma(close, 34)
+bearishStack = vwma8 < vwma21 and vwma21 < vwma34
+distToDecel = bearishStack and close <= vma
+
+// ─── VERY BEARISH SIGNAL ───
+veryBearishSignal = bearishSignal and strongNegCum and adrN and adDown and distToDecel
+
+// ─── PLOTS ───
+plot(showMAs ? vwap1 : na, "VWAP",                            color=color.new(color.yellow, 0), linewidth=2)
+plot(showMAs ? avg1  : na, "EMA " + str.tostring(avgLength1), color=color.new(color.aqua,   0), linewidth=1)
+plot(showMAs ? avg2  : na, "EMA " + str.tostring(avgLength2), color=color.new(color.orange, 0), linewidth=1)
+plotshape(showArrow and veryBearishSignal, "Very Bearish", shape.triangledown, location.abovebar, color.new(color.maroon, 0), size=size.normal, text="V-SELL")
+bgcolor(veryBearishSignal ? color.new(color.red, 80) : na, title="Very Bearish Bar")
+
+// ─── DASHBOARD ───
+var table dash = table.new(position.top_right, 2, 7, bgcolor=color.rgb(20, 20, 30), border_width=1, border_color=color.gray)
+if barstate.islast
+    table.cell(dash, 0, 0, "Base bearish",  text_color=color.white, text_size=size.small)
+    table.cell(dash, 1, 0, bearishSignal ? "✓" : "—", text_color=bearishSignal ? color.red : color.gray, text_size=size.small)
+    table.cell(dash, 0, 1, "ADR < -3 / VOLD", text_color=color.white, text_size=size.small)
+    table.cell(dash, 1, 1, adrN ? "✓ (ADR=" + str.tostring(adr) + ")" : "— (ADR=" + str.tostring(adr) + ")", text_color=adrN ? color.red : color.gray, text_size=size.small)
+    table.cell(dash, 0, 2, "Cum $TICK −",   text_color=color.white, text_size=size.small)
+    table.cell(dash, 1, 2, strongNegCum ? "✓" : "—", text_color=strongNegCum ? color.red : color.gray, text_size=size.small)
+    table.cell(dash, 0, 3, "$ADD down",     text_color=color.white, text_size=size.small)
+    table.cell(dash, 1, 3, adDown ? "✓" : "—", text_color=adDown ? color.red : color.gray, text_size=size.small)
+    table.cell(dash, 0, 4, "Dist→Decel",    text_color=color.white, text_size=size.small)
+    table.cell(dash, 1, 4, distToDecel ? "✓" : "—", text_color=distToDecel ? color.red : color.gray, text_size=size.small)
+    table.cell(dash, 0, 5, "All 5",         text_color=color.white, text_size=size.small)
+    table.cell(dash, 1, 5, veryBearishSignal ? "FIRING" : "no", text_color=veryBearishSignal ? color.red : color.gray, text_size=size.small)
+    table.cell(dash, 0, 6, "Cum $TICK",     text_color=color.white, text_size=size.small)
+    table.cell(dash, 1, 6, str.tostring(cumTick, "#"), text_color=cumTick > 0 ? color.lime : color.red, text_size=size.small)
+
+// ─── ALERT ───
+alertcondition(veryBearishSignal, "Prop Very Bearish Signal", "Prop Very Bearish on {{ticker}} @ {{close}} (all 5 layers true)")

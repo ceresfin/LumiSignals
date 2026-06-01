@@ -1,0 +1,51 @@
+// Prop Close Long — Pine Script port from ThinkOrSwim
+// Source: TOS Scripts/Prop Close Long.rtf
+// Exits a long position when BOTH conditions are met:
+//   1. accumulationToAcceleration is FALSE — i.e. NOT (VWMA(8)>VWMA(21)>VWMA(34) AND close>=VMA)
+//   2. PatternPlot is TRUE — 2-bar bearish reversal:
+//      prev bar green, current bar red, prev close > current close,
+//      AND prev high <= current high (failed breakout / shooting-star-like)
+//@version=6
+indicator("Prop Close Long", overlay=true)
+
+// ─── INPUTS ───
+vmaLength = input.int(10, "VMA Length", minval=2, group="Regime")
+showVMA   = input.bool(false, "Plot VMA & VWMAs", group="Display")
+showArrow = input.bool(true,  "Show Close-Long Arrow", group="Display")
+
+// ─── 2-BAR BEARISH REVERSAL ───
+isUp   = close > open
+isDown = close < open
+patternPlot = isUp[1] and isDown[0] and close[1] > close[0] and high[1] <= high[0]
+
+// ─── VMA (Chande VIDYA) ───
+priceVma = close
+tmp1 = priceVma > priceVma[1] ? priceVma - priceVma[1] : 0.0
+tmp2 = priceVma[1] > priceVma ? priceVma[1] - priceVma : 0.0
+d2 = math.sum(tmp1, vmaLength)
+d4 = math.sum(tmp2, vmaLength)
+ad3 = (d2 + d4) == 0 ? 0.0 : (d2 - d4) / (d2 + d4) * 100
+coeff = 2.0 / (vmaLength + 1) * math.abs(ad3) / 100
+var float vma = na
+vma := coeff * priceVma + (na(vma[1]) ? 0.0 : vma[1]) * (1 - coeff)
+
+// ─── VWMA STACK ───
+vwma8  = ta.vwma(close, 8)
+vwma21 = ta.vwma(close, 21)
+vwma34 = ta.vwma(close, 34)
+bullishStack = vwma8 > vwma21 and vwma21 > vwma34
+accumToAccel = bullishStack and close >= vma
+
+// ─── CLOSE LONG SIGNAL ───
+closeLongSignal = not accumToAccel and patternPlot
+
+// ─── PLOTS ───
+plot(showVMA ? vma    : na, "VMA",      color=color.new(color.white,  0), linewidth=1)
+plot(showVMA ? vwma8  : na, "VWMA 8",   color=color.new(color.aqua,   0), linewidth=1)
+plot(showVMA ? vwma21 : na, "VWMA 21",  color=color.new(color.yellow, 0), linewidth=1)
+plot(showVMA ? vwma34 : na, "VWMA 34",  color=color.new(color.orange, 0), linewidth=1)
+plotshape(showArrow and closeLongSignal, "Close Long", shape.xcross, location.abovebar, color.new(color.fuchsia, 0), size=size.normal, text="EXIT L")
+bgcolor(closeLongSignal ? color.new(color.fuchsia, 85) : na, title="Close Long Bar")
+
+// ─── ALERT ───
+alertcondition(closeLongSignal, "Prop Close Long", "Close Long on {{ticker}} @ {{close}}")

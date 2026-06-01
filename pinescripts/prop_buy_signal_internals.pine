@@ -1,0 +1,130 @@
+// Prop Buy Signal w/ Market Internals — Pine Script port from ThinkOrSwim
+// Source: TOS Scripts/Prop Buy Signal W Market Internals.rtf
+// Fires "verybullishsignal" only when ALL 5 layers are true:
+//   1. Symbol bullish_signal: close > VWAP, > EMA20, > EMA45, bullish engulfing
+//   2. NYSE breadth bullish: $ADVN/$DECN > 3:1  OR  $VOLD 20-EMA rising & > 0
+//   3. Cumulative $TICK (since 9:30 ET) positive AND rising
+//   4. $ADD 20-EMA rising AND > 0
+//   5. accumulationToAcceleration: VWMA(8) > VWMA(21) > VWMA(34) AND close >= VMA
+//@version=6
+indicator("Prop Buy Signal w/ Internals", overlay=true)
+
+// ─── INPUTS ───
+avgLength1 = input.int(20, "EMA Length 1",       minval=1, group="Moving Averages")
+avgLength2 = input.int(45, "EMA Length 2",       minval=1, group="Moving Averages")
+avgOffset  = input.int(0,  "MA Offset (bars)",   minval=0, group="Moving Averages")
+vwapAnchor = input.string("Day", "VWAP Anchor", options=["Day", "Week", "Month"], group="VWAP")
+vmaLength  = input.int(10, "VMA Length",         minval=2, group="Accumulation")
+
+advnSym = input.symbol("USI:ADV",   "$ADVN symbol", group="Market Internals")
+decnSym = input.symbol("USI:DECL",  "$DECN symbol", group="Market Internals")
+voldSym = input.symbol("USI:VOLD",  "$VOLD symbol", group="Market Internals")
+tickSym = input.symbol("INDEX:TICK","$TICK symbol", group="Market Internals")
+addSym  = input.symbol("USI:ADD",   "$ADD symbol",  group="Market Internals")
+
+showMAs   = input.bool(true, "Plot VWAP & EMAs", group="Display")
+showArrow = input.bool(true, "Show Buy Arrow",   group="Display")
+
+// ─── ANCHORED VWAP ───
+anchor = switch vwapAnchor
+    "Day"   => timeframe.change("D")
+    "Week"  => timeframe.change("W")
+    "Month" => timeframe.change("M")
+    =>         timeframe.change("D")
+
+vwap1 = ta.vwap(hlc3, anchor)
+
+// ─── EMAs ───
+avg1Raw = ta.ema(close, avgLength1)
+avg2Raw = ta.ema(close, avgLength2)
+avg1 = avgOffset > 0 ? avg1Raw[avgOffset] : avg1Raw
+avg2 = avgOffset > 0 ? avg2Raw[avgOffset] : avg2Raw
+
+// ─── ENGULFING + BASE BULLISH SIGNAL ───
+bodyMax = math.max(open, close)
+prevRed = close[1] < open[1]
+greenIsEngulfing = bodyMax > bodyMax[1] and prevRed
+bullishSignal = close > vwap1 and close > avg1 and close > avg2 and greenIsEngulfing
+
+// ─── MARKET INTERNALS via request.security ───
+advn = request.security(advnSym, timeframe.period, close)
+decn = request.security(decnSym, timeframe.period, close)
+vold = request.security(voldSym, timeframe.period, close)
+tickVal = request.security(tickSym, timeframe.period, (high + low + close) / 3)
+addLine = request.security(addSym,  timeframe.period, close)
+
+// $ADVN/$DECN ratio (rounded, signed)
+adr = advn > decn ? math.round(advn / decn) : math.round(-decn / advn)
+
+// $VOLD 20-EMA rising/falling
+voldAvg = ta.ema(vold, avgLength1)
+voldAvgPlot = avgOffset > 0 ? voldAvg[avgOffset] : voldAvg
+voldUp = voldAvgPlot > voldAvgPlot[1] and voldAvgPlot > 0
+
+// ADR positive = strong breadth (3:1+ advancers) OR VOLD trending up
+adrP = adr > 3 or voldUp
+
+// Cumulative $TICK since 9:30 ET
+inSession = hour(time, "America/New_York") * 100 + minute(time, "America/New_York") >= 930 and hour(time, "America/New_York") * 100 + minute(time, "America/New_York") < 1600
+var float cumTick = 0.0
+isNewDay = ta.change(time("D")) != 0
+if isNewDay
+    cumTick := 0.0
+if inSession
+    cumTick := cumTick + tickVal
+
+strongCum = cumTick > 0 and cumTick > cumTick[1]
+
+// $ADD 20-EMA rising
+addAvg = ta.ema(addLine, avgLength1)
+addAvgPlot = avgOffset > 0 ? addAvg[avgOffset] : addAvg
+adUp = addAvgPlot > addAvgPlot[1] and addAvgPlot > 0
+
+// ─── ACCUMULATION TO ACCELERATION (VMA + VWMA stack) ───
+// VMA = Chande VIDYA / Variable MA
+priceVma = close
+tmp1 = priceVma > priceVma[1] ? priceVma - priceVma[1] : 0.0
+tmp2 = priceVma[1] > priceVma ? priceVma[1] - priceVma : 0.0
+d2 = math.sum(tmp1, vmaLength)
+d4 = math.sum(tmp2, vmaLength)
+ad3 = (d2 + d4) == 0 ? 0.0 : (d2 - d4) / (d2 + d4) * 100
+coeff = 2.0 / (vmaLength + 1) * math.abs(ad3) / 100
+var float vma = na
+vma := coeff * priceVma + (na(vma[1]) ? 0.0 : vma[1]) * (1 - coeff)
+
+vwma8  = ta.vwma(close, 8)
+vwma21 = ta.vwma(close, 21)
+vwma34 = ta.vwma(close, 34)
+bullishStack = vwma8 > vwma21 and vwma21 > vwma34
+accumToAccel = bullishStack and close >= vma
+
+// ─── VERY BULLISH SIGNAL ───
+veryBullishSignal = bullishSignal and strongCum and adrP and adUp and accumToAccel
+
+// ─── PLOTS ───
+plot(showMAs ? vwap1 : na, "VWAP",                            color=color.new(color.yellow, 0), linewidth=2)
+plot(showMAs ? avg1  : na, "EMA " + str.tostring(avgLength1), color=color.new(color.aqua,   0), linewidth=1)
+plot(showMAs ? avg2  : na, "EMA " + str.tostring(avgLength2), color=color.new(color.orange, 0), linewidth=1)
+plotshape(showArrow and veryBullishSignal, "Very Bullish", shape.triangleup, location.belowbar, color.new(color.green, 0), size=size.normal, text="V-BUY")
+bgcolor(veryBullishSignal ? color.new(color.green, 80) : na, title="Very Bullish Bar")
+
+// ─── DASHBOARD ───
+var table dash = table.new(position.top_right, 2, 7, bgcolor=color.rgb(20, 20, 30), border_width=1, border_color=color.gray)
+if barstate.islast
+    table.cell(dash, 0, 0, "Base bullish",  text_color=color.white, text_size=size.small)
+    table.cell(dash, 1, 0, bullishSignal ? "✓" : "—", text_color=bullishSignal ? color.lime : color.gray, text_size=size.small)
+    table.cell(dash, 0, 1, "ADR > 3 / VOLD", text_color=color.white, text_size=size.small)
+    table.cell(dash, 1, 1, adrP ? "✓ (ADR=" + str.tostring(adr) + ")" : "— (ADR=" + str.tostring(adr) + ")", text_color=adrP ? color.lime : color.gray, text_size=size.small)
+    table.cell(dash, 0, 2, "Cum $TICK +",   text_color=color.white, text_size=size.small)
+    table.cell(dash, 1, 2, strongCum ? "✓" : "—", text_color=strongCum ? color.lime : color.gray, text_size=size.small)
+    table.cell(dash, 0, 3, "$ADD up",       text_color=color.white, text_size=size.small)
+    table.cell(dash, 1, 3, adUp ? "✓" : "—", text_color=adUp ? color.lime : color.gray, text_size=size.small)
+    table.cell(dash, 0, 4, "Accum→Accel",   text_color=color.white, text_size=size.small)
+    table.cell(dash, 1, 4, accumToAccel ? "✓" : "—", text_color=accumToAccel ? color.lime : color.gray, text_size=size.small)
+    table.cell(dash, 0, 5, "All 5",         text_color=color.white, text_size=size.small)
+    table.cell(dash, 1, 5, veryBullishSignal ? "FIRING" : "no", text_color=veryBullishSignal ? color.green : color.gray, text_size=size.small)
+    table.cell(dash, 0, 6, "Cum $TICK",     text_color=color.white, text_size=size.small)
+    table.cell(dash, 1, 6, str.tostring(cumTick, "#"), text_color=cumTick > 0 ? color.lime : color.red, text_size=size.small)
+
+// ─── ALERT ───
+alertcondition(veryBullishSignal, "Prop Very Bullish Signal", "Prop Very Bullish on {{ticker}} @ {{close}} (all 5 layers true)")

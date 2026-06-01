@@ -1,0 +1,16 @@
+// Daily ATR — Pine Script port from ThinkOrSwim
+// Source: TOS Scripts/ATR Daily.rtf
+// Plots the previous completed daily bar's ATR (Wilder's smoothing) in a lower
+// pane. Useful as a reference for stop sizing / expected daily range on any
+// intraday chart.
+//@version=6
+indicator("Daily ATR", overlay=false, precision=2)
+
+atrLength = input.int(14, "ATR Length", minval=1)
+
+// Wilder's ATR (Pine's ta.atr uses RMA = Wilder by default) on Daily timeframe,
+// shifted by 1 bar (= previous completed day's ATR).
+dailyAtr = request.security(syminfo.tickerid, "D", ta.atr(atrLength)[1], lookahead=barmerge.lookahead_off)
+
+plot(dailyAtr, "Daily ATR", color=color.new(color.orange, 0), linewidth=2)
+hline(0, "", color=color.new(color.gray, 70))

@@ -1,0 +1,51 @@
+// Prop Sell Signal — Pine Script port from ThinkOrSwim
+// Source: TOS Scripts/Prop Sell Signal.rtf
+// Fires when ALL of the following are true on the current bar:
+//   1. close < anchored VWAP (default daily anchor)
+//   2. close < EMA(20)
+//   3. close < EMA(45)
+//   4. "Bearish engulfing": current bar's body extends below the prior bar's
+//      body low AND the prior bar closed green
+//@version=6
+indicator("Prop Sell Signal", overlay=true)
+
+// ─── INPUTS ───
+avgLength1 = input.int(20,  "EMA Length 1",       minval=1, group="Moving Averages")
+avgLength2 = input.int(45,  "EMA Length 2",       minval=1, group="Moving Averages")
+avgOffset  = input.int(0,   "MA Offset (bars)",   minval=0, group="Moving Averages")
+vwapAnchor = input.string("Day", "VWAP Anchor", options=["Day", "Week", "Month"], group="VWAP")
+showMAs    = input.bool(true, "Plot VWAP & EMAs",       group="Display")
+showArrow  = input.bool(true, "Show Sell Arrow on Bar", group="Display")
+
+// ─── ANCHORED VWAP ───
+anchor = switch vwapAnchor
+    "Day"   => timeframe.change("D")
+    "Week"  => timeframe.change("W")
+    "Month" => timeframe.change("M")
+    =>         timeframe.change("D")
+
+vwap1 = ta.vwap(hlc3, anchor)
+
+// ─── EMAs ───
+avg1Raw = ta.ema(close, avgLength1)
+avg2Raw = ta.ema(close, avgLength2)
+avg1 = avgOffset > 0 ? avg1Raw[avgOffset] : avg1Raw
+avg2 = avgOffset > 0 ? avg2Raw[avgOffset] : avg2Raw
+
+// ─── BEARISH ENGULFING (matches TOS definition) ───
+bodyMin   = math.min(open, close)
+prevGreen = close[1] > open[1]
+redIsEngulfing = bodyMin < bodyMin[1] and prevGreen
+
+// ─── BEARISH SIGNAL ───
+bearishSignal = close < vwap1 and close < avg1 and close < avg2 and redIsEngulfing
+
+// ─── PLOTS ───
+plot(showMAs ? vwap1 : na, "VWAP",                            color=color.new(color.yellow, 0), linewidth=2)
+plot(showMAs ? avg1  : na, "EMA " + str.tostring(avgLength1), color=color.new(color.aqua,   0), linewidth=1)
+plot(showMAs ? avg2  : na, "EMA " + str.tostring(avgLength2), color=color.new(color.orange, 0), linewidth=1)
+plotshape(showArrow and bearishSignal, "Sell", shape.triangledown, location.abovebar, color.red, size=size.normal, text="SELL")
+bgcolor(bearishSignal ? color.new(color.red, 85) : na, title="Sell Signal Bar")
+
+// ─── ALERT ───
+alertcondition(bearishSignal, "Prop Sell Signal", "Prop Sell Signal on {{ticker}} @ {{close}}")

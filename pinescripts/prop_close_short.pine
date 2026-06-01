@@ -1,0 +1,51 @@
+// Prop Close Short — Pine Script port from ThinkOrSwim
+// Source: TOS Scripts/Prop Close Short.rtf
+// Exits a short position when BOTH conditions are met:
+//   1. distributionToDeceleration is FALSE — i.e. NOT (VWMA(8)<VWMA(21)<VWMA(34) AND close<=VMA)
+//   2. PatternPlot is TRUE — 2-bar bullish reversal:
+//      prev bar red, current bar green, prev open > current close,
+//      prev low >= current low, prev close < current close
+//@version=6
+indicator("Prop Close Short", overlay=true)
+
+// ─── INPUTS ───
+vmaLength = input.int(10, "VMA Length", minval=2, group="Regime")
+showVMA   = input.bool(false, "Plot VMA & VWMAs", group="Display")
+showArrow = input.bool(true,  "Show Close-Short Arrow", group="Display")
+
+// ─── 2-BAR BULLISH REVERSAL ───
+isUp   = close > open
+isDown = close < open
+patternPlot = isDown[1] and isUp[0] and open[1] > close[0] and low[1] >= low[0] and close[1] < close[0]
+
+// ─── VMA (Chande VIDYA) ───
+priceVma = close
+tmp1 = priceVma > priceVma[1] ? priceVma - priceVma[1] : 0.0
+tmp2 = priceVma[1] > priceVma ? priceVma[1] - priceVma : 0.0
+d2 = math.sum(tmp1, vmaLength)
+d4 = math.sum(tmp2, vmaLength)
+ad3 = (d2 + d4) == 0 ? 0.0 : (d2 - d4) / (d2 + d4) * 100
+coeff = 2.0 / (vmaLength + 1) * math.abs(ad3) / 100
+var float vma = na
+vma := coeff * priceVma + (na(vma[1]) ? 0.0 : vma[1]) * (1 - coeff)
+
+// ─── VWMA STACK ───
+vwma8  = ta.vwma(close, 8)
+vwma21 = ta.vwma(close, 21)
+vwma34 = ta.vwma(close, 34)
+bearishStack = vwma8 < vwma21 and vwma21 < vwma34
+distToDecel = bearishStack and close <= vma
+
+// ─── CLOSE SHORT SIGNAL ───
+closeShortSignal = not distToDecel and patternPlot
+
+// ─── PLOTS ───
+plot(showVMA ? vma    : na, "VMA",      color=color.new(color.white,  0), linewidth=1)
+plot(showVMA ? vwma8  : na, "VWMA 8",   color=color.new(color.aqua,   0), linewidth=1)
+plot(showVMA ? vwma21 : na, "VWMA 21",  color=color.new(color.yellow, 0), linewidth=1)
+plot(showVMA ? vwma34 : na, "VWMA 34",  color=color.new(color.orange, 0), linewidth=1)
+plotshape(showArrow and closeShortSignal, "Close Short", shape.xcross, location.belowbar, color.new(color.aqua, 0), size=size.normal, text="EXIT S")
+bgcolor(closeShortSignal ? color.new(color.aqua, 85) : na, title="Close Short Bar")
+
+// ─── ALERT ───
+alertcondition(closeShortSignal, "Prop Close Short", "Close Short on {{ticker}} @ {{close}}")
