@@ -23,10 +23,12 @@ showSignals = input.bool(false, "Show Signal Markers on Chart", group="Display")
 showDash    = input.bool(true, "Show Dashboard", group="Display")
 
 // Colors (matching untouched_hl v5)
-colorM  = color.orange
-colorW  = color.yellow
-colorD  = color.blue
-color4H = #CF9FFF
+colorM   = color.orange
+colorW   = color.yellow
+colorD   = color.blue
+color4H  = #CF9FFF
+color30M = color.teal
+color15M = color.gray
 
 // ==================== HTF LEVEL + TREND FUNCTION ====================
 // Combined: finds ADX trend + 2 untouched supply (S1/S2) + 2 untouched demand (D1/D2)
@@ -252,56 +254,86 @@ plotshape(showSignals and hBuy,  "Hourly Buy",   shape.triangleup,   location.be
 plotshape(showSignals and fSell, "5m Sell",     shape.triangledown, location.abovebar, color.fuchsia, size=size.tiny,   text="5m S")
 plotshape(showSignals and fBuy,  "5m Buy",      shape.triangleup,   location.belowbar, color.aqua,    size=size.tiny,   text="5m B")
 
-// ==================== LEVEL LINES ====================
-var line mSupLine = na, var line mDemLine = na
-var line wSupLine = na, var line wDemLine = na
-var line dSupLine = na, var line dDemLine = na
-var line h4SupLine = na, var line h4DemLine = na
-var label mSupLbl = na, var label mDemLbl = na
-var label wSupLbl = na, var label wDemLbl = na
-var label dSupLbl = na, var label dDemLbl = na
-var label h4SupLbl = na, var label h4DemLbl = na
+// ==================== LEVEL LINES (with auto-merge for overlaps) ====================
+mergeOverlap = input.bool(true,  "Merge Overlapping Levels", group="Display", tooltip="When multiple TF levels sit within tolerance, combine into a single label like '4H/30M/15M Supply'. Hover the merged label to see each TF's trend + ADX.")
+overlapPct   = input.float(0.05, "Overlap Tolerance (% of price)", step=0.01, minval=0.0, group="Display", tooltip="Levels within this percentage of each other get merged. 0.05 = ~$0.11 on a $220 stock.")
 
-line.delete(mSupLine),  line.delete(mDemLine)
-line.delete(wSupLine),  line.delete(wDemLine)
-line.delete(dSupLine),  line.delete(dDemLine)
-line.delete(h4SupLine), line.delete(h4DemLine)
-label.delete(mSupLbl),  label.delete(mDemLbl)
-label.delete(wSupLbl),  label.delete(wDemLbl)
-label.delete(dSupLbl),  label.delete(dDemLbl)
-label.delete(h4SupLbl), label.delete(h4DemLbl)
+var array<line>  levelLines  = array.new<line>()
+var array<label> levelLabels = array.new<label>()
+
+// Wipe last bar's drawings
+for ln in levelLines
+    line.delete(ln)
+array.clear(levelLines)
+for lb in levelLabels
+    label.delete(lb)
+array.clear(levelLabels)
 
 futureTime = time + (time - time[1]) * 20
 
 if showLevels
-    // Monthly
-    if not na(mSupply)
-        mSupLine := line.new(time, mSupply, futureTime, mSupply, xloc.bar_time, extend.none, colorM, line.style_dashed, 3)
-        mSupLbl  := label.new(futureTime, mSupply, "M Supply", xloc.bar_time, yloc.price, color.new(colorM, 80), label.style_label_left, colorM, size.small, tooltip="Monthly Supply: " + str.tostring(mSupply, format.mintick) + "\nTrend: " + dirStr(mDir) + " | ADX: " + str.tostring(mAdx, "#.#"))
-    if not na(mDemand)
-        mDemLine := line.new(time, mDemand, futureTime, mDemand, xloc.bar_time, extend.none, colorM, line.style_dashed, 3)
-        mDemLbl  := label.new(futureTime, mDemand, "M Demand", xloc.bar_time, yloc.price, color.new(colorM, 80), label.style_label_left, colorM, size.small, tooltip="Monthly Demand: " + str.tostring(mDemand, format.mintick) + "\nTrend: " + dirStr(mDir) + " | ADX: " + str.tostring(mAdx, "#.#"))
-    // Weekly
-    if not na(wSupply)
-        wSupLine := line.new(time, wSupply, futureTime, wSupply, xloc.bar_time, extend.none, colorW, line.style_dashed, 2)
-        wSupLbl  := label.new(futureTime, wSupply, "W Supply", xloc.bar_time, yloc.price, color.new(colorW, 80), label.style_label_left, colorW, size.small, tooltip="Weekly Supply: " + str.tostring(wSupply, format.mintick) + "\nTrend: " + dirStr(wDir) + " | ADX: " + str.tostring(wAdx, "#.#"))
-    if not na(wDemand)
-        wDemLine := line.new(time, wDemand, futureTime, wDemand, xloc.bar_time, extend.none, colorW, line.style_dashed, 2)
-        wDemLbl  := label.new(futureTime, wDemand, "W Demand", xloc.bar_time, yloc.price, color.new(colorW, 80), label.style_label_left, colorW, size.small, tooltip="Weekly Demand: " + str.tostring(wDemand, format.mintick) + "\nTrend: " + dirStr(wDir) + " | ADX: " + str.tostring(wAdx, "#.#"))
-    // Daily
-    if not na(dSupply)
-        dSupLine := line.new(time, dSupply, futureTime, dSupply, xloc.bar_time, extend.none, colorD, line.style_dashed, 1)
-        dSupLbl  := label.new(futureTime, dSupply, "D Supply", xloc.bar_time, yloc.price, color.new(colorD, 80), label.style_label_left, colorD, size.small, tooltip="Daily Supply: " + str.tostring(dSupply, format.mintick) + "\nTrend: " + dirStr(dDir) + " | ADX: " + str.tostring(dAdx, "#.#"))
-    if not na(dDemand)
-        dDemLine := line.new(time, dDemand, futureTime, dDemand, xloc.bar_time, extend.none, colorD, line.style_dashed, 1)
-        dDemLbl  := label.new(futureTime, dDemand, "D Demand", xloc.bar_time, yloc.price, color.new(colorD, 80), label.style_label_left, colorD, size.small, tooltip="Daily Demand: " + str.tostring(dDemand, format.mintick) + "\nTrend: " + dirStr(dDir) + " | ADX: " + str.tostring(dAdx, "#.#"))
-    // 4-Hour
-    if not na(h4Supply)
-        h4SupLine := line.new(time, h4Supply, futureTime, h4Supply, xloc.bar_time, extend.none, color4H, line.style_dashed, 1)
-        h4SupLbl  := label.new(futureTime, h4Supply, "4H Supply", xloc.bar_time, yloc.price, color.new(color4H, 80), label.style_label_left, color4H, size.small, tooltip="4H Supply: " + str.tostring(h4Supply, format.mintick) + "\nTrend: " + dirStr(h4Dir) + " | ADX: " + str.tostring(h4Adx, "#.#"))
-    if not na(h4Demand)
-        h4DemLine := line.new(time, h4Demand, futureTime, h4Demand, xloc.bar_time, extend.none, color4H, line.style_dashed, 1)
-        h4DemLbl  := label.new(futureTime, h4Demand, "4H Demand", xloc.bar_time, yloc.price, color.new(color4H, 80), label.style_label_left, color4H, size.small, tooltip="4H Demand: " + str.tostring(h4Demand, format.mintick) + "\nTrend: " + dirStr(h4Dir) + " | ADX: " + str.tostring(h4Adx, "#.#"))
+    // 6 TFs in priority order: M, W, D, 4H, 30M, 15M (highest first wins color + width)
+    tfTags    = array.from("M",      "W",     "D",     "4H",     "30M",     "15M")
+    tfColors  = array.from(colorM,   colorW,  colorD,  color4H,  color30M,  color15M)
+    tfWidths  = array.from(3,        2,       1,       1,        1,         1)
+    tfDirs    = array.from(mDir,     wDir,    dDir,    h4Dir,    m30Dir,    m15Dir)
+    tfAdxs    = array.from(mAdx,     wAdx,    dAdx,    h4Adx,    m30Adx,    m15Adx)
+    supPrices = array.from(mSupply,  wSupply, dSupply, h4Supply, m30Supply, m15Supply)
+    demPrices = array.from(mDemand,  wDemand, dDemand, h4Demand, m30Demand, m15Demand)
+
+    // Process each side (0 = supply, 1 = demand) with the same grouping logic
+    for side = 0 to 1
+        kindStr = side == 0 ? "Supply" : "Demand"
+        prices  = side == 0 ? supPrices : demPrices
+
+        // Group accumulators (rebuilt each side)
+        gPrice = array.new<float>()
+        gTags  = array.new<string>()
+        gColor = array.new<color>()
+        gWidth = array.new<int>()
+        gTip   = array.new<string>()
+
+        // Walk TFs in priority order; merge into existing group if within tolerance
+        for i = 0 to 5
+            p = array.get(prices, i)
+            if not na(p)
+                t = array.get(tfTags,   i)
+                c = array.get(tfColors, i)
+                w = array.get(tfWidths, i)
+                d = array.get(tfDirs,   i)
+                a = array.get(tfAdxs,   i)
+                detail = t + ": " + dirStr(d) + " (ADX " + str.tostring(a, "#.#") + ")"
+
+                matched = -1
+                if mergeOverlap and array.size(gPrice) > 0
+                    for g = 0 to array.size(gPrice) - 1
+                        gp = array.get(gPrice, g)
+                        if math.abs(gp - p) <= gp * overlapPct / 100.0
+                            matched := g
+                            break
+
+                if matched >= 0
+                    array.set(gTags, matched, array.get(gTags, matched) + "/" + t)
+                    array.set(gTip,  matched, array.get(gTip,  matched) + "\n" + detail)
+                else
+                    array.push(gPrice, p)
+                    array.push(gTags,  t)
+                    array.push(gColor, c)
+                    array.push(gWidth, w)
+                    array.push(gTip,   detail)
+
+        // Draw each group as one line + one label
+        if array.size(gPrice) > 0
+            for g = 0 to array.size(gPrice) - 1
+                p = array.get(gPrice, g)
+                tagStr = array.get(gTags,  g)
+                c = array.get(gColor, g)
+                w = array.get(gWidth, g)
+                tip = "Price: " + str.tostring(p, format.mintick) + "\n" + array.get(gTip, g)
+                ln = line.new(time, p, futureTime, p, xloc.bar_time, extend.none, c, line.style_dashed, w)
+                lb = label.new(futureTime, p, tagStr + " " + kindStr, xloc.bar_time, yloc.price, color.new(c, 80), label.style_label_left, c, size.small, tooltip=tip)
+                array.push(levelLines,  ln)
+                array.push(levelLabels, lb)
 
 // ==================== DASHBOARD TABLE ====================
 var table dash = table.new(position.top_right, 6, 11, bgcolor=color.rgb(20, 20, 30), border_width=1, border_color=color.gray)
