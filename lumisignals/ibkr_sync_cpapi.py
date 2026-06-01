@@ -1463,7 +1463,12 @@ def check_order_requests(client):
             if order.get("type") == "futures":
                 direction = order.get("direction", "")
                 contracts = int(order.get("contracts", 1))
-                strategy_name = order.get("strategy", "")
+                # Canonicalize the slug — the webhook receiver normally
+                # maps before storing, but in-flight orders queued before
+                # that fix landed could still hold a raw Pine slug. Map
+                # here so strat_pos always lands under the canonical key.
+                raw_strategy = order.get("strategy", "")
+                strategy_name = diary.strategy_slug(raw_strategy) or raw_strategy
 
                 # Weekend lockout: between Friday 17:00 ET flatten and
                 # Sunday 18:00 ET open, futures should not re-enter on

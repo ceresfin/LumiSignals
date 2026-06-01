@@ -4367,7 +4367,18 @@ def create_app():
 
         ticker = data.get("ticker", "").upper().strip()
         direction = data.get("direction", "").upper().strip()
-        strategy = data.get("strategy", "tradingview")
+        # Canonicalize the strategy slug at the webhook boundary. Pine
+        # sends raw labels like "2n20" / "fx_2n20" / "tidewater_swing";
+        # the rest of the bot stores state and writes diary rows under
+        # the mapped slug (futures_2n20 / fx_4h_trend / etc.). Mapping
+        # here ensures strat_pos, the runaway_guard counter, the bracket
+        # coid, and the reconciler all agree on a single key — without
+        # this, the fills watcher used the raw slug while the
+        # reconciler decoded the mapped slug from the coid, producing
+        # two strat_pos rows per fill and duplicate Closed Trades rows.
+        raw_strategy = data.get("strategy", "tradingview")
+        from lumisignals import diary as _diary
+        strategy = _diary.strategy_slug(raw_strategy) or raw_strategy
 
         # Normalize Pine's exit-alert direction names. TradingView's 2n20
         # script emits X-LONG / X-SHORT / VWAP-X-L / VWAP-X-S on exits;
