@@ -4030,7 +4030,7 @@ def create_app():
         import redis as _redis
         rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
 
-        tickers = request.args.get("tickers", "SPY,QQQ,NVDA,SPX,NDX,XSP,EURUSD,GBPUSD,USDJPY").upper().split(",")
+        tickers = request.args.get("tickers", "SPY,QQQ,NVDA,SPX,NDX,XSP,RUT,EURUSD,GBPUSD,USDJPY").upper().split(",")
         tickers = [t.strip() for t in tickers if t.strip()]
 
         snr_base_url = "https://app.lumitrade.ai/api/v1"
