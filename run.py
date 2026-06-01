@@ -54,7 +54,7 @@ def main():
                 check=True,
             )
         except subprocess.CalledProcessError:
-            print("Error: op inject failed. Run eval $(op signin) in this shell, then retry.")
+            print("Error: op inject failed. Run op-refresh in this shell, then retry.")
             sys.exit(1)
         except FileNotFoundError:
             print("Error: op CLI not found. Install 1Password CLI.")
