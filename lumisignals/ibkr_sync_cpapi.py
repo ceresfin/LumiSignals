@@ -163,6 +163,45 @@ def save_strat_pos(ticker: str, strategy: str, direction: str,
         logger.warning("strat_pos save failed for %s/%s: %s", ticker, strategy, e)
 
 
+def record_strategy_for_perm(place_result, strategy: str) -> None:
+    """Write {IB orderId: strategy_slug} to Redis for every order_id in
+    the place_order response.
+
+    The reconciler can then look up strategy attribution by perm_id even
+    when IB's order_ref echo is unreliable (observed 2026-06-01: every
+    fill landed with empty order_ref, so the reconciler adopted every
+    trade as strategy="manual", producing 55 duplicate diary events for
+    today's MES alone).
+
+    Walks the response shape from `client.place_order()`:
+      [{"order_id": "933424993", ...}, {"order_id": "933424994", ...}]
+    or a single-order dict. TTL 24h — fills always reconcile in minutes.
+
+    Maps EVERY order_id (parent + SL + TP) to the same strategy slug so
+    a child-leg fill (SL/TP) decodes correctly too.
+    """
+    if not strategy:
+        return
+    rdb = _rdb()
+    if rdb is None:
+        return
+    perm_ids: list[str] = []
+    candidates = place_result if isinstance(place_result, list) else [place_result]
+    for c in candidates:
+        if not isinstance(c, dict):
+            continue
+        oid = c.get("order_id") or c.get("orderId")
+        if oid:
+            perm_ids.append(str(oid))
+    for pid in perm_ids:
+        try:
+            rdb.setex(f"ibkr:strategy_by_perm:{pid}", 86400, strategy)
+        except Exception as e:
+            logger.debug("record_strategy_for_perm setex failed %s: %s", pid, e)
+    if perm_ids:
+        logger.debug("recorded perm→strategy mapping: %s → %s", perm_ids, strategy)
+
+
 def check_stop_fills(client):
     """Detect stop-loss order fills and close the matching strat_pos.
 
@@ -1963,6 +2002,12 @@ def check_order_requests(client):
                                 fut_conid, close_action, contracts, "MKT", tif="GTC",
                             )
                             trade_result = client.place_order(order_payload)
+                            # Tag the close order's perm_id with the strategy
+                            # so the reconciler labels the resulting fill.
+                            record_strategy_for_perm(
+                                trade_result,
+                                diary.strategy_slug(strategy_name) or strategy_name,
+                            )
 
                         # TP child cancel (atomic-close path doesn't auto-handle TP).
                         # In the atomic path, the SL becomes the close, but a
@@ -2371,6 +2416,12 @@ def check_order_requests(client):
                             continue
 
                         trade_result = client.place_order(bracket_payload)
+
+                        # Tag perm_id → strategy in Redis for the reconciler's
+                        # fallback lookup. Without this, fills land with empty
+                        # order_ref echo from IB and get adopted as "manual"
+                        # (see record_strategy_for_perm docstring).
+                        record_strategy_for_perm(trade_result, diary_strategy_id)
 
                         # Hard #1: validate the response. CPAPI can return
                         # error dicts that we'd otherwise parse as empty
@@ -2847,6 +2898,10 @@ def check_order_requests(client):
                     sell_conid, buy_conid, quantity, limit_price, is_credit, tif="GTC"
                 )
                 trade_result = client.place_order(spread_payload)
+                # Tag perm_id → strategy for the reconciler's fallback lookup
+                record_strategy_for_perm(
+                    trade_result, diary.strategy_slug(strategy_name) or strategy_name,
+                )
                 time.sleep(3)
 
                 # Extract order ID from CPAPI response
@@ -3095,6 +3150,12 @@ def _close_spread(client, spread: dict, reason: str):
     # Build and place closing order (reverse legs)
     close_payload = client.build_close_spread_order(long_conid, short_conid, quantity)
     trade_result = client.place_order(close_payload)
+    # Tag close order's perm_id with the strategy (carried on the spread
+    # dict if available, else "manual_close" for orphan adoptions)
+    record_strategy_for_perm(
+        trade_result,
+        diary.strategy_slug(spread.get("strategy") or "") or spread.get("strategy") or "manual_close",
+    )
     time.sleep(3)
 
     status = "Submitted"
@@ -3385,6 +3446,8 @@ def weekend_flatten_futures(client):
                     order_type="MKT", tif="DAY",
                 )
                 resp = client.place_order(payload)
+                # Tag this safety-flatten close so the reconciler labels it
+                record_strategy_for_perm(resp, "weekend_flatten")
                 logger.info("WEEKEND FLATTEN (residual): %s %s %d → %s",
                             side, sym, abs(residual), resp)
                 flattened.append(f"residual {side} {sym} ×{abs(residual)}")

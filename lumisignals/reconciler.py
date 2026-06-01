@@ -362,6 +362,31 @@ def run_pass(
                 if "_" in inner:
                     decoded_strategy = inner.rsplit("_", 1)[0] or None
 
+            # Fallback: even when /orders returns order_ref correctly,
+            # /trades' order_id sometimes uses a different ID scheme than
+            # /orders' orderId, so the lookup above misses (observed
+            # 2026-06-01: 55 fills all adopted as "manual" because of
+            # this mismatch). Look up our own Redis mapping keyed by the
+            # perm_id we get back from place_order — bulletproof against
+            # IB endpoint quirks. See record_strategy_for_perm in
+            # ibkr_sync_cpapi.py.
+            if not decoded_strategy and last_order_id:
+                try:
+                    import os
+                    import redis as _redis
+                    _rdb_fb = _redis.from_url(
+                        os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+                    raw = _rdb_fb.get(f"ibkr:strategy_by_perm:{last_order_id}")
+                    if raw:
+                        decoded_strategy = (
+                            raw.decode() if isinstance(raw, bytes) else str(raw)
+                        )
+                        # Synthesize a faux order_ref so downstream logging
+                        # still shows the source clearly.
+                        order_ref = f"lumi_{decoded_strategy}_redislookup"
+                except Exception as e:
+                    logger.debug("reconciler perm→strategy redis fallback failed: %s", e)
+
             if last_order_id:
                 # Adopt — synthetic broker_trade_id from the actual fill id
                 # so subsequent passes update this row instead of recreating.

@@ -1373,6 +1373,12 @@ def create_app():
 
         try:
             result = client.place_order(payload)
+            # Tag perm_id → strategy for reconciler labeling.
+            try:
+                from lumisignals.ibkr_sync_cpapi import record_strategy_for_perm
+                record_strategy_for_perm(result, "swing_setup")
+            except Exception as _e:
+                logger.debug("record_strategy_for_perm (swing combo) failed: %s", _e)
         except Exception as e:
             logger.error("swing combo place_order error: %s", e)
             return jsonify({"error": f"place_order failed: {e}",
