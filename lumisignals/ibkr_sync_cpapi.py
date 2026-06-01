@@ -309,7 +309,8 @@ def check_stop_fills(client):
             # Feed the streak counter from the actual realized P&L.
             try:
                 from .runaway_guard import record_close
-                record_close(float(pnl or 0))
+                record_close(float(pnl or 0),
+                             strategy=(diary.strategy_slug(strategy) or strategy))
             except Exception as _rg:
                 logger.warning("runaway_guard record_close (STOP_FIRED) failed: %s", _rg)
             # Cooldown: a stop-out triggers a pause on this (strategy,
@@ -2085,7 +2086,8 @@ def check_order_requests(client):
                             # streak crosses the configured cap.
                             try:
                                 from .runaway_guard import record_close
-                                record_close(float(pnl or 0))
+                                record_close(float(pnl or 0),
+                                             strategy=diary_strategy_id)
                             except Exception as _rg:
                                 logger.warning("runaway_guard record_close (CLOSED) failed: %s", _rg)
                             # Push notification: trade closed.

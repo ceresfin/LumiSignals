@@ -1300,8 +1300,8 @@ def create_app():
 
         try:
             from lumisignals import runaway_guard
-            if runaway_guard.is_blocking_entry():
-                st = runaway_guard.get_state()
+            if runaway_guard.is_blocking_entry("swing_setup"):
+                st = runaway_guard.get_state("swing_setup")
                 return jsonify({
                     "status": "skipped", "reason": "runaway_guard_tripped",
                     "trip_reason": st.get("trip_reason"),
@@ -1386,9 +1386,10 @@ def create_app():
                             "response": result,
                             "payload_coid": coid}), 502
 
-        # Count this against the shared runaway cap (same as 2n20/ORB)
+        # Per-strategy runaway counter (swing_setup has its own cap,
+        # so HTF FX losses don't bleed into it).
         try:
-            runaway_guard.record_entry()
+            runaway_guard.record_entry("swing_setup")
         except Exception:
             pass
 
@@ -3403,6 +3404,9 @@ def create_app():
         """Read or update the runaway guard (max-trades-per-day +
         consecutive-loss circuit breaker).
 
+        Query param `strategy` selects per-strategy state/config.
+        Omit it for the legacy global keys.
+
         GET  → { config, state }
         PUT  → body: any subset of { enabled, max_trades_per_day,
                                       max_consecutive_losses,
@@ -3413,12 +3417,14 @@ def create_app():
         if sync_key != os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026"):
             return jsonify({"error": "unauthorized"}), 401
         from lumisignals import runaway_guard
+        strategy = request.args.get("strategy") or None
         if request.method == "PUT":
             body = request.get_json(silent=True) or {}
-            cfg = runaway_guard.set_config(body)
+            cfg = runaway_guard.set_config(body, strategy=strategy)
         else:
-            cfg = runaway_guard.get_config()
-        return jsonify({"config": cfg, "state": runaway_guard.get_state()})
+            cfg = runaway_guard.get_config(strategy)
+        return jsonify({"config": cfg, "state": runaway_guard.get_state(strategy),
+                        "strategy": strategy})
 
     @app.route("/api/risk/runaway-guard/reset", methods=["POST"])
     def api_risk_runaway_guard_reset():
@@ -3426,8 +3432,9 @@ def create_app():
         if sync_key != os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026"):
             return jsonify({"error": "unauthorized"}), 401
         from lumisignals import runaway_guard
-        state = runaway_guard.manual_reset()
-        return jsonify({"state": state})
+        strategy = request.args.get("strategy") or None
+        state = runaway_guard.manual_reset(strategy)
+        return jsonify({"state": state, "strategy": strategy})
 
     @app.route("/api/risk/position-guard", methods=["GET", "PUT"])
     def api_risk_position_guard():
@@ -4570,12 +4577,12 @@ def create_app():
             if direction in ("BUY", "SELL"):
                 try:
                     from lumisignals import runaway_guard
-                    if runaway_guard.is_blocking_entry():
-                        st = runaway_guard.get_state()
-                        cfg = runaway_guard.get_config()
+                    if runaway_guard.is_blocking_entry(strategy):
+                        st = runaway_guard.get_state(strategy)
+                        cfg = runaway_guard.get_config(strategy)
                         logger.warning(
-                            "runaway_guard BLOCKED %s %s: %s",
-                            direction, ticker, st.get("trip_reason"),
+                            "runaway_guard[%s] BLOCKED %s %s: %s",
+                            strategy, direction, ticker, st.get("trip_reason"),
                         )
                         return jsonify({
                             "status": "skipped",
@@ -4726,7 +4733,7 @@ def create_app():
             # Pine fires too many signals.
             try:
                 from lumisignals import runaway_guard
-                runaway_guard.record_entry()
+                runaway_guard.record_entry(strategy)
             except Exception as _e:
                 logger.warning("runaway_guard record_entry failed: %s", _e)
             # 30s dedup — only protects against accidental webhook retries from TV
