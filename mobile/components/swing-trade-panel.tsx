@@ -14,7 +14,8 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  ActivityIndicator, Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View,
+  ActivityIndicator, Alert, ScrollView, StyleSheet, Text, TextInput,
+  TouchableOpacity, View,
 } from 'react-native';
 import { WebView } from 'react-native-webview';
 
@@ -115,24 +116,35 @@ export function SwingTradePanel() {
   const [setup, setSetup] = useState<Setup | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // User-controlled cap. Caps potential loss per trade and sizes
+  // contracts/shares to fit. Default $200 matches the backend default.
+  // Kept as a string so the user can clear/edit freely; parsed to a
+  // float at fetch time.
+  const [maxRiskInput, setMaxRiskInput] = useState<string>('200');
 
   // Auto-select default chart TF when mode changes
   useEffect(() => {
     setChartTf(DEFAULT_CHART_TF[mode]);
   }, [mode]);
 
-  // Refetch on ticker/mode change
+  // Refetch on ticker / mode / maxRisk change. Debounced 400ms for
+  // maxRisk so typing doesn't hammer the backend on every keystroke.
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    setError(null);
-    fetch(`${API_BASE}/api/swing-setup?ticker=${ticker}&mode=${mode}`)
-      .then((r) => r.json())
-      .then((data) => { if (!cancelled) setSetup(data as Setup); })
-      .catch((e) => { if (!cancelled) setError(String(e)); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [ticker, mode]);
+    const parsed = parseFloat(maxRiskInput);
+    const effectiveRisk = Number.isFinite(parsed) && parsed > 0 ? parsed : 200;
+    const timer = setTimeout(() => {
+      if (cancelled) return;
+      setLoading(true);
+      setError(null);
+      fetch(`${API_BASE}/api/swing-setup?ticker=${ticker}&mode=${mode}&max_risk_usd=${effectiveRisk}`)
+        .then((r) => r.json())
+        .then((data) => { if (!cancelled) setSetup(data as Setup); })
+        .catch((e) => { if (!cancelled) setError(String(e)); })
+        .finally(() => { if (!cancelled) setLoading(false); });
+    }, 400);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [ticker, mode, maxRiskInput]);
 
   const opt = setup?.options;
   const sh = setup?.shares;
@@ -345,9 +357,19 @@ export function SwingTradePanel() {
         </View>
         <View style={{ alignItems: 'flex-end' }}>
           <Text style={styles.label}>Max Risk Per Trade</Text>
-          <Text style={styles.bigValue}>
-            ${opt?.max_loss_per_spread ? Math.round(opt.max_loss_per_spread) : '—'}
-          </Text>
+          <View style={styles.riskInputRow}>
+            <Text style={styles.riskDollar}>$</Text>
+            <TextInput
+              value={maxRiskInput}
+              onChangeText={setMaxRiskInput}
+              keyboardType="numeric"
+              placeholder="200"
+              placeholderTextColor={Colors.textLight}
+              style={styles.riskInput}
+              selectTextOnFocus
+              returnKeyType="done"
+            />
+          </View>
         </View>
       </View>
 
@@ -579,6 +601,12 @@ const styles = StyleSheet.create({
   symbolText: { fontSize: 28, fontWeight: '300', color: Colors.dark },
   dirBadge: { fontSize: 12, fontWeight: '600', marginTop: 2 },
   bigValue: { fontSize: 22, fontWeight: '300', color: Colors.dark, marginTop: 2 },
+  riskInputRow: { flexDirection: 'row', alignItems: 'baseline', marginTop: 2 },
+  riskDollar: { fontSize: 22, fontWeight: '300', color: Colors.dark, marginRight: 1 },
+  riskInput: { fontSize: 22, fontWeight: '300', color: Colors.dark,
+               minWidth: 70, paddingVertical: 0, paddingHorizontal: 4,
+               textAlign: 'right',
+               borderBottomWidth: 1, borderBottomColor: Colors.cream },
   paramCard: { backgroundColor: Colors.white, borderRadius: 12, padding: 12, marginBottom: 10 },
   cardTitle: { fontSize: 10, fontWeight: '600', letterSpacing: 0.5, color: Colors.textLight,
                marginBottom: 8 },
