@@ -18,8 +18,15 @@ import {
   TouchableOpacity, View,
 } from 'react-native';
 import { WebView } from 'react-native-webview';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { Colors } from '@/constants/theme';
+
+// AsyncStorage key for the per-trade max-risk cap. One global value
+// shared across all tickers/modes — the user's risk tolerance per
+// click of Open Trade, not a per-symbol setting.
+const MAX_RISK_KEY = 'swingPanel:maxRiskUsd';
+const MAX_RISK_DEFAULT = '200';
 
 // Two groups so the UI can render a section label per row.
 // Stocks chosen for: liquid weekly chains, sane strike intervals
@@ -119,8 +126,25 @@ export function SwingTradePanel() {
   // User-controlled cap. Caps potential loss per trade and sizes
   // contracts/shares to fit. Default $200 matches the backend default.
   // Kept as a string so the user can clear/edit freely; parsed to a
-  // float at fetch time.
-  const [maxRiskInput, setMaxRiskInput] = useState<string>('200');
+  // float at fetch time. Persisted to AsyncStorage so it survives
+  // panel remounts and app restarts.
+  const [maxRiskInput, setMaxRiskInput] = useState<string>(MAX_RISK_DEFAULT);
+
+  // Hydrate the saved value once on mount.
+  useEffect(() => {
+    AsyncStorage.getItem(MAX_RISK_KEY)
+      .then(saved => { if (saved) setMaxRiskInput(saved); })
+      .catch(() => { /* fall through to default */ });
+  }, []);
+
+  // Persist on change. Skip empty/0 values so an in-progress edit
+  // doesn't clobber a previously-good value mid-keystroke.
+  useEffect(() => {
+    const parsed = parseFloat(maxRiskInput);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      AsyncStorage.setItem(MAX_RISK_KEY, maxRiskInput).catch(() => {});
+    }
+  }, [maxRiskInput]);
 
   // Auto-select default chart TF when mode changes
   useEffect(() => {
