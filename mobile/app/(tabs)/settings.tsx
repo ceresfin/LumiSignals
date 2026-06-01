@@ -573,9 +573,15 @@ export default function Settings() {
               <NumberInput value={profile.futures_stop_loss ?? 25}
                 onChange={v => update('futures_stop_loss', v)} min={5} step={5} />
             </Field>
-            <Field label="Contracts/Entry">
+            <Field label="2n20 Contracts/Entry" hint="MES 2n20">
               <NumberInput value={profile.futures_contracts ?? 1}
                 onChange={v => update('futures_contracts', v)} min={1} step={1} />
+            </Field>
+          </View>
+          <View style={styles.modelRow}>
+            <Field label="ORB Contracts/Entry" hint="MES ORB futures">
+              <NumberInput value={profile.orb_futures_contracts ?? 1}
+                onChange={v => update('orb_futures_contracts', v)} min={1} step={1} />
             </Field>
           </View>
         </Section>

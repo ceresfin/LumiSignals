@@ -126,9 +126,13 @@ def create_app():
         debit_sl_pct = db.Column(db.Float, default=50.0)      # Stop loss at X% loss
         options_time_stop_dte = db.Column(db.Integer, default=7)  # Close at X DTE
 
-        # Futures settings
+        # Futures settings — per-strategy contract caps. Each strategy
+        # has its own knob so loosening (say) ORB sizing doesn't
+        # accidentally affect 2n20, and vice versa. Hard cap is applied
+        # in the webhook handler before placing the order.
         futures_stop_loss = db.Column(db.Float, default=25.0)  # Stop loss in dollars per contract
-        futures_contracts = db.Column(db.Integer, default=1)   # N contracts per entry; exits flatten actual position
+        futures_contracts = db.Column(db.Integer, default=1)   # 2n20 MES contracts per entry
+        orb_futures_contracts = db.Column(db.Integer, default=1)  # ORB MES contracts per entry
 
     @login_manager.user_loader
     def load_user(user_id):
@@ -252,6 +256,7 @@ def create_app():
             # Futures settings
             current_user.futures_stop_loss = float(request.form.get("futures_stop_loss", 25) or 25)
             current_user.futures_contracts = max(1, int(request.form.get("futures_contracts", 1) or 1))
+            current_user.orb_futures_contracts = max(1, int(request.form.get("orb_futures_contracts", 1) or 1))
 
             db.session.commit()
             flash("Settings saved", "success")
@@ -4463,6 +4468,30 @@ def create_app():
         spread_pref = data.get("spread_type", "credit")
         override_contracts = data.get("contracts", 1)
         dte = data.get("dte", 0)
+
+        # Per-strategy contract cap from user settings. Pine may send any
+        # contracts value (default 1) but the user's settings define the
+        # hard cap per strategy. Webhook is single-tenant — user 1.
+        # Bug observed 2026-06-01: Pine fired 5+ separate 2n20 alerts that
+        # accumulated to +5 MES, despite settings showing Contracts/Entry=1.
+        # Pine sent 1 per signal (correct) but nothing was capping
+        # aggregate. The hard cap below clamps per-order contracts; the
+        # signal accumulation problem is separate (Pine-rate-limit).
+        if trade_type == "futures":
+            try:
+                _u = User.query.get(1)
+                if _u is not None:
+                    if strategy in ("orb_butterfly", "orb"):
+                        _cap = int(_u.orb_futures_contracts or 1)
+                    else:
+                        _cap = int(_u.futures_contracts or 1)
+                    if int(override_contracts) > _cap:
+                        logger.warning(
+                            "futures cap: %s clamped %s -> %s (user setting)",
+                            strategy, override_contracts, _cap)
+                        override_contracts = _cap
+            except Exception as _e:
+                logger.warning("futures cap lookup failed: %s", _e)
 
         # ─── ORB BUTTERFLY PATH (SPX 0DTE leg-in) ───
         # Pine alert carries the full butterfly plan (K1/K2/K3, debit/credit
