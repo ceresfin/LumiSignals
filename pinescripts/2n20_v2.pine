@@ -112,8 +112,8 @@ anchorBullBody = useGreenK1 ? prevGreenBody :
                  useNeutK1Bull ? neutralBullBody :
                  useGreenK2 ? math.abs(close[2] - open[2]) : 0.0
 anchorBullLow = useGreenK1 ? open[1] :
-                useNeutK1Bull ? low[1] :
-                useGreenK2 ? open[2] : 0.0
+                 useNeutK1Bull ? low[1] :
+                 useGreenK2 ? open[2] : 0.0
 
 // ─── BODY SIZE FILTER (trigger candle) ───
 candleRange = high - low
