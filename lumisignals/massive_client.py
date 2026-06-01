@@ -365,7 +365,19 @@ class MassiveClient:
         elif span == "day":
             start = now - timedelta(days=count * 1.5)  # buffer for weekends
         else:  # minute
-            start = now - timedelta(minutes=count * int(multiplier) * 1.5)
+            # Stocks/ETFs trade ~6.5h RTH only, so a wall-clock lookback
+            # of count*multiplier*1.5 minutes falls short whenever the
+            # market is closed (after-hours, weekends, holidays). Convert
+            # to trading days and pad for weekends.
+            if is_stock:
+                bars_per_day = max(1.0, (6.5 * 60) / int(multiplier))
+                trading_days = max(1.0, count / bars_per_day)
+                # trading_days * 7/5 covers weekends; +3 days pads holidays
+                calendar_days = max(4, int(trading_days * 1.4) + 3)
+                start = now - timedelta(days=calendar_days)
+            else:
+                # Forex 24/5, crypto 24/7: wall-clock is fine
+                start = now - timedelta(minutes=count * int(multiplier) * 1.5)
 
         start_str = start.strftime("%Y-%m-%d")
         end_str = now.strftime("%Y-%m-%d")
