@@ -1237,9 +1237,13 @@ def create_app():
         massive_key = os.environ.get("MASSIVE_API_KEY", "")
         if massive_key:
             try:
-                from lumisignals.massive_client import MassiveClient
+                from lumisignals.massive_client import get_shared_client
                 from lumisignals.untouched_levels import find_untouched_levels
-                _massive = MassiveClient(massive_key)
+                # Use the SAME MassiveClient instance the analyzer used —
+                # its TTL candle cache means any TF the analyzer already
+                # pulled (the 3 russian-doll TFs) is served from memory
+                # instead of round-tripping to Polygon.
+                _massive = get_shared_client(massive_key)
                 INDEX_SYMBOLS = {"SPX", "NDX", "RUT", "VIX", "DJI", "XSP", "XND"}
                 is_forex = (len(ticker) == 6 and ticker[:3].isalpha()
                             and ticker[3:].isalpha() and ticker not in ("GOOGL",))
@@ -1249,14 +1253,15 @@ def create_app():
                     poly_ticker = f"I:{ticker}"
                 else:
                     poly_ticker = ticker
-                # Match BAR_COUNT_PER_TF from swing_setup.py so the bars
-                # fed into find_untouched_levels are identical to what the
-                # analyzer used for trigger_level.
+                # Counts MUST match BAR_COUNT_PER_TF in swing_setup.py so
+                # the (ticker, tf, count) cache key from the analyzer's
+                # fetch lines up with this loop's lookup. Mismatched
+                # counts → cache miss → double Polygon hit.
                 tf_specs = [
                     ("1mo", "M",   36),  ("1w",  "W",   104),
                     ("1d",  "D",   200), ("4h",  "4H",  200),
                     ("1h",  "1H",  200), ("30m", "30M", 200),
-                    ("15m", "15M", 300),
+                    ("15m", "15M", 200),
                 ]
                 for tf_key, tf_label, count in tf_specs:
                     try:

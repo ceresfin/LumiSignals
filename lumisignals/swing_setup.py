@@ -158,8 +158,12 @@ def compute_setup(ticker: str, mode: str,
     cfg = MODE_CONFIG[mode]
 
     try:
-        from .massive_client import MassiveClient
-        massive = MassiveClient(api_key=api_key)
+        from .massive_client import get_shared_client
+        # Process-wide singleton — the endpoint's zones panel hits the
+        # same MassiveClient instance and reuses cached candles. Without
+        # this we'd pull each TF from Polygon twice per /api/swing-setup
+        # request (once here, once in the zones loop).
+        massive = get_shared_client(api_key)
     except Exception as e:
         return _skip(ticker, mode, f"massive client init failed: {e}")
 
@@ -464,23 +468,17 @@ def _pick_trigger_level(monthly_candles, current_price: float,
         "demand": dem1, "demand2": dem2,
     }
 
-    # Per user spec 2026-06-02: use the 2ND untouched level (D2/S2), not
-    # the 1st. Logic: from the current bar, walk back until you find the
-    # first untouched low (D1), then keep walking until you find the next
-    # one (D2). Trade off the second one — D2 tends to be a more
-    # significant zone with more room. Fall back to D1 when D2 is null.
+    # Per user spec 2026-06-02 (revised): use the 1st untouched level
+    # (D1/S1) — the nearest untouched low under price for longs, the
+    # nearest untouched high above price for shorts.
     if direction_dir == "UP":
-        if dem2 is not None and dem2 < current_price:
-            level = dem2
-        elif dem1 is not None and dem1 < current_price:
+        if dem1 is not None and dem1 < current_price:
             level = dem1
         else:
             return None, "no untouched demand below current price"
         proximity = (current_price - level) / current_price
     else:
-        if sup2 is not None and sup2 > current_price:
-            level = sup2
-        elif sup1 is not None and sup1 > current_price:
+        if sup1 is not None and sup1 > current_price:
             level = sup1
         else:
             return None, "no untouched supply above current price"

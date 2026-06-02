@@ -1,6 +1,7 @@
 """Massive (formerly Polygon) market data client for stocks and crypto."""
 
 import logging
+import os
 import time
 from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
@@ -702,3 +703,25 @@ class MassiveClient:
         except Exception as e:
             logger.error("Failed to connect to Massive: %s", e)
         return False
+
+
+# Process-wide singleton so that every caller (analyzer, /api endpoint,
+# bot loop) shares the TTL candle cache. Each `MassiveClient(api_key)`
+# call used to mint a new cache, defeating the cache when two code
+# paths in one request asked for the same (ticker, tf, count).
+_SHARED_CLIENT: Optional["MassiveClient"] = None
+
+
+def get_shared_client(api_key: Optional[str] = None) -> "MassiveClient":
+    """Return the process-wide MassiveClient.
+
+    Pass api_key on first call; subsequent calls ignore it. Falls back
+    to MASSIVE_API_KEY env if not given. Raises if no key is available.
+    """
+    global _SHARED_CLIENT
+    if _SHARED_CLIENT is None:
+        key = api_key or os.environ.get("MASSIVE_API_KEY", "")
+        if not key:
+            raise RuntimeError("MASSIVE_API_KEY not set")
+        _SHARED_CLIENT = MassiveClient(key)
+    return _SHARED_CLIENT

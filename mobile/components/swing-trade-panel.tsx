@@ -671,8 +671,8 @@ function ZonesSection({ data }: { data: any }) {
         <Text style={styles.zonesNow}>now <Text style={styles.zonesNowVal}>{price.toFixed(2)}</Text></Text>
       </View>
       <Text style={styles.zonesSub}>
-        2nd untouched demand (low) and supply (high) per timeframe — the same
-        levels the chart enters on. Near 100% = pressing supply,
+        Nearest untouched demand (low) and supply (high) per timeframe —
+        the same levels the chart enters on. Near 100% = pressing supply,
         near 0% = sitting on demand.
       </Text>
       {ZONE_TF_ORDER.map(tf => (
@@ -690,12 +690,10 @@ function ZonesSection({ data }: { data: any }) {
 }
 
 function ZonesRow({ tfKey, levels, price }: { tfKey: string; levels: any; price: number }) {
-  // Per user spec 2026-06-02: show the 2nd untouched levels (D2/S2)
-  // because those are the levels the analyzer enters on. Fall back to
-  // D1/S1 when D2/S2 missing (lower TFs sometimes only have one
-  // untouched level back).
-  const lo = levels.demand2 ?? levels.demand;
-  const hi = levels.supply2 ?? levels.supply;
+  // Per user spec 2026-06-02 (revised): show the 1st untouched levels
+  // (D1/S1) — the same levels the analyzer enters on.
+  const lo = levels.demand;
+  const hi = levels.supply;
   const hasRange = lo != null && hi != null && hi > lo;
 
   // % position within the high–low range.
