@@ -399,8 +399,8 @@ def create_app():
         try:
             massive_key = os.environ.get("MASSIVE_API_KEY", "")
             if massive_key:
-                from lumisignals.massive_client import MassiveClient
-                _massive = MassiveClient(massive_key)
+                from lumisignals.massive_client import get_shared_client
+                _massive = get_shared_client(massive_key)
         except Exception:
             _massive = None
 
@@ -538,10 +538,10 @@ def create_app():
         massive_key = os.environ.get("MASSIVE_API_KEY", "")
         if massive_key:
             try:
-                from lumisignals.massive_client import MassiveClient
+                from lumisignals.massive_client import get_shared_client
                 from lumisignals.levels_strategy import get_builtin_snr_levels
                 from lumisignals.untouched_levels import calculate_adx_direction
-                massive = MassiveClient(massive_key)
+                massive = get_shared_client(massive_key)
                 # Always-on watchlist for the mobile UI. Lives alongside the
                 # bot's market-hours-gated scan so high-interest names are
                 # visible 24/7 (pre/post-market the bot writes 0 stock zones).
@@ -799,8 +799,8 @@ def create_app():
         if not massive_key:
             return jsonify({"candles": [], "error": "No Polygon API key"}), 400
 
-        from lumisignals.massive_client import MassiveClient
-        massive = MassiveClient(massive_key)
+        from lumisignals.massive_client import get_shared_client
+        massive = get_shared_client(massive_key)
 
         # Map display names to Polygon tickers
         TICKER_MAP = {"GOLD": "C:XAUUSD", "OIL": "C:WTICOUSD"}
@@ -873,9 +873,9 @@ def create_app():
         massive_key = os.environ.get("MASSIVE_API_KEY", "")
         if massive_key:
             try:
-                from lumisignals.massive_client import MassiveClient
+                from lumisignals.massive_client import get_shared_client
                 from lumisignals.levels_strategy import get_builtin_snr_levels
-                massive = MassiveClient(massive_key)
+                massive = get_shared_client(massive_key)
                 # Detect forex: explicit underscore, C:-prefix, or a
                 # 6-letter all-alpha symbol like AUDUSD/EURUSD/GBPJPY.
                 # The chart strips the underscore before calling this
@@ -3684,9 +3684,9 @@ def create_app():
         if not massive_key:
             return jsonify({"pair": pair, "tfs": out, "error": "no polygon key"}), 200
 
-        from lumisignals.massive_client import MassiveClient
+        from lumisignals.massive_client import get_shared_client
         from lumisignals.untouched_levels import calculate_trend_direction
-        massive = MassiveClient(massive_key)
+        massive = get_shared_client(massive_key)
         poly_ticker = f"C:{pair.replace('_', '')}"
 
         class _C:
@@ -4013,9 +4013,9 @@ def create_app():
         massive_key = os.environ.get("MASSIVE_API_KEY", "")
         massive = None
         if massive_key:
-            from lumisignals.massive_client import MassiveClient
+            from lumisignals.massive_client import get_shared_client
             from lumisignals.untouched_levels import find_untouched_levels, calculate_adx_direction
-            massive = MassiveClient(massive_key)
+            massive = get_shared_client(massive_key)
 
         # Cash indexes need Polygon's "I:" prefix or they return 0 bars
         INDEX_SYMBOLS = {"SPX", "NDX", "RUT", "VIX", "DJI", "XSP", "XND"}
@@ -4139,9 +4139,9 @@ def create_app():
         massive_key = os.environ.get("MASSIVE_API_KEY", "")
         massive = None
         if massive_key:
-            from lumisignals.massive_client import MassiveClient
+            from lumisignals.massive_client import get_shared_client
             from lumisignals.untouched_levels import find_untouched_levels, calculate_adx_direction
-            massive = MassiveClient(massive_key)
+            massive = get_shared_client(massive_key)
 
         # Cash indexes need Polygon's "I:" prefix or they return 0 bars
         INDEX_SYMBOLS = {"SPX", "NDX", "RUT", "VIX", "DJI", "XSP", "XND"}
@@ -4287,10 +4287,10 @@ def create_app():
         if not massive_key:
             return jsonify({"error": "No Massive API key configured"}), 400
 
-        from lumisignals.massive_client import MassiveClient, CORE_TICKERS, SWING_TICKERS, TICKER_NAMES
+        from lumisignals.massive_client import get_shared_client, CORE_TICKERS, SWING_TICKERS, TICKER_NAMES
         from lumisignals.untouched_levels import scan_universe, scan_ticker, TIMEFRAMES
 
-        client = MassiveClient(massive_key)
+        client = get_shared_client(massive_key)
         proximity = float(request.args.get("proximity", 2.0))
         tickers = request.args.get("tickers", "").upper().split(",")
         tickers = [t.strip() for t in tickers if t.strip()]
@@ -4422,10 +4422,10 @@ def create_app():
         if not massive_key:
             return jsonify({"error": "No Massive API key configured"}), 400
 
-        from lumisignals.massive_client import MassiveClient
+        from lumisignals.massive_client import get_shared_client
         from lumisignals.untouched_levels import scan_ticker
 
-        client = MassiveClient(massive_key)
+        client = get_shared_client(massive_key)
         candles = client.get_candles(ticker.upper(), "1d", 2)
         price = candles[-1].close if candles else 0
 
@@ -4453,10 +4453,10 @@ def create_app():
 
         dry_run = request.args.get("dry_run", "false").lower() == "true"
 
-        from lumisignals.massive_client import MassiveClient
+        from lumisignals.massive_client import get_shared_client
         from lumisignals.swing_scanner import run_swing_scan
 
-        client = MassiveClient(massive_key)
+        client = get_shared_client(massive_key)
         triggered = run_swing_scan(client, rdb, massive_key, dry_run=dry_run)
 
         return jsonify({
