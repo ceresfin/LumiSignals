@@ -201,16 +201,28 @@ export function SwingTradePanel() {
       // blocks price action.
       `dashboard=0`,
     ];
-    if (opt?.long_strike) params.push(`long_strike=${opt.long_strike}`);
-    if (opt?.short_strike) params.push(`short_strike=${opt.short_strike}`);
-    if (opt?.breakeven) params.push(`breakeven=${opt.breakeven}`);
-    if (opt?.max_profit_per_spread) params.push(`max_profit=${opt.max_profit_per_spread}`);
-    if (opt?.max_loss_per_spread) params.push(`max_loss=${opt.max_loss_per_spread}`);
-    if (opt?.spread_type) params.push(`spread_type=${opt.spread_type}`);
+    params.push(`vehicle=${vehicle}`);
+    if (vehicle === 'shares' && sh) {
+      // Stock plan — chart renders 3 simple lines: ENTRY / TARGET / STOP.
+      // These come from swing_setup.py per-mode logic (HTF zone entry,
+      // 3x bottom-TF ATR stop, opposite-zone target). Mode change here
+      // → backend returns different sh values → chart updates.
+      if (sh.entry != null)  params.push(`entry=${sh.entry}`);
+      if (sh.target != null) params.push(`target=${sh.target}`);
+      if (sh.stop != null)   params.push(`stop=${sh.stop}`);
+    } else if (vehicle === 'options' && opt) {
+      // Options spread — keep the long/short/breakeven lines.
+      if (opt.long_strike) params.push(`long_strike=${opt.long_strike}`);
+      if (opt.short_strike) params.push(`short_strike=${opt.short_strike}`);
+      if (opt.breakeven) params.push(`breakeven=${opt.breakeven}`);
+      if (opt.max_profit_per_spread) params.push(`max_profit=${opt.max_profit_per_spread}`);
+      if (opt.max_loss_per_spread) params.push(`max_loss=${opt.max_loss_per_spread}`);
+      if (opt.spread_type) params.push(`spread_type=${opt.spread_type}`);
+    }
     if (setup?.trigger_level) params.push(`trigger_level=${setup.trigger_level}`);
     if (setup?.direction) params.push(`direction=${setup.direction}`);
     return `${API_BASE}/chart?${params.join('&')}`;
-  }, [ticker, chartTf, setup, opt]);
+  }, [ticker, chartTf, setup, opt, sh, vehicle]);
   // tradeable defaults to true for backward-compat when the backend
   // doesn't include the field (older deploys); explicit false from the
   // backend disables Open Trade while still allowing levels to render.
@@ -596,10 +608,11 @@ export function SwingTradePanel() {
                 'Bright green band — max profit zone past the short strike.\n\n' +
                 'Red band — max loss zone past the long strike.\n\n' +
                 'The green and red bands are sized proportionally to the dollar amounts — green is taller than red by the reward:risk ratio.'
-              : 'ENTRY (teal/red) — where the trade enters.\n\n' +
-                'STOP — where the trade exits at max loss.\n\n' +
-                'TARGET — first profit target.\n\n' +
-                'TRIGGER (magenta dotted) — the higher-TF zone the bias is built on.'
+              : 'ENTRY (amber) — limit price at the HTF supply/demand zone.\n\n' +
+                'TARGET (teal) — first profit target, set to the next opposite zone or per-mode R:R floor.\n\n' +
+                'STOP (red) — 3× ATR beyond the entry zone.\n\n' +
+                'TRIGGER (magenta dotted) — the higher-TF zone the bias is built on.\n\n' +
+                'All three lines update when you switch between SCALP, INTRADAY, SWING.'
           )}
           accessibilityRole="button"
           accessibilityLabel="Chart legend">

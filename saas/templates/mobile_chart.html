@@ -80,7 +80,16 @@
     const MAX_LOSS      = params.get('max_loss')      ? parseFloat(params.get('max_loss'))      : null;
     const TRIGGER_LEVEL = params.get('trigger_level') ? parseFloat(params.get('trigger_level')) : null;
     const SPREAD_TYPE   = params.get('spread_type') || '';
+    // Shares-vehicle params (passed when vehicle=shares). When present
+    // the chart renders 3 simple lines — ENTRY / TARGET / STOP —
+    // instead of the option-spread overlay. Mode-dependent: the panel
+    // recomputes entry/stop/target per mode and the chart updates.
+    const VEHICLE      = params.get('vehicle') || '';
+    const SHARES_ENTRY  = params.get('entry')  ? parseFloat(params.get('entry'))  : null;
+    const SHARES_TARGET = params.get('target') ? parseFloat(params.get('target')) : null;
+    const SHARES_STOP   = params.get('stop')   ? parseFloat(params.get('stop'))   : null;
     const IS_SWING_SETUP = STRATEGY === 'swing_setup';
+    const IS_SHARES_VIEW = IS_SWING_SETUP && VEHICLE === 'shares';
     // Watchlist zone "activated" timestamp (unix seconds). When set,
     // drops a triangle marker on the bar where price first entered the
     // zone band. Optional; ignored if not provided.
@@ -805,10 +814,49 @@
         }
 
         // ─── Swing-setup specific overlay ────────────────────────────
+        // ─── Shares-vehicle overlay ────────────────────────────────
+        // Three simple horizontal lines + right-axis labels: ENTRY
+        // (amber), TARGET (green), STOP (red). The panel recomputes
+        // these per mode (scalp/intraday/swing) and the chart picks
+        // up the new values via the URL params.
+        if (IS_SHARES_VIEW && SHARES_ENTRY != null) {
+          candleSeries.createPriceLine({
+            price: SHARES_ENTRY,
+            color: '#FFC107',
+            lineWidth: 3,
+            lineStyle: LightweightCharts.LineStyle.Solid,
+            axisLabelVisible: true,
+            axisLabelTextColor: '#000',
+            title: 'ENTRY ' + SHARES_ENTRY.toFixed(2),
+          });
+          if (SHARES_TARGET != null) {
+            candleSeries.createPriceLine({
+              price: SHARES_TARGET,
+              color: '#3E7F6B',
+              lineWidth: 3,
+              lineStyle: LightweightCharts.LineStyle.Solid,
+              axisLabelVisible: true,
+              axisLabelTextColor: '#fff',
+              title: 'TARGET ' + SHARES_TARGET.toFixed(2),
+            });
+          }
+          if (SHARES_STOP != null) {
+            candleSeries.createPriceLine({
+              price: SHARES_STOP,
+              color: '#C26A6A',
+              lineWidth: 3,
+              lineStyle: LightweightCharts.LineStyle.Solid,
+              axisLabelVisible: true,
+              axisLabelTextColor: '#fff',
+              title: 'STOP ' + SHARES_STOP.toFixed(2),
+            });
+          }
+        }
+
         // Trade-aware lines + P&L bands for the options debit spread.
         // Only renders when strategy=swing_setup AND the panel passed
         // the option-spread params (long_strike / short_strike / etc).
-        if (IS_SWING_SETUP && LONG_STRIKE && SHORT_STRIKE) {
+        if (IS_SWING_SETUP && !IS_SHARES_VIEW && LONG_STRIKE && SHORT_STRIKE) {
           const isCall = SPREAD_TYPE === 'call_debit';
           // Profit zone (green-tinted band):
           //   call debit: between breakeven and short_strike
