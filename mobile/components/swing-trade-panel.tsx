@@ -134,22 +134,18 @@ export function SwingTradePanel() {
   // button in mobile_chart.html via postMessage.
   const [chartExpanded, setChartExpanded] = useState(false);
 
-  // Supply & Demand Zones data — fetched from the compare-levels endpoint
-  // which is the same source the SNR Compare screen uses. One ticker at
-  // a time. Refreshes on ticker change.
-  const [zonesData, setZonesData] = useState<any>(null);
-  useEffect(() => {
-    let cancelled = false;
-    fetch(`${API_BASE}/api/mobile/compare/levels?tickers=${encodeURIComponent(ticker)}`)
-      .then(r => r.json())
-      .then(d => {
-        if (cancelled) return;
-        const item = (d?.tickers || [])[0];
-        if (item) setZonesData(item);
-      })
-      .catch(() => { /* silent */ });
-    return () => { cancelled = true; };
-  }, [ticker]);
+  // Supply & Demand Zones data now comes from the swing-setup response
+  // (setup.zones_by_tf + setup.underlying_price). Single source of truth
+  // shared with the chart's entry/target/stop levels — no separate fetch
+  // and no possibility of bar-fetch divergence between endpoints.
+  const zonesData = useMemo(() => {
+    if (!setup) return null;
+    return {
+      ticker,
+      current_price: setup.underlying_price,
+      server: (setup as any).zones_by_tf || {},
+    };
+  }, [setup, ticker]);
 
   // Hydrate the saved value once on mount.
   useEffect(() => {

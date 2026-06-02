@@ -1228,6 +1228,60 @@ def create_app():
             }
         setup["chart_overlay"] = chart_overlay
 
+        # All-TF zones (D1/D2/S1/S2 per timeframe) — single source of truth
+        # for the Dashboard panel's zones bar. Uses the SAME find_untouched_levels
+        # call as the analyzer's trigger_level so chart entry == panel D1.
+        # The panel reads this from the swing-setup response instead of
+        # making a separate /api/mobile/compare/levels call.
+        zones_by_tf = {}
+        massive_key = os.environ.get("MASSIVE_API_KEY", "")
+        if massive_key:
+            try:
+                from lumisignals.massive_client import MassiveClient
+                from lumisignals.untouched_levels import find_untouched_levels
+                _massive = MassiveClient(massive_key)
+                INDEX_SYMBOLS = {"SPX", "NDX", "RUT", "VIX", "DJI", "XSP", "XND"}
+                is_forex = (len(ticker) == 6 and ticker[:3].isalpha()
+                            and ticker[3:].isalpha() and ticker not in ("GOOGL",))
+                if is_forex:
+                    poly_ticker = f"C:{ticker}"
+                elif ticker in INDEX_SYMBOLS:
+                    poly_ticker = f"I:{ticker}"
+                else:
+                    poly_ticker = ticker
+                # Match BAR_COUNT_PER_TF from swing_setup.py so the bars
+                # fed into find_untouched_levels are identical to what the
+                # analyzer used for trigger_level.
+                tf_specs = [
+                    ("1mo", "M",   36),  ("1w",  "W",   104),
+                    ("1d",  "D",   200), ("4h",  "4H",  200),
+                    ("1h",  "1H",  200), ("30m", "30M", 200),
+                    ("15m", "15M", 300),
+                ]
+                for tf_key, tf_label, count in tf_specs:
+                    try:
+                        candles = _massive.get_candles(poly_ticker, tf_key, count)
+                        if not candles or len(candles) < 3:
+                            continue
+                        price = candles[-1].close
+                        highs = [c.high for c in reversed(candles)]
+                        lows = [c.low for c in reversed(candles)]
+                        s1, s2, d1, d2 = find_untouched_levels(
+                            highs, lows, price, lookback=12)
+                        recent_highs = [c.high for c in candles[-12:]]
+                        recent_lows = [c.low for c in candles[-12:]]
+                        zones_by_tf[tf_label] = {
+                            "supply": s1, "supply2": s2,
+                            "demand": d1, "demand2": d2,
+                            "range_high": max(recent_highs) if recent_highs else None,
+                            "range_low": min(recent_lows) if recent_lows else None,
+                        }
+                    except Exception as _e:
+                        logger.debug("zones_by_tf err %s %s: %s", ticker, tf_key, _e)
+            except Exception as e:
+                logger.warning("zones_by_tf compute failed: %s", e)
+        setup["zones_by_tf"] = zones_by_tf
+
         rdb.setex(cache_key, 60, json.dumps(setup, default=str))
         return jsonify(setup)
 
