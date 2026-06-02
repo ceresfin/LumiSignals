@@ -269,6 +269,9 @@ def compute_setup(ticker: str, mode: str,
         bars_bot, bars_top, current_price, trigger_level,
         direction, max_risk_usd, mode,
     )
+    # Attach the bottom-TF label so the panel can render "4.5× ATR(5M)"
+    # under the Stop Loss row.
+    shares_spec["atr_tf"] = TF_LABELS.get(tf_bot, tf_bot)
 
     warnings = []
     if opt_warn:

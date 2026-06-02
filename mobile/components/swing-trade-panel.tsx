@@ -95,6 +95,9 @@ type Setup = {
     qty: number;
     qty_reason: string | null;
     risk_per_share: number | null;
+    atr: number | null;
+    atr_multiplier: number | null;
+    atr_tf: string | null;
   } | null;
   warnings: string[];
   chart_overlay?: Record<string, number | null>;
@@ -522,6 +525,11 @@ export function SwingTradePanel() {
             <Text style={styles.rrLabel}>{vehicle === 'shares' ? 'Stop Loss' : 'Breakeven'}</Text>
             <Text style={styles.rrValue}>{fmtMoney(rrView.stop)}</Text>
           </View>
+          {vehicle === 'shares' && sh?.atr != null && sh?.atr_multiplier != null && (
+            <Text style={styles.rrSubline}>
+              {sh.atr_multiplier}× ATR{sh.atr_tf ? `(${sh.atr_tf})` : ''} = ${(sh.atr * sh.atr_multiplier).toFixed(2)}
+            </Text>
+          )}
           <View style={styles.rrLineRow}>
             <Text style={styles.rrLabel}>Risk {rrView.labelPerUnit}</Text>
             <Text style={styles.rrValue}>{fmtMoney(rrView.riskPerUnit)}</Text>
@@ -889,6 +897,8 @@ const styles = StyleSheet.create({
                paddingVertical: 3 },
   rrLabel: { fontSize: 11, color: Colors.textLight, flexShrink: 1 },
   rrValue: { fontSize: 12, fontWeight: '600', color: Colors.dark },
+  rrSubline: { fontSize: 10, color: Colors.textLight, marginTop: -2,
+               marginBottom: 4, fontStyle: 'italic' },
   rrRatioCard: { backgroundColor: Colors.white, borderRadius: 12,
                  padding: 16, marginBottom: 10, alignItems: 'center' },
   rrRatioBig: { fontSize: 36, fontWeight: '300', color: Colors.dark,
