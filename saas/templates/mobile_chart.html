@@ -236,11 +236,11 @@
             timeVisible: ['1m','2m','5m','15m','30m','1h','4h'].indexOf(TIMESPAN) >= 0,
             secondsVisible: false,
             fixLeftEdge: true,
-            // Push the last candle ~36 bars left of the y-axis so the
-            // ENTRY / TARGET / STOP labels have plenty of breathing
-            // room and don't crowd the latest price action.
-            rightOffset: 36,
-            barSpacing: 8,
+            // Right padding is actually enforced by an explicit
+            // setVisibleLogicalRange() call after setData() — see the
+            // candleSeries.setData() block. rightOffset here is a
+            // fallback for any code path that doesn't hit that call.
+            rightOffset: 20,
             tickMarkFormatter: function(timestamp) {
               const d = new Date(timestamp * 1000);
               const opts = { timeZone: 'America/New_York' };
@@ -312,6 +312,21 @@
           }
         }
         candleSeries.setData(unique);
+
+        // Lock the visible window — show only the last ~30 candles +
+        // ~25 bars of empty space on the right. This overrides the
+        // chart's auto-fit (which was squishing 80+ candles into the
+        // viewport and ignoring rightOffset visually). Predictable
+        // layout regardless of how many bars were fetched or zoom.
+        try {
+          const N_VISIBLE_CANDLES = 30;
+          const N_RIGHT_PAD = 25;
+          const lastIdx = unique.length - 1;
+          chart.timeScale().setVisibleLogicalRange({
+            from: Math.max(0, lastIdx - N_VISIBLE_CANDLES),
+            to:   lastIdx + N_RIGHT_PAD,
+          });
+        } catch (_e) { /* fall through to auto-fit */ }
 
         // ── Auto-refresh of candles ────────────────────────────────
         // The chart fetches once on load — without polling, the last
