@@ -91,6 +91,60 @@ def find_untouched_levels(highs: List[float], lows: List[float],
     return sup1, sup2, dem1, dem2
 
 
+def find_step_levels(highs: List[float], lows: List[float],
+                     lookback: int = 12) -> Tuple[
+                         Optional[float], Optional[float],
+                         Optional[float], Optional[float]]:
+    """Untouched demand / supply, anchored on the in-progress bar.
+
+    Baseline = in-progress bar's low (for demand) / high (for supply).
+    Walk back through prior bars; each one whose low is BELOW the
+    running-min becomes a demand level, each one whose high is ABOVE
+    the running-max becomes a supply level. First two of each become
+    D1/D2 and S1/S2.
+
+    Args:
+        highs: List of period highs, most-recent-first.
+                highs[0] = current in-progress bar.
+        lows:  Same convention as highs.
+        lookback: how many prior bars to scan.
+
+    Returns:
+        (s1, s2, d1, d2) — any may be None if no qualifying bar exists.
+
+    Per user spec 2026-06-02 for the Dashboard panel. Distinct from
+    find_untouched_levels above, which mixes current_price (e.g. from a
+    finer TF's close) into the baseline. This version uses ONLY the
+    in-progress bar's own extreme, so an intra-bar dip from a finer TF
+    doesn't invalidate a still-untouched higher-TF level.
+    """
+    n = min(len(highs), len(lows), lookback + 1)
+    if n < 2:
+        return None, None, None, None
+
+    s1 = s2 = d1 = d2 = None
+
+    max_h = highs[0]
+    for i in range(1, n):
+        if highs[i] > max_h:
+            if s1 is None:
+                s1 = highs[i]
+            elif s2 is None:
+                s2 = highs[i]
+        max_h = max(max_h, highs[i])
+
+    min_l = lows[0]
+    for i in range(1, n):
+        if lows[i] < min_l:
+            if d1 is None:
+                d1 = lows[i]
+            elif d2 is None:
+                d2 = lows[i]
+        min_l = min(min_l, lows[i])
+
+    return s1, s2, d1, d2
+
+
 def calculate_structure_direction(candles, n: int = 15,
                                   prefer_confirmed: bool = False) -> Tuple[str, float]:
     """Trend direction from swing pivot structure (Dow Theory).
