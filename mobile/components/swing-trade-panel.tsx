@@ -131,6 +131,23 @@ export function SwingTradePanel() {
   // panel remounts and app restarts.
   const [maxRiskInput, setMaxRiskInput] = useState<string>(MAX_RISK_DEFAULT);
 
+  // Supply & Demand Zones data — fetched from the compare-levels endpoint
+  // which is the same source the SNR Compare screen uses. One ticker at
+  // a time. Refreshes on ticker change.
+  const [zonesData, setZonesData] = useState<any>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`${API_BASE}/api/mobile/compare/levels?tickers=${encodeURIComponent(ticker)}`)
+      .then(r => r.json())
+      .then(d => {
+        if (cancelled) return;
+        const item = (d?.tickers || [])[0];
+        if (item) setZonesData(item);
+      })
+      .catch(() => { /* silent */ });
+    return () => { cancelled = true; };
+  }, [ticker]);
+
   // Hydrate the saved value once on mount.
   useEffect(() => {
     AsyncStorage.getItem(MAX_RISK_KEY)
@@ -597,6 +614,111 @@ export function SwingTradePanel() {
           javaScriptEnabled
         />
       </View>
+
+      {/* Supply & Demand Zones — graphical view under the chart */}
+      <ZonesSection data={zonesData} />
+    </View>
+  );
+}
+
+// ─── Supply & Demand Zones component ─────────────────────────────
+// Per-timeframe horizontal bar: [D2|D1|gap|S1|S2] with a yellow price
+// marker positioned in the gap proportional to where price sits
+// between D1 and S1. Distance chips on either side show the room to
+// the nearest demand (▼) and supply (▲) zones. Mirrors the SNR Compare
+// page's SRV data — same source, same numbers, visual layout.
+const ZONE_TF_ORDER = ['M', 'W', 'D', '4H', '1H', '30M', '15M'];
+const ZONE_TF_LABELS: Record<string, string> = {
+  M: '1mo', W: '1w', D: '1d', '4H': '4h', '1H': '1h', '30M': '30m', '15M': '15m',
+};
+
+function ZonesSection({ data }: { data: any }) {
+  if (!data?.current_price) {
+    return (
+      <View style={styles.zonesCard}>
+        <Text style={styles.zonesTitle}>SUPPLY &amp; DEMAND ZONES</Text>
+        <Text style={styles.zonesEmpty}>Loading…</Text>
+      </View>
+    );
+  }
+  const price: number = data.current_price;
+  const server = data.server || {};
+  return (
+    <View style={styles.zonesCard}>
+      <View style={styles.zonesHeaderRow}>
+        <Text style={styles.zonesTitle}>SUPPLY &amp; DEMAND ZONES</Text>
+        <Text style={styles.zonesNow}>now <Text style={styles.zonesNowVal}>{price.toFixed(2)}</Text></Text>
+      </View>
+      <Text style={styles.zonesSub}>
+        Each level is a price zone, not a single line. Solid = nearest zone, faded = the next one out.
+      </Text>
+      {ZONE_TF_ORDER.map(tf => (
+        <ZonesRow key={tf} tfKey={tf} levels={server[tf] || {}} price={price} />
+      ))}
+      <View style={styles.zonesLegend}>
+        <View style={[styles.zlgDot, { backgroundColor: 'rgba(85,145,85,0.85)' }]} />
+        <Text style={styles.zlgLabel}>demand</Text>
+        <Text style={styles.zlgSep}>·</Text>
+        <View style={[styles.zlgDot, { backgroundColor: 'rgba(195,100,100,0.85)' }]} />
+        <Text style={styles.zlgLabel}>supply</Text>
+        <Text style={styles.zlgSep}>·</Text>
+        <View style={[styles.zlgDot, { backgroundColor: '#d4a02a' }]} />
+        <Text style={styles.zlgLabel}>price</Text>
+      </View>
+    </View>
+  );
+}
+
+function ZonesRow({ tfKey, levels, price }: { tfKey: string; levels: any; price: number }) {
+  const d1 = levels.demand, d2 = levels.demand2;
+  const s1 = levels.supply, s2 = levels.supply2;
+
+  // Marker position within the middle gap (35-65% of bar).
+  let markerPct = 50;
+  if (d1 != null && s1 != null && s1 > d1) {
+    if (price < d1)      markerPct = 30;  // priced through demand
+    else if (price > s1) markerPct = 70;  // priced through supply
+    else markerPct = 35 + ((price - d1) / (s1 - d1)) * 30;
+  }
+  const dDown = d1 != null ? price - d1 : null;
+  const dUp   = s1 != null ? s1 - price : null;
+
+  return (
+    <View style={styles.zRow}>
+      <Text style={styles.zLabel}>{ZONE_TF_LABELS[tfKey] || tfKey}</Text>
+
+      <View style={[
+        styles.zChip,
+        dDown == null ? styles.zChipEmpty
+          : dDown < 0 ? styles.zChipBad
+          : styles.zChipDem,
+      ]}>
+        <Text style={styles.zChipText}>
+          {dDown == null ? '—'
+            : (dDown >= 0 ? '▼ ' : '✕ ') + Math.abs(dDown).toFixed(2)}
+        </Text>
+      </View>
+
+      <View style={styles.zBar}>
+        <View style={[styles.zSeg, d2 == null ? styles.zSegEmpty : styles.zSegD2]} />
+        <View style={[styles.zSeg, d1 == null ? styles.zSegEmpty : styles.zSegD1]} />
+        <View style={styles.zSegGap} />
+        <View style={[styles.zSeg, s1 == null ? styles.zSegEmpty : styles.zSegS1]} />
+        <View style={[styles.zSeg, s2 == null ? styles.zSegEmpty : styles.zSegS2]} />
+        <View style={[styles.zMarker, { left: `${markerPct}%` }]} />
+      </View>
+
+      <View style={[
+        styles.zChip,
+        dUp == null ? styles.zChipEmpty
+          : dUp < 0 ? styles.zChipBad
+          : styles.zChipSup,
+      ]}>
+        <Text style={styles.zChipText}>
+          {dUp == null ? '—'
+            : (dUp >= 0 ? '▲ ' : '✕ ') + Math.abs(dUp).toFixed(2)}
+        </Text>
+      </View>
     </View>
   );
 }
@@ -682,6 +804,50 @@ const styles = StyleSheet.create({
   chartContainer: { height: 400, borderRadius: 12, overflow: 'hidden',
                     backgroundColor: Colors.white },
   chart: { flex: 1 },
+
+  // Supply & Demand Zones
+  zonesCard: { marginTop: 14, padding: 12, backgroundColor: '#fbf8ef',
+               borderColor: '#ede5cf', borderWidth: 1, borderRadius: 8 },
+  zonesHeaderRow: { flexDirection: 'row', justifyContent: 'space-between',
+                    alignItems: 'baseline' },
+  zonesTitle: { fontSize: 11, fontWeight: '600', letterSpacing: 0.5,
+                color: Colors.textLight },
+  zonesNow: { fontSize: 12, color: Colors.textLight },
+  zonesNowVal: { color: Colors.dark, fontWeight: '600' },
+  zonesSub: { fontSize: 10, color: Colors.textLight, marginTop: 4,
+              marginBottom: 10, lineHeight: 14 },
+  zonesEmpty: { fontSize: 11, color: Colors.textLight, marginTop: 8,
+                fontStyle: 'italic' },
+  zRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 6, gap: 6 },
+  zLabel: { width: 30, fontSize: 12, fontWeight: '600', color: Colors.dark },
+  zChip: { minWidth: 56, paddingVertical: 2, paddingHorizontal: 6,
+           borderRadius: 10, alignItems: 'center' },
+  zChipText: { fontSize: 11, fontWeight: '500' },
+  zChipDem: { backgroundColor: '#c8e0c8' },
+  zChipSup: { backgroundColor: '#f2c4c4' },
+  zChipBad: { backgroundColor: '#ddd' },
+  zChipEmpty: { backgroundColor: '#e8e3d3' },
+  zBar: { flex: 1, height: 18, backgroundColor: '#efe9d7', borderRadius: 3,
+          flexDirection: 'row', position: 'relative' },
+  zSeg: { flex: 1, height: '100%' },
+  zSegGap: { flex: 1, height: '100%', backgroundColor: 'transparent' },
+  zSegD2: { backgroundColor: 'rgba(115,165,115,0.45)',
+            borderTopLeftRadius: 3, borderBottomLeftRadius: 3 },
+  zSegD1: { backgroundColor: 'rgba(85,145,85,0.85)' },
+  zSegS1: { backgroundColor: 'rgba(195,100,100,0.85)' },
+  zSegS2: { backgroundColor: 'rgba(210,145,145,0.45)',
+            borderTopRightRadius: 3, borderBottomRightRadius: 3 },
+  zSegEmpty: { backgroundColor: '#e2dcc8' },
+  zMarker: { position: 'absolute', top: -3, bottom: -3, width: 3,
+             backgroundColor: '#d4a02a', borderRadius: 2,
+             transform: [{ translateX: -1.5 }] },
+  zonesLegend: { flexDirection: 'row', alignItems: 'center',
+                 justifyContent: 'center', marginTop: 10, paddingTop: 8,
+                 borderTopWidth: 1, borderTopColor: '#e8e3d3',
+                 borderStyle: 'dashed', gap: 4 },
+  zlgDot: { width: 9, height: 9, borderRadius: 5 },
+  zlgLabel: { fontSize: 10, color: Colors.textLight },
+  zlgSep: { fontSize: 10, color: Colors.textLight, marginHorizontal: 4 },
   vehicleRow: { flexDirection: 'row', gap: 6, marginBottom: 10 },
   vehicleChip: { flex: 1, paddingVertical: 8, borderRadius: 12,
                  backgroundColor: Colors.cream, alignItems: 'center',

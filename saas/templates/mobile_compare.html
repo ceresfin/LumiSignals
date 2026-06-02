@@ -325,19 +325,14 @@ function renderTicker(item) {
   });
   html += '</table>';
 
-  // ─── SUPPLY & DEMAND ZONES — graphical view ───
-  html += renderZonesSection(item);
-
   html += '</div>';
   return html;
 }
 
-// Render the graphical Supply & Demand Zones section using SRV
-// (Polygon-derived) levels. Per TF: 5 segments [D2][D1][gap][S1][S2]
-// with a yellow current-price marker positioned in the gap
-// proportionally to where price sits between D1 and S1. Distance
-// chips on either side show the nearest gap to D1 (▼) and S1 (▲).
-function renderZonesSection(item) {
+// Unused on the Compare page — the graphical zones view lives in the
+// mobile Dashboard swing-trade panel instead. Kept here as a
+// reference implementation; safe to delete if the panel diverges.
+function _unusedRenderZonesSection(item) {
   var price = item.current_price;
   if (price == null) return '';   // can't position the marker
 
