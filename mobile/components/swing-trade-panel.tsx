@@ -194,7 +194,7 @@ export function SwingTradePanel() {
   const chartUrl = useMemo(() => {
     const params: string[] = [
       `ticker=${encodeURIComponent(ticker)}`,
-      `timespan=${chartTf}`, `count=200`, `strategy=swing_setup`,
+      `timespan=${chartTf}`, `count=80`, `strategy=swing_setup`,
       // Suppress the in-chart DASHBOARD overlay table — we render the
       // same info (Direction / Entry / Stop / Target / R:R) above the
       // chart in the SPREAD card. Duplicating it on the candles just

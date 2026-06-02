@@ -177,6 +177,11 @@
             timeVisible: ['1m','2m','5m','15m','30m','1h','4h'].indexOf(TIMESPAN) >= 0,
             secondsVisible: false,
             fixLeftEdge: true,
+            // Push the last candle ~12 bars left of the y-axis so the
+            // ENTRY / TARGET / STOP labels have breathing room and
+            // don't crowd the latest price action.
+            rightOffset: 12,
+            barSpacing: 8,
             tickMarkFormatter: function(timestamp) {
               const d = new Date(timestamp * 1000);
               const opts = { timeZone: 'America/New_York' };
