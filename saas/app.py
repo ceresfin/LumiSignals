@@ -2650,6 +2650,47 @@ def create_app():
         except Exception as e:
             logger.warning("audit strat_pos read failed: %s", e)
 
+        # Index filled_orders by symbol so we can attach the last
+        # handful of fills to any mismatch row. The sync's _collect_data
+        # already puts execution rows here with symbol/side/qty/price/
+        # time/order_id (which is order_ref when tagged, execution_id
+        # when not). Sort newest-first by time. Time comes in as a
+        # millisecond unix string in most cases — handle both.
+        def _fill_ts_ms(f):
+            t = f.get("time") or 0
+            try:
+                t = int(t)
+            except (TypeError, ValueError):
+                return 0
+            # Heuristic: > year-3000 in seconds means it's already ms
+            return t if t > 32000000000 else t * 1000
+        fills_by_symbol = {}
+        for f in ib.get("filled_orders", []) or []:
+            sym = f.get("symbol", "")
+            if not sym:
+                continue
+            fills_by_symbol.setdefault(sym, []).append(f)
+        for sym in fills_by_symbol:
+            fills_by_symbol[sym].sort(key=_fill_ts_ms, reverse=True)
+
+        def _classify_fill(ref):
+            """Tag each fill with its source for the mobile UI."""
+            if not ref or ref == 0 or ref == "0":
+                return "untagged"
+            ref_s = str(ref)
+            if ref_s.startswith("lumi_"):
+                # Bracket children carry the parent ref + "sl"/"tp" suffix
+                if ref_s.endswith("sl"):
+                    return "bracket_stop"
+                if ref_s.endswith("tp"):
+                    return "bracket_target"
+                # Strip "lumi_" prefix and trailing 8-hex coid → strategy slug
+                core = ref_s[5:]
+                if "_" in core:
+                    return f"bot:{core.rsplit('_', 1)[0]}"
+                return f"bot:{core}"
+            return "other"
+
         # Build the audit rows.
         # IB positions key on symbol (OPT keys differently); strat_pos
         # keys on ticker symbol. Join by symbol so OPT legs and tracked
@@ -2687,6 +2728,22 @@ def create_app():
             else:
                 status = "matched"; status_label = "MATCHED"
 
+            # For mismatch rows, attach the last few IB fills for this
+            # symbol so the user can see what created the discrepancy
+            # (manual order vs bracket child vs another strategy).
+            recent_fills = []
+            if status not in ("matched", "flat"):
+                for f in (fills_by_symbol.get(lookup_sym, []) or [])[:6]:
+                    ref = f.get("order_id")
+                    recent_fills.append({
+                        "time_ms": _fill_ts_ms(f),
+                        "side": f.get("action") or "",
+                        "qty": f.get("quantity") or 0,
+                        "price": f.get("price") or 0,
+                        "order_ref": str(ref) if ref else None,
+                        "source": _classify_fill(ref),
+                    })
+
             rows.append({
                 "instrument": lookup_sym,
                 "display_key": key,
@@ -2702,6 +2759,7 @@ def create_app():
                 "strats": strats,
                 "status": status,
                 "status_label": status_label,
+                "recent_fills": recent_fills,
             })
 
         # Total exposure summary for the "you are flat" confirmation

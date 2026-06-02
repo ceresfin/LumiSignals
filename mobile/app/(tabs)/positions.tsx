@@ -908,6 +908,43 @@ export default function Positions() {
                           ? `   [${row.strats.map((s: any) => `${s.strategy}=${s.direction}${s.contracts}`).join(', ')}]`
                           : '   (none)'}
                       </Text>
+                      {row.recent_fills && row.recent_fills.length > 0 && (
+                        <View style={styles.fillsBox}>
+                          <Text style={styles.fillsHeader}>
+                            Recent IB fills ({row.recent_fills.length})
+                          </Text>
+                          {row.recent_fills.map((f: any, i: number) => {
+                            // Format ms-since-epoch → local clock time HH:MM:SS
+                            const t = f.time_ms
+                              ? new Date(f.time_ms).toLocaleTimeString([], {
+                                  hour: '2-digit', minute: '2-digit',
+                                  second: '2-digit', hour12: false,
+                                })
+                              : '—';
+                            const isUntagged = f.source === 'untagged';
+                            const isStop = f.source === 'bracket_stop';
+                            const isTarget = f.source === 'bracket_target';
+                            const isBot = typeof f.source === 'string' && f.source.startsWith('bot:');
+                            const tag =
+                              isUntagged ? '⚠️ untagged'
+                                : isStop ? '🛡 bracket stop'
+                                : isTarget ? '🎯 bracket target'
+                                : isBot ? f.source.replace('bot:', '')
+                                : (f.source || 'other');
+                            return (
+                              <Text
+                                key={i}
+                                style={[
+                                  styles.fillRow,
+                                  isUntagged && styles.fillUntagged,
+                                ]}
+                              >
+                                {t}  {f.side} {f.qty} @ {Number(f.price).toFixed(2)}  ·  {tag}
+                              </Text>
+                            );
+                          })}
+                        </View>
+                      )}
                     </View>
                   ))}
                   {audit.last_synced && (
@@ -1241,6 +1278,13 @@ const styles = StyleSheet.create({
   auditStatus: { fontSize: 11, fontWeight: '600' },
   auditDetail: { fontSize: 12, color: Colors.textLight, marginTop: 2 },
   auditSynced: { fontSize: 11, color: Colors.textLight, marginTop: 6, fontStyle: 'italic', textAlign: 'right' },
+  fillsBox: { marginTop: 8, paddingTop: 6, borderTopWidth: 1,
+              borderTopColor: '#e8d8d6' },
+  fillsHeader: { fontSize: 11, color: Colors.textLight, marginBottom: 3,
+                 fontWeight: '600', letterSpacing: 0.3 },
+  fillRow: { fontSize: 11, color: Colors.dark, marginTop: 2,
+             fontVariant: ['tabular-nums'] },
+  fillUntagged: { color: '#c0392b', fontWeight: '600' },
   watchlistTitle: { fontSize: 16, fontWeight: '500', color: Colors.dark, marginBottom: 12 },
   zoneCard: {
     backgroundColor: Colors.white, borderRadius: 12, padding: 14,
