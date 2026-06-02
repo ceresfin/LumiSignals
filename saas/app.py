@@ -4078,7 +4078,18 @@ def create_app():
                     poly_ticker = ticker
                 for tf, tf_label in interval_to_tf.items():
                     try:
-                        count = 30 if tf in ("3mo", "1mo", "1w") else 50
+                        # Match swing_setup.py's bar counts + lookback so the
+                        # zones visualization on the Dashboard panel uses
+                        # the same numbers the analyzer's trade card is
+                        # built from (single source of truth).
+                        count = (
+                            36 if tf == "3mo"
+                            else 36 if tf == "1mo"
+                            else 104 if tf == "1w"
+                            else 200 if tf in ("1d", "1h", "4h")
+                            else 200 if tf == "30m"
+                            else 300  # 15m and 5m
+                        )
                         candles = massive.get_candles(poly_ticker, tf, count)
                         if not candles or len(candles) < 3:
                             continue
@@ -4090,7 +4101,7 @@ def create_app():
                             item["current_price"] = price
                         highs = [c.high for c in reversed(candles)]
                         lows = [c.low for c in reversed(candles)]
-                        s1, s2, d1, d2 = find_untouched_levels(highs, lows, price, lookback=10)
+                        s1, s2, d1, d2 = find_untouched_levels(highs, lows, price, lookback=12)
                         item["server"][tf_label] = {
                             "supply": s1, "supply2": s2,
                             "demand": d1, "demand2": d2,
