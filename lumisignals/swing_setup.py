@@ -270,6 +270,12 @@ def compute_setup(ticker: str, mode: str,
     if opt_warn:
         warnings.append(opt_warn)
 
+    # Stash the zones computed inside _pick_trigger_level so the
+    # endpoint can merge them into zones_by_tf for the panel. Without
+    # this the panel re-fetches bars and the trigger_level + panel D2
+    # can disagree (observed 2026-06-02 for SCALP on SPY).
+    top_zones = getattr(_pick_trigger_level, "last_zones", None) or {}
+
     return {
         "ticker": ticker,
         "mode": mode,
@@ -284,6 +290,10 @@ def compute_setup(ticker: str, mode: str,
         "options": options_spec,
         "shares": shares_spec,
         "warnings": warnings,
+        # Used by the endpoint to align the top-TF row in zones_by_tf
+        # with the chart's trigger_level — same call, same bars.
+        "top_tf_key": tf_top,
+        "top_zones": top_zones,
         "computed_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -445,20 +455,35 @@ def _pick_trigger_level(monthly_candles, current_price: float,
     highs = [c.high for c in monthly_candles[::-1]]  # most recent first
     lows = [c.low for c in monthly_candles[::-1]]
     sup1, sup2, dem1, dem2 = find_untouched_levels(highs, lows, current_price, lookback=12)
+    # Stash the full zone set on a function attribute so the caller can
+    # reuse it for the zones-panel data — guarantees the chart's
+    # trigger_level and the panel's D1/D2/S1/S2 come from the exact
+    # same find_untouched_levels call on the exact same bars.
+    _pick_trigger_level.last_zones = {
+        "supply": sup1, "supply2": sup2,
+        "demand": dem1, "demand2": dem2,
+    }
 
+    # Per user spec 2026-06-02: use the 2ND untouched level (D2/S2), not
+    # the 1st. Logic: from the current bar, walk back until you find the
+    # first untouched low (D1), then keep walking until you find the next
+    # one (D2). Trade off the second one — D2 tends to be a more
+    # significant zone with more room. Fall back to D1 when D2 is null.
     if direction_dir == "UP":
-        # Long — want nearest demand BELOW current price
-        candidates = [d for d in (dem1, dem2) if d is not None and d < current_price]
-        if not candidates:
-            return None, "no monthly demand level below current price"
-        level = max(candidates)
+        if dem2 is not None and dem2 < current_price:
+            level = dem2
+        elif dem1 is not None and dem1 < current_price:
+            level = dem1
+        else:
+            return None, "no untouched demand below current price"
         proximity = (current_price - level) / current_price
     else:
-        # Short — want nearest supply ABOVE current price
-        candidates = [s for s in (sup1, sup2) if s is not None and s > current_price]
-        if not candidates:
-            return None, "no monthly supply level above current price"
-        level = min(candidates)
+        if sup2 is not None and sup2 > current_price:
+            level = sup2
+        elif sup1 is not None and sup1 > current_price:
+            level = sup1
+        else:
+            return None, "no untouched supply above current price"
         proximity = (level - current_price) / current_price
 
     # Note: previously this hard-skipped when proximity > 3%. For the

@@ -657,7 +657,7 @@ function ZonesSection({ data }: { data: any }) {
   if (!data?.current_price) {
     return (
       <View style={styles.zonesCard}>
-        <Text style={styles.zonesTitle}>RANGE POSITION (12-BAR)</Text>
+        <Text style={styles.zonesTitle}>SUPPLY &amp; DEMAND ZONES</Text>
         <Text style={styles.zonesEmpty}>Loading…</Text>
       </View>
     );
@@ -667,13 +667,13 @@ function ZonesSection({ data }: { data: any }) {
   return (
     <View style={styles.zonesCard}>
       <View style={styles.zonesHeaderRow}>
-        <Text style={styles.zonesTitle}>RANGE POSITION (12-BAR)</Text>
+        <Text style={styles.zonesTitle}>SUPPLY &amp; DEMAND ZONES</Text>
         <Text style={styles.zonesNow}>now <Text style={styles.zonesNowVal}>{price.toFixed(2)}</Text></Text>
       </View>
       <Text style={styles.zonesSub}>
-        12-bar high–low range per timeframe (literal bar extremes — different
-        from the chart's entry/target pivot levels).
-        Near 100% = pressing the highs.
+        2nd untouched demand (low) and supply (high) per timeframe — the same
+        levels the chart enters on. Near 100% = pressing supply,
+        near 0% = sitting on demand.
       </Text>
       {ZONE_TF_ORDER.map(tf => (
         <ZonesRow key={tf} tfKey={tf} levels={server[tf] || {}} price={price} />
@@ -690,8 +690,12 @@ function ZonesSection({ data }: { data: any }) {
 }
 
 function ZonesRow({ tfKey, levels, price }: { tfKey: string; levels: any; price: number }) {
-  const lo = levels.range_low;
-  const hi = levels.range_high;
+  // Per user spec 2026-06-02: show the 2nd untouched levels (D2/S2)
+  // because those are the levels the analyzer enters on. Fall back to
+  // D1/S1 when D2/S2 missing (lower TFs sometimes only have one
+  // untouched level back).
+  const lo = levels.demand2 ?? levels.demand;
+  const hi = levels.supply2 ?? levels.supply;
   const hasRange = lo != null && hi != null && hi > lo;
 
   // % position within the high–low range.

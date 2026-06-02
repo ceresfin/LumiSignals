@@ -1280,6 +1280,30 @@ def create_app():
                         logger.debug("zones_by_tf err %s %s: %s", ticker, tf_key, _e)
             except Exception as e:
                 logger.warning("zones_by_tf compute failed: %s", e)
+        # Critical: override the analyzer's top-TF entry in zones_by_tf
+        # with the EXACT zones the analyzer's _pick_trigger_level computed.
+        # Without this, the endpoint's separate Polygon fetch can return a
+        # slightly different last-bar low → different D1/D2 than what the
+        # chart's trigger_level was derived from. Observed 2026-06-02 on
+        # SCALP/SPY: chart entry 755.87 but panel 1H D1 757.73 / D2 756.78.
+        top_tf_key = setup.get("top_tf_key")
+        top_zones = setup.get("top_zones") or {}
+        tf_key_to_label = {
+            "3mo": "Q", "1mo": "M", "1w": "W", "1d": "D",
+            "4h": "4H", "1h": "1H", "30m": "30M", "15m": "15M", "5m": "5M",
+        }
+        if top_tf_key and top_zones.get("demand") is not None:
+            label = tf_key_to_label.get(top_tf_key, top_tf_key.upper())
+            existing = zones_by_tf.get(label, {})
+            zones_by_tf[label] = {
+                "supply":  top_zones.get("supply"),
+                "supply2": top_zones.get("supply2"),
+                "demand":  top_zones.get("demand"),
+                "demand2": top_zones.get("demand2"),
+                # Preserve range numbers if we'd computed them
+                "range_high": existing.get("range_high"),
+                "range_low":  existing.get("range_low"),
+            }
         setup["zones_by_tf"] = zones_by_tf
 
         rdb.setex(cache_key, 60, json.dumps(setup, default=str))
