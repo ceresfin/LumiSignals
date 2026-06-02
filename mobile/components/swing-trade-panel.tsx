@@ -67,6 +67,7 @@ type Setup = {
   mode: string;
   direction: 'BUY' | 'SELL' | null;
   skip_reason: string | null;
+  tradeable?: boolean;   // false in "prospective" mode (no pullback yet) — Open Trade disabled but levels still show
   momentum: 'Strong' | 'Weak' | null;
   trends: Record<string, 'UP' | 'DOWN' | 'SIDE'> | null;
   trigger_level: number | null;
@@ -193,7 +194,12 @@ export function SwingTradePanel() {
     if (setup?.direction) params.push(`direction=${setup.direction}`);
     return `${API_BASE}/chart?${params.join('&')}`;
   }, [ticker, chartTf, setup, opt]);
-  const tradeReady = setup?.direction != null && (opt?.contracts ?? 0) > 0;
+  // tradeable defaults to true for backward-compat when the backend
+  // doesn't include the field (older deploys); explicit false from the
+  // backend disables Open Trade while still allowing levels to render.
+  const isTradeable = setup?.tradeable !== false;
+  const tradeReady = isTradeable && setup?.direction != null
+    && ((vehicle === 'shares' ? (sh?.qty ?? 0) : (opt?.contracts ?? 0)) > 0);
 
   // Derive the RETURN / RISK / R:R view per vehicle. Shares uses
   // entry / target / stop directly; options maps net_debit→entry,

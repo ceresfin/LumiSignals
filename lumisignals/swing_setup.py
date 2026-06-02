@@ -209,25 +209,40 @@ def compute_setup(ticker: str, mode: str,
         return _skip(ticker, mode, skip,
                      trends=trends, underlying_price=current_price)
 
-    # 4. Bottom TF must counter-move against the bias (pullback for
-    # long setups, rally for shorts).
+    # 4. Bottom TF counter-move check. When the bottom TF agrees with
+    # the bias (no pullback yet), the trade is NOT tradeable but we
+    # still want to show what the prospective setup looks like — the
+    # user is watching the entry zone develop. Set a flag and continue;
+    # the panel disables Open Trade based on `tradeable`.
     expected_counter = "DOWN" if direction_dir == "UP" else "UP"
+    prospective_reason = None
     if trends[tf_bot] != expected_counter:
-        return _skip(
-            ticker, mode,
+        prospective_reason = (
             f"{TF_LABELS.get(tf_bot, tf_bot)} not counter-moving "
-            f"({trends[tf_bot]}); no pullback entry yet",
-            trends=trends, underlying_price=current_price,
+            f"({trends[tf_bot]}); no pullback entry yet"
         )
 
     # 5. Trigger level from nearest untouched zone on the TOP TF
-    # (the highest-TF level price is approaching).
+    # (the highest-TF level price is approaching). Proximity is checked
+    # below — if level is far (> threshold), we still surface it for
+    # prospective view but flag tradeable=False.
     trigger_level, level_skip = _pick_trigger_level(
         bars_top, current_price, direction_dir
     )
-    if level_skip:
+    if level_skip and trigger_level is None:
+        # Genuine no-level case (no zones found at all). Skip cleanly.
         return _skip(ticker, mode, level_skip,
                      trends=trends, underlying_price=current_price)
+
+    # Proximity gate: if price is far from the entry zone, the trade
+    # isn't tradeable now (limit at the zone wouldn't fill) — but we
+    # still surface the level for prospective view.
+    proximity_pct = abs(current_price - trigger_level) / current_price
+    if proximity_pct > TRIGGER_PROXIMITY_PCT and prospective_reason is None:
+        prospective_reason = (
+            f"price {proximity_pct*100:.1f}% from trigger level; "
+            f"wait for closer approach (threshold {TRIGGER_PROXIMITY_PCT*100:.0f}%)"
+        )
 
     # Translate direction to BUY/SELL + spread_type.
     if direction_dir == "UP":
@@ -259,7 +274,8 @@ def compute_setup(ticker: str, mode: str,
         "ticker": ticker,
         "mode": mode,
         "direction": direction,
-        "skip_reason": None,
+        "skip_reason": prospective_reason,   # populated when counter-move pending
+        "tradeable": prospective_reason is None,
         "momentum": momentum,
         "trends": trends,
         "trigger_level": round(trigger_level, 2),
@@ -445,9 +461,11 @@ def _pick_trigger_level(monthly_candles, current_price: float,
         level = min(candidates)
         proximity = (level - current_price) / current_price
 
-    if proximity > TRIGGER_PROXIMITY_PCT:
-        return None, (f"price {proximity*100:.1f}% from trigger level; "
-                      f"wait for closer approach (threshold {TRIGGER_PROXIMITY_PCT*100:.0f}%)")
+    # Note: previously this hard-skipped when proximity > 3%. For the
+    # dashboard's prospective view we want to SHOW the level even when
+    # it's far away (the user is watching the zone develop). The
+    # tradeable flag is now toggled at the call site based on
+    # proximity, but the level itself is always returned.
     return level, None
 
 
@@ -778,6 +796,7 @@ def _skip(ticker: str, mode: str, reason: str, **extras) -> dict:
         "mode": mode,
         "direction": None,
         "skip_reason": reason,
+        "tradeable": False,
         "momentum": None,
         "trends": extras.get("trends"),
         "trigger_level": None,
