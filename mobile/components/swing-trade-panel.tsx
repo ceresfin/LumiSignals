@@ -206,8 +206,12 @@ export function SwingTradePanel() {
   // max_profit→target, and the spread itself defines the loss.
   const rrView: ReturnRiskView = useMemo(() => {
     if (vehicle === 'shares' && sh && sh.entry != null && sh.stop != null && sh.target != null) {
-      const profitPerShare = sh.target - sh.entry;
-      const riskPerShare = sh.risk_per_share ?? (sh.entry - sh.stop);
+      // For shorts (SELL), target < entry and stop > entry — taking
+      // absolute values keeps profit/risk positive regardless of
+      // direction. Without this, SHORT setups showed negative profit
+      // and negative R:R (e.g., AAPL SCALP SHORT: -$894.30 "profit").
+      const profitPerShare = Math.abs(sh.target - sh.entry);
+      const riskPerShare = sh.risk_per_share ?? Math.abs(sh.entry - sh.stop);
       return {
         labelEntry: 'Entry', labelTarget: 'Target',
         labelUnit: 'Share', labelPerUnit: '/ Share',
