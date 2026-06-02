@@ -102,6 +102,14 @@ TF_LABELS = {
 
 TARGET_DELTA = 0.30                # TUNING: long-leg strike delta target
 TRIGGER_PROXIMITY_PCT = 0.03       # TUNING: skip if price > 3% from level
+
+# Shares-vehicle stop/target tuning (per user spec 2026-06-01):
+#   - Entry  = HTF supply/demand level (the bars_top zone)
+#   - Stop   = 3 × bottom-TF ATR beyond the entry level
+#   - Target = next opposite zone on the same TF as entry; if none,
+#              fall back to a per-mode R:R floor.
+SHARES_ATR_STOP_MULT = 3.0
+SHARES_RR_FLOOR = {"scalp": 1.5, "intraday": 2.0, "swing": 3.0}
 DEBIT_RATIO_FALLBACK = 0.30        # TUNING: if net_debit/width > 30%, try wider
 ADX_STRONG_TREND_THRESHOLD = 25    # TUNING: ADX >= this on M or W = Strong
 DAILY_COUNTER_BARS = 5             # TUNING: look at last 5 daily bars for counter-move
@@ -234,12 +242,13 @@ def compute_setup(ticker: str, mode: str,
         api_key, ticker, current_price, cfg, direction, spread_type, max_risk_usd
     )
 
-    # 7. Shares plan (alternative vehicle if user toggles). ATR for
-    # stop sizing comes from the bottom TF — the same TF that drives
-    # the counter-move trigger, so the stop scale matches the chart
-    # the user is watching for entry.
+    # 7. Shares plan (alternative vehicle if user toggles).
+    #   - Entry = trigger_level (the bars_top supply/demand zone)
+    #   - Stop  = 3 × ATR(bars_bot) beyond the entry
+    #   - Target = next opposite zone on bars_top, else per-mode R:R floor
     shares_spec = _pick_shares_plan(
-        bars_bot, current_price, trigger_level, direction, max_risk_usd
+        bars_bot, bars_top, current_price, trigger_level,
+        direction, max_risk_usd, mode,
     )
 
     warnings = []
@@ -636,38 +645,87 @@ def _fetch_schwab_chain(ticker: str, cfg: _ModeCfg,
     return flat, None
 
 
-def _pick_shares_plan(daily_candles, current_price: float,
+def _pick_shares_plan(atr_bars, top_bars, current_price: float,
                       trigger_level: float, direction: str,
-                      max_risk_usd: float) -> dict:
-    """Compute an alternative ETF-shares plan in case the user toggles
-    'Trade as: shares' instead of options.
+                      max_risk_usd: float, mode: str) -> dict:
+    """Compute the shares-vehicle plan.
 
-    Entry: current price (or trigger level on a limit basis).
-    Stop:  one ATR beyond the trigger level (counter-trend side).
-    Target: next opposite level (placeholder for v1 — uses 2:1 R:R if
-            no clear opposite level available).
-    Shares: floor(max_risk / abs(entry - stop)).
+    Spec (per user 2026-06-01):
+      Entry  = trigger_level (the HTF supply/demand zone for the mode:
+               hourly for scalp, daily for intraday, monthly for swing).
+               Placed as a limit — the trade only fills if price pulls
+               back into the level.
+      Stop   = entry ± 3 × ATR(atr_bars), where atr_bars is the bottom
+               TF: 5m for scalp, 15m for intraday, 1d for swing.
+      Target = next OPPOSITE untouched zone on the same TF as the entry
+               (top_bars). If none found, fall back to per-mode R:R
+               floor (SHARES_RR_FLOOR).
+      Shares = floor(max_risk_usd / risk_per_share).
+
+    Args:
+      atr_bars:     bottom-TF candles (drives stop width)
+      top_bars:     entry-TF candles (drives target — same TF that
+                    produced trigger_level)
+      current_price: live price (for sanity / display only — entry
+                    itself sits at trigger_level)
+      trigger_level: the entry-side HTF zone
+      direction:    "BUY" (long at demand) or "SELL" (short at supply)
+      max_risk_usd: user cap from the panel input
+      mode:         "scalp" | "intraday" | "swing" — selects R:R floor
     """
-    # Simple ATR-14 on the daily bars.
+    # ATR-14 on the bottom-TF bars.
     atrs = []
-    for i in range(1, min(15, len(daily_candles))):
-        c = daily_candles[-i]
-        p = daily_candles[-(i + 1)]
+    for i in range(1, min(15, len(atr_bars))):
+        c = atr_bars[-i]
+        p = atr_bars[-(i + 1)]
         tr = max(c.high - c.low, abs(c.high - p.close), abs(c.low - p.close))
         atrs.append(tr)
     atr = sum(atrs) / len(atrs) if atrs else 0
-    stop_buffer = atr  # TUNING: 1x ATR beyond the trigger
+    stop_buffer = SHARES_ATR_STOP_MULT * atr
 
+    entry = trigger_level
     if direction == "BUY":
-        entry = current_price
-        stop = trigger_level - stop_buffer
-        target = entry + 2 * (entry - stop)   # 2:1 R:R placeholder
+        stop = entry - stop_buffer
     else:
-        entry = current_price
-        stop = trigger_level + stop_buffer
-        target = entry - 2 * (stop - entry)
+        stop = entry + stop_buffer
+
+    # Target: next opposite zone on the same TF as the entry.
+    target = None
+    target_source = None
+    try:
+        from .untouched_levels import find_untouched_levels
+        highs = [c.high for c in top_bars[::-1]]
+        lows  = [c.low  for c in top_bars[::-1]]
+        sup1, sup2, dem1, dem2 = find_untouched_levels(
+            highs, lows, current_price, lookback=12)
+        if direction == "BUY":
+            # Long at demand → target = nearest supply ABOVE entry
+            candidates = [s for s in (sup1, sup2) if s is not None and s > entry]
+            if candidates:
+                target = min(candidates)
+                target_source = "opposite_zone"
+        else:
+            # Short at supply → target = nearest demand BELOW entry
+            candidates = [d for d in (dem1, dem2) if d is not None and d < entry]
+            if candidates:
+                target = max(candidates)
+                target_source = "opposite_zone"
+    except Exception:
+        pass
 
     risk_per_share = abs(entry - stop)
+    if target is None:
+        # Fallback: per-mode R:R floor (no opposite zone visible)
+        rr = SHARES_RR_FLOOR.get(mode, 2.0)
+        if direction == "BUY":
+            target = entry + rr * risk_per_share
+        else:
+            target = entry - rr * risk_per_share
+        target_source = f"rr_floor_{rr}x"
+
+    reward_per_share = abs(target - entry)
+    rr_ratio = (reward_per_share / risk_per_share) if risk_per_share > 0 else None
+
     qty = int(max_risk_usd // risk_per_share) if risk_per_share > 0 else 0
     qty_reason = None if qty >= 1 else (
         f"stop ${risk_per_share:.2f} wide, ${max_risk_usd:.0f} max risk → 0 shares"
@@ -680,6 +738,11 @@ def _pick_shares_plan(daily_candles, current_price: float,
         "qty": qty,
         "qty_reason": qty_reason,
         "risk_per_share": round(risk_per_share, 2),
+        "reward_per_share": round(reward_per_share, 2),
+        "rr_ratio": round(rr_ratio, 2) if rr_ratio else None,
+        "target_source": target_source,
+        "atr": round(atr, 4),
+        "atr_multiplier": SHARES_ATR_STOP_MULT,
     }
 
 
