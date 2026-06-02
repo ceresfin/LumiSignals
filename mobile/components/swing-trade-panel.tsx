@@ -661,7 +661,7 @@ function ZonesSection({ data }: { data: any }) {
   if (!data?.current_price) {
     return (
       <View style={styles.zonesCard}>
-        <Text style={styles.zonesTitle}>SUPPLY &amp; DEMAND ZONES</Text>
+        <Text style={styles.zonesTitle}>RANGE POSITION (12-BAR)</Text>
         <Text style={styles.zonesEmpty}>Loading…</Text>
       </View>
     );
@@ -671,11 +671,12 @@ function ZonesSection({ data }: { data: any }) {
   return (
     <View style={styles.zonesCard}>
       <View style={styles.zonesHeaderRow}>
-        <Text style={styles.zonesTitle}>SUPPLY &amp; DEMAND ZONES</Text>
+        <Text style={styles.zonesTitle}>RANGE POSITION (12-BAR)</Text>
         <Text style={styles.zonesNow}>now <Text style={styles.zonesNowVal}>{price.toFixed(2)}</Text></Text>
       </View>
       <Text style={styles.zonesSub}>
-        Where the live price sits inside each timeframe's high–low range.
+        12-bar high–low range per timeframe (literal bar extremes — different
+        from the chart's entry/target pivot levels).
         Near 100% = pressing the highs.
       </Text>
       {ZONE_TF_ORDER.map(tf => (
