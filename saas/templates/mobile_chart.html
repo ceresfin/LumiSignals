@@ -6,7 +6,7 @@
   <script src="/static/js/lightweight-charts.js"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { background: #1a1a2e; overflow: hidden; font-family: -apple-system, sans-serif; }
+    body { background: #fbf8ef; overflow: hidden; font-family: -apple-system, sans-serif; }
     #chart { width: 100vw; height: 100vh; position: relative; }
     #loading {
       position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
@@ -113,7 +113,13 @@
     // doesn't want the generic Polygon S/R clutter on top.
     const SHOW_LEVELS = !IS_2N20 && !IS_ORB && !IS_H1_ZONE && !IS_SWING_SETUP;
     const SHOW_VWAP = IS_2N20;  // VWAP only for 2n20 strategy
-    const HAS_TRADE = ENTRY_PRICE !== null;  // Only show entry/exit/stop if it's an actual trade
+    // HAS_TRADE drives the legacy entry/exit/stop labels (Trades tab,
+    // Positions tab inline chart). In the swing-setup Shares view the
+    // ENTRY/TARGET/STOP labels are drawn by the IS_SHARES_VIEW block
+    // below — gate this off so we don't render both sets and end up
+    // with duplicate "Entry"/"ENTRY" + "SL"/"STOP" labels on the
+    // right axis.
+    const HAS_TRADE = ENTRY_PRICE !== null && !IS_SHARES_VIEW;
 
     // Filter levels by chart timeframe — don't show lower TF levels on higher TF charts
     const TF_RANK = { '1m': 1, '2m': 2, '5m': 3, '15m': 4, '30m': 5, '1h': 6, '4h': 7, '1d': 8, '1w': 9, '1mo': 10 };
@@ -154,20 +160,20 @@
         // Create chart
         const chart = LightweightCharts.createChart(document.getElementById('chart'), {
           layout: {
-            background: { color: '#1a1a2e' },
-            textColor: '#888',
+            background: { color: '#fbf8ef' },   // vanilla — matches the
+            textColor: '#5a5347',               // panel/zones card bg
           },
           grid: {
-            vertLines: { color: '#252547' },
-            horzLines: { color: '#252547' },
+            vertLines: { color: '#ede5cf' },    // subtle ivory grid
+            horzLines: { color: '#ede5cf' },
           },
           crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
-          rightPriceScale: { borderColor: '#333' },
+          rightPriceScale: { borderColor: '#d4ccb3' },
           // Show time-of-day only on intraday TFs. 1D/1W/1mo print as
           // dates, not "4:00 PM". timeVisible flips the right-edge time
           // chip; tickMarkFormatter formats the axis labels per TF.
           timeScale: {
-            borderColor: '#333',
+            borderColor: '#d4ccb3',
             timeVisible: ['1m','2m','5m','15m','30m','1h','4h'].indexOf(TIMESPAN) >= 0,
             secondsVisible: false,
             fixLeftEdge: true,
@@ -349,7 +355,7 @@
             if (i >= N - 1) emaData.push({ time: unique[i].time, value: ema });
           }
           const emaSeries = chart.addLineSeries({
-            color: 'rgba(200, 200, 200, 0.85)',
+            color: 'rgba(110, 95, 70, 0.75)',   // muted brown for vanilla bg
             lineWidth: 2,
             title: 'EMA 20',
             priceLineVisible: false,
