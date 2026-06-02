@@ -650,75 +650,69 @@ function ZonesSection({ data }: { data: any }) {
         <Text style={styles.zonesNow}>now <Text style={styles.zonesNowVal}>{price.toFixed(2)}</Text></Text>
       </View>
       <Text style={styles.zonesSub}>
-        Each level is a price zone, not a single line. Solid = nearest zone, faded = the next one out.
+        Where the live price sits inside each timeframe's high–low range.
+        Near 100% = pressing the highs.
       </Text>
       {ZONE_TF_ORDER.map(tf => (
         <ZonesRow key={tf} tfKey={tf} levels={server[tf] || {}} price={price} />
       ))}
-      <View style={styles.zonesLegend}>
-        <View style={[styles.zlgDot, { backgroundColor: 'rgba(85,145,85,0.85)' }]} />
-        <Text style={styles.zlgLabel}>demand</Text>
-        <Text style={styles.zlgSep}>·</Text>
-        <View style={[styles.zlgDot, { backgroundColor: 'rgba(195,100,100,0.85)' }]} />
-        <Text style={styles.zlgLabel}>supply</Text>
-        <Text style={styles.zlgSep}>·</Text>
-        <View style={[styles.zlgDot, { backgroundColor: '#d4a02a' }]} />
-        <Text style={styles.zlgLabel}>price</Text>
-      </View>
+      <Text style={styles.zonesLegendText}>
+        <Text style={styles.zPctHi}>green</Text>
+        <Text style={styles.zonesLegendDim}> near highs · </Text>
+        <Text style={styles.zPctLo}>red</Text>
+        <Text style={styles.zonesLegendDim}> near lows — strong on big timeframes,
+          cooling on short ones</Text>
+      </Text>
     </View>
   );
 }
 
 function ZonesRow({ tfKey, levels, price }: { tfKey: string; levels: any; price: number }) {
-  const d1 = levels.demand, d2 = levels.demand2;
-  const s1 = levels.supply, s2 = levels.supply2;
+  const lo = levels.range_low;
+  const hi = levels.range_high;
+  const hasRange = lo != null && hi != null && hi > lo;
 
-  // Marker position within the middle gap (35-65% of bar).
-  let markerPct = 50;
-  if (d1 != null && s1 != null && s1 > d1) {
-    if (price < d1)      markerPct = 30;  // priced through demand
-    else if (price > s1) markerPct = 70;  // priced through supply
-    else markerPct = 35 + ((price - d1) / (s1 - d1)) * 30;
+  // % position within the high–low range.
+  // Clamped so an out-of-range price still shows at 0/100.
+  let pct = 50;
+  if (hasRange) {
+    const raw = ((price - lo) / (hi - lo)) * 100;
+    pct = Math.max(0, Math.min(100, raw));
   }
-  const dDown = d1 != null ? price - d1 : null;
-  const dUp   = s1 != null ? s1 - price : null;
+
+  // Color tier — near highs = green, near lows = red, middle = amber.
+  const tier = pct >= 70 ? 'hi' : pct <= 30 ? 'lo' : 'mid';
+  const fillStyle =
+    tier === 'hi' ? styles.zFillHi
+      : tier === 'lo' ? styles.zFillLo
+      : styles.zFillMid;
+  const dotStyle =
+    tier === 'hi' ? styles.zDotHi
+      : tier === 'lo' ? styles.zDotLo
+      : styles.zDotMid;
+  const pctStyle =
+    tier === 'hi' ? styles.zPctHi
+      : tier === 'lo' ? styles.zPctLo
+      : styles.zPctMid;
 
   return (
     <View style={styles.zRow}>
       <Text style={styles.zLabel}>{ZONE_TF_LABELS[tfKey] || tfKey}</Text>
-
-      <View style={[
-        styles.zChip,
-        dDown == null ? styles.zChipEmpty
-          : dDown < 0 ? styles.zChipBad
-          : styles.zChipDem,
-      ]}>
-        <Text style={styles.zChipText}>
-          {dDown == null ? '—'
-            : (dDown >= 0 ? '▼ ' : '✕ ') + Math.abs(dDown).toFixed(2)}
-        </Text>
-      </View>
+      <Text style={styles.zLoVal}>{lo != null ? lo.toFixed(2) : '—'}</Text>
 
       <View style={styles.zBar}>
-        <View style={[styles.zSeg, d2 == null ? styles.zSegEmpty : styles.zSegD2]} />
-        <View style={[styles.zSeg, d1 == null ? styles.zSegEmpty : styles.zSegD1]} />
-        <View style={styles.zSegGap} />
-        <View style={[styles.zSeg, s1 == null ? styles.zSegEmpty : styles.zSegS1]} />
-        <View style={[styles.zSeg, s2 == null ? styles.zSegEmpty : styles.zSegS2]} />
-        <View style={[styles.zMarker, { left: `${markerPct}%` }]} />
+        {hasRange && (
+          <View style={[styles.zFill, fillStyle, { width: `${pct}%` }]} />
+        )}
+        {hasRange && (
+          <View style={[styles.zDot, dotStyle, { left: `${pct}%` }]} />
+        )}
       </View>
 
-      <View style={[
-        styles.zChip,
-        dUp == null ? styles.zChipEmpty
-          : dUp < 0 ? styles.zChipBad
-          : styles.zChipSup,
-      ]}>
-        <Text style={styles.zChipText}>
-          {dUp == null ? '—'
-            : (dUp >= 0 ? '▲ ' : '✕ ') + Math.abs(dUp).toFixed(2)}
-        </Text>
-      </View>
+      <Text style={styles.zHiVal}>{hi != null ? hi.toFixed(2) : '—'}</Text>
+      <Text style={[styles.zPct, pctStyle]}>
+        {hasRange ? `${pct.toFixed(0)}%` : '—'}
+      </Text>
     </View>
   );
 }
@@ -818,36 +812,32 @@ const styles = StyleSheet.create({
               marginBottom: 10, lineHeight: 14 },
   zonesEmpty: { fontSize: 11, color: Colors.textLight, marginTop: 8,
                 fontStyle: 'italic' },
-  zRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 6, gap: 6 },
-  zLabel: { width: 30, fontSize: 12, fontWeight: '600', color: Colors.dark },
-  zChip: { minWidth: 56, paddingVertical: 2, paddingHorizontal: 6,
-           borderRadius: 10, alignItems: 'center' },
-  zChipText: { fontSize: 11, fontWeight: '500' },
-  zChipDem: { backgroundColor: '#c8e0c8' },
-  zChipSup: { backgroundColor: '#f2c4c4' },
-  zChipBad: { backgroundColor: '#ddd' },
-  zChipEmpty: { backgroundColor: '#e8e3d3' },
-  zBar: { flex: 1, height: 18, backgroundColor: '#efe9d7', borderRadius: 3,
-          flexDirection: 'row', position: 'relative' },
-  zSeg: { flex: 1, height: '100%' },
-  zSegGap: { flex: 1, height: '100%', backgroundColor: 'transparent' },
-  zSegD2: { backgroundColor: 'rgba(115,165,115,0.45)',
-            borderTopLeftRadius: 3, borderBottomLeftRadius: 3 },
-  zSegD1: { backgroundColor: 'rgba(85,145,85,0.85)' },
-  zSegS1: { backgroundColor: 'rgba(195,100,100,0.85)' },
-  zSegS2: { backgroundColor: 'rgba(210,145,145,0.45)',
-            borderTopRightRadius: 3, borderBottomRightRadius: 3 },
-  zSegEmpty: { backgroundColor: '#e2dcc8' },
-  zMarker: { position: 'absolute', top: -3, bottom: -3, width: 3,
-             backgroundColor: '#d4a02a', borderRadius: 2,
-             transform: [{ translateX: -1.5 }] },
-  zonesLegend: { flexDirection: 'row', alignItems: 'center',
-                 justifyContent: 'center', marginTop: 10, paddingTop: 8,
-                 borderTopWidth: 1, borderTopColor: '#e8e3d3',
-                 borderStyle: 'dashed', gap: 4 },
-  zlgDot: { width: 9, height: 9, borderRadius: 5 },
-  zlgLabel: { fontSize: 10, color: Colors.textLight },
-  zlgSep: { fontSize: 10, color: Colors.textLight, marginHorizontal: 4 },
+  // Range-position bar: [label] [low] [bar] [high] [%]
+  zRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 8, gap: 8 },
+  zLabel: { width: 32, fontSize: 12, fontWeight: '600', color: Colors.dark },
+  zLoVal: { width: 60, fontSize: 11, color: Colors.textLight, textAlign: 'right' },
+  zHiVal: { width: 60, fontSize: 11, color: Colors.textLight, textAlign: 'left' },
+  zBar: { flex: 1, height: 6, backgroundColor: '#e8e3d3',
+          borderRadius: 3, position: 'relative', overflow: 'visible' },
+  zFill: { position: 'absolute', left: 0, top: 0, bottom: 0,
+           borderRadius: 3 },
+  zDot: { position: 'absolute', top: -4, width: 14, height: 14,
+          borderRadius: 7, transform: [{ translateX: -7 }],
+          borderWidth: 1.5, borderColor: '#fbf8ef' },
+  zFillHi:  { backgroundColor: 'rgba(85, 145, 85, 0.85)' },
+  zFillMid: { backgroundColor: 'rgba(190, 155, 60, 0.85)' },
+  zFillLo:  { backgroundColor: 'rgba(195, 100, 100, 0.85)' },
+  zDotHi:   { backgroundColor: 'rgb(60, 120, 60)' },
+  zDotMid:  { backgroundColor: 'rgb(160, 125, 40)' },
+  zDotLo:   { backgroundColor: 'rgb(170, 75, 75)' },
+  zPct: { width: 42, fontSize: 12, fontWeight: '600', textAlign: 'right' },
+  zPctHi:  { color: 'rgb(60, 120, 60)' },
+  zPctMid: { color: 'rgb(160, 125, 40)' },
+  zPctLo:  { color: 'rgb(170, 75, 75)' },
+  zonesLegendText: { marginTop: 10, paddingTop: 8, borderTopWidth: 1,
+                     borderTopColor: '#e8e3d3', fontSize: 10,
+                     textAlign: 'center', lineHeight: 14 },
+  zonesLegendDim: { color: Colors.textLight, fontWeight: '400' },
   vehicleRow: { flexDirection: 'row', gap: 6, marginBottom: 10 },
   vehicleChip: { flex: 1, paddingVertical: 8, borderRadius: 12,
                  backgroundColor: Colors.cream, alignItems: 'center',

@@ -4102,9 +4102,16 @@ def create_app():
                         highs = [c.high for c in reversed(candles)]
                         lows = [c.low for c in reversed(candles)]
                         s1, s2, d1, d2 = find_untouched_levels(highs, lows, price, lookback=12)
+                        # Range high/low for the position-bar visualization
+                        # on the Dashboard panel. Same lookback window as
+                        # the zones — 12 bars back from most-recent.
+                        recent_highs = [c.high for c in candles[-12:]]
+                        recent_lows = [c.low for c in candles[-12:]]
                         item["server"][tf_label] = {
                             "supply": s1, "supply2": s2,
                             "demand": d1, "demand2": d2,
+                            "range_high": max(recent_highs) if recent_highs else None,
+                            "range_low": min(recent_lows) if recent_lows else None,
                         }
                         direction, adx_val = calculate_adx_direction(candles, period=14)
                         item["server_trends"][tf_label] = direction
