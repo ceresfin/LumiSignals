@@ -527,7 +527,7 @@ export function SwingTradePanel() {
           </View>
           {vehicle === 'shares' && sh?.atr != null && sh?.atr_multiplier != null && (
             <Text style={styles.rrSubline}>
-              {sh.atr_multiplier}× ATR{sh.atr_tf ? `(${sh.atr_tf})` : ''} = ${(sh.atr * sh.atr_multiplier).toFixed(2)}
+              ATR{sh.atr_tf ? `(${sh.atr_tf})` : ''} ${sh.atr.toFixed(2)} × {sh.atr_multiplier} = ${(sh.atr * sh.atr_multiplier).toFixed(2)}
             </Text>
           )}
           <View style={styles.rrLineRow}>
