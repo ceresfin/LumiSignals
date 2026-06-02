@@ -837,16 +837,19 @@ const styles = StyleSheet.create({
   zDot: { position: 'absolute', top: -4, width: 14, height: 14,
           borderRadius: 7, transform: [{ translateX: -7 }],
           borderWidth: 1.5, borderColor: '#fbf8ef' },
-  zFillHi:  { backgroundColor: 'rgba(85, 145, 85, 0.85)' },
-  zFillMid: { backgroundColor: 'rgba(190, 155, 60, 0.85)' },
-  zFillLo:  { backgroundColor: 'rgba(195, 100, 100, 0.85)' },
-  zDotHi:   { backgroundColor: 'rgb(60, 120, 60)' },
-  zDotMid:  { backgroundColor: 'rgb(160, 125, 40)' },
-  zDotLo:   { backgroundColor: 'rgb(170, 75, 75)' },
+  // Lumitrade palette — muted sage / mustard / dusty coral. Keeps the
+  // green/red color logic readable while sitting harmoniously on the
+  // vanilla card background.
+  zFillHi:  { backgroundColor: '#87b287' },   // sage
+  zFillMid: { backgroundColor: '#c5a347' },   // mustard gold
+  zFillLo:  { backgroundColor: '#ce9590' },   // dusty coral
+  zDotHi:   { backgroundColor: '#5a8a5a' },
+  zDotMid:  { backgroundColor: '#9c803a' },
+  zDotLo:   { backgroundColor: '#b87870' },
   zPct: { width: 42, fontSize: 12, fontWeight: '600', textAlign: 'right' },
-  zPctHi:  { color: 'rgb(60, 120, 60)' },
-  zPctMid: { color: 'rgb(160, 125, 40)' },
-  zPctLo:  { color: 'rgb(170, 75, 75)' },
+  zPctHi:  { color: '#5a8a5a' },
+  zPctMid: { color: '#9c803a' },
+  zPctLo:  { color: '#b87870' },
   zonesLegendText: { marginTop: 10, paddingTop: 8, borderTopWidth: 1,
                      borderTopColor: '#e8e3d3', fontSize: 10,
                      textAlign: 'center', lineHeight: 14 },

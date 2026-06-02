@@ -831,35 +831,37 @@
         // these per mode (scalp/intraday/swing) and the chart picks
         // up the new values via the URL params.
         if (IS_SHARES_VIEW && SHARES_ENTRY != null) {
+          // Lumitrade palette: warm gold / sage / dusty coral, dashed,
+          // lowercase labels to match the brand aesthetic.
           candleSeries.createPriceLine({
             price: SHARES_ENTRY,
-            color: '#FFC107',
-            lineWidth: 3,
-            lineStyle: LightweightCharts.LineStyle.Solid,
+            color: '#c5a347',              // warm mustard gold
+            lineWidth: 2,
+            lineStyle: LightweightCharts.LineStyle.Dashed,
             axisLabelVisible: true,
-            axisLabelTextColor: '#000',
-            title: 'ENTRY ' + SHARES_ENTRY.toFixed(2),
+            axisLabelTextColor: '#fff',
+            title: 'entry ' + SHARES_ENTRY.toFixed(2),
           });
           if (SHARES_TARGET != null) {
             candleSeries.createPriceLine({
               price: SHARES_TARGET,
-              color: '#3E7F6B',
-              lineWidth: 3,
-              lineStyle: LightweightCharts.LineStyle.Solid,
+              color: '#87b287',            // muted sage green
+              lineWidth: 2,
+              lineStyle: LightweightCharts.LineStyle.Dashed,
               axisLabelVisible: true,
               axisLabelTextColor: '#fff',
-              title: 'TARGET ' + SHARES_TARGET.toFixed(2),
+              title: 'target ' + SHARES_TARGET.toFixed(2),
             });
           }
           if (SHARES_STOP != null) {
             candleSeries.createPriceLine({
               price: SHARES_STOP,
-              color: '#C26A6A',
-              lineWidth: 3,
-              lineStyle: LightweightCharts.LineStyle.Solid,
+              color: '#ce9590',            // dusty coral / salmon
+              lineWidth: 2,
+              lineStyle: LightweightCharts.LineStyle.Dashed,
               axisLabelVisible: true,
               axisLabelTextColor: '#fff',
-              title: 'STOP ' + SHARES_STOP.toFixed(2),
+              title: 'stop loss ' + SHARES_STOP.toFixed(2),
             });
           }
         }
