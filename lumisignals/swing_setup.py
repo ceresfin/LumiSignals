@@ -455,10 +455,14 @@ def _pick_trigger_level(monthly_candles, current_price: float,
     Returns (level, None) on success or (None, skip_reason) on skip
     (no level found, or price too far from any level).
     """
-    from .untouched_levels import find_untouched_levels
+    from .untouched_levels import find_step_levels
     highs = [c.high for c in monthly_candles[::-1]]  # most recent first
     lows = [c.low for c in monthly_candles[::-1]]
-    sup1, sup2, dem1, dem2 = find_untouched_levels(highs, lows, current_price, lookback=12)
+    # Anchor on the in-progress bar's own low/high and walk back with
+    # running min/max. Avoids the prior find_untouched_levels behavior
+    # of mixing in a finer-TF current_price, which let intra-bar dips
+    # invalidate still-untouched higher-TF levels.
+    sup1, sup2, dem1, dem2 = find_step_levels(highs, lows, lookback=12)
     # Stash the full zone set on a function attribute so the caller can
     # reuse it for the zones-panel data — guarantees the chart's
     # trigger_level and the panel's D1/D2/S1/S2 come from the exact
@@ -468,21 +472,20 @@ def _pick_trigger_level(monthly_candles, current_price: float,
         "demand": dem1, "demand2": dem2,
     }
 
-    # Per user spec 2026-06-02 (revised): use the 1st untouched level
-    # (D1/S1) — the nearest untouched low under price for longs, the
-    # nearest untouched high above price for shorts.
+    # D1/S1 from find_step_levels are the most recent untouched
+    # low/high going back from the in-progress bar. Level may sit above
+    # OR below current_price (e.g. monthly D1 well below price during an
+    # uptrend; hourly D1 can be slightly above when a wick has just
+    # broken through) — caller decides whether to take the trade.
     if direction_dir == "UP":
-        if dem1 is not None and dem1 < current_price:
-            level = dem1
-        else:
-            return None, "no untouched demand below current price"
-        proximity = (current_price - level) / current_price
+        if dem1 is None:
+            return None, "no untouched demand in lookback window"
+        level = dem1
     else:
-        if sup1 is not None and sup1 > current_price:
-            level = sup1
-        else:
-            return None, "no untouched supply above current price"
-        proximity = (level - current_price) / current_price
+        if sup1 is None:
+            return None, "no untouched supply in lookback window"
+        level = sup1
+    proximity = abs(current_price - level) / current_price
 
     # Note: previously this hard-skipped when proximity > 3%. For the
     # dashboard's prospective view we want to SHOW the level even when

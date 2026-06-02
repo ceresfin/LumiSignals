@@ -1238,7 +1238,7 @@ def create_app():
         if massive_key:
             try:
                 from lumisignals.massive_client import get_shared_client
-                from lumisignals.untouched_levels import find_untouched_levels
+                from lumisignals.untouched_levels import find_step_levels
                 # Use the SAME MassiveClient instance the analyzer used —
                 # its TTL candle cache means any TF the analyzer already
                 # pulled (the 3 russian-doll TFs) is served from memory
@@ -1271,8 +1271,8 @@ def create_app():
                         price = candles[-1].close
                         highs = [c.high for c in reversed(candles)]
                         lows = [c.low for c in reversed(candles)]
-                        s1, s2, d1, d2 = find_untouched_levels(
-                            highs, lows, price, lookback=12)
+                        s1, s2, d1, d2 = find_step_levels(
+                            highs, lows, lookback=12)
                         recent_highs = [c.high for c in candles[-12:]]
                         recent_lows = [c.low for c in candles[-12:]]
                         zones_by_tf[tf_label] = {
