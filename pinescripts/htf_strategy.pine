@@ -162,25 +162,31 @@ fBuy       = fBuyRaw and fBuyScore >= minScore
 // ==================== WEBHOOK ALERTS ====================
 tk = syminfo.ticker
 
+// Only fire trade alerts on equities. SPX/NDX/forex have no equity-options
+// chain at the server's Polygon endpoint, so the webhook would 400 with
+// "Could not get price for {ticker}". The levels-sync alert below still
+// fires for every asset class so the SNR Compare dashboard stays populated.
+tradeable = syminfo.type == "stock"
+
 // --- Daily duration ---
-if dSell
+if dSell and tradeable
     alert('{"ticker":"' + tk + '","direction":"SELL","strategy":"htf_supply_demand","key":"' + webhookKey + '","type":"stock","spread_type":"both","trade_duration":"daily","score":' + str.tostring(dSellScore) + ',"level_price":' + str.tostring(dSellLvl) + ',"level_tf":"' + dSellTf + '","htf_trends":"W:' + dirStr(wDir) + ' M:' + dirStr(mDir) + '","msg":"HTF SELL ' + tk + ' — ' + dSellTf + ' S1' + str.tostring(dSellLvl, format.mintick) + ' | W:' + dirStr(wDir) + ' M:' + dirStr(mDir) + ' | Score ' + str.tostring(dSellScore) + '/3"}', alert.freq_once_per_bar_close)
 
-if dBuy
+if dBuy and tradeable
     alert('{"ticker":"' + tk + '","direction":"BUY","strategy":"htf_supply_demand","key":"' + webhookKey + '","type":"stock","spread_type":"both","trade_duration":"daily","score":' + str.tostring(dBuyScore) + ',"level_price":' + str.tostring(dBuyLvl) + ',"level_tf":"' + dBuyTf + '","htf_trends":"W:' + dirStr(wDir) + ' M:' + dirStr(mDir) + '","msg":"HTF BUY ' + tk + ' — ' + dBuyTf + ' D1' + str.tostring(dBuyLvl, format.mintick) + ' | W:' + dirStr(wDir) + ' M:' + dirStr(mDir) + ' | Score ' + str.tostring(dBuyScore) + '/3"}', alert.freq_once_per_bar_close)
 
 // --- Hourly duration ---
-if hSell
+if hSell and tradeable
     alert('{"ticker":"' + tk + '","direction":"SELL","strategy":"htf_supply_demand","key":"' + webhookKey + '","type":"stock","spread_type":"both","trade_duration":"hourly","score":' + str.tostring(hSellScore) + ',"level_price":' + str.tostring(dSupply) + ',"level_tf":"D","htf_trends":"D:' + dirStr(dDir) + ' W:' + dirStr(wDir) + '","msg":"HTF SELL ' + tk + ' — D S1' + str.tostring(dSupply, format.mintick) + ' | D:' + dirStr(dDir) + ' W:' + dirStr(wDir) + ' | Score ' + str.tostring(hSellScore) + '/3"}', alert.freq_once_per_bar_close)
 
-if hBuy
+if hBuy and tradeable
     alert('{"ticker":"' + tk + '","direction":"BUY","strategy":"htf_supply_demand","key":"' + webhookKey + '","type":"stock","spread_type":"both","trade_duration":"hourly","score":' + str.tostring(hBuyScore) + ',"level_price":' + str.tostring(dDemand) + ',"level_tf":"D","htf_trends":"D:' + dirStr(dDir) + ' W:' + dirStr(wDir) + '","msg":"HTF BUY ' + tk + ' — D D1' + str.tostring(dDemand, format.mintick) + ' | D:' + dirStr(dDir) + ' W:' + dirStr(wDir) + ' | Score ' + str.tostring(hBuyScore) + '/3"}', alert.freq_once_per_bar_close)
 
 // --- 5-min duration ---
-if fSell
+if fSell and tradeable
     alert('{"ticker":"' + tk + '","direction":"SELL","strategy":"htf_supply_demand","key":"' + webhookKey + '","type":"stock","spread_type":"both","trade_duration":"5min","score":' + str.tostring(fSellScore) + ',"level_price":' + str.tostring(h4Supply) + ',"level_tf":"4H","htf_trends":"4H:' + dirStr(h4Dir) + ' D:' + dirStr(dDir) + ' 1H:' + dirStr(h1Dir) + '","msg":"HTF SELL ' + tk + ' — 4H S1' + str.tostring(h4Supply, format.mintick) + ' | 4H:' + dirStr(h4Dir) + ' D:' + dirStr(dDir) + ' 1H:' + dirStr(h1Dir) + ' | Score ' + str.tostring(fSellScore) + '/4"}', alert.freq_once_per_bar_close)
 
-if fBuy
+if fBuy and tradeable
     alert('{"ticker":"' + tk + '","direction":"BUY","strategy":"htf_supply_demand","key":"' + webhookKey + '","type":"stock","spread_type":"both","trade_duration":"5min","score":' + str.tostring(fBuyScore) + ',"level_price":' + str.tostring(h4Demand) + ',"level_tf":"4H","htf_trends":"4H:' + dirStr(h4Dir) + ' D:' + dirStr(dDir) + ' 1H:' + dirStr(h1Dir) + '","msg":"HTF BUY ' + tk + ' — 4H D1' + str.tostring(h4Demand, format.mintick) + ' | 4H:' + dirStr(h4Dir) + ' D:' + dirStr(dDir) + ' 1H:' + dirStr(h1Dir) + ' | Score ' + str.tostring(fBuyScore) + '/4"}', alert.freq_once_per_bar_close)
 
 // --- Levels sync (pushes current levels + trends to server for comparison dashboard) ---
