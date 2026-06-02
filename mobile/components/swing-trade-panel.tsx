@@ -681,7 +681,8 @@ function ZonesSection({ data }: { data: any }) {
       <Text style={styles.zonesSub}>
         Nearest untouched demand (low) and supply (high) per timeframe —
         the same levels the chart enters on. Near 100% = pressing supply,
-        near 0% = sitting on demand.
+        near 0% = sitting on demand. Italic value = no untouched level
+        in window (at extreme); falls back to 12-bar range edge.
       </Text>
       {ZONE_TF_ORDER.map(tf => (
         <ZonesRow key={tf} tfKey={tf} levels={server[tf] || {}} price={price} />
@@ -698,10 +699,17 @@ function ZonesSection({ data }: { data: any }) {
 }
 
 function ZonesRow({ tfKey, levels, price }: { tfKey: string; levels: any; price: number }) {
-  // Per user spec 2026-06-02 (revised): show the 1st untouched levels
-  // (D1/S1) — the same levels the analyzer enters on.
-  const lo = levels.demand;
-  const hi = levels.supply;
+  // D1/S1 are the analyzer's untouched levels. When a TF is at ATH
+  // (very common for SPX-style indexes in an uptrend) supply is null
+  // because no prior bar's high pierces the in-progress high. Same on
+  // the other side for ATL. Fall back to the 12-bar literal range
+  // extreme so the bar pegs at 100% / 0% instead of going blank.
+  const loRaw = levels.demand;
+  const hiRaw = levels.supply;
+  const lo = loRaw ?? levels.range_low;
+  const hi = hiRaw ?? levels.range_high;
+  const loIsFallback = loRaw == null && lo != null;
+  const hiIsFallback = hiRaw == null && hi != null;
   const hasRange = lo != null && hi != null && hi > lo;
 
   // % position within the high–low range.
@@ -730,7 +738,9 @@ function ZonesRow({ tfKey, levels, price }: { tfKey: string; levels: any; price:
   return (
     <View style={styles.zRow}>
       <Text style={styles.zLabel}>{ZONE_TF_LABELS[tfKey] || tfKey}</Text>
-      <Text style={styles.zLoVal}>{lo != null ? lo.toFixed(2) : '—'}</Text>
+      <Text style={[styles.zLoVal, loIsFallback && styles.zValFallback]}>
+        {lo != null ? lo.toFixed(2) : '—'}
+      </Text>
 
       <View style={styles.zBar}>
         {hasRange && (
@@ -741,7 +751,9 @@ function ZonesRow({ tfKey, levels, price }: { tfKey: string; levels: any; price:
         )}
       </View>
 
-      <Text style={styles.zHiVal}>{hi != null ? hi.toFixed(2) : '—'}</Text>
+      <Text style={[styles.zHiVal, hiIsFallback && styles.zValFallback]}>
+        {hi != null ? hi.toFixed(2) : '—'}
+      </Text>
       <Text style={[styles.zPct, pctStyle]}>
         {hasRange ? `${pct.toFixed(0)}%` : '—'}
       </Text>
@@ -850,6 +862,7 @@ const styles = StyleSheet.create({
   zLabel: { width: 32, fontSize: 12, fontWeight: '600', color: Colors.dark },
   zLoVal: { width: 60, fontSize: 11, color: Colors.textLight, textAlign: 'right' },
   zHiVal: { width: 60, fontSize: 11, color: Colors.textLight, textAlign: 'left' },
+  zValFallback: { fontStyle: 'italic', opacity: 0.7 },
   zBar: { flex: 1, height: 6, backgroundColor: '#e8e3d3',
           borderRadius: 3, position: 'relative', overflow: 'visible' },
   zFill: { position: 'absolute', left: 0, top: 0, bottom: 0,
