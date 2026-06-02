@@ -4083,6 +4083,11 @@ def create_app():
                         if not candles or len(candles) < 3:
                             continue
                         price = candles[-1].close
+                        # Track the freshest last-close across all TFs.
+                        # Lowest TF wins (most current).
+                        if (item.get("current_price") is None
+                            or tf in ("15m", "30m", "1h")):
+                            item["current_price"] = price
                         highs = [c.high for c in reversed(candles)]
                         lows = [c.low for c in reversed(candles)]
                         s1, s2, d1, d2 = find_untouched_levels(highs, lows, price, lookback=10)
