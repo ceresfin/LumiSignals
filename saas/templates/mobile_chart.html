@@ -38,11 +38,50 @@
     }
     #contractBadge .sym { font-size: 10px; opacity: 0.95; }
     #contractBadge .cd  { font-size: 11px; font-variant-numeric: tabular-nums; margin-top: 1px; }
+
+    /* Upper-left legend chip: ticker | timeframe + entry/target/stop
+       dot palette + expand button. Sits above the chart canvas. */
+    #legend {
+      position: absolute; top: 10px; left: 10px; z-index: 12;
+      background: rgba(251, 248, 239, 0.88);
+      border: 1px solid #d4ccb3;
+      border-radius: 8px;
+      padding: 6px 9px;
+      font-size: 12px;
+      color: #2c2925;
+      pointer-events: auto;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    }
+    #legend .title { font-weight: 600; letter-spacing: 0.4px; font-size: 13px; }
+    #legend .row {
+      display: flex; align-items: center; gap: 6px; margin-top: 3px;
+    }
+    #legend .dot {
+      width: 9px; height: 9px; border-radius: 50%; display: inline-block;
+    }
+    #legend .dot-entry  { background: #c5a347; }
+    #legend .dot-target { background: #87b287; }
+    #legend .dot-stop   { background: #ce9590; }
+    #legend .eye {
+      cursor: pointer; padding: 1px 4px; margin-left: 4px;
+      border-radius: 4px; font-size: 14px; line-height: 1;
+      color: #5a5347;
+    }
+    #legend .eye:active { background: #e8e3d3; }
   </style>
 </head>
 <body>
   <div id="chart">
     <div id="contractBadge"><div class="sym"></div><div class="cd"></div></div>
+    <div id="legend">
+      <div class="title"><span id="legendTicker"></span> | <span id="legendTf"></span></div>
+      <div class="row">
+        <span class="dot dot-entry"></span>
+        <span class="dot dot-target"></span>
+        <span class="dot dot-stop"></span>
+        <span class="eye" id="legendEye" role="button" aria-label="Expand chart">⛶</span>
+      </div>
+    </div>
   </div>
   <div id="loading">Loading chart...</div>
   <div id="error"></div>
@@ -52,6 +91,26 @@
     const params = new URLSearchParams(window.location.search);
     const TICKER = params.get('ticker') || 'EUR_USD';
     const TIMESPAN = params.get('timespan') || '15m';
+
+    // ── Legend overlay (upper-left): ticker + readable TF + expand ──
+    const TF_LABELS_MAP = {
+      '1m': '1 MIN', '2m': '2 MIN', '5m': '5 MIN', '15m': '15 MIN',
+      '30m': '30 MIN', '1h': '1 HOUR', '4h': '4 HOUR',
+      '1d': 'DAILY', '1w': 'WEEKLY', '1mo': 'MONTHLY', '3mo': 'QUARTERLY',
+    };
+    document.getElementById('legendTicker').textContent =
+      TICKER.replace(/^[CIX]:/, '');   // strip Polygon prefix (I:/C:/X:)
+    document.getElementById('legendTf').textContent =
+      TF_LABELS_MAP[TIMESPAN] || TIMESPAN.toUpperCase();
+    document.getElementById('legendEye').addEventListener('click', function() {
+      // Notify React Native to toggle the WebView height between
+      // normal and fullscreen. RN side listens via onMessage.
+      try {
+        window.ReactNativeWebView &&
+          window.ReactNativeWebView.postMessage(
+            JSON.stringify({ type: 'chart:toggle-expand' }));
+      } catch (e) { /* silent */ }
+    });
     const COUNT = params.get('count') || '300';
     const LEVELS_TICKER = TICKER.replace('_', '');
 

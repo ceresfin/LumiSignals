@@ -130,6 +130,9 @@ export function SwingTradePanel() {
   // float at fetch time. Persisted to AsyncStorage so it survives
   // panel remounts and app restarts.
   const [maxRiskInput, setMaxRiskInput] = useState<string>(MAX_RISK_DEFAULT);
+  // Tall-mode toggle for the chart — triggered by the legend's expand
+  // button in mobile_chart.html via postMessage.
+  const [chartExpanded, setChartExpanded] = useState(false);
 
   // Supply & Demand Zones data — fetched from the compare-levels endpoint
   // which is the same source the SNR Compare screen uses. One ticker at
@@ -619,12 +622,21 @@ export function SwingTradePanel() {
           <Text style={styles.infoBtnText}>i</Text>
         </TouchableOpacity>
       </View>
-      <View style={styles.chartContainer}>
+      <View style={[styles.chartContainer, chartExpanded && styles.chartContainerTall]}>
         <WebView
           source={{ uri: chartUrl }}
           style={styles.chart}
           scalesPageToFit
           javaScriptEnabled
+          onMessage={(e) => {
+            // Chart legend's expand button postMessages here.
+            try {
+              const msg = JSON.parse(e.nativeEvent.data);
+              if (msg?.type === 'chart:toggle-expand') {
+                setChartExpanded(v => !v);
+              }
+            } catch { /* ignore non-JSON */ }
+          }}
         />
       </View>
 
@@ -810,6 +822,7 @@ const styles = StyleSheet.create({
                  fontFamily: 'serif' },
   chartContainer: { height: 400, borderRadius: 12, overflow: 'hidden',
                     backgroundColor: Colors.white },
+  chartContainerTall: { height: 700 },   // toggled by chart legend expand
   chart: { flex: 1 },
 
   // Supply & Demand Zones
