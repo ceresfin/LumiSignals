@@ -67,6 +67,24 @@ _last_slow_pass_at: float = 0.0
 _recent_emits: Dict[tuple, float] = {}
 
 
+def _is_disabled() -> bool:
+    """Redis kill switch — when `ibkr:reconciler:disabled` = "1" the
+    reconciler skips every pass. Set/unset with redis-cli without a
+    redeploy. Added 2026-06-02 after the adopt path on reconciler.py:481
+    silently synthesized a 15-contract MES strat_pos from accumulated
+    orphan fills, exposing the bot to $1k of risk on a position no
+    strategy actually opened.
+    """
+    try:
+        import os
+        import redis as _redis
+        _r = _redis.from_url(os.environ.get("REDIS_URL",
+                                            "redis://localhost:6379/0"))
+        return _r.get("ibkr:reconciler:disabled") == b"1"
+    except Exception:
+        return False
+
+
 def _should_emit(key: tuple) -> bool:
     """Return True iff this mismatch wasn't already flagged recently."""
     now = time.time()
@@ -138,6 +156,8 @@ def run_pass(
 
     Idempotent within the cooldown window; safe to call every loop tick.
     """
+    if _is_disabled():
+        return
     global _last_pass_at
     now = time.time()
     if now - _last_pass_at < MIN_INTERVAL_SECONDS:
@@ -670,6 +690,8 @@ def slow_tier_pass(broker: str, position_summary: Iterable[dict]) -> None:
 
     Self-throttles to SLOW_TIER_INTERVAL_SECONDS. Called by run_pass().
     """
+    if _is_disabled():
+        return
     global _last_slow_pass_at
     now = time.time()
     if now - _last_slow_pass_at < SLOW_TIER_INTERVAL_SECONDS:
