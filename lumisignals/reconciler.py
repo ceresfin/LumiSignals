@@ -498,6 +498,21 @@ def run_pass(
                 # cycle at module load time.
                 try:
                     from .ibkr_sync_cpapi import save_strat_pos
+                    # If the order originated from the mobile MTF dashboard
+                    # (or a future panel that calls model_by_perm), pick up
+                    # the model so the audit row shows "MTF·" / "Scalp·" /
+                    # "Intraday·" instead of just the strategy name alone.
+                    adopt_model = ""
+                    try:
+                        if last_order_id:
+                            import redis as _redis_m
+                            rdb_m = _redis_m.from_url(os.environ.get("REDIS_URL",
+                                "redis://localhost:6379/0"))
+                            raw_m = rdb_m.get(f"ibkr:model_by_perm:{last_order_id}")
+                            if raw_m:
+                                adopt_model = (raw_m.decode() if isinstance(raw_m, bytes) else str(raw_m))
+                    except Exception as _me:
+                        logger.debug("model_by_perm lookup failed: %s", _me)
                     save_strat_pos(
                         ticker=ticker,
                         strategy=strat,
@@ -509,6 +524,7 @@ def run_pass(
                         stop_price=discovered_sl_price,
                         target_order_id=discovered_tp_id,
                         target_price=discovered_tp_price,
+                        metadata={"model": adopt_model} if adopt_model else None,
                         caller="reconciler_adopt",
                     )
                 except Exception as _e:

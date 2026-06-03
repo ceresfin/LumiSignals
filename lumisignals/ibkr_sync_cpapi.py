@@ -940,6 +940,157 @@ def sync_positions_to_supabase(positions: list):
         logger.debug("stale-row sweep failed: %s", e)
 
 
+def sync_spreads_to_supabase(spreads: list):
+    """Mirror open IB option spreads into the Supabase `positions` table.
+
+    Bot-opened spreads (htf_levels, swing_setup via the MTF dashboard, etc.)
+    were previously invisible to the mobile Open Positions tab because the
+    Pine/dashboard path only wrote Redis strat_pos — never inserted a
+    Supabase row. Mobile reads Supabase for Open Positions, so spreads
+    showed up only in the IB Direct audit panel.
+
+    Keyed by perm_id when available, falling back to a synthetic id
+    derived from symbol+expiry+strikes so identical legs adopted from
+    different orders still get distinct rows.
+    """
+    try:
+        from .supabase_client import get_client
+    except Exception as e:
+        logger.debug("supabase_client unavailable: %s", e)
+        return
+    sb = get_client()
+    if not sb:
+        return
+    user_id = os.environ.get("SUPABASE_USER_ID", "")
+    if not user_id:
+        return
+
+    seen_tids = set()  # broker_trade_ids touched this cycle
+
+    for sp in spreads or []:
+        sym = sp.get("symbol", "")
+        qty = int(sp.get("quantity", 0) or 0)
+        if not sym or qty <= 0:
+            continue
+
+        spread_type = sp.get("spread_type", "")
+        long_strike = float(sp.get("long_strike", 0) or 0)
+        short_strike = float(sp.get("short_strike", 0) or 0)
+        expiration = str(sp.get("expiration", ""))
+        right = str(sp.get("right", ""))
+        net_cost = float(sp.get("net_cost", 0) or 0)
+        unreal = float(sp.get("unrealized_pnl", 0) or 0)
+
+        # Pull strategy / model / direction from the matching strat_pos
+        # so dashboard-placed trades land with their proper attribution
+        # (otherwise they'd show up as untagged in the Open Positions tab).
+        spread_strategy = sp.get("strategy", "")
+        spread_model = sp.get("model", "")
+        spread_direction = ""
+        spread_opened_at = sp.get("opened_at", "")
+        spread_metadata_extra = {}
+        try:
+            rdb = _rdb()
+            if rdb:
+                for k in rdb.scan_iter(f"ibkr:strat_pos:{sym}:*"):
+                    raw = rdb.get(k)
+                    if not raw:
+                        continue
+                    sp_rec = json.loads(raw)
+                    spread_strategy = spread_strategy or sp_rec.get("strategy", "")
+                    spread_direction = spread_direction or sp_rec.get("direction", "")
+                    spread_opened_at = spread_opened_at or sp_rec.get("opened_at", "")
+                    md = sp_rec.get("metadata") or {}
+                    if md.get("model"):
+                        spread_model = spread_model or md["model"]
+                    spread_metadata_extra = md
+                    break
+        except Exception as e:
+            logger.debug("strat_pos lookup for %s failed: %s", sym, e)
+
+        # Direction fallback when no strat_pos exists: derive from
+        # spread_type semantics. Bull setups → BUY, Bear → SELL. Mirrors
+        # the bot's existing convention for OPT bias tracking.
+        if not spread_direction:
+            st_l = spread_type.lower()
+            if "bull" in st_l or ("call" in st_l and "debit" in st_l) or ("put" in st_l and "credit" in st_l):
+                spread_direction = "BUY"
+            elif "bear" in st_l or ("call" in st_l and "credit" in st_l) or ("put" in st_l and "debit" in st_l):
+                spread_direction = "SELL"
+            else:
+                spread_direction = "BUY"
+
+        # broker_trade_id: prefer perm_id (set by record_strategy_for_perm
+        # for bot-placed orders), else synthesize a stable key. Synthesized
+        # keys still upsert cleanly across cycles since the spread structure
+        # is deterministic.
+        perm_id = str(sp.get("perm_id", "") or "")
+        broker_trade_id = perm_id or (
+            f"spread:{sym}:{expiration}:{long_strike:g}/{short_strike:g}:{right}"
+        )
+        seen_tids.add(broker_trade_id)
+
+        row = {
+            "user_id": user_id,
+            "broker": "ib",
+            "broker_trade_id": broker_trade_id,
+            "instrument": sym,
+            "asset_type": "options",
+            "direction": spread_direction,
+            "contracts": qty,
+            "entry_price": round(net_cost, 4),
+            "unrealized_pl": round(unreal, 2),
+            "strategy": spread_strategy or "",
+            "model": spread_model or spread_strategy or "",
+            "spread_type": spread_type,
+            "sell_strike": short_strike,
+            "buy_strike": long_strike,
+            "right": right,
+            "expiration": expiration,
+            "metadata": {
+                **(spread_metadata_extra or {}),
+                "long_strike": long_strike,
+                "short_strike": short_strike,
+                "width": sp.get("width", 0),
+                "max_profit": sp.get("max_profit", 0),
+                "max_risk": sp.get("max_risk", 0),
+                "current_value": sp.get("current_value", 0),
+            },
+            "updated_at": time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime()),
+        }
+        if spread_opened_at:
+            row["opened_at"] = spread_opened_at
+
+        row = {k: v for k, v in row.items() if v is not None}
+        try:
+            sb.table("positions").upsert(
+                row, on_conflict="user_id,broker,broker_trade_id"
+            ).execute()
+        except Exception as e:
+            logger.debug("spread upsert failed for %s (%s): %s",
+                          sym, broker_trade_id, e)
+
+    # Sweep stale OPT rows — any options position in Supabase for this
+    # user that wasn't touched this cycle has closed (or never matched
+    # an IB spread). Drop it so the mobile doesn't show ghost rows.
+    try:
+        existing = sb.table("positions").select("id, broker_trade_id") \
+            .eq("user_id", user_id).eq("broker", "ib") \
+            .eq("asset_type", "options") \
+            .execute().data or []
+        for r in existing:
+            tid = str(r.get("broker_trade_id") or "")
+            if tid and tid not in seen_tids:
+                try:
+                    sb.table("positions").delete().eq("id", r["id"]).execute()
+                    logger.info("Cleared stale OPT spread row: tid=%s", tid)
+                except Exception as e:
+                    logger.debug("stale OPT row delete failed (id=%s): %s",
+                                  r.get("id"), e)
+    except Exception as e:
+        logger.debug("stale OPT sweep failed: %s", e)
+
+
 def collect_ib_data(client) -> dict:
     """Collect all relevant data from IB via Client Portal API."""
 
@@ -3569,6 +3720,7 @@ def main():
             # reads Supabase directly, so the rows would otherwise stay frozen
             # at order-placement-time values).
             sync_positions_to_supabase(data.get("positions", []))
+            sync_spreads_to_supabase(data.get("spreads", []))
             sync_oanda_positions_to_supabase()
 
             # Diary reconciler: compare what the trade-event diary thinks

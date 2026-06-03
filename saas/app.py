@@ -1354,6 +1354,9 @@ def create_app():
         contracts = int(body.get("contracts") or 0)
         limit_price = body.get("limit_price")
         max_risk_usd = float(body.get("max_risk_usd") or 200)
+        # Dashboard mode (scalp/intraday/mtf) — used to tag the strat_pos
+        # so the mobile reconciler shows the right bucket. Missing → empty.
+        mode = (body.get("mode") or "").lower()
 
         missing = [k for k, v in (
             ("ticker", ticker), ("direction", direction),
@@ -1462,6 +1465,24 @@ def create_app():
                 record_strategy_for_perm(result, "swing_setup")
             except Exception as _e:
                 logger.debug("record_strategy_for_perm (swing combo) failed: %s", _e)
+            # Tag perm_id → model (scalp/intraday/mtf) so the reconciler
+            # can stash it on the strat_pos metadata when adopting. Mirrors
+            # record_strategy_for_perm — 24h TTL covers same-day adoption.
+            if mode:
+                try:
+                    import redis as _redis
+                    _rdb_m = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+                    perm_ids = []
+                    cands = result if isinstance(result, list) else [result]
+                    for c in cands:
+                        if isinstance(c, dict):
+                            oid = c.get("order_id") or c.get("orderId")
+                            if oid:
+                                perm_ids.append(str(oid))
+                    for pid in perm_ids:
+                        _rdb_m.setex(f"ibkr:model_by_perm:{pid}", 86400, mode)
+                except Exception as _e:
+                    logger.debug("model_by_perm setex failed: %s", _e)
         except Exception as e:
             logger.error("swing combo place_order error: %s", e)
             return jsonify({"error": f"place_order failed: {e}",
@@ -2626,6 +2647,17 @@ def create_app():
                 "sec_type": "OPT",
                 "multiplier": 100.0,
                 "description": label,
+                # Structured fields for the mobile UI to render an IBKR-style
+                # vertical descriptor (e.g. "VERTICAL SPX 100 2 JUN 26 (0) 7610/7615 C")
+                "expiration": str(sp.get("expiration", "")),  # YYYYMMDD
+                "right": str(sp.get("right", "")),            # "C" or "P"
+                "long_strike": float(long_strike or 0),
+                "short_strike": float(short_strike or 0),
+                "spread_type": spread_type,
+                # Per-spread max profit + max risk (dollars). Mobile multiplies
+                # by qty to show "uPL +$X / $Y max" progress vs the target.
+                "max_profit": float(sp.get("max_profit", 0)),
+                "max_risk": float(sp.get("max_risk", 0)),
             }
 
         # Gather strat_pos coverage per symbol
@@ -2646,6 +2678,11 @@ def create_app():
                     "entry_price": float(sp.get("entry_price", 0)),
                     "perm_id": str(sp.get("perm_id", "")),
                     "opened_at": sp.get("opened_at", ""),
+                    # Model lets the mobile UI show whether a bot trade came
+                    # from Scalp / Intraday / Swing. Pine signals stash it in
+                    # metadata.model; manual + reconciler-adopted strat_pos
+                    # records don't have it and render no badge.
+                    "model": str((sp.get("metadata") or {}).get("model", "")),
                 })
         except Exception as e:
             logger.warning("audit strat_pos read failed: %s", e)
@@ -2695,7 +2732,20 @@ def create_app():
         # IB positions key on symbol (OPT keys differently); strat_pos
         # keys on ticker symbol. Join by symbol so OPT legs and tracked
         # futures positions both show up.
-        all_keys = set(ib_positions.keys()) | set(strat_by_symbol.keys())
+        #
+        # Dedup: when an OPT synthetic row already exists for a symbol
+        # (e.g. "AMZN OPT Put Debit Spread 250/255"), the corresponding
+        # bare-symbol strat_pos key ("AMZN") would otherwise emit a
+        # second row with no IB data and render as a misleading PHANTOM.
+        # Drop the bare-symbol key in that case — the OPT row's strats
+        # lookup will still find the strat_pos by symbol.
+        covered_by_opt_synthetic = {
+            v["symbol"] for v in ib_positions.values()
+            if v.get("sec_type") == "OPT"
+        }
+        all_keys = set(ib_positions.keys()) | (
+            set(strat_by_symbol.keys()) - covered_by_opt_synthetic
+        )
         for key in sorted(all_keys):
             ib_data = ib_positions.get(key)
             # strats lookup uses the IB symbol field (or the key itself
@@ -2711,6 +2761,13 @@ def create_app():
             tracked_abs = sum(sp["contracts"] for sp in strats)
             orphan_qty = abs(ib_qty) - tracked_abs
 
+            # OPT spreads: the bot's "direction" field stores BIAS (SELL=
+            # bearish for a put debit, BUY=bullish for a put credit), not
+            # the position sign — but you always BUY the combo, so IB
+            # reports +N regardless. Skip the direction-mismatch check
+            # for OPT and compare by absolute contracts instead.
+            is_opt = bool(ib_data) and ib_data.get("sec_type") == "OPT"
+
             # Classify
             if ib_qty == 0 and tracked_abs == 0:
                 status = "flat"; status_label = "FLAT"
@@ -2718,8 +2775,8 @@ def create_app():
                 status = "phantom"; status_label = "PHANTOM (bot thinks open, IB shows flat)"
             elif ib_qty != 0 and tracked_abs == 0:
                 status = "all_orphan"; status_label = "ALL ORPHAN (IB open, no strat_pos)"
-            elif tracked_signed * (1 if ib_qty > 0 else -1) <= 0 and ib_qty != 0:
-                # Tracked direction opposite to IB direction
+            elif (not is_opt) and tracked_signed * (1 if ib_qty > 0 else -1) <= 0 and ib_qty != 0:
+                # Tracked direction opposite to IB direction (non-OPT only)
                 status = "direction_mismatch"; status_label = "DIRECTION MISMATCH"
             elif orphan_qty > 0:
                 status = "partial_orphan"; status_label = f"PARTIAL ORPHAN ({orphan_qty} of {abs(ib_qty)} untracked)"
@@ -2749,6 +2806,17 @@ def create_app():
                 "display_key": key,
                 "asset_type": ib_data["sec_type"] if ib_data else "?",
                 "description": ib_data["description"] if ib_data else "",
+                # Structured option-spread fields (synthetic OPT rows only).
+                # Mobile uses these to render an IBKR-style vertical line:
+                #   "VERTICAL SPX 100 2 JUN 26 (0) 7610/7615 C"
+                "expiration": ib_data.get("expiration", "") if ib_data else "",
+                "right": ib_data.get("right", "") if ib_data else "",
+                "long_strike": ib_data.get("long_strike", 0) if ib_data else 0,
+                "short_strike": ib_data.get("short_strike", 0) if ib_data else 0,
+                "spread_type": ib_data.get("spread_type", "") if ib_data else "",
+                "multiplier": ib_data.get("multiplier", 0) if ib_data else 0,
+                "max_profit": ib_data.get("max_profit", 0) if ib_data else 0,
+                "max_risk": ib_data.get("max_risk", 0) if ib_data else 0,
                 "ib_qty": ib_qty,
                 "ib_avg": round(ib_data["avg_cost"], 4) if ib_data else None,
                 "ib_market_price": round(ib_data["market_price"], 4) if ib_data else None,
