@@ -38,6 +38,9 @@ const STOCK_TICKERS = [
   'MSFT', 'MU', 'NFLX', 'NVDA', 'TSLA', 'WMT', 'XOM',
 ] as const;
 const SUPPORTED_TICKERS = [...INDEX_TICKERS, ...STOCK_TICKERS] as const;
+// Tab labels show the trade's holding period (SCALP/INTRADAY/SWING).
+// The section title "Multiple Time Frame Trade Setup" and the trade tag
+// "MTF·" in Positions describe the analysis methodology — those stay.
 const MODES = ['scalp', 'intraday', 'swing'] as const;
 const TF_LABELS: Record<string, string> = {
   '5m': '5M', '15m': '15M', '1h': '1H',
@@ -307,6 +310,9 @@ export function SwingTradePanel() {
           long_strike: o.long_strike, short_strike: o.short_strike,
           contracts: o.contracts, limit_price: o.net_debit_estimate,
           max_risk_usd: o.max_loss_per_spread,
+          // Lets the backend tag the strat_pos with model=mode so the
+          // Positions reconciler shows "MTF·" / "Scalp·" / "Intraday·".
+          mode,
         }),
       });
       const j = await r.json();
@@ -322,7 +328,7 @@ export function SwingTradePanel() {
 
   return (
     <View style={styles.section}>
-      <Text style={styles.sectionTitle}>Swing Trade Setup</Text>
+      <Text style={styles.sectionTitle}>Multiple Time Frame Trade Setup</Text>
 
       {/* Symbol picker — two horizontally-scrollable rows: indexes + stocks */}
       <Text style={styles.pickerLabel}>INDEXES</Text>
