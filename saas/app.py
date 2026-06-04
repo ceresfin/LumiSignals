@@ -4211,7 +4211,7 @@ def create_app():
                     resp = session.get(
                         f"{snr_base_url}/partners/technical-analysis/snr/frequency/",
                         params={"ticker": ticker, "intervals": ",".join(snr_intervals),
-                                "type": "forex" if is_forex else "stock", "days": 256},
+                                "type": "forex" if is_forex else ("indices" if ticker in INDEX_SYMBOLS else "stock"), "days": 256},
                         timeout=15,
                     )
                     if resp.status_code == 200:
@@ -4237,7 +4237,7 @@ def create_app():
                     resp2 = session.get(
                         f"{snr_base_url}/partners/technical-analysis/trade-builder-setup",
                         params={"ticker": ticker, "period": 14,
-                                "market": "forex" if is_forex else "stock",
+                                "market": "forex" if is_forex else ("indices" if ticker in INDEX_SYMBOLS else "stock"),
                                 "frequency": ",".join(frequencies)},
                         timeout=15,
                     )
@@ -4365,7 +4365,7 @@ def create_app():
                     resp = session.get(
                         f"{snr_base_url}/partners/technical-analysis/snr/frequency/",
                         params={"ticker": ticker, "intervals": ",".join(snr_intervals),
-                                "type": "forex" if is_forex else "stock", "days": 256},
+                                "type": "forex" if is_forex else ("indices" if ticker in INDEX_SYMBOLS else "stock"), "days": 256},
                         timeout=15,
                     )
                     if resp.status_code == 200:
@@ -4391,7 +4391,7 @@ def create_app():
                     resp2 = session.get(
                         f"{snr_base_url}/partners/technical-analysis/trade-builder-setup",
                         params={"ticker": ticker, "period": 14,
-                                "market": "forex" if is_forex else "stock",
+                                "market": "forex" if is_forex else ("indices" if ticker in INDEX_SYMBOLS else "stock"),
                                 "frequency": ",".join(frequencies)},
                         timeout=15,
                     )
