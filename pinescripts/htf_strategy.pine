@@ -38,15 +38,22 @@ findAll(int adxLen) =>
     dir = dp > (dm + 2) ? 1 : dp < (dm - 2) ? -1 : 0
     atrVal = ta.atr(14)
 
-    float maxH = high
+    // Supply: start the running max at the PREVIOUS completed bar (high[1]),
+    // not the in-progress one — otherwise a bullish current bar making a
+    // fresh high registers its own high as S1. Also require any candidate
+    // peak to sit strictly above current close so a stale value doesn't
+    // surface as a "supply" at or below price.
+    float maxH = high[1]
     float sup1 = na
     float sup2 = na
+    // Demand keeps the original behavior — current bar's low is a useful
+    // intraday demand marker.
     float minL = low
     float dem1 = na
     float dem2 = na
 
     for i = 1 to 10
-        if high[i] > maxH
+        if high[i] > maxH and high[i] > close
             if na(sup1)
                 sup1 := high[i]
             else if na(sup2)
@@ -59,8 +66,8 @@ findAll(int adxLen) =>
                 dem2 := low[i]
         minL := math.min(minL, low[i])
 
-    if na(sup1)
-        sup1 := high
+    // No fallback for sup1 — let it stay NA so the dashboard shows "—"
+    // instead of the misleading current-bar high
     if na(dem1)
         dem1 := low
 
@@ -79,15 +86,17 @@ findAll(int adxLen) =>
 [m30Dir, m30Adx, m30Atr, m30Supply, m30Supply2, m30Demand, m30Demand2] = request.security(syminfo.tickerid, "30", findAll(adxPeriod))
 [m15Dir, m15Adx, m15Atr, m15Supply, m15Supply2, m15Demand, m15Demand2] = request.security(syminfo.tickerid, "15", findAll(adxPeriod))
 
-// Fix stale levels from request.security — supply must be above price, demand below
-mSupply  := not na(mSupply) and mSupply < close ? close : mSupply
-wSupply  := not na(wSupply) and wSupply < close ? close : wSupply
-dSupply  := not na(dSupply) and dSupply < close ? close : dSupply
-h4Supply := not na(h4Supply) and h4Supply < close ? close : h4Supply
-h1Supply  := not na(h1Supply) and h1Supply < close ? close : h1Supply
-m30Supply := not na(m30Supply) and m30Supply < close ? close : m30Supply
-m15Supply := not na(m15Supply) and m15Supply < close ? close : m15Supply
-qSupply   := not na(qSupply) and qSupply < close ? close : qSupply
+// Defensive: drop any supply that's at or below current price (S2 already
+// did this; S1 used to be force-bumped UP to close, which surfaced as a
+// fake "supply at current price" instead of an honest "no level found").
+mSupply  := not na(mSupply) and mSupply <= close ? na : mSupply
+wSupply  := not na(wSupply) and wSupply <= close ? na : wSupply
+dSupply  := not na(dSupply) and dSupply <= close ? na : dSupply
+h4Supply := not na(h4Supply) and h4Supply <= close ? na : h4Supply
+h1Supply  := not na(h1Supply) and h1Supply <= close ? na : h1Supply
+m30Supply := not na(m30Supply) and m30Supply <= close ? na : m30Supply
+m15Supply := not na(m15Supply) and m15Supply <= close ? na : m15Supply
+qSupply   := not na(qSupply) and qSupply <= close ? na : qSupply
 mSupply2  := not na(mSupply2) and mSupply2 < close ? na : mSupply2
 wSupply2  := not na(wSupply2) and wSupply2 < close ? na : wSupply2
 dSupply2  := not na(dSupply2) and dSupply2 < close ? na : dSupply2
