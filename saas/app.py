@@ -4131,9 +4131,17 @@ def create_app():
         interval_to_tf = {"3mo": "Q", "1mo": "M", "1w": "W", "1d": "D",
                           "4h": "4H", "1h": "1H", "30m": "30M", "15m": "15M"}
         snr_intervals = ["3mo", "1mo", "1w", "1d", "4h", "1h", "30m", "15m"]
-        # Trade-builder for trend data
-        freq_to_tf = {"quarterly": "Q", "monthly": "M", "weekly": "W", "daily": "D", "fourhour": "4H", "hourly": "1H"}
-        frequencies = ["quarterly", "monthly", "weekly", "daily", "fourhour", "hourly"]
+        # Trade-builder for trend data. LumiTrade exposes 30m/15m trends
+        # only under the spelled-out keys "thirtyminute"/"fifteenminute"
+        # ("30m"/"15m"/"30min" all return null). Mapped by label to the
+        # 30M/15M rows for consistency with the existing offset convention
+        # (LT's frequency names run one step coarser than the literal bar
+        # interval — e.g. LT "hourly" is computed on 4h bars).
+        freq_to_tf = {"quarterly": "Q", "monthly": "M", "weekly": "W", "daily": "D",
+                      "fourhour": "4H", "hourly": "1H",
+                      "thirtyminute": "30M", "fifteenminute": "15M"}
+        frequencies = ["quarterly", "monthly", "weekly", "daily", "fourhour", "hourly",
+                       "thirtyminute", "fifteenminute"]
 
         # Built-in Polygon levels (replaces LumiTrade API)
         massive_key = os.environ.get("MASSIVE_API_KEY", "")
@@ -4266,8 +4274,12 @@ def create_app():
         interval_to_tf = {"3mo": "Q", "1mo": "M", "1w": "W", "1d": "D",
                           "4h": "4H", "1h": "1H", "30m": "30M", "15m": "15M"}
         snr_intervals = ["3mo", "1mo", "1w", "1d", "4h", "1h", "30m", "15m"]
-        freq_to_tf = {"quarterly": "Q", "monthly": "M", "weekly": "W", "daily": "D", "fourhour": "4H", "hourly": "1H"}
-        frequencies = ["quarterly", "monthly", "weekly", "daily", "fourhour", "hourly"]
+        # 30m/15m trends only under "thirtyminute"/"fifteenminute" keys.
+        freq_to_tf = {"quarterly": "Q", "monthly": "M", "weekly": "W", "daily": "D",
+                      "fourhour": "4H", "hourly": "1H",
+                      "thirtyminute": "30M", "fifteenminute": "15M"}
+        frequencies = ["quarterly", "monthly", "weekly", "daily", "fourhour", "hourly",
+                       "thirtyminute", "fifteenminute"]
 
         massive_key = os.environ.get("MASSIVE_API_KEY", "")
         massive = None
