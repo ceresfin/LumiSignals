@@ -393,6 +393,30 @@ class MassiveClient:
         )
 
         results = data.get("results", [])
+
+        # Regular-trading-hours filter for stock/index intraday minute bars.
+        # Polygon's raw aggregates include pre-market (04:00 ET) and
+        # after-hours (to 20:00 ET) prints. Including them corrupts SNR
+        # levels: e.g. SPY closes RTH at 754 but drops to 750 after hours,
+        # so the newest after-hours bar makes the analyzer compute supply
+        # ~751 instead of ~755 — diverging from TradingView / LumiTrade,
+        # which are RTH-only. The 1h/4h path already filters to RTH via
+        # _get_market_aligned_candles; this brings 15m/30m in line. The
+        # date-window math above (bars_per_day = 6.5h) already assumes
+        # RTH-only, so this filter is what that sizing expected.
+        # Hours hardcoded to EDT (13:30–20:00 UTC) to match the rest of
+        # this module; off by 1h during EST winter (known, file-wide).
+        if is_stock and span == "minute":
+            _open_min = 13 * 60 + 30   # 09:30 ET
+            _close_min = 20 * 60       # 16:00 ET
+            rth = []
+            for bar in results:
+                dt = datetime.fromtimestamp(bar.get("t", 0) / 1000, tz=timezone.utc)
+                bar_min = dt.hour * 60 + dt.minute
+                if _open_min <= bar_min < _close_min:
+                    rth.append(bar)
+            results = rth
+
         # Polygon returned newest-first; take the `count` newest, then flip
         # to oldest-first so callers get chronological order.
         results = results[:count]
