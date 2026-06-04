@@ -13,8 +13,9 @@
 indicator("HTF Strategy Scanner", overlay=true, max_lines_count=20, max_labels_count=20)
 
 // ==================== INPUTS ====================
-adxPeriod  = input.int(14, "ADX Period", minval=1, group="Indicators")
-zoneMult   = input.float(1.0, "Zone Width (x ATR)", step=0.1, minval=0.1, maxval=5.0, group="Proximity", tooltip="How close price must be to a level to trigger. Uses the level's timeframe ATR. 1.0 = within 1 ATR of the level.")
+adxPeriod    = input.int(14,  "ADX Period",             minval=1,  group="Indicators")
+lookbackBars = input.int(50,  "Lookback Bars (per TF)", minval=10, maxval=500, group="Indicators", tooltip="How many bars back to scan for untouched supply/demand on each timeframe. 10 = old default (too short on 15M/30M). 50 ≈ 25h on 30M, 12.5h on 15M. 100+ for catching multi-day peaks on low TFs.")
+zoneMult     = input.float(1.0, "Zone Width (x ATR)",   step=0.1, minval=0.1, maxval=5.0, group="Proximity", tooltip="How close price must be to a level to trigger. Uses the level's timeframe ATR. 1.0 = within 1 ATR of the level.")
 minScore   = input.int(2, "Min Score to Alert (1-4)", minval=1, maxval=4, group="Alerts", tooltip="1 = any aligned trend, 2 = two factors, 3 = strong confluence, 4 = max (5-min only)")
 webhookKey = input.string("lumisignals2026", "Webhook Key", group="Alerts")
 syncLevels = input.bool(true, "Sync Levels to Server", group="Alerts", tooltip="Send current levels and trends to the server every bar for the Compare dashboard.")
@@ -32,8 +33,8 @@ color15M = color.gray
 
 // ==================== HTF LEVEL + TREND FUNCTION ====================
 // Combined: finds ADX trend + 2 untouched supply (S1/S2) + 2 untouched demand (D1/D2)
-// Uses a loop with 10-bar lookback for deeper level detection
-findAll(int adxLen) =>
+// over a configurable lookback window per timeframe.
+findAll(int adxLen, int lookback) =>
     [dp, dm, adx] = ta.dmi(adxLen, adxLen)
     dir = dp > (dm + 2) ? 1 : dp < (dm - 2) ? -1 : 0
     atrVal = ta.atr(14)
@@ -52,7 +53,7 @@ findAll(int adxLen) =>
     float dem1 = na
     float dem2 = na
 
-    for i = 1 to 10
+    for i = 1 to lookback
         if high[i] > maxH and high[i] > close
             if na(sup1)
                 sup1 := high[i]
@@ -76,15 +77,15 @@ findAll(int adxLen) =>
 // ==================== HTF DATA VIA request.security ====================
 // Monthly + Quarterly use lookahead_on to get current period's actual high/low
 // (without this, lower chart TFs see last completed month/quarter = stale baseline)
-[mDir,  mAdx,  mAtr,  mSupply,  mSupply2,  mDemand,  mDemand2]  = request.security(syminfo.tickerid, "M",   findAll(adxPeriod), lookahead=barmerge.lookahead_on)
-[qDir,  qAdx,  qAtr,  qSupply,  qSupply2,  qDemand,  qDemand2]  = request.security(syminfo.tickerid, "3M",  findAll(adxPeriod), lookahead=barmerge.lookahead_on)
+[mDir,  mAdx,  mAtr,  mSupply,  mSupply2,  mDemand,  mDemand2]  = request.security(syminfo.tickerid, "M",   findAll(adxPeriod, lookbackBars), lookahead=barmerge.lookahead_on)
+[qDir,  qAdx,  qAtr,  qSupply,  qSupply2,  qDemand,  qDemand2]  = request.security(syminfo.tickerid, "3M",  findAll(adxPeriod, lookbackBars), lookahead=barmerge.lookahead_on)
 // Weekly and below: default (lookahead_off) is fine — completed bars are recent enough
-[wDir,  wAdx,  wAtr,  wSupply,  wSupply2,  wDemand,  wDemand2]  = request.security(syminfo.tickerid, "W",   findAll(adxPeriod))
-[dDir,  dAdx,  dAtr,  dSupply,  dSupply2,  dDemand,  dDemand2]  = request.security(syminfo.tickerid, "D",   findAll(adxPeriod))
-[h4Dir, h4Adx, h4Atr, h4Supply, h4Supply2, h4Demand, h4Demand2] = request.security(syminfo.tickerid, "240", findAll(adxPeriod))
-[h1Dir, h1Adx, h1Atr, h1Supply, h1Supply2, h1Demand, h1Demand2] = request.security(syminfo.tickerid, "60",  findAll(adxPeriod))
-[m30Dir, m30Adx, m30Atr, m30Supply, m30Supply2, m30Demand, m30Demand2] = request.security(syminfo.tickerid, "30", findAll(adxPeriod))
-[m15Dir, m15Adx, m15Atr, m15Supply, m15Supply2, m15Demand, m15Demand2] = request.security(syminfo.tickerid, "15", findAll(adxPeriod))
+[wDir,  wAdx,  wAtr,  wSupply,  wSupply2,  wDemand,  wDemand2]  = request.security(syminfo.tickerid, "W",   findAll(adxPeriod, lookbackBars))
+[dDir,  dAdx,  dAtr,  dSupply,  dSupply2,  dDemand,  dDemand2]  = request.security(syminfo.tickerid, "D",   findAll(adxPeriod, lookbackBars))
+[h4Dir, h4Adx, h4Atr, h4Supply, h4Supply2, h4Demand, h4Demand2] = request.security(syminfo.tickerid, "240", findAll(adxPeriod, lookbackBars))
+[h1Dir, h1Adx, h1Atr, h1Supply, h1Supply2, h1Demand, h1Demand2] = request.security(syminfo.tickerid, "60",  findAll(adxPeriod, lookbackBars))
+[m30Dir, m30Adx, m30Atr, m30Supply, m30Supply2, m30Demand, m30Demand2] = request.security(syminfo.tickerid, "30", findAll(adxPeriod, lookbackBars))
+[m15Dir, m15Adx, m15Atr, m15Supply, m15Supply2, m15Demand, m15Demand2] = request.security(syminfo.tickerid, "15", findAll(adxPeriod, lookbackBars))
 
 // Defensive: drop any supply that's at or below current price (S2 already
 // did this; S1 used to be force-bumped UP to close, which surfaced as a
