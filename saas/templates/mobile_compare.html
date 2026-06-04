@@ -224,12 +224,27 @@ function trendLabel(d) {
   return '<span class="' + trendClass(d) + '">' + d + '</span>';
 }
 
-function diffClass(lt, tv, pct) {
-  if (lt === null || lt === undefined || tv === null || tv === undefined) return '';
-  var diff = Math.abs(lt - tv) / Math.max(lt, 0.0001) * 100;
-  if (diff <= pct * 0.5) return 'diff-ok';
-  if (diff <= pct) return 'diff-warn';
-  return 'diff-bad';
+// Combined % + $ divergence flag (vs the TV reference). The worse of the
+// two measures wins, so a small-percentage-but-real-dollar gap on a
+// mid-priced stock (e.g. SPY hourly $1.40 / 0.18%) still flags amber —
+// which a pure-percentage tolerance missed. The dollar floor is scoped to
+// normal stock prices ($10–$2,000): below that (forex) a fixed $ gap is
+// nonsense, above it (indices like SPX ~7600) it's trivial, so percentage
+// alone governs those.
+function diffClass(v, ref, pct) {
+  if (v === null || v === undefined || ref === null || ref === undefined) return '';
+  var aref = Math.abs(ref);
+  var pctDiff = Math.abs(v - ref) / Math.max(aref, 0.0001) * 100;
+  var absDiff = Math.abs(v - ref);
+  // Percentage bands — universal across instruments.
+  var pctClass = pctDiff <= 0.15 ? 0 : pctDiff <= 0.50 ? 1 : 2;
+  // Absolute-dollar floor — only for the normal stock price band.
+  var absClass = 0;
+  if (aref >= 10 && aref <= 2000) {
+    absClass = absDiff <= 1.00 ? 0 : absDiff <= 3.50 ? 1 : 2;
+  }
+  var worst = Math.max(pctClass, absClass);
+  return worst === 0 ? 'diff-ok' : worst === 1 ? 'diff-warn' : 'diff-bad';
 }
 
 function fmtTime(iso) {
