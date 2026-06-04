@@ -119,6 +119,11 @@ td {
 .diff-ok { background: #f1f8e9; }
 .diff-warn { background: #fff8e1; }
 .diff-bad { background: #fbe9e7; }
+/* Stacked S1/S2 (or D1/D2) cell — level 2 sits below in a dimmer tone.
+   Each line keeps its own diff tint so a mismatch on either level shows. */
+.lvlcell { padding: 4px 8px; }
+.lvlcell > div { padding: 2px 4px; border-radius: 3px; }
+.lvl2 { color: var(--text-light); font-size: 11px; margin-top: 1px; }
 .match { color: var(--green); font-weight: 600; }
 .mismatch { color: var(--red); font-weight: 600; }
 .loading {
@@ -196,6 +201,19 @@ function fmt(v) {
   return parseFloat(v).toFixed(2);
 }
 
+// Stacked cell: level-1 on top, level-2 below (dimmer). Each line is
+// tinted by how far it diverges from the TV reference for that level
+// (ref1/ref2). The TV column passes itself as the reference so it stays
+// neutral. Keeps the comparison readable in just 4 columns on mobile.
+function lvlCell(v1, v2, ref1, ref2) {
+  var c1 = diffClass(v1, ref1, 0.5);
+  var c2 = diffClass(v2, ref2, 0.5);
+  return '<td class="lvlcell">'
+    + '<div class="' + c1 + '">' + fmt(v1) + '</div>'
+    + '<div class="lvl2 ' + c2 + '">' + fmt(v2) + '</div>'
+    + '</td>';
+}
+
 function trendClass(d) {
   if (!d) return 'no-data';
   return d === 'UP' ? 'trend-up' : d === 'DOWN' ? 'trend-down' : 'trend-side';
@@ -229,48 +247,17 @@ function renderTicker(item) {
     html += '<div class="updated-at" style="color:var(--red)">No TradingView data for this ticker</div>';
   }
 
-  // ─── SUPPLY LEVELS ───
-  html += '<div class="section-label">Supply Levels (Resistance)</div>';
-  html += '<table><tr>';
-  html += '<th>TF</th>';
-  html += '<th><span class="source-tag tag-tv">TV</span>S1</th>';
-  html += '<th><span class="source-tag tag-srv">SRV</span>S1</th>';
-  html += '<th><span class="source-tag tag-lt">LT</span>S1</th>';
-  html += '<th><span class="source-tag tag-tv">TV</span>S2</th>';
-  html += '<th><span class="source-tag tag-srv">SRV</span>S2</th>';
-  html += '<th><span class="source-tag tag-lt">LT</span>S2</th>';
-  html += '</tr>';
-
   var srvLevels = item.server || {};
   var tvLevels = item.tradingview || {};
   var ltLevels = item.lumitrade || {};
 
-  TF_ORDER.forEach(function(tf) {
-    var srv = srvLevels[tf] || {};
-    var tv = tvLevels[tf] || {};
-    var lt = ltLevels[tf] || {};
-    html += '<tr>';
-    html += '<td><strong>' + (TF_LABELS[tf] || tf) + '</strong></td>';
-    html += '<td>' + fmt(tv.supply) + '</td>';
-    html += '<td class="' + diffClass(tv.supply, srv.supply, 0.5) + '">' + fmt(srv.supply) + '</td>';
-    html += '<td class="' + diffClass(tv.supply, lt.supply, 0.5) + '">' + fmt(lt.supply) + '</td>';
-    html += '<td>' + fmt(tv.supply2) + '</td>';
-    html += '<td class="' + diffClass(tv.supply2, srv.supply2, 0.5) + '">' + fmt(srv.supply2) + '</td>';
-    html += '<td class="' + diffClass(tv.supply2, lt.supply2, 0.5) + '">' + fmt(lt.supply2) + '</td>';
-    html += '</tr>';
-  });
-  html += '</table>';
-
-  // ─── DEMAND LEVELS ───
-  html += '<div class="section-label">Demand Levels (Support)</div>';
+  // ─── SUPPLY LEVELS ─── (S1 top / S2 below, one column per source)
+  html += '<div class="section-label">Supply Levels (Resistance) — S1 / S2</div>';
   html += '<table><tr>';
   html += '<th>TF</th>';
-  html += '<th><span class="source-tag tag-tv">TV</span>D1</th>';
-  html += '<th><span class="source-tag tag-srv">SRV</span>D1</th>';
-  html += '<th><span class="source-tag tag-lt">LT</span>D1</th>';
-  html += '<th><span class="source-tag tag-tv">TV</span>D2</th>';
-  html += '<th><span class="source-tag tag-srv">SRV</span>D2</th>';
-  html += '<th><span class="source-tag tag-lt">LT</span>D2</th>';
+  html += '<th><span class="source-tag tag-tv">TV</span></th>';
+  html += '<th><span class="source-tag tag-srv">SRV</span></th>';
+  html += '<th><span class="source-tag tag-lt">LT</span></th>';
   html += '</tr>';
 
   TF_ORDER.forEach(function(tf) {
@@ -279,12 +266,32 @@ function renderTicker(item) {
     var lt = ltLevels[tf] || {};
     html += '<tr>';
     html += '<td><strong>' + (TF_LABELS[tf] || tf) + '</strong></td>';
-    html += '<td>' + fmt(tv.demand) + '</td>';
-    html += '<td class="' + diffClass(tv.demand, srv.demand, 0.5) + '">' + fmt(srv.demand) + '</td>';
-    html += '<td class="' + diffClass(tv.demand, lt.demand, 0.5) + '">' + fmt(lt.demand) + '</td>';
-    html += '<td>' + fmt(tv.demand2) + '</td>';
-    html += '<td class="' + diffClass(tv.demand2, srv.demand2, 0.5) + '">' + fmt(srv.demand2) + '</td>';
-    html += '<td class="' + diffClass(tv.demand2, lt.demand2, 0.5) + '">' + fmt(lt.demand2) + '</td>';
+    // TV is the reference — passes itself so it renders neutral.
+    html += lvlCell(tv.supply, tv.supply2, tv.supply, tv.supply2);
+    html += lvlCell(srv.supply, srv.supply2, tv.supply, tv.supply2);
+    html += lvlCell(lt.supply, lt.supply2, tv.supply, tv.supply2);
+    html += '</tr>';
+  });
+  html += '</table>';
+
+  // ─── DEMAND LEVELS ─── (D1 top / D2 below, one column per source)
+  html += '<div class="section-label">Demand Levels (Support) — D1 / D2</div>';
+  html += '<table><tr>';
+  html += '<th>TF</th>';
+  html += '<th><span class="source-tag tag-tv">TV</span></th>';
+  html += '<th><span class="source-tag tag-srv">SRV</span></th>';
+  html += '<th><span class="source-tag tag-lt">LT</span></th>';
+  html += '</tr>';
+
+  TF_ORDER.forEach(function(tf) {
+    var srv = srvLevels[tf] || {};
+    var tv = tvLevels[tf] || {};
+    var lt = ltLevels[tf] || {};
+    html += '<tr>';
+    html += '<td><strong>' + (TF_LABELS[tf] || tf) + '</strong></td>';
+    html += lvlCell(tv.demand, tv.demand2, tv.demand, tv.demand2);
+    html += lvlCell(srv.demand, srv.demand2, tv.demand, tv.demand2);
+    html += lvlCell(lt.demand, lt.demand2, tv.demand, tv.demand2);
     html += '</tr>';
   });
   html += '</table>';
