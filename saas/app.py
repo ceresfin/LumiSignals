@@ -4211,9 +4211,16 @@ def create_app():
                         for interval, tf_label in interval_to_tf.items():
                             tf_data = snr_data.get(interval, {})
                             if isinstance(tf_data, dict):
+                                # The API returns two levels each:
+                                # resistance_price1/2 (supply) and
+                                # support_price1/2 (demand). Fall back to the
+                                # singular convenience field for S1/D1 when the
+                                # numbered one is absent.
                                 item["lumitrade"][tf_label] = {
-                                    "supply": tf_data.get("resistance_price"),
-                                    "demand": tf_data.get("support_price"),
+                                    "supply": tf_data.get("resistance_price1", tf_data.get("resistance_price")),
+                                    "supply2": tf_data.get("resistance_price2"),
+                                    "demand": tf_data.get("support_price1", tf_data.get("support_price")),
+                                    "demand2": tf_data.get("support_price2"),
                                 }
                 except Exception as e:
                     item["lumitrade"]["error"] = str(e)
@@ -4354,9 +4361,16 @@ def create_app():
                         for interval, tf_label in interval_to_tf.items():
                             tf_data = snr_data.get(interval, {})
                             if isinstance(tf_data, dict):
+                                # The API returns two levels each:
+                                # resistance_price1/2 (supply) and
+                                # support_price1/2 (demand). Fall back to the
+                                # singular convenience field for S1/D1 when the
+                                # numbered one is absent.
                                 item["lumitrade"][tf_label] = {
-                                    "supply": tf_data.get("resistance_price"),
-                                    "demand": tf_data.get("support_price"),
+                                    "supply": tf_data.get("resistance_price1", tf_data.get("resistance_price")),
+                                    "supply2": tf_data.get("resistance_price2"),
+                                    "demand": tf_data.get("support_price1", tf_data.get("support_price")),
+                                    "demand2": tf_data.get("support_price2"),
                                 }
                 except Exception as e:
                     item["lumitrade"]["error"] = str(e)
