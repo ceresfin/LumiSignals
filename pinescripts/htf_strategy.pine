@@ -10,12 +10,11 @@
 // Recommended chart: 15-min or 1-hour (enough history for all HTFs)
 // One alert per ticker covers all 3 durations.
 //@version=6
-indicator("HTF Strategy Scanner", overlay=true, max_lines_count=20, max_labels_count=20)
+indicator("HTF Strategy Scanner", overlay=true, max_lines_count=20, max_labels_count=20, max_bars_back=500)
 
 // ==================== INPUTS ====================
-adxPeriod    = input.int(14,  "ADX Period",             minval=1,  group="Indicators")
-lookbackBars = input.int(50,  "Lookback Bars (per TF)", minval=10, maxval=500, group="Indicators", tooltip="How many bars back to scan for untouched supply/demand on each timeframe. 10 = old default (too short on 15M/30M). 50 ≈ 25h on 30M, 12.5h on 15M. 100+ for catching multi-day peaks on low TFs.")
-zoneMult     = input.float(1.0, "Zone Width (x ATR)",   step=0.1, minval=0.1, maxval=5.0, group="Proximity", tooltip="How close price must be to a level to trigger. Uses the level's timeframe ATR. 1.0 = within 1 ATR of the level.")
+adxPeriod  = input.int(14, "ADX Period", minval=1, group="Indicators")
+zoneMult   = input.float(1.0, "Zone Width (x ATR)", step=0.1, minval=0.1, maxval=5.0, group="Proximity", tooltip="How close price must be to a level to trigger. Uses the level's timeframe ATR. 1.0 = within 1 ATR of the level.")
 minScore   = input.int(2, "Min Score to Alert (1-4)", minval=1, maxval=4, group="Alerts", tooltip="1 = any aligned trend, 2 = two factors, 3 = strong confluence, 4 = max (5-min only)")
 webhookKey = input.string("lumisignals2026", "Webhook Key", group="Alerts")
 syncLevels = input.bool(true, "Sync Levels to Server", group="Alerts", tooltip="Send current levels and trends to the server every bar for the Compare dashboard.")
@@ -32,23 +31,23 @@ color30M = color.teal
 color15M = color.gray
 
 // ==================== HTF LEVEL + TREND FUNCTION ====================
-// Combined: finds ADX trend + 2 untouched supply (S1/S2) + 2 untouched demand (D1/D2)
-// over a configurable lookback window per timeframe.
+// Finds ADX trend + 2 untouched supply (S1/S2) + 2 untouched demand (D1/D2)
+// over a per-TF lookback window passed in by the caller.
+//
+// Supply detection excludes the in-progress destination-TF bar (starts at
+// high[1]) and requires any candidate peak to sit strictly above current
+// close. Without these two filters, a bullish current bar making a fresh
+// high registers its own high as S1 — visible on intraday TFs as "supply
+// at current price". Demand keeps the original behavior (current bar's
+// low is a useful intraday demand marker).
 findAll(int adxLen, int lookback) =>
     [dp, dm, adx] = ta.dmi(adxLen, adxLen)
     dir = dp > (dm + 2) ? 1 : dp < (dm - 2) ? -1 : 0
     atrVal = ta.atr(14)
 
-    // Supply: start the running max at the PREVIOUS completed bar (high[1]),
-    // not the in-progress one — otherwise a bullish current bar making a
-    // fresh high registers its own high as S1. Also require any candidate
-    // peak to sit strictly above current close so a stale value doesn't
-    // surface as a "supply" at or below price.
     float maxH = high[1]
     float sup1 = na
     float sup2 = na
-    // Demand keeps the original behavior — current bar's low is a useful
-    // intraday demand marker.
     float minL = low
     float dem1 = na
     float dem2 = na
@@ -67,7 +66,7 @@ findAll(int adxLen, int lookback) =>
                 dem2 := low[i]
         minL := math.min(minL, low[i])
 
-    // No fallback for sup1 — let it stay NA so the dashboard shows "—"
+    // No supply fallback — let sup1 stay NA so the dashboard shows "—"
     // instead of the misleading current-bar high
     if na(dem1)
         dem1 := low
@@ -75,21 +74,28 @@ findAll(int adxLen, int lookback) =>
     [dir, adx, atrVal, sup1, sup2, dem1, dem2]
 
 // ==================== HTF DATA VIA request.security ====================
-// Monthly + Quarterly use lookahead_on to get current period's actual high/low
-// (without this, lower chart TFs see last completed month/quarter = stale baseline)
-[mDir,  mAdx,  mAtr,  mSupply,  mSupply2,  mDemand,  mDemand2]  = request.security(syminfo.tickerid, "M",   findAll(adxPeriod, lookbackBars), lookahead=barmerge.lookahead_on)
-[qDir,  qAdx,  qAtr,  qSupply,  qSupply2,  qDemand,  qDemand2]  = request.security(syminfo.tickerid, "3M",  findAll(adxPeriod, lookbackBars), lookahead=barmerge.lookahead_on)
+// Per-TF lookback (raised to reach further-back peaks for pairs at multi-year
+// highs like USDJPY — every recent peak gets NA'd by the "above-close" filter,
+// so we need a deeper window to find the next surviving overhead level):
+//   Q   60 = 15 years        D   100 ≈ 5 months
+//   M   60 = 5 years         4H  120 ≈ 4 weeks
+//   W  100 ≈ 2 years         1H  200 ≈ 8 weeks (stock) / ~1.5w (forex 24/5)
+//                            30M 300 ≈ 6 weeks (stock) / ~1.3w (forex)
+//                            15M 500 ≈ 5 weeks (stock) / ~1.0w (forex)
+// Monthly + Quarterly use lookahead_on to capture the in-progress period's high.
+[mDir,  mAdx,  mAtr,  mSupply,  mSupply2,  mDemand,  mDemand2]  = request.security(syminfo.tickerid, "M",   findAll(adxPeriod, 60),  lookahead=barmerge.lookahead_on)
+[qDir,  qAdx,  qAtr,  qSupply,  qSupply2,  qDemand,  qDemand2]  = request.security(syminfo.tickerid, "3M",  findAll(adxPeriod, 60),  lookahead=barmerge.lookahead_on)
 // Weekly and below: default (lookahead_off) is fine — completed bars are recent enough
-[wDir,  wAdx,  wAtr,  wSupply,  wSupply2,  wDemand,  wDemand2]  = request.security(syminfo.tickerid, "W",   findAll(adxPeriod, lookbackBars))
-[dDir,  dAdx,  dAtr,  dSupply,  dSupply2,  dDemand,  dDemand2]  = request.security(syminfo.tickerid, "D",   findAll(adxPeriod, lookbackBars))
-[h4Dir, h4Adx, h4Atr, h4Supply, h4Supply2, h4Demand, h4Demand2] = request.security(syminfo.tickerid, "240", findAll(adxPeriod, lookbackBars))
-[h1Dir, h1Adx, h1Atr, h1Supply, h1Supply2, h1Demand, h1Demand2] = request.security(syminfo.tickerid, "60",  findAll(adxPeriod, lookbackBars))
-[m30Dir, m30Adx, m30Atr, m30Supply, m30Supply2, m30Demand, m30Demand2] = request.security(syminfo.tickerid, "30", findAll(adxPeriod, lookbackBars))
-[m15Dir, m15Adx, m15Atr, m15Supply, m15Supply2, m15Demand, m15Demand2] = request.security(syminfo.tickerid, "15", findAll(adxPeriod, lookbackBars))
+[wDir,  wAdx,  wAtr,  wSupply,  wSupply2,  wDemand,  wDemand2]  = request.security(syminfo.tickerid, "W",   findAll(adxPeriod, 100))
+[dDir,  dAdx,  dAtr,  dSupply,  dSupply2,  dDemand,  dDemand2]  = request.security(syminfo.tickerid, "D",   findAll(adxPeriod, 100))
+[h4Dir, h4Adx, h4Atr, h4Supply, h4Supply2, h4Demand, h4Demand2] = request.security(syminfo.tickerid, "240", findAll(adxPeriod, 120))
+[h1Dir, h1Adx, h1Atr, h1Supply, h1Supply2, h1Demand, h1Demand2] = request.security(syminfo.tickerid, "60",  findAll(adxPeriod, 200))
+[m30Dir, m30Adx, m30Atr, m30Supply, m30Supply2, m30Demand, m30Demand2] = request.security(syminfo.tickerid, "30", findAll(adxPeriod, 300))
+[m15Dir, m15Adx, m15Atr, m15Supply, m15Supply2, m15Demand, m15Demand2] = request.security(syminfo.tickerid, "15", findAll(adxPeriod, 500))
 
-// Defensive: drop any supply that's at or below current price (S2 already
-// did this; S1 used to be force-bumped UP to close, which surfaced as a
-// fake "supply at current price" instead of an honest "no level found").
+// Defensive: drop any supply at or below current price (was force-bumping
+// up to close, which surfaced as a fake "supply at current price" — now we
+// honestly show "—" via NA).
 mSupply  := not na(mSupply) and mSupply <= close ? na : mSupply
 wSupply  := not na(wSupply) and wSupply <= close ? na : wSupply
 dSupply  := not na(dSupply) and dSupply <= close ? na : dSupply
@@ -172,11 +178,11 @@ fBuy       = fBuyRaw and fBuyScore >= minScore
 // ==================== WEBHOOK ALERTS ====================
 tk = syminfo.ticker
 
-// Only fire trade alerts on equities. SPX/NDX/forex have no equity-options
-// chain at the server's Polygon endpoint, so the webhook would 400 with
-// "Could not get price for {ticker}". The levels-sync alert below still
-// fires for every asset class so the SNR Compare dashboard stays populated.
-tradeable = syminfo.type == "stock"
+// Skip trade alerts on forex/crypto — the server's stock-options webhook
+// path uses Polygon's equity endpoint, which doesn't resolve bare 'EURUSD'
+// (needs 'C:' prefix) and crypto symbols. Indices/stocks/futures continue
+// to send. The levels-sync alert below still fires for every asset class.
+tradeable = syminfo.type != "forex" and syminfo.type != "crypto"
 
 // --- Daily duration ---
 if dSell and tradeable
