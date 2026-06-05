@@ -145,6 +145,89 @@ def find_step_levels(highs: List[float], lows: List[float],
     return s1, s2, d1, d2
 
 
+# Per-TF lookback depth — mirrors TF_LOOKBACK in scripts/htf_levels.py
+# (the Python port of pinescripts/htf_strategy.pine). Deeper than the
+# old fixed-12 window so each TF's untouched levels match what the Pine
+# script draws on TradingView (and thus the compare page's TV column).
+HTF_TF_LOOKBACK = {
+    "Q":   60,  "3mo": 60,
+    "M":   60,  "1mo": 60,
+    "W":   100, "1w":  100,
+    "D":   100, "1d":  100,
+    "4H":  120, "4h":  120,
+    "1H":  200, "1h":  200,
+    "30M": 300, "30m": 300,
+    "15M": 500, "15m": 500,
+}
+
+
+def find_htf_levels(highs: List[float], lows: List[float],
+                    current_price: float, lookback: int = 10) -> Tuple[
+                        Optional[float], Optional[float],
+                        Optional[float], Optional[float]]:
+    """Untouched S1/S2 + D1/D2 — pure-Python port of the Pine algorithm
+    in pinescripts/htf_strategy.pine (and scripts/htf_levels.py
+    compute_levels). Use this so the compare-page SRV column and the
+    MTF trade setups match what TradingView draws.
+
+    Args:
+        highs/lows: most-recent-first lists (highs[0] = current bar).
+        current_price: current bar's close (the supply "> close" filter
+            and the post-find "drop supply at/below close" both use it).
+        lookback: how many prior bars to scan (see HTF_TF_LOOKBACK).
+
+    Differences from find_step_levels (the prior MTF logic):
+      - Supply candidate must satisfy high[i] > running-max AND
+        high[i] > close (not just > running-max).
+      - No supply fallback: S1 stays None if no past peak qualifies.
+      - Demand DOES fall back to the current bar's low if no past
+        trough is lower.
+      - Post-find defensive drop: any supply at or below close → None
+        (kills a fake "supply at price").
+
+    Returns (s1, s2, d1, d2) — any may be None.
+    """
+    n = min(len(highs), len(lows))
+    if n < 2:
+        return None, None, None, None
+    scan = min(lookback, n - 1)
+    close_now = current_price
+
+    # Supply — seed running-max at the in-progress bar's high.
+    max_h = highs[0]
+    s1 = s2 = None
+    for i in range(1, scan + 1):
+        h_i = highs[i]
+        if h_i > max_h and h_i > close_now:
+            if s1 is None:
+                s1 = h_i
+            elif s2 is None:
+                s2 = h_i
+        max_h = max(max_h, h_i)
+
+    # Demand — seed running-min at the in-progress bar's low.
+    min_l = lows[0]
+    d1 = d2 = None
+    for i in range(1, scan + 1):
+        l_i = lows[i]
+        if l_i < min_l:
+            if d1 is None:
+                d1 = l_i
+            elif d2 is None:
+                d2 = l_i
+        min_l = min(min_l, l_i)
+    if d1 is None:
+        d1 = lows[0]
+
+    # Defensive: supply must sit above price.
+    if s1 is not None and s1 <= close_now:
+        s1 = None
+    if s2 is not None and s2 <= close_now:
+        s2 = None
+
+    return s1, s2, d1, d2
+
+
 def calculate_structure_direction(candles, n: int = 15,
                                   prefer_confirmed: bool = False) -> Tuple[str, float]:
     """Trend direction from swing pivot structure (Dow Theory).

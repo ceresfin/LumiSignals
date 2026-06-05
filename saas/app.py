@@ -1238,11 +1238,8 @@ def create_app():
         if massive_key:
             try:
                 from lumisignals.massive_client import get_shared_client
-                from lumisignals.untouched_levels import find_step_levels
-                # Use the SAME MassiveClient instance the analyzer used —
-                # its TTL candle cache means any TF the analyzer already
-                # pulled (the 3 russian-doll TFs) is served from memory
-                # instead of round-tripping to Polygon.
+                from lumisignals.untouched_levels import (
+                    find_htf_levels, HTF_TF_LOOKBACK)
                 _massive = get_shared_client(massive_key)
                 INDEX_SYMBOLS = {"SPX", "NDX", "RUT", "VIX", "DJI", "XSP", "XND"}
                 is_forex = (len(ticker) == 6 and ticker[:3].isalpha()
@@ -1253,26 +1250,25 @@ def create_app():
                     poly_ticker = f"I:{ticker}"
                 else:
                     poly_ticker = ticker
-                # Counts MUST match BAR_COUNT_PER_TF in swing_setup.py so
-                # the (ticker, tf, count) cache key from the analyzer's
-                # fetch lines up with this loop's lookup. Mismatched
-                # counts → cache miss → double Polygon hit.
+                # Deep per-TF lookback so the panel's zones match the Pine/TV
+                # levels (same find_htf_levels the compare SRV column uses).
                 tf_specs = [
-                    ("1mo", "M",   36),  ("1w",  "W",   104),
-                    ("1d",  "D",   200), ("4h",  "4H",  200),
-                    ("1h",  "1H",  200), ("30m", "30M", 200),
-                    ("15m", "15M", 200),
+                    ("1mo", "M"),  ("1w",  "W"),
+                    ("1d",  "D"),  ("4h",  "4H"),
+                    ("1h",  "1H"), ("30m", "30M"),
+                    ("15m", "15M"),
                 ]
-                for tf_key, tf_label, count in tf_specs:
+                for tf_key, tf_label in tf_specs:
                     try:
-                        candles = _massive.get_candles(poly_ticker, tf_key, count)
+                        lb = HTF_TF_LOOKBACK.get(tf_key, 50)
+                        candles = _massive.get_candles(poly_ticker, tf_key, lb + 5)
                         if not candles or len(candles) < 3:
                             continue
                         price = candles[-1].close
                         highs = [c.high for c in reversed(candles)]
                         lows = [c.low for c in reversed(candles)]
-                        s1, s2, d1, d2 = find_step_levels(
-                            highs, lows, lookback=12)
+                        s1, s2, d1, d2 = find_htf_levels(
+                            highs, lows, price, lookback=lb)
                         recent_highs = [c.high for c in candles[-12:]]
                         recent_lows = [c.low for c in candles[-12:]]
                         zones_by_tf[tf_label] = {
@@ -4148,7 +4144,8 @@ def create_app():
         massive = None
         if massive_key:
             from lumisignals.massive_client import get_shared_client
-            from lumisignals.untouched_levels import find_untouched_levels, calculate_adx_direction
+            from lumisignals.untouched_levels import (
+                find_htf_levels, HTF_TF_LOOKBACK, calculate_adx_direction)
             massive = get_shared_client(massive_key)
 
         # Cash indexes need Polygon's "I:" prefix or they return 0 bars
@@ -4171,14 +4168,18 @@ def create_app():
 
                 for tf, tf_label in interval_to_tf.items():
                     try:
-                        count = 30 if tf in ("3mo", "1mo", "1w") else 50
+                        # Deep per-TF lookback so the SRV levels match what
+                        # the Pine script draws (the TV column). Fetch a few
+                        # extra bars beyond the lookback for the current bar.
+                        lb = HTF_TF_LOOKBACK.get(tf, 50)
+                        count = lb + 5
                         candles = massive.get_candles(poly_ticker, tf, count)
                         if not candles or len(candles) < 3:
                             continue
                         price = candles[-1].close
                         highs = [c.high for c in reversed(candles)]
                         lows = [c.low for c in reversed(candles)]
-                        s1, s2, d1, d2 = find_untouched_levels(highs, lows, price, lookback=10)
+                        s1, s2, d1, d2 = find_htf_levels(highs, lows, price, lookback=lb)
                         item["server"][tf_label] = {
                             "supply": s1, "supply2": s2,
                             "demand": d1, "demand2": d2,
@@ -4285,7 +4286,8 @@ def create_app():
         massive = None
         if massive_key:
             from lumisignals.massive_client import get_shared_client
-            from lumisignals.untouched_levels import find_untouched_levels, calculate_adx_direction
+            from lumisignals.untouched_levels import (
+                find_htf_levels, HTF_TF_LOOKBACK, calculate_adx_direction)
             massive = get_shared_client(massive_key)
 
         # Cash indexes need Polygon's "I:" prefix or they return 0 bars
@@ -4306,18 +4308,11 @@ def create_app():
                     poly_ticker = ticker
                 for tf, tf_label in interval_to_tf.items():
                     try:
-                        # Match swing_setup.py's bar counts + lookback so the
-                        # zones visualization on the Dashboard panel uses
-                        # the same numbers the analyzer's trade card is
-                        # built from (single source of truth).
-                        count = (
-                            36 if tf == "3mo"
-                            else 36 if tf == "1mo"
-                            else 104 if tf == "1w"
-                            else 200 if tf in ("1d", "1h", "4h")
-                            else 200 if tf == "30m"
-                            else 300  # 15m and 5m
-                        )
+                        # Deep per-TF lookback so SRV matches the Pine/TV
+                        # levels (find_htf_levels is the port of the Pine
+                        # algorithm). Fetch a few extra bars for the current.
+                        lb = HTF_TF_LOOKBACK.get(tf, 50)
+                        count = lb + 5
                         candles = massive.get_candles(poly_ticker, tf, count)
                         if not candles or len(candles) < 3:
                             continue
@@ -4329,7 +4324,7 @@ def create_app():
                             item["current_price"] = price
                         highs = [c.high for c in reversed(candles)]
                         lows = [c.low for c in reversed(candles)]
-                        s1, s2, d1, d2 = find_untouched_levels(highs, lows, price, lookback=12)
+                        s1, s2, d1, d2 = find_htf_levels(highs, lows, price, lookback=lb)
                         # Range high/low for the position-bar visualization
                         # on the Dashboard panel. Same lookback window as
                         # the zones — 12 bars back from most-recent.

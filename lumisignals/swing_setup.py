@@ -88,7 +88,7 @@ BAR_COUNT_PER_TF = {
     "4h":  200,   # ~3 months
     "1d":  200,   # ~10 months
     "1w":  104,   # 2 years
-    "1mo": 36,    # 3 years
+    "1mo": 65,    # ~5 years — covers the HTF_TF_LOOKBACK[M]=60 window
 }
 
 # Human-readable labels (matches TF_LABELS in levels_strategy.py).
@@ -231,8 +231,13 @@ def compute_setup(ticker: str, mode: str,
     # (the highest-TF level price is approaching). Proximity is checked
     # below — if level is far (> threshold), we still surface it for
     # prospective view but flag tradeable=False.
+    # Deep per-TF lookback for the top TF so the trigger level matches
+    # the Pine/TV levels (find_htf_levels). HTF_TF_LOOKBACK keys on both
+    # interval ("1mo") and label ("M") forms.
+    from .untouched_levels import HTF_TF_LOOKBACK
+    top_lookback = HTF_TF_LOOKBACK.get(tf_top, 100)
     trigger_level, level_skip = _pick_trigger_level(
-        bars_top, current_price, direction_dir
+        bars_top, current_price, direction_dir, lookback=top_lookback
     )
     if level_skip and trigger_level is None:
         # Genuine no-level case (no zones found at all). Skip cleanly.
@@ -268,7 +273,7 @@ def compute_setup(ticker: str, mode: str,
     #   - Target = next opposite zone on bars_top, else per-mode R:R floor
     shares_spec = _pick_shares_plan(
         bars_bot, bars_top, current_price, trigger_level,
-        direction, max_risk_usd, mode,
+        direction, max_risk_usd, mode, lookback=top_lookback,
     )
     # Attach the bottom-TF label so the panel can render "4.5× ATR(5M)"
     # under the Stop Loss row.
@@ -449,7 +454,8 @@ def adx_momentum_label(adx_value: float) -> str:
 
 
 def _pick_trigger_level(monthly_candles, current_price: float,
-                        direction_dir: str) -> Tuple[Optional[float], Optional[str]]:
+                        direction_dir: str,
+                        lookback: int = 100) -> Tuple[Optional[float], Optional[str]]:
     """Find the nearest untouched monthly level on the side that aligns
     with a front-side entry.
 
@@ -459,18 +465,18 @@ def _pick_trigger_level(monthly_candles, current_price: float,
     Returns (level, None) on success or (None, skip_reason) on skip
     (no level found, or price too far from any level).
     """
-    from .untouched_levels import find_step_levels
+    from .untouched_levels import find_htf_levels
     highs = [c.high for c in monthly_candles[::-1]]  # most recent first
     lows = [c.low for c in monthly_candles[::-1]]
-    # Anchor on the in-progress bar's own low/high and walk back with
-    # running min/max. Avoids the prior find_untouched_levels behavior
-    # of mixing in a finer-TF current_price, which let intra-bar dips
-    # invalidate still-untouched higher-TF levels.
-    sup1, sup2, dem1, dem2 = find_step_levels(highs, lows, lookback=12)
+    # Pine-matching level finder (find_htf_levels): supply must be above
+    # close, no supply fallback, demand falls back to the current low.
+    # Deep per-TF lookback so the MTF trigger level matches what the
+    # Pine script draws on TradingView.
+    sup1, sup2, dem1, dem2 = find_htf_levels(highs, lows, current_price, lookback=lookback)
     # Stash the full zone set on a function attribute so the caller can
     # reuse it for the zones-panel data — guarantees the chart's
     # trigger_level and the panel's D1/D2/S1/S2 come from the exact
-    # same find_untouched_levels call on the exact same bars.
+    # same find_htf_levels call on the exact same bars.
     _pick_trigger_level.last_zones = {
         "supply": sup1, "supply2": sup2,
         "demand": dem1, "demand2": dem2,
@@ -695,7 +701,8 @@ def _fetch_schwab_chain(ticker: str, cfg: _ModeCfg,
 
 def _pick_shares_plan(atr_bars, top_bars, current_price: float,
                       trigger_level: float, direction: str,
-                      max_risk_usd: float, mode: str) -> dict:
+                      max_risk_usd: float, mode: str,
+                      lookback: int = 100) -> dict:
     """Compute the shares-vehicle plan.
 
     Spec (per user 2026-06-01):
@@ -741,11 +748,11 @@ def _pick_shares_plan(atr_bars, top_bars, current_price: float,
     target = None
     target_source = None
     try:
-        from .untouched_levels import find_untouched_levels
+        from .untouched_levels import find_htf_levels
         highs = [c.high for c in top_bars[::-1]]
         lows  = [c.low  for c in top_bars[::-1]]
-        sup1, sup2, dem1, dem2 = find_untouched_levels(
-            highs, lows, current_price, lookback=12)
+        sup1, sup2, dem1, dem2 = find_htf_levels(
+            highs, lows, current_price, lookback=lookback)
         if direction == "BUY":
             # Long at demand → target = nearest supply ABOVE entry
             candidates = [s for s in (sup1, sup2) if s is not None and s > entry]
