@@ -179,9 +179,10 @@ def compute_levels(
         sorted oldest → newest. The last row is the "current bar".
 
     Algorithm (mirror of pinescripts/htf_strategy.pine findAll):
-      Supply: maxH = high[-2] (exclude in-progress bar). Walk i=1..lookback;
-              candidate must satisfy high[i] > maxH AND high[i] > close.
-              First two qualifying peaks become S1 / S2. No fallback.
+      Supply: maxH = current bar's high. Walk i=1..lookback; candidate
+              must satisfy high[i] > maxH AND high[i] > close. First two
+              qualifying peaks become S1 / S2. No fallback — sup1 stays
+              None when no past peak exceeds the current bar's high.
       Demand: minL = low[-1] (include current bar). Walk i=1..lookback;
               candidate must satisfy low[i] < minL. First two become D1/D2.
               Falls back to current bar's low if no past trough.
@@ -213,8 +214,11 @@ def compute_levels(
     atr_val = float(atr_series.iloc[-1]) if not pd.isna(atr_series.iloc[-1]) else float("nan")
     close_now = float(df["close"].iloc[-1])
 
-    # ─── Supply scan (excludes in-progress bar via maxH = high[-2]) ───
-    max_h = float(df["high"].iloc[-2])
+    # ─── Supply scan — seed maxH at the in-progress bar's high so the
+    # immediately-preceding bar can qualify as S1. The "high[i] > close"
+    # filter + no fallback keep a bullish bar at new highs from showing
+    # its own high as supply.
+    max_h = float(df["high"].iloc[-1])
     sup1: Optional[float] = None
     sup2: Optional[float] = None
     for i in range(1, lookback + 1):

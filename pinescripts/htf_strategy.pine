@@ -34,18 +34,20 @@ color15M = color.gray
 // Finds ADX trend + 2 untouched supply (S1/S2) + 2 untouched demand (D1/D2)
 // over a per-TF lookback window passed in by the caller.
 //
-// Supply detection excludes the in-progress destination-TF bar (starts at
-// high[1]) and requires any candidate peak to sit strictly above current
-// close. Without these two filters, a bullish current bar making a fresh
-// high registers its own high as S1 — visible on intraday TFs as "supply
-// at current price". Demand keeps the original behavior (current bar's
-// low is a useful intraday demand marker).
+// Supply detection: maxH seeds at the in-progress bar's high so the
+// immediately-preceding bar (high[1]) can qualify as S1 when its high
+// exceeds the current bar's running high. The "high[i] > close" filter
+// plus the absence of a sup1 fallback is enough to keep a bullish in-
+// progress bar making a fresh high from registering its own high as S1
+// — there's no past bar above it, no fallback, so sup1 stays NA.
+// Demand keeps the original behavior — current bar's low is a useful
+// intraday demand marker.
 findAll(int adxLen, int lookback) =>
     [dp, dm, adx] = ta.dmi(adxLen, adxLen)
     dir = dp > (dm + 2) ? 1 : dp < (dm - 2) ? -1 : 0
     atrVal = ta.atr(14)
 
-    float maxH = high[1]
+    float maxH = high
     float sup1 = na
     float sup2 = na
     float minL = low
