@@ -43,7 +43,7 @@ const SUPPORTED_TICKERS = [...INDEX_TICKERS, ...STOCK_TICKERS] as const;
 // "MTF·" in Positions describe the analysis methodology — those stay.
 const MODES = ['scalp', 'intraday', 'swing'] as const;
 const TF_LABELS: Record<string, string> = {
-  '5m': '5M', '15m': '15M', '1h': '1H',
+  '5m': '5M', '15m': '15M', '1h': '1H', '4h': '4H',
   '1d': 'Daily', '1w': 'Weekly', '1mo': 'Monthly',
 };
 // Chart timeframe options per mode — mirrors the analyzer's Russian-
@@ -51,7 +51,7 @@ const TF_LABELS: Record<string, string> = {
 // middle TF (the "main" timeframe for the mode).
 const MODE_TIMEFRAMES: Record<string, string[]> = {
   scalp:    ['5m',  '15m', '1h'],
-  intraday: ['15m', '1h',  '1d'],
+  intraday: ['15m', '1h',  '4h'],
   swing:    ['1d',  '1w',  '1mo'],
 };
 const DEFAULT_CHART_TF: Record<string, string> = {

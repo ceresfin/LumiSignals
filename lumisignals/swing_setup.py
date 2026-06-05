@@ -66,7 +66,7 @@ MODE_CONFIG = {
 # Ordered bottom-to-top (shortest first). The pattern across modes is
 # uniform "Russian dolls": each mode shows trigger TF + 2 higher TFs.
 #   SCALP    → 5m  / 15m / 1h
-#   INTRADAY → 15m / 1h  / 1d
+#   INTRADAY → 15m / 1h  / 4h
 #   SWING    → 1d  / 1w  / 1mo
 # Direction logic: the top-two TFs are the BIAS (weighted same as
 # Monthly+Weekly were for swing); the bottom TF is the COUNTER-MOVE
@@ -74,7 +74,7 @@ MODE_CONFIG = {
 # counter-move against the bias").
 MODE_TFS = {
     "scalp":    ["5m",  "15m", "1h"],
-    "intraday": ["15m", "1h",  "1d"],
+    "intraday": ["15m", "1h",  "4h"],
     "swing":    ["1d",  "1w",  "1mo"],
 }
 
@@ -85,6 +85,7 @@ BAR_COUNT_PER_TF = {
     "5m":  300,   # ~2-3 trading days
     "15m": 200,   # ~6-7 trading days
     "1h":  200,   # ~30 trading days
+    "4h":  200,   # ~3 months
     "1d":  200,   # ~10 months
     "1w":  104,   # 2 years
     "1mo": 36,    # 3 years
@@ -92,7 +93,7 @@ BAR_COUNT_PER_TF = {
 
 # Human-readable labels (matches TF_LABELS in levels_strategy.py).
 TF_LABELS = {
-    "5m":  "5M",  "15m": "15M", "1h":  "1H",
+    "5m":  "5M",  "15m": "15M", "1h":  "1H", "4h":  "4H",
     "1d":  "Daily", "1w":  "Weekly", "1mo": "Monthly",
 }
 
