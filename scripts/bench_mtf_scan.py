@@ -252,6 +252,83 @@ def intraday_scan(key, universe, workers):
     return stats, time.time() - t0
 
 
+# ─────────────────────────────── the actual scan ─────────────────────────
+
+def scan_actionable(store, universe, near_pct):
+    """What a 700-ticker SWING scan produces: for each ticker, compute the
+    untouched D/W/M levels (the validated find_htf_levels) and flag any that
+    price is sitting within `near_pct` of RIGHT NOW. A demand level just below
+    price = a long pullback; a supply level just above = a short. Returns the
+    actionable shortlist, closest-first — the whole point of a scanner."""
+    TF = [("D", "1d", lambda d: d),
+          ("W", "1w", to_weekly),
+          ("M", "1mo", to_monthly)]
+    LEVELS = [("S1", 0, "SHORT"), ("S2", 1, "SHORT"),   # supply = resistance
+              ("D1", 2, "LONG"),  ("D2", 3, "LONG")]    # demand = support
+    rows = []
+    for t in universe:
+        daily = store.get(t, [])
+        if len(daily) < 30:
+            continue
+        price = daily[-1]["c"]
+        best = None   # (dist, tf, level_name, level_price, side)
+        for tf, gtf, derive in TF:
+            bars = derive(daily)
+            lv = levels_for(bars, gtf)
+            if not lv:
+                continue
+            cur_low = bars[-1]["l"]   # find_htf_levels' demand-fallback value
+            for name, i, side in LEVELS:
+                L = lv[i]
+                if L is None:
+                    continue
+                # Side-correct: you pull DOWN to demand (below price) and rally
+                # UP to supply (above price). A level on the wrong side isn't a
+                # setup. Tiny tolerance so "exactly at" still counts.
+                if side == "LONG" and L > price * 1.001:
+                    continue
+                if side == "SHORT" and L < price * 0.999:
+                    continue
+                # Drop the demand fallback: when demand == this bar's own low,
+                # it's "price at its low", not a pullback into a prior zone.
+                if side == "LONG" and abs(L - cur_low) < 1e-9:
+                    continue
+                dist = abs(price - L) / price
+                if dist <= near_pct and (best is None or dist < best[0]):
+                    best = (dist, tf, name, L, side)
+        if best:
+            dist, tf, name, L, side = best
+            rows.append(dict(ticker=t, price=price, side=side, tf=tf,
+                             level_name=name, level=L, dist=dist))
+    rows.sort(key=lambda r: r["dist"])
+    return rows
+
+
+def run_scan(session, key, n, years, workers, near_pct):
+    print(f"\n=== MTF SWING SCAN — top {n} liquid stocks ===")
+    day, rows = most_recent_trading_day(session, key)
+    universe = pick_universe(rows, n)
+    print(f"universe as of {day}; warming {years:g}y grouped store...")
+    store, warm = warm_store(session, key, universe, years, workers)
+    t0 = time.time()
+    hits = scan_actionable(store, universe, near_pct)
+    scan_ms = (time.time() - t0) * 1000
+    print(f"warm {warm['secs']:.0f}s (one-time / 1 call-a-day after) · "
+          f"SCAN {scan_ms:.0f} ms for {len(universe)} tickers\n")
+    print(f"{len(hits)} of {len(universe)} sitting within {near_pct*100:.1f}% "
+          f"of an untouched D/W/M level right now:\n")
+    print(f"  {'TICKER':7} {'PRICE':>9}  {'BIAS':5} {'LEVEL':14} "
+          f"{'DIST':>6}  TF")
+    print("  " + "-" * 52)
+    for r in hits[:40]:
+        at = "  <- AT LEVEL" if r["dist"] < 0.003 else ""
+        print(f"  {r['ticker']:7} {r['price']:>9.2f}  {r['side']:5} "
+              f"{r['level_name']+' '+format(r['level'], '.2f'):14} "
+              f"{r['dist']*100:>5.1f}%  {r['tf']}{at}")
+    if len(hits) > 40:
+        print(f"  ... +{len(hits)-40} more")
+
+
 # ─────────────────────────────────── main ────────────────────────────────
 
 def to_quarterly(daily):
@@ -342,6 +419,10 @@ def main():
                     help="comma tickers to diff vs SRV+TV instead of benchmarking")
     ap.add_argument("--market", type=str, default="stocks",
                     choices=list(MARKETS), help="grouped market for --verify")
+    ap.add_argument("--scan", action="store_true",
+                    help="produce the actionable MTF swing shortlist for N tickers")
+    ap.add_argument("--near", type=float, default=0.03,
+                    help="flag tickers within this fraction of a level (default 3%%)")
     args = ap.parse_args()
 
     key = os.environ.get("MASSIVE_API_KEY", "")
@@ -352,6 +433,10 @@ def main():
     if args.verify:
         verify_vs_tv(session, key, [t.strip().upper() for t in args.verify.split(",")],
                      args.years, args.workers, args.market)
+        return
+
+    if args.scan:
+        run_scan(session, key, args.universe, args.years, args.workers, args.near)
         return
 
     print(f"\n=== MTF scan benchmark — {args.universe} tickers ===")
