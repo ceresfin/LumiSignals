@@ -69,6 +69,7 @@ body {
 }
 .feed-oanda   { background: #e8eef5; color: #2c5d8a; }   /* forex → OANDA */
 .feed-polygon { background: #eef2e8; color: #4d6630; }   /* stocks/indices → Polygon */
+.stale-badge  { background: #fdecea; color: #c0392b; }   /* TV alert frozen */
 .updated-at {
   font-size: 10px;
   color: var(--text-light);
@@ -260,7 +261,7 @@ function fmtTime(iso) {
   return d.toLocaleString('en-US', {month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true});
 }
 
-function renderTicker(item) {
+function renderTicker(item, medianTv) {
   var html = '<div class="card">';
   // Feed badge — forex compares OANDA vs TV-OANDA; stocks/indices
   // compare Polygon vs TV-Polygon. Each row says which.
@@ -268,11 +269,18 @@ function renderTicker(item) {
   var feedBadge = feed
     ? ' <span class="feed-badge feed-' + feed.toLowerCase() + '">' + feed + '</span>'
     : '';
-  html += '<div class="ticker-header">' + item.ticker + feedBadge + '</div>';
+  // TV staleness: this ticker's Pine push lags the median by >2h → its
+  // alert froze, so the TV column isn't a fair comparison.
+  var tvTime = item.tv_updated ? new Date(item.tv_updated).getTime() : null;
+  var tvStale = (tvTime && medianTv && (medianTv - tvTime) > 2*60*60*1000);
+  var staleBadge = tvStale ? ' <span class="feed-badge stale-badge">TV STALE</span>' : '';
+  html += '<div class="ticker-header">' + item.ticker + feedBadge + staleBadge + '</div>';
   if (item.tv_updated) {
-    html += '<div class="updated-at">SRV: ' + feed + ' · TV updated ' + fmtTime(item.tv_updated) + '</div>';
+    var cls = tvStale ? ' style="color:var(--red);font-weight:600"' : '';
+    var note = tvStale ? ' — alert frozen, TV not comparable' : '';
+    html += '<div class="updated-at"' + cls + '>SRV: ' + feed + ' · TV updated ' + fmtTime(item.tv_updated) + note + '</div>';
   } else {
-    html += '<div class="updated-at" style="color:var(--red)">No TradingView data for this ticker</div>';
+    html += '<div class="updated-at" style="color:var(--red);font-weight:600">⚠ No TradingView alert for this ticker — TV column blank</div>';
   }
 
   // Forex carries TWO comparisons: OANDA-feed pair (TV ↔ OANDA) and
@@ -305,17 +313,21 @@ function renderTicker(item) {
       var tv = tvLevels[tf] || {}, srv = srvLevels[tf] || {},
           lt = ltLevels[tf] || {}, poly = polyLevels[tf] || {};
       h += '<tr><td><strong>' + (TF_LABELS[tf] || tf) + '</strong></td>';
+      // When TV is stale, don't tint other columns against it (else they
+      // look "wrong" when really TV is just frozen). null ref → neutral.
+      var tvRef1 = tvStale ? null : tv[s1k];
+      var tvRef2 = tvStale ? null : tv[s2k];
       if (isForex) {
-        // OANDA pair: TV (ref, neutral) + OANDA tinted vs TV.
-        // Polygon pair: POLY (ref, neutral) + LT tinted vs POLY.
+        // OANDA pair: TV (neutral) + OANDA tinted vs TV.
+        // Polygon pair: POLY (neutral) + LT tinted vs POLY (TV-independent).
         h += lvlCell(tv[s1k], tv[s2k], tv[s1k], tv[s2k], dec);
-        h += lvlCell(srv[s1k], srv[s2k], tv[s1k], tv[s2k], dec);
+        h += lvlCell(srv[s1k], srv[s2k], tvRef1, tvRef2, dec);
         h += lvlCell(poly[s1k], poly[s2k], poly[s1k], poly[s2k], dec);
         h += lvlCell(lt[s1k], lt[s2k], poly[s1k], poly[s2k], dec);
       } else {
         h += lvlCell(tv[s1k], tv[s2k], tv[s1k], tv[s2k], dec);
-        h += lvlCell(srv[s1k], srv[s2k], tv[s1k], tv[s2k], dec);
-        h += lvlCell(lt[s1k], lt[s2k], tv[s1k], tv[s2k], dec);
+        h += lvlCell(srv[s1k], srv[s2k], tvRef1, tvRef2, dec);
+        h += lvlCell(lt[s1k], lt[s2k], tvRef1, tvRef2, dec);
       }
       h += '</tr>';
     });
@@ -350,16 +362,18 @@ function renderTicker(item) {
     var ltDir = ltTrends[tf];
 
     // Forex match = both feed-pairs agree (OANDA≈TV AND LT≈POLY).
-    // Stocks match = SRV≈TV.
+    // Stocks match = SRV≈TV. When TV is stale, drop the TV-based pair
+    // so a frozen alert doesn't show a false ✗.
+    var useTv = tvDir && !tvStale;
     var matchStr = '';
     if (isForex) {
-      var okO = (srvDir && tvDir) ? srvDir === tvDir : null;
+      var okO = (srvDir && useTv) ? srvDir === tvDir : null;
       var okP = (ltDir && polyDir) ? ltDir === polyDir : null;
       if (okO !== null || okP !== null) {
         matchStr = (okO !== false && okP !== false)
           ? '<span class="match">✓</span>' : '<span class="mismatch">✗</span>';
       }
-    } else if (srvDir && tvDir) {
+    } else if (srvDir && useTv) {
       matchStr = srvDir === tvDir ? '<span class="match">✓</span>' : '<span class="mismatch">✗</span>';
     }
 
@@ -470,9 +484,16 @@ function loadComparison() {
         document.getElementById('compareContent').innerHTML = '<div class="card"><div class="loading">No data available</div></div>';
         return;
       }
+      // Median TV-push time across all tickers as the freshness reference.
+      // A ticker whose TV pushed >2h before the median has a frozen alert
+      // (median is robust to one ticker pushing unusually late). Works on
+      // weekends too — it's relative to the other tickers, not "now".
+      var times = tickers.map(function(i){ return i.tv_updated ? new Date(i.tv_updated).getTime() : null; })
+                         .filter(function(t){ return t; }).sort(function(a,b){ return a-b; });
+      var medianTv = times.length ? times[Math.floor(times.length/2)] : null;
       var html = '';
       tickers.forEach(function(item) {
-        html += renderTicker(item);
+        html += renderTicker(item, medianTv);
       });
       document.getElementById('compareContent').innerHTML = html;
     })
