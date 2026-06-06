@@ -28,6 +28,7 @@ Run:
 """
 import argparse
 import concurrent.futures as cf
+import math
 import os
 import sys
 import time
@@ -254,6 +255,50 @@ def intraday_scan(key, universe, workers):
 
 # ─────────────────────────────── the actual scan ─────────────────────────
 
+def realized_vol(daily, window=20):
+    """Annualized historical (realized) volatility from daily closes — the
+    baseline IV is judged against. Free from the grouped store we already
+    have. Returns a fraction (0.28 = 28%) or None."""
+    closes = [b["c"] for b in daily[-(window + 1):]]
+    if len(closes) < window + 1:
+        return None
+    rets = [math.log(closes[i] / closes[i - 1]) for i in range(1, len(closes))
+            if closes[i - 1] > 0]
+    if len(rets) < 2:
+        return None
+    mean = sum(rets) / len(rets)
+    var = sum((r - mean) ** 2 for r in rets) / (len(rets) - 1)
+    return (var ** 0.5) * (252 ** 0.5)
+
+
+def iv_regime(iv, hv):
+    """Given current IV and our HV baseline, classify the options regime and
+    name the spread that fits. IV/HV is the comparable signal (true IV-Rank
+    needs IV history we'd start logging). Returns (regime, ratio) or (None,_).
+      ratio >~1.3  IV rich  -> sell premium (CREDIT)
+      ratio <~1.1  IV cheap -> buy premium  (DEBIT)
+    """
+    if not iv or not hv or hv <= 0:
+        return None, None
+    ratio = iv / hv
+    if ratio >= 1.3:
+        return "RICH", ratio
+    if ratio <= 1.1:
+        return "CHEAP", ratio
+    return "FAIR", ratio
+
+
+def spread_for(side, regime):
+    """direction (from the level scan) x IV regime -> the spread to use."""
+    table = {
+        ("LONG", "CHEAP"): "bull call DEBIT",
+        ("LONG", "RICH"):  "bull put CREDIT",
+        ("SHORT", "CHEAP"): "bear put DEBIT",
+        ("SHORT", "RICH"):  "bear call CREDIT",
+    }
+    return table.get((side, regime), "—")
+
+
 def scan_actionable(store, universe, near_pct):
     """What a 700-ticker SWING scan produces: for each ticker, compute the
     untouched D/W/M levels (the validated find_htf_levels) and flag any that
@@ -299,7 +344,8 @@ def scan_actionable(store, universe, near_pct):
         if best:
             dist, tf, name, L, side = best
             rows.append(dict(ticker=t, price=price, side=side, tf=tf,
-                             level_name=name, level=L, dist=dist))
+                             level_name=name, level=L, dist=dist,
+                             hv=realized_vol(daily, 20)))
     rows.sort(key=lambda r: r["dist"])
     return rows
 
@@ -317,14 +363,19 @@ def run_scan(session, key, n, years, workers, near_pct):
           f"SCAN {scan_ms:.0f} ms for {len(universe)} tickers\n")
     print(f"{len(hits)} of {len(universe)} sitting within {near_pct*100:.1f}% "
           f"of an untouched D/W/M level right now:\n")
-    print(f"  {'TICKER':7} {'PRICE':>9}  {'BIAS':5} {'LEVEL':14} "
-          f"{'DIST':>6}  TF")
-    print("  " + "-" * 52)
+    print(f"  {'TICKER':7} {'PRICE':>9}  {'BIAS':5} {'LEVEL':13} "
+          f"{'DIST':>5}  {'TF':2} {'HV20':>6}  SPREAD (once IV known)")
+    print("  " + "-" * 70)
     for r in hits[:40]:
-        at = "  <- AT LEVEL" if r["dist"] < 0.003 else ""
+        hv = r.get("hv")
+        # IV isn't wired in yet (Schwab, market hours) — show what the spread
+        # WOULD be in each regime so the shape is clear; final pick needs IV.
+        hint = (f"DEBIT if IV<{hv*1.1*100:.0f}% / CREDIT if IV>{hv*1.3*100:.0f}%"
+                if hv else "needs IV")
         print(f"  {r['ticker']:7} {r['price']:>9.2f}  {r['side']:5} "
-              f"{r['level_name']+' '+format(r['level'], '.2f'):14} "
-              f"{r['dist']*100:>5.1f}%  {r['tf']}{at}")
+              f"{r['level_name']+' '+format(r['level'], '.2f'):13} "
+              f"{r['dist']*100:>4.1f}%  {r['tf']:2} "
+              f"{(hv*100 if hv else 0):>5.0f}%  {hint}")
     if len(hits) > 40:
         print(f"  ... +{len(hits)-40} more")
 
