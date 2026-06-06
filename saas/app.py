@@ -89,6 +89,42 @@ def _oanda_forex_levels(oc, ticker):
     return server, trends, current_price
 
 
+def _polygon_levels(massive, poly_ticker):
+    """SRV supply/demand + trend from Polygon/Massive bars via the same
+    find_htf_levels. Works for stocks/indices (bare/I: ticker) and forex
+    (C: ticker, now 5pm-ET aggregated). Returns (server, trends, price)."""
+    from lumisignals.untouched_levels import (
+        find_htf_levels, HTF_TF_LOOKBACK, calculate_adx_direction)
+    interval_to_tf = {"3mo": "Q", "1mo": "M", "1w": "W", "1d": "D",
+                      "4h": "4H", "1h": "1H", "30m": "30M", "15m": "15M"}
+    server, trends = {}, {}
+    current_price = None
+    for tf, tf_label in interval_to_tf.items():
+        try:
+            lb = HTF_TF_LOOKBACK.get(tf, 50)
+            candles = massive.get_candles(poly_ticker, tf, lb + 5)
+            if not candles or len(candles) < 3:
+                continue
+            price = candles[-1].close
+            if current_price is None or tf in ("15m", "30m", "1h"):
+                current_price = price
+            highs = [c.high for c in reversed(candles)]
+            lows = [c.low for c in reversed(candles)]
+            s1, s2, d1, d2 = find_htf_levels(highs, lows, price, lookback=lb)
+            recent_highs = [c.high for c in candles[-12:]]
+            recent_lows = [c.low for c in candles[-12:]]
+            server[tf_label] = {
+                "supply": s1, "supply2": s2, "demand": d1, "demand2": d2,
+                "range_high": max(recent_highs) if recent_highs else None,
+                "range_low": min(recent_lows) if recent_lows else None,
+            }
+            direction, _adx = calculate_adx_direction(candles, period=14)
+            trends[tf_label] = direction
+        except Exception as e:
+            logger.debug("Polygon level err %s %s: %s", poly_ticker, tf, e)
+    return server, trends, current_price
+
+
 def create_app():
     app = Flask(__name__, template_folder="templates", static_folder="static")
 
@@ -4241,6 +4277,13 @@ def create_app():
                         item["current_price"] = cp
                 else:
                     item["server"]["error"] = "OANDA creds not configured"
+                # Second comparison: Polygon-aligned forex (5pm-ET windows)
+                # — pairs with the LT (LumiTrade Polygon) column so you can
+                # validate LumiTrade's Polygon forex against ours.
+                if massive:
+                    psrv, ptrd, _pcp = _polygon_levels(massive, f"C:{ticker}")
+                    item["server_polygon"] = psrv
+                    item["server_polygon_trends"] = ptrd
             elif massive:
                 poly_ticker = f"I:{ticker}" if ticker in INDEX_SYMBOLS else ticker
 
@@ -4388,6 +4431,13 @@ def create_app():
                         item["current_price"] = cp
                 else:
                     item["server"]["error"] = "OANDA creds not configured"
+                # Second comparison: Polygon-aligned forex (5pm-ET windows)
+                # — pairs with the LT (LumiTrade Polygon) column so you can
+                # validate LumiTrade's Polygon forex against ours.
+                if massive:
+                    psrv, ptrd, _pcp = _polygon_levels(massive, f"C:{ticker}")
+                    item["server_polygon"] = psrv
+                    item["server_polygon_trends"] = ptrd
             elif massive:
                 poly_ticker = f"I:{ticker}" if ticker in INDEX_SYMBOLS else ticker
                 for tf, tf_label in interval_to_tf.items():

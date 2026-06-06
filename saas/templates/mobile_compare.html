@@ -118,6 +118,7 @@ td {
 }
 .tag-tv { background: #e3f2fd; color: #1565c0; }
 .tag-srv { background: #e8f5e9; color: var(--green); }
+.tag-poly { background: #ede7f6; color: #5e35b1; }
 .tag-lt { background: #fff3e0; color: #e65100; }
 .trend-up { color: var(--green); font-weight: 600; }
 .trend-down { color: var(--red); font-weight: 600; }
@@ -274,77 +275,87 @@ function renderTicker(item) {
     html += '<div class="updated-at" style="color:var(--red)">No TradingView data for this ticker</div>';
   }
 
-  var srvLevels = item.server || {};
+  // Forex carries TWO comparisons: OANDA-feed pair (TV ↔ OANDA) and
+  // Polygon-feed pair (POLY ↔ LT). Stocks/indices stay the 3-source
+  // TV/SRV/LT layout (all Polygon-equivalent).
+  var isForex = (item.feed === 'OANDA');
+  var srvLevels = item.server || {};          // forex: OANDA · stocks: Polygon
+  var polyLevels = item.server_polygon || {}; // forex only: Polygon-aligned
   var tvLevels = item.tradingview || {};
   var ltLevels = item.lumitrade || {};
 
-  // ─── SUPPLY LEVELS ─── (S1 top / S2 below, one column per source)
-  html += '<div class="section-label">Supply Levels (Resistance) — S1 / S2</div>';
-  html += '<table><tr>';
-  html += '<th>TF</th>';
-  html += '<th><span class="source-tag tag-tv">TV</span></th>';
-  html += '<th><span class="source-tag tag-srv">SRV</span></th>';
-  html += '<th><span class="source-tag tag-lt">LT</span></th>';
-  html += '</tr>';
+  function levelTable(title, s1k, s2k) {
+    var h = '<div class="section-label">' + title + '</div><table><tr><th>TF</th>';
+    if (isForex) {
+      h += '<th><span class="source-tag tag-tv">TV</span></th>'
+         + '<th><span class="source-tag tag-srv">OANDA</span></th>'
+         + '<th><span class="source-tag tag-poly">POLY</span></th>'
+         + '<th><span class="source-tag tag-lt">LT</span></th>';
+    } else {
+      h += '<th><span class="source-tag tag-tv">TV</span></th>'
+         + '<th><span class="source-tag tag-srv">SRV</span></th>'
+         + '<th><span class="source-tag tag-lt">LT</span></th>';
+    }
+    h += '</tr>';
+    TF_ORDER.forEach(function(tf) {
+      var tv = tvLevels[tf] || {}, srv = srvLevels[tf] || {},
+          lt = ltLevels[tf] || {}, poly = polyLevels[tf] || {};
+      h += '<tr><td><strong>' + (TF_LABELS[tf] || tf) + '</strong></td>';
+      if (isForex) {
+        // OANDA pair: TV (ref, neutral) + OANDA tinted vs TV.
+        // Polygon pair: POLY (ref, neutral) + LT tinted vs POLY.
+        h += lvlCell(tv[s1k], tv[s2k], tv[s1k], tv[s2k]);
+        h += lvlCell(srv[s1k], srv[s2k], tv[s1k], tv[s2k]);
+        h += lvlCell(poly[s1k], poly[s2k], poly[s1k], poly[s2k]);
+        h += lvlCell(lt[s1k], lt[s2k], poly[s1k], poly[s2k]);
+      } else {
+        h += lvlCell(tv[s1k], tv[s2k], tv[s1k], tv[s2k]);
+        h += lvlCell(srv[s1k], srv[s2k], tv[s1k], tv[s2k]);
+        h += lvlCell(lt[s1k], lt[s2k], tv[s1k], tv[s2k]);
+      }
+      h += '</tr>';
+    });
+    h += '</table>';
+    return h;
+  }
 
-  TF_ORDER.forEach(function(tf) {
-    var srv = srvLevels[tf] || {};
-    var tv = tvLevels[tf] || {};
-    var lt = ltLevels[tf] || {};
-    html += '<tr>';
-    html += '<td><strong>' + (TF_LABELS[tf] || tf) + '</strong></td>';
-    // TV is the reference — passes itself so it renders neutral.
-    html += lvlCell(tv.supply, tv.supply2, tv.supply, tv.supply2);
-    html += lvlCell(srv.supply, srv.supply2, tv.supply, tv.supply2);
-    html += lvlCell(lt.supply, lt.supply2, tv.supply, tv.supply2);
-    html += '</tr>';
-  });
-  html += '</table>';
-
-  // ─── DEMAND LEVELS ─── (D1 top / D2 below, one column per source)
-  html += '<div class="section-label">Demand Levels (Support) — D1 / D2</div>';
-  html += '<table><tr>';
-  html += '<th>TF</th>';
-  html += '<th><span class="source-tag tag-tv">TV</span></th>';
-  html += '<th><span class="source-tag tag-srv">SRV</span></th>';
-  html += '<th><span class="source-tag tag-lt">LT</span></th>';
-  html += '</tr>';
-
-  TF_ORDER.forEach(function(tf) {
-    var srv = srvLevels[tf] || {};
-    var tv = tvLevels[tf] || {};
-    var lt = ltLevels[tf] || {};
-    html += '<tr>';
-    html += '<td><strong>' + (TF_LABELS[tf] || tf) + '</strong></td>';
-    html += lvlCell(tv.demand, tv.demand2, tv.demand, tv.demand2);
-    html += lvlCell(srv.demand, srv.demand2, tv.demand, tv.demand2);
-    html += lvlCell(lt.demand, lt.demand2, tv.demand, tv.demand2);
-    html += '</tr>';
-  });
-  html += '</table>';
+  html += levelTable('Supply Levels (Resistance) — S1 / S2', 'supply', 'supply2');
+  html += levelTable('Demand Levels (Support) — D1 / D2', 'demand', 'demand2');
 
   // ─── TREND COMPARISON ───
   html += '<div class="section-label">Trend Direction (ADX)</div>';
   html += '<table><tr>';
   html += '<th>TF</th>';
   html += '<th><span class="source-tag tag-tv">TV</span></th>';
-  html += '<th><span class="source-tag tag-srv">SRV</span></th>';
+  html += '<th><span class="source-tag tag-srv">' + (isForex ? 'OANDA' : 'SRV') + '</span></th>';
+  if (isForex) html += '<th><span class="source-tag tag-poly">POLY</span></th>';
   html += '<th><span class="source-tag tag-lt">LT</span></th>';
   html += '<th>Match</th>';
   html += '</tr>';
 
   var srvTrends = item.server_trends || {};
+  var polyTrends = item.server_polygon_trends || {};
   var tvTrends = item.tv_trends || {};
   var ltTrends = item.lt_trends || {};
 
   TF_ORDER.forEach(function(tf) {
     var srvDir = srvTrends[tf];
+    var polyDir = polyTrends[tf];
     var tvDir = tvTrends[tf] ? tvTrends[tf].dir : undefined;
     var tvAdx = tvTrends[tf] ? tvTrends[tf].adx : undefined;
     var ltDir = ltTrends[tf];
 
+    // Forex match = both feed-pairs agree (OANDA≈TV AND LT≈POLY).
+    // Stocks match = SRV≈TV.
     var matchStr = '';
-    if (srvDir && tvDir) {
+    if (isForex) {
+      var okO = (srvDir && tvDir) ? srvDir === tvDir : null;
+      var okP = (ltDir && polyDir) ? ltDir === polyDir : null;
+      if (okO !== null || okP !== null) {
+        matchStr = (okO !== false && okP !== false)
+          ? '<span class="match">✓</span>' : '<span class="mismatch">✗</span>';
+      }
+    } else if (srvDir && tvDir) {
       matchStr = srvDir === tvDir ? '<span class="match">✓</span>' : '<span class="mismatch">✗</span>';
     }
 
@@ -357,6 +368,7 @@ function renderTicker(item) {
     html += '<td><strong>' + (TF_LABELS[tf] || tf) + '</strong></td>';
     html += '<td>' + tvLabel + '</td>';
     html += '<td>' + trendLabel(srvDir) + '</td>';
+    if (isForex) html += '<td>' + trendLabel(polyDir) + '</td>';
     html += '<td>' + trendLabel(ltDir) + '</td>';
     html += '<td>' + matchStr + '</td>';
     html += '</tr>';
