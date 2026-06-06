@@ -203,21 +203,21 @@ var DEFAULT_TICKERS = 'SPY,QQQ,NVDA,SPX,NDX,XSP,RUT,EURUSD,GBPUSD,USDJPY';
 var urlParams = new URLSearchParams(window.location.search);
 document.getElementById('tickerInput').value = urlParams.get('tickers') || DEFAULT_TICKERS;
 
-function fmt(v) {
+function fmt(v, decimals) {
   if (v === null || v === undefined) return '<span class="no-data">--</span>';
-  return parseFloat(v).toFixed(2);
+  return parseFloat(v).toFixed(decimals == null ? 2 : decimals);
 }
 
 // Stacked cell: level-1 on top, level-2 below (dimmer). Each line is
 // tinted by how far it diverges from the TV reference for that level
 // (ref1/ref2). The TV column passes itself as the reference so it stays
 // neutral. Keeps the comparison readable in just 4 columns on mobile.
-function lvlCell(v1, v2, ref1, ref2) {
+function lvlCell(v1, v2, ref1, ref2, decimals) {
   var c1 = diffClass(v1, ref1, 0.5);
   var c2 = diffClass(v2, ref2, 0.5);
   return '<td class="lvlcell">'
-    + '<div class="' + c1 + '">' + fmt(v1) + '</div>'
-    + '<div class="lvl2 ' + c2 + '">' + fmt(v2) + '</div>'
+    + '<div class="' + c1 + '">' + fmt(v1, decimals) + '</div>'
+    + '<div class="lvl2 ' + c2 + '">' + fmt(v2, decimals) + '</div>'
     + '</td>';
 }
 
@@ -284,6 +284,10 @@ function renderTicker(item) {
   var tvLevels = item.tradingview || {};
   var ltLevels = item.lumitrade || {};
 
+  // Decimal precision: forex needs 5 places (1.16455) to see a match,
+  // JPY pairs 3 (160.317), stocks/indices 2.
+  var dec = !isForex ? 2 : (item.ticker.slice(-3) === 'JPY' ? 3 : 5);
+
   function levelTable(title, s1k, s2k) {
     var h = '<div class="section-label">' + title + '</div><table><tr><th>TF</th>';
     if (isForex) {
@@ -304,14 +308,14 @@ function renderTicker(item) {
       if (isForex) {
         // OANDA pair: TV (ref, neutral) + OANDA tinted vs TV.
         // Polygon pair: POLY (ref, neutral) + LT tinted vs POLY.
-        h += lvlCell(tv[s1k], tv[s2k], tv[s1k], tv[s2k]);
-        h += lvlCell(srv[s1k], srv[s2k], tv[s1k], tv[s2k]);
-        h += lvlCell(poly[s1k], poly[s2k], poly[s1k], poly[s2k]);
-        h += lvlCell(lt[s1k], lt[s2k], poly[s1k], poly[s2k]);
+        h += lvlCell(tv[s1k], tv[s2k], tv[s1k], tv[s2k], dec);
+        h += lvlCell(srv[s1k], srv[s2k], tv[s1k], tv[s2k], dec);
+        h += lvlCell(poly[s1k], poly[s2k], poly[s1k], poly[s2k], dec);
+        h += lvlCell(lt[s1k], lt[s2k], poly[s1k], poly[s2k], dec);
       } else {
-        h += lvlCell(tv[s1k], tv[s2k], tv[s1k], tv[s2k]);
-        h += lvlCell(srv[s1k], srv[s2k], tv[s1k], tv[s2k]);
-        h += lvlCell(lt[s1k], lt[s2k], tv[s1k], tv[s2k]);
+        h += lvlCell(tv[s1k], tv[s2k], tv[s1k], tv[s2k], dec);
+        h += lvlCell(srv[s1k], srv[s2k], tv[s1k], tv[s2k], dec);
+        h += lvlCell(lt[s1k], lt[s2k], tv[s1k], tv[s2k], dec);
       }
       h += '</tr>';
     });
