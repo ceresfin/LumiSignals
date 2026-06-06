@@ -19,6 +19,76 @@ login_manager = LoginManager()
 logger = logging.getLogger(__name__)
 
 
+def _get_oanda_md_client():
+    """OANDA client for compare-page forex market data, built from env
+    (OANDA_API_KEY / OANDA_ACCOUNT_ID / OANDA_ENVIRONMENT). Returns None
+    if creds are absent. Forex levels come from OANDA — the same feed the
+    bot trades on and the TradingView OANDA charts use — so they match;
+    Polygon/Massive does not carry an OANDA-comparable forex feed."""
+    ak = os.environ.get("OANDA_API_KEY", "")
+    acc = os.environ.get("OANDA_ACCOUNT_ID", "")
+    if not ak or not acc:
+        return None
+    try:
+        from lumisignals.oanda_client import OandaClient
+        return OandaClient(account_id=acc, api_key=ak,
+                           environment=os.environ.get("OANDA_ENVIRONMENT", "practice"))
+    except Exception as e:
+        logger.warning("OANDA md client init failed: %s", e)
+        return None
+
+
+# TF interval key → (display label, OANDA granularity). OANDA tops out at
+# monthly (no quarterly), and its daily candles roll at the 5pm-ET NY
+# close — exactly the FX day TradingView's OANDA charts use.
+_OANDA_TF_SPECS = [
+    ("1mo", "M", "M"), ("1w", "W", "W"), ("1d", "D", "D"),
+    ("4h", "4H", "H4"), ("1h", "1H", "H1"),
+    ("30m", "30M", "M30"), ("15m", "15M", "M15"),
+]
+
+
+def _oanda_forex_levels(oc, ticker):
+    """SRV supply/demand + trend for a forex ticker, computed from OANDA
+    bars via the same find_htf_levels used for Polygon stocks/indices.
+    Returns (server_dict, trends_dict, current_price)."""
+    from lumisignals.untouched_levels import (
+        find_htf_levels, HTF_TF_LOOKBACK, calculate_adx_direction)
+    from lumisignals.candle_classifier import CandleData
+    instrument = f"{ticker[:3]}_{ticker[3:]}"  # EURUSD -> EUR_USD
+    server, trends = {}, {}
+    current_price = None
+    for tf_key, tf_label, gran in _OANDA_TF_SPECS:
+        try:
+            lb = HTF_TF_LOOKBACK.get(tf_key, 50)
+            raw = oc.get_candles(instrument, gran, lb + 5)  # oldest-first
+            cds = [CandleData(
+                       open=float(c["mid"]["o"]), high=float(c["mid"]["h"]),
+                       low=float(c["mid"]["l"]), close=float(c["mid"]["c"]),
+                       timestamp=c["time"])
+                   for c in raw if c.get("mid")]
+            if len(cds) < 3:
+                continue
+            price = cds[-1].close
+            if current_price is None or tf_key in ("15m", "30m", "1h"):
+                current_price = price
+            highs = [c.high for c in reversed(cds)]
+            lows = [c.low for c in reversed(cds)]
+            s1, s2, d1, d2 = find_htf_levels(highs, lows, price, lookback=lb)
+            recent_highs = [c.high for c in cds[-12:]]
+            recent_lows = [c.low for c in cds[-12:]]
+            server[tf_label] = {
+                "supply": s1, "supply2": s2, "demand": d1, "demand2": d2,
+                "range_high": max(recent_highs) if recent_highs else None,
+                "range_low": min(recent_lows) if recent_lows else None,
+            }
+            direction, _adx = calculate_adx_direction(cds, period=14)
+            trends[tf_label] = direction
+        except Exception as e:
+            logger.debug("OANDA forex level err %s %s: %s", ticker, tf_key, e)
+    return server, trends, current_price
+
+
 def create_app():
     app = Flask(__name__, template_folder="templates", static_folder="static")
 
@@ -4157,14 +4227,22 @@ def create_app():
 
             # Determine if ticker is forex (e.g. EURUSD, GBPUSD)
             is_forex = len(ticker) == 6 and ticker[:3].isalpha() and ticker[3:].isalpha() and ticker not in ("GOOGL",)
+            # Data source per asset class: forex → OANDA (matches TV-OANDA
+            # + the bot's trades), everything else → Polygon.
+            item["feed"] = "OANDA" if is_forex else "Polygon"
 
-            if massive:
-                if is_forex:
-                    poly_ticker = f"C:{ticker}"
-                elif ticker in INDEX_SYMBOLS:
-                    poly_ticker = f"I:{ticker}"
+            if is_forex:
+                oc = _get_oanda_md_client()
+                if oc is not None:
+                    srv, trd, cp = _oanda_forex_levels(oc, ticker)
+                    item["server"] = srv
+                    item["server_trends"] = trd
+                    if cp is not None:
+                        item["current_price"] = cp
                 else:
-                    poly_ticker = ticker
+                    item["server"]["error"] = "OANDA creds not configured"
+            elif massive:
+                poly_ticker = f"I:{ticker}" if ticker in INDEX_SYMBOLS else ticker
 
                 for tf, tf_label in interval_to_tf.items():
                     try:
@@ -4185,9 +4263,8 @@ def create_app():
                             "demand": d1, "demand2": d2,
                         }
                         # ADX trend
-                        adx_dir = calculate_adx_direction(candles)
-                        if adx_dir:
-                            item["server_trends"][tf_label] = adx_dir.get("direction", "SIDE")
+                        direction, _adx = calculate_adx_direction(candles)
+                        item["server_trends"][tf_label] = direction
                     except Exception as e:
                         logger.debug("Compare level error %s %s: %s", ticker, tf, e)
             else:
@@ -4298,14 +4375,21 @@ def create_app():
             item = {"ticker": ticker, "server": {}, "tradingview": {}, "tv_trends": {}, "server_trends": {}, "tv_updated": ""}
             is_forex = (len(ticker) == 6 and ticker[:3].isalpha() and ticker[3:].isalpha()
                         and ticker not in ("GOOGL",))
+            # Forex → OANDA (matches TV-OANDA + the bot's trades); else Polygon.
+            item["feed"] = "OANDA" if is_forex else "Polygon"
 
-            if massive:
-                if is_forex:
-                    poly_ticker = f"C:{ticker}"
-                elif ticker in INDEX_SYMBOLS:
-                    poly_ticker = f"I:{ticker}"
+            if is_forex:
+                oc = _get_oanda_md_client()
+                if oc is not None:
+                    srv, trd, cp = _oanda_forex_levels(oc, ticker)
+                    item["server"] = srv
+                    item["server_trends"] = trd
+                    if cp is not None:
+                        item["current_price"] = cp
                 else:
-                    poly_ticker = ticker
+                    item["server"]["error"] = "OANDA creds not configured"
+            elif massive:
+                poly_ticker = f"I:{ticker}" if ticker in INDEX_SYMBOLS else ticker
                 for tf, tf_label in interval_to_tf.items():
                     try:
                         # Deep per-TF lookback so SRV matches the Pine/TV

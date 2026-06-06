@@ -63,6 +63,12 @@ body {
   font-weight: 600;
   margin-bottom: 2px;
 }
+.feed-badge {
+  font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 10px;
+  vertical-align: middle; letter-spacing: 0.3px;
+}
+.feed-oanda   { background: #e8eef5; color: #2c5d8a; }   /* forex → OANDA */
+.feed-polygon { background: #eef2e8; color: #4d6630; }   /* stocks/indices → Polygon */
 .updated-at {
   font-size: 10px;
   color: var(--text-light);
@@ -255,9 +261,15 @@ function fmtTime(iso) {
 
 function renderTicker(item) {
   var html = '<div class="card">';
-  html += '<div class="ticker-header">' + item.ticker + '</div>';
+  // Feed badge — forex compares OANDA vs TV-OANDA; stocks/indices
+  // compare Polygon vs TV-Polygon. Each row says which.
+  var feed = item.feed || '';
+  var feedBadge = feed
+    ? ' <span class="feed-badge feed-' + feed.toLowerCase() + '">' + feed + '</span>'
+    : '';
+  html += '<div class="ticker-header">' + item.ticker + feedBadge + '</div>';
   if (item.tv_updated) {
-    html += '<div class="updated-at">TV data updated: ' + fmtTime(item.tv_updated) + '</div>';
+    html += '<div class="updated-at">SRV: ' + feed + ' · TV updated ' + fmtTime(item.tv_updated) + '</div>';
   } else {
     html += '<div class="updated-at" style="color:var(--red)">No TradingView data for this ticker</div>';
   }
