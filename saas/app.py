@@ -4256,15 +4256,21 @@ def create_app():
 
         # Cash indexes need Polygon's "I:" prefix or they return 0 bars
         INDEX_SYMBOLS = {"SPX", "NDX", "RUT", "VIX", "DJI", "XSP", "XND"}
+        # Crypto bases (BTC, ETH, ...) — same 6-char shape as forex but must
+        # route to Polygon "X:" not OANDA. Derived from the canonical list.
+        from lumisignals.massive_client import CRYPTO_TICKERS
+        CRYPTO_BASES = {t[2:] for t in CRYPTO_TICKERS}  # "X:BTCUSD" -> "BTCUSD"
 
         results = []
         for ticker in tickers:
             item = {"ticker": ticker, "server": {}, "tradingview": {}, "tv_trends": {}, "server_trends": {}, "tv_updated": ""}
 
             # Determine if ticker is forex (e.g. EURUSD, GBPUSD)
-            is_forex = len(ticker) == 6 and ticker[:3].isalpha() and ticker[3:].isalpha() and ticker not in ("GOOGL",)
+            is_crypto = ticker in CRYPTO_BASES
+            is_forex = (len(ticker) == 6 and ticker[:3].isalpha() and ticker[3:].isalpha()
+                        and ticker not in ("GOOGL",) and not is_crypto)
             # Data source per asset class: forex → OANDA (matches TV-OANDA
-            # + the bot's trades), everything else → Polygon.
+            # + the bot's trades); crypto + everything else → Polygon.
             item["feed"] = "OANDA" if is_forex else "Polygon"
 
             if is_forex:
@@ -4285,7 +4291,12 @@ def create_app():
                     item["server_polygon"] = psrv
                     item["server_polygon_trends"] = ptrd
             elif massive:
-                poly_ticker = f"I:{ticker}" if ticker in INDEX_SYMBOLS else ticker
+                if is_crypto:
+                    poly_ticker = f"X:{ticker}"   # crypto → Polygon X: feed (24/7, UTC-day bars)
+                elif ticker in INDEX_SYMBOLS:
+                    poly_ticker = f"I:{ticker}"
+                else:
+                    poly_ticker = ticker
 
                 for tf, tf_label in interval_to_tf.items():
                     try:
@@ -4412,13 +4423,19 @@ def create_app():
 
         # Cash indexes need Polygon's "I:" prefix or they return 0 bars
         INDEX_SYMBOLS = {"SPX", "NDX", "RUT", "VIX", "DJI", "XSP", "XND"}
+        # Crypto bases (BTC, ETH, ...) — same 6-char shape as forex but must
+        # route to Polygon "X:" not OANDA. Derived from the canonical list.
+        from lumisignals.massive_client import CRYPTO_TICKERS
+        CRYPTO_BASES = {t[2:] for t in CRYPTO_TICKERS}  # "X:BTCUSD" -> "BTCUSD"
 
         results = []
         for ticker in tickers:
             item = {"ticker": ticker, "server": {}, "tradingview": {}, "tv_trends": {}, "server_trends": {}, "tv_updated": ""}
+            is_crypto = ticker in CRYPTO_BASES
             is_forex = (len(ticker) == 6 and ticker[:3].isalpha() and ticker[3:].isalpha()
-                        and ticker not in ("GOOGL",))
-            # Forex → OANDA (matches TV-OANDA + the bot's trades); else Polygon.
+                        and ticker not in ("GOOGL",) and not is_crypto)
+            # Forex → OANDA (matches TV-OANDA + the bot's trades); crypto +
+            # everything else → Polygon.
             item["feed"] = "OANDA" if is_forex else "Polygon"
 
             if is_forex:
@@ -4439,7 +4456,12 @@ def create_app():
                     item["server_polygon"] = psrv
                     item["server_polygon_trends"] = ptrd
             elif massive:
-                poly_ticker = f"I:{ticker}" if ticker in INDEX_SYMBOLS else ticker
+                if is_crypto:
+                    poly_ticker = f"X:{ticker}"   # crypto → Polygon X: feed (24/7, UTC-day bars)
+                elif ticker in INDEX_SYMBOLS:
+                    poly_ticker = f"I:{ticker}"
+                else:
+                    poly_ticker = ticker
                 for tf, tf_label in interval_to_tf.items():
                     try:
                         # Deep per-TF lookback so SRV matches the Pine/TV
