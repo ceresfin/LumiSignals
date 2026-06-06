@@ -278,6 +278,16 @@ AGGREGATE_FROM_5M = {"1h", "4h"}
 MARKET_OPEN_ET = (9, 30)   # 9:30 AM ET = 13:30 UTC
 MARKET_CLOSE_ET = (16, 0)  # 4:00 PM ET = 20:00 UTC
 
+# Forex session boundary — the FX trading day rolls at the 5pm-ET New
+# York close (Sun 5pm ET → Fri 5pm ET), which is how OANDA and
+# TradingView build forex daily/weekly bars. 5pm EDT = 21:00 UTC, so
+# shifting a UTC timestamp by +3h lands that boundary on midnight:
+# (utc + 3h).date() is the FX session date, and the FX week becomes a
+# Monday-start week in shifted time (Sun 21:00 UTC + 3h = Mon 00:00).
+# Validated bar-for-bar against OANDA daily bars (within feed-pips).
+# Hardcoded EDT to match the rest of this module (off 1h in EST winter).
+FOREX_DAY_SHIFT = timedelta(hours=3)
+
 
 class MassiveClient:
     """Massive (Polygon.io) REST API client for stocks and crypto."""
@@ -341,6 +351,14 @@ class MassiveClient:
         # Re-enable once we have proper caching/throttling on the alignment path.
         if timespan in AGGREGATE_FROM_5M and (is_stock or is_forex):
             return self._get_market_aligned_candles(ticker, timespan, count)
+
+        # Forex daily/weekly roll at the 5pm-ET NY close (OANDA/TradingView
+        # convention), not UTC midnight / Monday. Build from hourly bars on
+        # the FX session boundary so the windows match.
+        if timespan == "1d" and is_forex:
+            return self._get_forex_session_daily(ticker, count)
+        if timespan == "1w" and is_forex:
+            return self._get_forex_session_weekly(ticker, count)
 
         # Weekly: always Monday-start (TradingView uses Monday for all markets)
         if timespan == "1w" and not is_crypto:
@@ -508,9 +526,12 @@ class MassiveClient:
         buckets = {}  # key = (date_str, bucket_index) → list of bars
 
         if is_forex:
-            # Forex: clock-aligned buckets (00:00, 01:00, ... for 1h)
+            # Forex: anchor buckets to the 5pm-ET session (shift +3h so the
+            # FX day starts at 00:00 shifted). 4h buckets then align to
+            # 17:00/21:00/01:00/... ET like OANDA/TradingView. (1h is
+            # unaffected — each clock-hour bar is identical either way.)
             for bar in market_bars:
-                dt = datetime.fromtimestamp(bar["t"] / 1000, tz=timezone.utc)
+                dt = datetime.fromtimestamp(bar["t"] / 1000, tz=timezone.utc) + FOREX_DAY_SHIFT
                 date_key = dt.strftime("%Y-%m-%d")
                 minutes_since_midnight = dt.hour * 60 + dt.minute
                 bucket_idx = minutes_since_midnight // bucket_minutes
@@ -642,6 +663,73 @@ class MassiveClient:
             )
             candles.append(candle)
 
+        return candles[-count:] if len(candles) > count else candles
+
+    def _fetch_forex_hourly(self, ticker: str, days: int) -> list:
+        """Raw hourly forex bars over the last `days` calendar days,
+        oldest-first. Shared by the FX-session daily/weekly builders.
+
+        Fetch with sort=desc then reverse: Polygon caps the response, and
+        with sort=asc it truncates the LATEST bars (returning stale old
+        data) — the same quirk the minute path guards against. desc keeps
+        the most-recent bars, which is what we need.
+        """
+        now = datetime.now(timezone.utc)
+        start = now - timedelta(days=days)
+        data = self._request(
+            f"/v2/aggs/ticker/{ticker}/range/1/hour/{start.strftime('%Y-%m-%d')}/{now.strftime('%Y-%m-%d')}",
+            params={"adjusted": "true", "sort": "desc", "limit": 50000},
+        )
+        results = data.get("results", []) or []
+        results.reverse()  # → oldest-first for session grouping
+        return results
+
+    def _get_forex_session_daily(self, ticker: str, count: int) -> List[CandleData]:
+        """FX daily candles aligned to the 5pm-ET NY close, built from
+        hourly bars grouped by FX session date ((utc + FOREX_DAY_SHIFT).
+        date()). Matches OANDA/TradingView forex daily — validated
+        bar-for-bar against OANDA (within feed-pips)."""
+        hourly = self._fetch_forex_hourly(ticker, days=int(count * 1.5) + 14)
+        if not hourly:
+            return []
+        sessions = {}
+        for bar in hourly:
+            dt = datetime.fromtimestamp(bar["t"] / 1000, tz=timezone.utc) + FOREX_DAY_SHIFT
+            sessions.setdefault(dt.strftime("%Y-%m-%d"), []).append(bar)
+        candles = []
+        for key in sorted(sessions.keys()):
+            bars = sessions[key]
+            candles.append(CandleData(
+                open=float(bars[0]["o"]),
+                high=max(float(b["h"]) for b in bars),
+                low=min(float(b["l"]) for b in bars),
+                close=float(bars[-1]["c"]),
+                timestamp=str(bars[0]["t"] / 1000),
+            ))
+        return candles[-count:] if len(candles) > count else candles
+
+    def _get_forex_session_weekly(self, ticker: str, count: int) -> List[CandleData]:
+        """FX weekly candles aligned to the Sunday 5pm-ET week open.
+        Shifting +FOREX_DAY_SHIFT maps Sun 21:00 UTC → Mon 00:00, so the
+        ISO week of the shifted timestamp is the FX week."""
+        hourly = self._fetch_forex_hourly(ticker, days=count * 7 + 14)
+        if not hourly:
+            return []
+        weeks = {}
+        for bar in hourly:
+            dt = datetime.fromtimestamp(bar["t"] / 1000, tz=timezone.utc) + FOREX_DAY_SHIFT
+            iso_year, iso_week, _ = dt.isocalendar()
+            weeks.setdefault((iso_year, iso_week), []).append(bar)
+        candles = []
+        for key in sorted(weeks.keys()):
+            bars = weeks[key]
+            candles.append(CandleData(
+                open=float(bars[0]["o"]),
+                high=max(float(b["h"]) for b in bars),
+                low=min(float(b["l"]) for b in bars),
+                close=float(bars[-1]["c"]),
+                timestamp=str(bars[0]["t"] / 1000),
+            ))
         return candles[-count:] if len(candles) > count else candles
 
     def get_price(self, ticker: str) -> Optional[float]:
