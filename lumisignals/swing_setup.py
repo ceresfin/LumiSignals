@@ -119,7 +119,7 @@ DAILY_COUNTER_BARS = 5             # TUNING: look at last 5 daily bars for count
 # SPX, NDX, RUT, VIX, DJI). Plain SPY/QQQ/IWM (ETFs) use the regular
 # ticker. Schwab's /chains endpoint takes the bare underlying symbol
 # either way, so this translation only applies to the Polygon bars call.
-_POLYGON_INDEX_SYMBOLS = {"SPX", "NDX", "RUT", "VIX", "DJI"}
+_POLYGON_INDEX_SYMBOLS = {"SPX", "NDX", "RUT", "VIX", "DJI", "XSP", "XND"}
 
 
 def _polygon_ticker(ticker: str) -> str:

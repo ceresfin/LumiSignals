@@ -27,12 +27,17 @@ import { Colors } from '@/constants/theme';
 // click of Open Trade, not a per-symbol setting.
 const MAX_RISK_KEY = 'swingPanel:maxRiskUsd';
 const MAX_RISK_DEFAULT = '200';
+// User's custom ticker watchlist (added via the search bar). Persisted to
+// AsyncStorage so uploaded symbols survive remounts/restarts.
+const WATCHLIST_KEY = 'swingPanel:watchlist';
+// A ticker is anything 1-6 chars of letters (optionally a dot, e.g. BRK.B).
+const TICKER_RE = /^[A-Z]{1,6}(\.[A-Z])?$/;
 
 // Two groups so the UI can render a section label per row.
 // Stocks chosen for: liquid weekly chains, sane strike intervals
 // ($1-2.50), and enough IV to make 30-delta verticals worth the
 // debit. Alphabetized within group for findability.
-const INDEX_TICKERS = ['SPY', 'QQQ', 'IWM', 'SPX', 'NDX'] as const;
+const INDEX_TICKERS = ['SPY', 'QQQ', 'IWM', 'SPX', 'XSP', 'NDX'] as const;
 const STOCK_TICKERS = [
   'AAPL', 'AMD', 'AMZN', 'AVGO', 'GOOG', 'JPM', 'LLY', 'META',
   'MSFT', 'MU', 'NFLX', 'NVDA', 'TSLA', 'WMT', 'XOM',
@@ -123,8 +128,13 @@ type ReturnRiskView = {
 export function SwingTradePanel() {
   if (!ENABLED) return null;
 
-  const [ticker, setTicker] = useState<typeof SUPPORTED_TICKERS[number]>('SPX');
+  // Free-form now (was limited to SUPPORTED_TICKERS) — the search bar lets
+  // the user add any ticker the backend can analyze.
+  const [ticker, setTicker] = useState<string>('SPX');
   const [mode, setMode] = useState<typeof MODES[number]>('swing');
+  // Custom watchlist + the search/upload box text.
+  const [watchlist, setWatchlist] = useState<string[]>([]);
+  const [query, setQuery] = useState('');
   const [vehicle, setVehicle] = useState<'options' | 'shares'>('options');
   const [chartTf, setChartTf] = useState<string>('1w');
   const [setup, setSetup] = useState<Setup | null>(null);
@@ -168,6 +178,41 @@ export function SwingTradePanel() {
       AsyncStorage.setItem(MAX_RISK_KEY, maxRiskInput).catch(() => {});
     }
   }, [maxRiskInput]);
+
+  // Hydrate the saved watchlist once on mount.
+  useEffect(() => {
+    AsyncStorage.getItem(WATCHLIST_KEY)
+      .then(saved => { if (saved) setWatchlist(JSON.parse(saved)); })
+      .catch(() => { /* no saved list yet */ });
+  }, []);
+
+  // Persist the watchlist whenever it changes.
+  useEffect(() => {
+    AsyncStorage.setItem(WATCHLIST_KEY, JSON.stringify(watchlist)).catch(() => {});
+  }, [watchlist]);
+
+  // Parse the search box (single ticker, or comma/space/newline-separated
+  // for fast bulk upload), keep valid + new ones, append to the watchlist,
+  // and jump to the first one added. Built-ins aren't re-added.
+  const addTickers = (raw: string) => {
+    const known = new Set<string>([...SUPPORTED_TICKERS, ...watchlist]);
+    const parsed = raw.toUpperCase().split(/[\s,]+/)
+      .map(s => s.trim()).filter(Boolean).filter(t => TICKER_RE.test(t));
+    const fresh: string[] = [];
+    for (const t of parsed) {
+      if (!known.has(t) && !fresh.includes(t)) fresh.push(t);
+    }
+    // Select the first thing typed (new or existing) so Add always navigates.
+    const first = parsed[0];
+    if (fresh.length) setWatchlist(prev => [...prev, ...fresh]);
+    if (first) setTicker(first);
+    setQuery('');
+  };
+
+  const removeTicker = (t: string) => {
+    setWatchlist(prev => prev.filter(x => x !== t));
+    if (ticker === t) setTicker('SPX');   // fall back if the active one is removed
+  };
 
   // Auto-select default chart TF when mode changes
   useEffect(() => {
@@ -326,37 +371,83 @@ export function SwingTradePanel() {
     }
   };
 
+  // Search box behavior: a single token filters the built-in chip rows
+  // (find fast); a multi-token entry (comma/space) is treated as a bulk
+  // upload and skips filtering. The Add button always parses + adds.
+  const q = query.trim().toUpperCase();
+  const isBulk = /[\s,]/.test(query.trim());
+  const flt = (list: readonly string[]) =>
+    (!q || isBulk) ? list : list.filter(t => t.startsWith(q));
+  const fIdx = flt(INDEX_TICKERS);
+  const fStk = flt(STOCK_TICKERS);
+  const fWatch = flt(watchlist);
+  const canAdd = query.trim().length > 0;
+
+  const renderChip = (t: string, removable = false) => (
+    <TouchableOpacity key={t}
+      onPress={() => setTicker(t)}
+      onLongPress={removable ? () => removeTicker(t) : undefined}
+      style={[styles.chip, ticker === t && styles.chipActive]}>
+      <Text style={[styles.chipText, ticker === t && styles.chipTextActive]}>{t}</Text>
+    </TouchableOpacity>
+  );
+
   return (
     <View style={styles.section}>
       <Text style={styles.sectionTitle}>Multiple Time Frame Trade Setup</Text>
 
+      {/* Search / fast-upload bar — type one ticker to find, or paste a
+          comma/space list (e.g. "AMZN, MSFT, GOOGL") to add them all. */}
+      <View style={styles.searchRow}>
+        <TextInput
+          style={styles.searchInput}
+          value={query}
+          onChangeText={t => setQuery(t.toUpperCase())}
+          onSubmitEditing={() => addTickers(query)}
+          placeholder="Search or add tickers — AMZN, MSFT, GOOGL"
+          placeholderTextColor={Colors.textLight}
+          autoCapitalize="characters"
+          autoCorrect={false}
+          returnKeyType="done"
+        />
+        <TouchableOpacity
+          onPress={() => addTickers(query)}
+          disabled={!canAdd}
+          style={[styles.addBtn, !canAdd && styles.addBtnDisabled]}>
+          <Text style={styles.addBtnText}>Add</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* My custom watchlist — long-press a chip to remove it. */}
+      {fWatch.length > 0 && (
+        <>
+          <Text style={styles.pickerLabel}>MY TICKERS  ·  long-press to remove</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.chipScrollRow}>
+            {fWatch.map((t) => renderChip(t, true))}
+          </ScrollView>
+        </>
+      )}
+
       {/* Symbol picker — two horizontally-scrollable rows: indexes + stocks */}
-      <Text style={styles.pickerLabel}>INDEXES</Text>
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.chipScrollRow}>
-        {INDEX_TICKERS.map((t) => (
-          <TouchableOpacity key={t}
-            onPress={() => setTicker(t)}
-            style={[styles.chip, ticker === t && styles.chipActive]}>
-            <Text style={[styles.chipText, ticker === t && styles.chipTextActive]}>{t}</Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
-      <Text style={styles.pickerLabel}>STOCKS</Text>
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.chipScrollRow}>
-        {STOCK_TICKERS.map((t) => (
-          <TouchableOpacity key={t}
-            onPress={() => setTicker(t)}
-            style={[styles.chip, ticker === t && styles.chipActive]}>
-            <Text style={[styles.chipText, ticker === t && styles.chipTextActive]}>{t}</Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
+      {fIdx.length > 0 && <>
+        <Text style={styles.pickerLabel}>INDEXES</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.chipScrollRow}>
+          {fIdx.map((t) => renderChip(t))}
+        </ScrollView>
+      </>}
+      {fStk.length > 0 && <>
+        <Text style={styles.pickerLabel}>STOCKS</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.chipScrollRow}>
+          {fStk.map((t) => renderChip(t))}
+        </ScrollView>
+      </>}
+      {/* When a single-token search matches nothing built-in/saved, hint Add. */}
+      {q && !isBulk && fIdx.length === 0 && fStk.length === 0 && fWatch.length === 0 && (
+        <Text style={styles.noMatch}>No saved match for "{q}" — tap Add to analyze it.</Text>
+      )}
 
       {/* Vehicle toggle (Options is primary; Shares for ETF trades) */}
       <View style={styles.vehicleRow}>
@@ -779,6 +870,15 @@ const styles = StyleSheet.create({
   chipActive: { backgroundColor: Colors.olive, borderColor: Colors.olive },
   chipText: { fontSize: 13, fontWeight: '500', color: Colors.textLight },
   chipTextActive: { color: Colors.gold },
+  searchRow: { flexDirection: 'row', gap: 8, alignItems: 'center', marginBottom: 4 },
+  searchInput: { flex: 1, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10,
+                 borderWidth: 1, borderColor: Colors.cream, backgroundColor: Colors.white,
+                 fontSize: 14, color: Colors.dark },
+  addBtn: { paddingVertical: 9, paddingHorizontal: 18, borderRadius: 10,
+            backgroundColor: Colors.olive },
+  addBtnDisabled: { opacity: 0.4 },
+  addBtnText: { color: Colors.gold, fontWeight: '600', fontSize: 13 },
+  noMatch: { fontSize: 12, color: Colors.textLight, marginTop: 6, fontStyle: 'italic' },
   segmented: { flexDirection: 'row', backgroundColor: Colors.cream, borderRadius: 10,
                padding: 3, marginBottom: 10 },
   segment: { flex: 1, paddingVertical: 8, borderRadius: 8, alignItems: 'center' },
