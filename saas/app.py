@@ -4213,7 +4213,10 @@ def create_app():
             "trends": data.get("trends", {}),
             "updated_at": _dt.now(_tz.utc).isoformat(),
         }
-        rdb.setex(f"tv:levels:{ticker}", 86400, json.dumps(store))
+        # 7-day TTL so last-known levels survive weekends + holiday closes
+        # (markets can be dark ~65-90h). The compare page's staleness badge
+        # flags them as not-live; a fresh push overwrites this anyway.
+        rdb.setex(f"tv:levels:{ticker}", 604800, json.dumps(store))
         return jsonify({"status": "ok", "ticker": ticker})
 
     @app.route("/api/compare/levels")
@@ -4876,7 +4879,10 @@ def create_app():
                 "trends": data.get("trends", {}),
                 "updated_at": _dt.now(_tz.utc).isoformat(),
             }
-            rdb.setex(f"tv:levels:{ticker}", 86400, json.dumps(store))
+            # 7-day TTL so last-known levels survive weekends + holiday closes
+            # (markets can be dark ~65-90h). The compare page's staleness badge
+            # flags them as not-live; a fresh push overwrites this anyway.
+            rdb.setex(f"tv:levels:{ticker}", 604800, json.dumps(store))
             return jsonify({"status": "ok", "action": "levels_sync", "ticker": ticker})
 
         trade_type = data.get("type", "options")  # "options" or "futures"
