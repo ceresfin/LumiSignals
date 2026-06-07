@@ -77,12 +77,14 @@ def _grouped(session, key, date_str, market="stocks"):
 def most_recent_trading_day(session, key, market="stocks"):
     """Walk back from today until a grouped call returns rows."""
     d = datetime.now(timezone.utc).date()
-    for _ in range(7):
+    for _ in range(9):
         rows = _grouped(session, key, d.isoformat(), market)
-        if rows and rows != "throttled":
+        # Only a non-empty list is real data; skip weekends/holidays (empty
+        # list) and "throttled"/"forbidden" sentinels (strings).
+        if isinstance(rows, list) and rows:
             return d, rows
         d -= timedelta(days=1)
-    raise RuntimeError("no trading day found in last 7 days")
+    raise RuntimeError("no trading day found in last 9 days")
 
 
 def pick_universe(rows, n):
@@ -271,6 +273,41 @@ def realized_vol(daily, window=20):
     return (var ** 0.5) * (252 ** 0.5)
 
 
+def hv_series(daily, window=20, lookback=252):
+    """Rolling annualized HV(window) over the last `lookback` trading days —
+    the ticker's OWN volatility history, from price alone. This is what we
+    rank today's reading against until we've logged real IV history (then
+    feed the logged IV series to rank_1_5 instead — same scale)."""
+    closes = [b["c"] for b in daily]
+    rets = [math.log(closes[i] / closes[i - 1]) for i in range(1, len(closes))
+            if closes[i - 1] > 0]
+    out = []
+    for end in range(window, len(rets) + 1):
+        w = rets[end - window:end]
+        mean = sum(w) / window
+        var = sum((r - mean) ** 2 for r in w) / (window - 1)
+        out.append((var ** 0.5) * (252 ** 0.5))
+    return out[-lookback:]
+
+
+def rank_1_5(value, series):
+    """Where does `value` sit in its own historical range → a 1-5 band.
+    Classic IV-Rank style (min-max position): 1 = at/near its low, 5 = at/
+    near its high. Works for any volatility series (realized now, implied
+    once logged)."""
+    if value is None or len(series) < 20:
+        return None
+    lo, hi = min(series), max(series)
+    if hi <= lo:
+        return 3
+    pos = (value - lo) / (hi - lo)            # 0..1 within its own range
+    return min(5, max(1, int(pos * 5) + 1))   # 1..5 bands of 20% each
+
+
+# Vol band → which side of the options trade it favors.
+VOL_LEAN = {1: "DEBIT", 2: "DEBIT", 3: "—", 4: "CREDIT", 5: "CREDIT"}
+
+
 def iv_regime(iv, hv):
     """Given current IV and our HV baseline, classify the options regime and
     name the spread that fits. IV/HV is the comparable signal (true IV-Rank
@@ -343,9 +380,11 @@ def scan_actionable(store, universe, near_pct):
                     best = (dist, tf, name, L, side)
         if best:
             dist, tf, name, L, side = best
+            series = hv_series(daily, 20, 252)
+            today_hv = series[-1] if series else None
             rows.append(dict(ticker=t, price=price, side=side, tf=tf,
                              level_name=name, level=L, dist=dist,
-                             hv=realized_vol(daily, 20)))
+                             hv=today_hv, vol_rank=rank_1_5(today_hv, series)))
     rows.sort(key=lambda r: r["dist"])
     return rows
 
@@ -363,19 +402,22 @@ def run_scan(session, key, n, years, workers, near_pct):
           f"SCAN {scan_ms:.0f} ms for {len(universe)} tickers\n")
     print(f"{len(hits)} of {len(universe)} sitting within {near_pct*100:.1f}% "
           f"of an untouched D/W/M level right now:\n")
+    print("  Vol 1-5 = today's volatility vs the ticker's OWN 1yr range "
+          "(realized-vol proxy until IV is logged).\n")
     print(f"  {'TICKER':7} {'PRICE':>9}  {'BIAS':5} {'LEVEL':13} "
-          f"{'DIST':>5}  {'TF':2} {'HV20':>6}  SPREAD (once IV known)")
-    print("  " + "-" * 70)
+          f"{'DIST':>5}  {'TF':2} {'HV20':>5}  {'VOL 1-5':9}  SUGGESTED SPREAD")
+    print("  " + "-" * 64)
     for r in hits[:40]:
-        hv = r.get("hv")
-        # IV isn't wired in yet (Schwab, market hours) — show what the spread
-        # WOULD be in each regime so the shape is clear; final pick needs IV.
-        hint = (f"DEBIT if IV<{hv*1.1*100:.0f}% / CREDIT if IV>{hv*1.3*100:.0f}%"
-                if hv else "needs IV")
+        hv, vr = r.get("hv"), r.get("vol_rank")
+        bar = ("●" * vr + "○" * (5 - vr)) if vr else "  ?  "
+        lean = VOL_LEAN.get(vr) if vr else None
+        # The level scan gives LONG/SHORT; the vol band gives debit vs credit.
+        spread = spread_for(r["side"], "CHEAP" if lean == "DEBIT"
+                            else "RICH" if lean == "CREDIT" else None)
         print(f"  {r['ticker']:7} {r['price']:>9.2f}  {r['side']:5} "
               f"{r['level_name']+' '+format(r['level'], '.2f'):13} "
               f"{r['dist']*100:>4.1f}%  {r['tf']:2} "
-              f"{(hv*100 if hv else 0):>5.0f}%  {hint}")
+              f"{(hv*100 if hv else 0):>4.0f}%  {bar} {vr or '?'}  {spread}")
     if len(hits) > 40:
         print(f"  ... +{len(hits)-40} more")
 
