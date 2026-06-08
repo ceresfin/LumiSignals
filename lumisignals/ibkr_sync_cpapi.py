@@ -3175,8 +3175,34 @@ def push_to_server(data: dict):
         logger.error("Failed to push to server: %s", e)
 
 
+# Per-mode debit-spread exit defaults (take-profit %, stop-loss %), used when
+# the spread carries no per-trade tp_pct/sl_pct override. TP is % of MAX
+# PROFIT; SL is % of debit paid (a debit spread's max loss == its debit).
+MODE_EXIT_DEFAULTS = {
+    "scalp":    (50, 50),
+    "intraday": (60, 50),
+    "swing":    (75, 50),
+}
+# Per-mode DTE time-stop. None = no DTE stop (scalps are 0-2 DTE and managed
+# by the minute time-stop + pre-expiry force-close instead).
+MODE_DTE_STOP = {"scalp": None, "intraday": 0, "swing": None}
+# Cash-settled index options settle to cash at expiry (no share assignment) →
+# allowed to expire. Everything else — single stocks AND ETFs (SPY/QQQ/IWM) —
+# physically settles and MUST be force-closed before expiry.
+CASH_SETTLED_INDEX = {"SPX", "NDX", "RUT", "VIX", "DJI", "XSP", "XND"}
+
+
+def _spread_mode(spread) -> str:
+    """Trade mode for a spread (scalp/intraday/swing); 'swing' (most
+    conservative) when unknown or tagged generically (e.g. 'mtf')."""
+    m = str(spread.get("mode") or spread.get("model") or "").lower()
+    return m if m in MODE_EXIT_DEFAULTS else "swing"
+
+
 def monitor_spreads(client, spreads: list):
-    """Monitor open spreads and auto-close when TP/SL/time stop is hit."""
+    """Monitor open spreads and auto-close when TP/SL/time stop is hit, and
+    force-close physically-settled (stock/ETF) options before expiry so they
+    never exercise/assign into shares."""
     if not spreads:
         return
 
@@ -3214,6 +3240,7 @@ def monitor_spreads(client, spreads: list):
         spread_tp = spread.get("tp_pct")
         spread_sl = spread.get("sl_pct")
         spread_time_stop_min = spread.get("time_stop_min", 0)
+        mode = _spread_mode(spread)
 
         if not net_cost or not expiration or not quantity:
             continue
@@ -3239,13 +3266,17 @@ def monitor_spreads(client, spreads: list):
                 close_reason = f"STOP LOSS — loss exceeded {sl_pct}% of credit (P&L: ${pnl:+.2f})"
         else:
             debit_paid = net_cost
-            tp_pct = spread_tp if spread_tp else default_debit_tp
-            sl_pct = spread_sl if spread_sl else default_debit_sl
+            m_tp, m_sl = MODE_EXIT_DEFAULTS.get(mode, (default_debit_tp, default_debit_sl))
+            tp_pct = spread_tp if spread_tp else m_tp
+            sl_pct = spread_sl if spread_sl else m_sl
+            max_profit = abs(spread.get("max_profit", 0) or 0)
 
-            if pnl > 0 and pnl >= debit_paid * (tp_pct / 100):
-                close_reason = f"TAKE PROFIT — {tp_pct}% gain (P&L: ${pnl:+.2f})"
+            # TP = % of MAX PROFIT; SL = % of debit paid (debit spread max
+            # loss == the debit). Per user spec: default 50% / 50%.
+            if pnl > 0 and max_profit > 0 and pnl >= max_profit * (tp_pct / 100):
+                close_reason = f"TAKE PROFIT — {tp_pct}% of max profit (P&L: ${pnl:+.2f})"
             elif pnl < 0 and abs(pnl) >= debit_paid * (sl_pct / 100):
-                close_reason = f"STOP LOSS — {sl_pct}% loss (P&L: ${pnl:+.2f})"
+                close_reason = f"STOP LOSS — {sl_pct}% of debit (P&L: ${pnl:+.2f})"
 
         # Minute-based time stop (for 0DTE scalps)
         if not close_reason and spread_time_stop_min > 0:
@@ -3262,9 +3293,23 @@ def monitor_spreads(client, spreads: list):
                 except Exception:
                     pass
 
-        # DTE-based time stop (for swing trades)
-        if not close_reason and dte <= time_stop_dte:
-            close_reason = f"TIME STOP — {dte} DTE remaining (limit: {time_stop_dte})"
+        # DTE-based time stop — per mode (None = none; scalps ride on the
+        # minute stop + force-close). Avoids insta-closing a 0-2 DTE scalp,
+        # which the old blanket `dte <= 7` rule would have done.
+        if not close_reason:
+            dte_stop = MODE_DTE_STOP.get(mode, time_stop_dte)
+            if dte_stop is not None and dte <= dte_stop:
+                close_reason = f"TIME STOP — {dte} DTE remaining (limit: {dte_stop})"
+
+        # Pre-expiry hard close for PHYSICALLY-settled options (single stocks
+        # + ETFs). They exercise/assign into shares at expiry — flatten them
+        # ~30 min before the close on expiry day, regardless of P&L. Cash-
+        # settled index options (SPX/NDX/...) are exempt — they settle to cash.
+        if (not close_reason and dte <= 0
+                and symbol.upper() not in CASH_SETTLED_INDEX):
+            et = _et_now()
+            if et is not None and (et.hour, et.minute) >= (15, 30):
+                close_reason = "PRE-EXPIRY FORCE CLOSE (physical settlement)"
 
         if close_reason:
             # Dedup: after we fire a close order, the spread may still show
@@ -3274,27 +3319,32 @@ def monitor_spreads(client, spreads: list):
             # new Telegram/push notification. At SYNC_INTERVAL=2s a single
             # close was generating 5+ duplicate notifications.
             dedup_rdb = _rdb()
-            close_key = (
-                f"ibkr:spread_closing:{symbol}:{expiration}:"
-                f"{spread.get('long_strike',0)}:{spread.get('short_strike',0)}:"
-                f"{spread.get('right','')}"
-            )
+            ident = (f"{symbol}:{expiration}:{spread.get('long_strike',0)}:"
+                     f"{spread.get('short_strike',0)}:{spread.get('right','')}")
+            close_key = f"ibkr:spread_closing:{ident}"      # 90s in-flight lock
+            closed_key = f"ibkr:spread_closed:{ident}"      # 10m post-close marker
             if dedup_rdb is not None:
                 try:
-                    if dedup_rdb.get(close_key):
-                        # Close already in flight — skip this tick.
+                    # Skip if a close is in flight OR recently completed (IB can
+                    # be slow to drop the position from /positions; without the
+                    # closed-marker the next tick would re-fire after the 90s
+                    # lock expired). This is the zombie-order fix (54 stale).
+                    if dedup_rdb.get(close_key) or dedup_rdb.get(closed_key):
                         continue
-                    # 90s lock: long enough for fill + position propagation,
-                    # short enough to recover if the close failed silently.
                     dedup_rdb.setex(close_key, 90, "1")
                 except Exception:
                     pass
             logger.info("CLOSING %s %s: %s", symbol, spread_type, close_reason)
             try:
                 _close_spread(client, spread, close_reason)
+                if dedup_rdb is not None:
+                    try:
+                        dedup_rdb.setex(closed_key, 600, "1")
+                    except Exception:
+                        pass
             except Exception as e:
                 logger.error("Failed to close %s spread: %s", symbol, e)
-                # Clear the lock so the next tick can retry
+                # Clear the in-flight lock so the next tick can retry
                 if dedup_rdb is not None:
                     try:
                         dedup_rdb.delete(close_key)
@@ -3302,8 +3352,61 @@ def monitor_spreads(client, spreads: list):
                         pass
 
 
+def _norm_right(right: str) -> str:
+    """Normalize call/put markers to the 'C'/'P' that secdef/info expects."""
+    r = str(right or "").upper()
+    if r in ("C", "CALL"):
+        return "C"
+    if r in ("P", "PUT"):
+        return "P"
+    return r[:1]
+
+
+def _resolve_option_conid(client, symbol, expiration, strike, right):
+    """Conid for one option leg. search_option_contract looks the underlying
+    up as STK; index underlyings (SPX/NDX/...) resolve under IND, so fall
+    back to the orb helper which tries IND then STK."""
+    conid = client.search_option_contract(symbol, expiration, strike, right)
+    if conid:
+        return conid
+    try:
+        from .orb_butterfly_handler import _lookup_option_conid
+        return _lookup_option_conid(client, symbol, expiration, strike, right)
+    except Exception:
+        return None
+
+
+def _close_option_leg(client, conid, side, qty, price, strategy):
+    """Place ONE single-leg close. Marketable LMT when a price is known, else
+    MKT. Walks the /iserver/reply confirm loop and tags the perm_id with the
+    owning strategy. Returns the order_id (or None)."""
+    if price and price > 0:
+        order = {"conid": conid, "orderType": "LMT", "side": side,
+                 "quantity": qty, "price": round(price, 2), "tif": "DAY"}
+    else:
+        order = {"conid": conid, "orderType": "MKT", "side": side,
+                 "quantity": qty, "tif": "DAY"}
+    try:
+        result = client.place_order({"orders": [order]})
+        while isinstance(result, list) and result and "id" in result[0] and "order_id" not in result[0]:
+            result = client._request("POST", "/iserver/reply/" + result[0]["id"],
+                                     json_data={"confirmed": True})
+        record_strategy_for_perm(result, strategy)
+    except Exception as e:
+        logger.warning("close leg %s conid=%s failed: %s", side, conid, e)
+        return None
+    if isinstance(result, list) and result and result[0].get("order_id"):
+        return str(result[0]["order_id"])
+    if isinstance(result, dict) and result.get("order_id"):
+        return str(result["order_id"])
+    return None
+
+
 def _close_spread(client, spread: dict, reason: str):
-    """Close an open spread by placing an opposite market order."""
+    """Close an open spread with TWO single-leg orders (a CPAPI combo close
+    submits but never fills — see git history). Marketable-LMT first, then
+    escalate any unfilled leg to MKT so we never leave a half-closed spread
+    (one filled leg = a naked option)."""
     symbol = spread["symbol"]
     expiration = spread.get("expiration", "")
     right = spread.get("right", "")
@@ -3316,28 +3419,50 @@ def _close_spread(client, spread: dict, reason: str):
         return
 
     # Resolve conIds for the legs
-    long_conid = client.search_option_contract(symbol, expiration, long_strike, right)
-    short_conid = client.search_option_contract(symbol, expiration, short_strike, right)
+    right = _norm_right(right)
+    long_conid = _resolve_option_conid(client, symbol, expiration, long_strike, right)
+    short_conid = _resolve_option_conid(client, symbol, expiration, short_strike, right)
 
     if not long_conid or not short_conid:
         logger.error("Could not resolve conIds for spread close: %s %s/%s", symbol, long_strike, short_strike)
         return
 
-    # Build and place closing order (reverse legs)
-    close_payload = client.build_close_spread_order(long_conid, short_conid, quantity)
-    trade_result = client.place_order(close_payload)
-    # Tag close order's perm_id with the strategy (carried on the spread
-    # dict if available, else "manual_close" for orphan adoptions)
-    record_strategy_for_perm(
-        trade_result,
-        diary.strategy_slug(spread.get("strategy") or "") or spread.get("strategy") or "manual_close",
-    )
-    time.sleep(3)
+    # Close sides: a DEBIT spread holds long=BUY (own → SELL to close) and
+    # short=SELL (owe → BUY to close); a CREDIT spread inverts.
+    is_credit = "credit" in str(spread.get("spread_type", "")).lower()
+    long_side = "BUY" if is_credit else "SELL"
+    short_side = "SELL" if is_credit else "BUY"
+    strat = diary.strategy_slug(spread.get("strategy") or "") or spread.get("strategy") or "manual_close"
 
-    status = "Submitted"
-    if isinstance(trade_result, list) and trade_result:
-        status = trade_result[0].get("order_status", "Submitted") if isinstance(trade_result[0], dict) else "Submitted"
-    logger.info("Close order for %s: status=%s reason=%s", symbol, status, reason)
+    # Marketable-LMT pricing from warmed quotes (sell the long at bid, buy the
+    # short back at ask); MKT fallback if no quote.
+    try:
+        from .orb_butterfly_handler import _warm_quotes, _fetch_quote
+        _warm_quotes(client, [long_conid, short_conid])
+        lbid, lask = _fetch_quote(client, long_conid)
+        sbid, sask = _fetch_quote(client, short_conid)
+    except Exception:
+        lbid = lask = sbid = sask = 0
+    long_px = (lbid if long_side == "SELL" else lask) or 0
+    short_px = (sask if short_side == "BUY" else sbid) or 0
+
+    legs = [("long", long_conid, long_side, long_px),
+            ("short", short_conid, short_side, short_px)]
+    order_ids = {tag: _close_option_leg(client, conid, side, quantity, px, strat)
+                 for tag, conid, side, px in legs}
+
+    # Never leave a half-closed spread: re-push any leg that didn't fill at
+    # MKT (one filled leg = a naked option carrying open risk).
+    for tag, conid, side, _px in legs:
+        oid = order_ids.get(tag)
+        fill = client.get_order_fill(oid, max_wait=5) if oid else {"filled": False}
+        if not fill.get("filled"):
+            logger.warning("Close leg %s/%s not filled (%s) — escalating to MKT",
+                           symbol, tag, (fill or {}).get("status"))
+            order_ids[tag] = _close_option_leg(client, conid, side, quantity, 0, strat)
+
+    status = "Closed (2-leg)"
+    logger.info("Close order for %s: status=%s reason=%s legs=%s", symbol, status, reason, order_ids)
 
     # Send alert
     try:
@@ -3829,17 +3954,32 @@ def main():
             # Check for pending orders to place
             check_order_requests(client)
 
-            # Monitor open spreads for TP/SL/time stop — DISABLED.
-            # The close path (build_close_spread_order) uses CPAPI combo
-            # orders which fail silently: IB returns "Submitted" but never
-            # executes. With monitor_spreads running, every sync tick re-
-            # fired the close attempt, generating a notification each
-            # time and accumulating zombie orders at IB (saw 54 stale
-            # MES Markets + 4 SPX legs in one inventory). Re-enable only
-            # after rewriting _close_spread to use two-leg singles like
-            # orb_butterfly_handler does.
-            # if data.get("spreads"):
-            #     monitor_spreads(client, data["spreads"])
+            # Monitor open spreads: %-based TP/SL, per-mode time-stop, and a
+            # pre-expiry FORCE CLOSE for physically-settled (stock/ETF)
+            # options so they never exercise into shares (cash-settled index
+            # options are exempt). RE-ENABLED now that _close_spread places
+            # two-leg singles (the old combo "submitted but never executed",
+            # and the unhardened dedup left 54 zombie orders). Gated on the
+            # reconcile gate so closes never fire against unvalidated state.
+            # Kill switch — DEFAULT OFF until paper-verified during market
+            # hours (run the V2-V6 suite first). Enable with:
+            #   redis-cli set ibkr:spread_monitor:enabled 1
+            # Disable instantly with: redis-cli del ibkr:spread_monitor:enabled
+            if data.get("spreads"):
+                _mon_on = False
+                try:
+                    _r = _rdb()
+                    _mon_on = bool(_r and _r.get("ibkr:spread_monitor:enabled"))
+                except Exception:
+                    _mon_on = False
+                if _mon_on:
+                    try:
+                        from .reconcile_gate import is_locked as _rg_locked
+                        _gated = _rg_locked()
+                    except Exception:
+                        _gated = False
+                    if not _gated:
+                        monitor_spreads(client, data["spreads"])
 
             # Tick completed without exception — reset the crash-loop counter
             consecutive_errors = 0
