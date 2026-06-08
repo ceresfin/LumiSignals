@@ -370,9 +370,13 @@ def run_pass(
             last_order_id = (fill_details or {}).get(ticker, {}).get("last_order_id") or ""
             last_price = float((fill_details or {}).get(ticker, {}).get("last_price") or 0)
             order_ref = ""
+            adopt_asset = ""   # asset class of the adopted orphan (for strat_pos)
             if last_order_id and order_status_by_id:
                 ord_row = order_status_by_id.get(str(last_order_id)) or {}
                 order_ref = str(ord_row.get("order_ref") or "")
+                _sec = str(ord_row.get("secType") or ord_row.get("sec_type") or "").upper()
+                adopt_asset = {"OPT": "options", "FUT": "futures",
+                               "CASH": "forex", "STK": "stock"}.get(_sec, "")
 
             # Decode strategy from lumi_<slug>_<hash>
             decoded_strategy = None
@@ -525,6 +529,7 @@ def run_pass(
                         target_order_id=discovered_tp_id,
                         target_price=discovered_tp_price,
                         metadata={"model": adopt_model} if adopt_model else None,
+                        asset_type=adopt_asset,
                         caller="reconciler_adopt",
                     )
                 except Exception as _e:

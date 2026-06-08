@@ -124,7 +124,7 @@ def save_strat_pos(ticker: str, strategy: str, direction: str,
                     stop_order_id: str = "", stop_price: float = 0,
                     target_order_id: str = "", target_price: float = 0,
                     multiplier: float = 1, metadata: dict = None,
-                    caller: str = ""):
+                    asset_type: str = "", caller: str = ""):
     """Persist per-strategy position state. stop_order_id lets the
     stop-fill watcher know which IB order belongs to this strategy's
     SL — when that order leaves IB's open-orders list, the strategy
@@ -150,6 +150,11 @@ def save_strat_pos(ticker: str, strategy: str, direction: str,
                 "target_order_id": str(target_order_id or ""),
                 "target_price": float(target_price or 0),
                 "multiplier": float(multiplier or 1),
+                # Asset class so the close detectors know which one owns this
+                # position. "options"/"forex" are booked by their own paths;
+                # check_stop_fills (the futures/stock bracket detector) skips
+                # them. Empty = legacy/unknown (guarded by a sanity check).
+                "asset_type": (asset_type or "").lower(),
                 "metadata": metadata or {},
                 "opened_at": _dt.now(_tz.utc).isoformat(),
             }),
@@ -240,6 +245,13 @@ def check_stop_fills(client):
             if not raw:
                 continue
             sp = json.loads(raw)
+            asset_type = (sp.get("asset_type") or "").lower()
+            # Options + forex book through their own dedicated close paths
+            # (option-spread reconciliation / OANDA sync). This futures/stock
+            # bracket detector must skip them — else it mislabels them as
+            # "futures" and computes P&L from mismatched price units.
+            if asset_type in ("options", "forex"):
+                continue
             stop_id = str(sp.get("stop_order_id") or "")
             target_id = str(sp.get("target_order_id") or "")
             stop_gone   = bool(stop_id   and stop_id   != "0" and stop_id   not in open_ids)
@@ -278,6 +290,18 @@ def check_stop_fills(client):
 
             pnl = 0
             if entry_price and exit_price:
+                # Sanity guard: a real futures/stock bracket never closes at
+                # <50% / >200% of entry. If it does, entry and exit are in
+                # mismatched units (e.g. a strike/stock entry paired with an
+                # option-premium target) — booking it would mint a fake P&L.
+                # Skip and flag for review instead. (Protects legacy/untagged
+                # positions even before the asset_type tag is in place.)
+                if exit_price < entry_price * 0.5 or exit_price > entry_price * 2.0:
+                    logger.warning(
+                        "Skipping implausible close %s/%s: entry=%.2f exit=%.2f "
+                        "asset_type=%s — mismatched units, not booking",
+                        ticker, strategy, entry_price, exit_price, asset_type or "?")
+                    continue
                 if direction == "BUY":
                     pnl = (exit_price - entry_price) * contracts * multiplier
                 else:
@@ -288,7 +312,7 @@ def check_stop_fills(client):
                 requests.post(
                     f"{SERVER_URL}/api/ibkr/closed-trade",
                     json={
-                        "symbol": ticker, "type": "futures",
+                        "symbol": ticker, "type": asset_type or "futures",
                         "direction": "LONG" if direction == "BUY" else "SHORT",
                         "contracts": contracts,
                         "entry_price": round(entry_price, 2),
@@ -2838,6 +2862,7 @@ def check_order_requests(client):
                                        target_price=tp_price,
                                        multiplier=multiplier,
                                        metadata=strat_meta,
+                                       asset_type="futures",
                                        caller=f"entry_fill:{strategy_name}")
 
                         # If this was a close-and-reverse, the PRIOR strat_pos's
