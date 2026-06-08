@@ -52,14 +52,17 @@ class _ModeCfg:
     dte_target: int          # ideal days-to-expiration for the option
     dte_min: int             # acceptable range to find a real expiration
     dte_max: int
-    width_default: int       # default spread width in points
-    width_fallback: int
+    width_default: int       # spread-width sanity-clamp ceiling (points)
+    width_fallback: int      # wider clamp ceiling for index-priced names
+    short_delta: float       # target |delta| for the short leg — sets the
+                             # spread WIDTH, so it self-scales with price+IV
 
 
 MODE_CONFIG = {
-    "scalp":    _ModeCfg("scalp",    0,  0,  2,  10, 15),
-    "intraday": _ModeCfg("intraday", 4,  2,  6,  10, 15),
-    "swing":    _ModeCfg("swing",    11, 7,  14, 10, 15),
+    #                          name        tgt min max  wd  wf  shortΔ
+    "scalp":    _ModeCfg("scalp",    0,  0,  2,  10, 15, 0.20),
+    "intraday": _ModeCfg("intraday", 4,  2,  6,  10, 15, 0.15),
+    "swing":    _ModeCfg("swing",    11, 7,  14, 10, 15, 0.12),
 }
 
 # Per-mode timeframe stack — sourced from levels_strategy.TARGET_TFS_BY_MODEL.
@@ -103,6 +106,10 @@ TF_LABELS = {
 
 TARGET_DELTA = 0.30                # TUNING: long-leg strike delta target
 TRIGGER_PROXIMITY_PCT = 0.03       # TUNING: skip if price > 3% from level
+# Long leg must be strictly OTM (never buy an ITM debit leg). Short leg is
+# picked by cfg.short_delta so width self-scales with price+IV; this caps a
+# pathologically wide spread on a stock (fraction of the underlying).
+MAX_WIDTH_PCT = 0.10               # TUNING: cap spread width at 10% of price
 
 # Shares-vehicle stop/target tuning (per user spec 2026-06-01):
 #   - Entry  = HTF supply/demand level (the bars_top zone)
@@ -505,6 +512,17 @@ def _pick_trigger_level(monthly_candles, current_price: float,
     return level, None
 
 
+def _strike_increment(strikes) -> Optional[float]:
+    """Median gap between adjacent strikes in a chain (5.0 for SPX, 0.5/1.0
+    for cheaper names). Lets width/rounding scale per underlying instead of
+    assuming SPX's 5-point grid. None if undeterminable."""
+    uniq = sorted({s for s in strikes if s is not None})
+    if len(uniq) < 2:
+        return None
+    diffs = sorted(round(b - a, 4) for a, b in zip(uniq, uniq[1:]) if b > a)
+    return diffs[len(diffs) // 2] if diffs else None
+
+
 def _pick_options_spread(api_key: str, ticker: str, underlying_price: float,
                          cfg: _ModeCfg, direction: str, spread_type: str,
                          max_risk_usd: float) -> Tuple[dict, Optional[str]]:
@@ -551,46 +569,78 @@ def _pick_options_spread(api_key: str, ticker: str, underlying_price: float,
         return _empty_options_spec(cfg, f"no contracts at expiry {expiry}"), \
                "Schwab chain missing target expiry"
 
-    # Pick long strike: closest |delta| to TARGET_DELTA. Schwab returns
-    # signed delta (positive for calls, negative for puts) — abs() it.
-    by_delta = [(c, abs(c["delta"])) for c in in_expiry if c["delta"] != 0]
-    if not by_delta:
-        # Greeks present but all zero (rare — usually a Schwab data hiccup).
-        # Fall back to OTM heuristic so we at least produce a spec.
-        if spread_type == "call_debit":
-            long_strike = round(underlying_price * 1.005 / 5) * 5
-        else:
-            long_strike = round(underlying_price * 0.995 / 5) * 5
-        warning = "Schwab chain returned zero deltas; used OTM heuristic"
-    else:
-        best = min(by_delta, key=lambda cd: abs(cd[1] - TARGET_DELTA))
-        long_strike = best[0]["strike"]
-        warning = None
+    is_call = spread_type == "call_debit"
+    inc = _strike_increment([c["strike"] for c in in_expiry]) or 5.0
 
-    # Pick short strike: long ± width on the trend-OTM direction.
-    # Call debit: short HIGHER (further OTM up) so short_strike > long_strike.
-    # Put  debit: short LOWER  (further OTM down) so short_strike < long_strike.
-    def _build(width):
-        ss = long_strike + width if spread_type == "call_debit" else long_strike - width
+    def _is_otm(strike):
+        # Long debit leg must be OUT of the money — never buy an ITM debit
+        # (a 30Δ option is normally OTM; enforce it so a skewed chain can't
+        # hand us an ITM long that exercises into stock at expiry).
+        return strike > underlying_price if is_call else strike < underlying_price
+
+    otm = [c for c in in_expiry if _is_otm(c["strike"])]
+
+    # Long strike: OTM strike whose |delta| is closest to TARGET_DELTA.
+    # Schwab returns signed delta (positive calls, negative puts) — abs() it.
+    long_by_delta = [(c, abs(c["delta"])) for c in otm if c.get("delta")]
+    if long_by_delta:
+        long_strike = min(long_by_delta, key=lambda cd: abs(cd[1] - TARGET_DELTA))[0]["strike"]
+        warning = None
+    else:
+        # No OTM greeks — side-correct OTM heuristic at the real increment.
+        raw = underlying_price * (1.005 if is_call else 0.995)
+        long_strike = round(raw / inc) * inc
+        if is_call and long_strike <= underlying_price:
+            long_strike += inc
+        elif not is_call and long_strike >= underlying_price:
+            long_strike -= inc
+        warning = "Schwab chain returned zero deltas; used OTM heuristic"
+
+    # Short strike: picked by cfg.short_delta so the WIDTH self-scales with
+    # price + IV (small $ for cheap names, tens of points for SPX). Capped at
+    # a fraction of the underlying so a thin chain can't produce a
+    # pathologically wide spread (floor of 2 strike increments).
+    max_width = max(inc * 2, MAX_WIDTH_PCT * underlying_price)
+
+    def _further_otm(strike):
+        return strike > long_strike if is_call else strike < long_strike
+
+    def _pick_short(target_delta):
+        cands = [c for c in otm if _further_otm(c["strike"])
+                 and abs(c["strike"] - long_strike) <= max_width]
+        with_d = [(c, abs(c["delta"])) for c in cands if c.get("delta")]
+        if with_d:
+            return min(with_d, key=lambda cd: abs(cd[1] - target_delta))[0]["strike"]
+        if cands:   # no greeks — nearest valid strike beyond the long
+            return min(cands, key=lambda c: abs(c["strike"] - long_strike))["strike"]
+        return long_strike + inc if is_call else long_strike - inc
+
+    def _build(short_strike):
         long_row = next((c for c in in_expiry if c["strike"] == long_strike), None)
-        short_row = next((c for c in in_expiry if c["strike"] == ss), None)
+        short_row = next((c for c in in_expiry if c["strike"] == short_strike), None)
         net_debit = None
         if long_row and short_row:
             long_ask = long_row.get("ask", 0)
             short_bid = short_row.get("bid", 0)
             if long_ask > 0 and short_bid > 0:
                 net_debit = round(long_ask - short_bid, 2)
-        return ss, net_debit, long_row, short_row
+        return net_debit, long_row, short_row
 
-    short_strike, net_debit, long_row, short_row = _build(cfg.width_default)
-    width = cfg.width_default
+    short_strike = _pick_short(cfg.short_delta)
+    net_debit, long_row, short_row = _build(short_strike)
+    width = abs(short_strike - long_strike)
 
-    if net_debit and net_debit / cfg.width_default > DEBIT_RATIO_FALLBACK:
-        ss2, nd2, lr2, sr2 = _build(cfg.width_fallback)
-        if nd2 is not None:
-            short_strike, net_debit = ss2, nd2
-            long_row, short_row = lr2, sr2
-            width = cfg.width_fallback
+    # Quality gate: if the debit eats > DEBIT_RATIO_FALLBACK of the width
+    # (poor R:R), step the short one notch further OTM (lower delta) once.
+    if net_debit and width and net_debit / width > DEBIT_RATIO_FALLBACK:
+        ss2 = _pick_short(max(0.05, cfg.short_delta - 0.05))
+        nd2, lr2, sr2 = _build(ss2)
+        if nd2 is not None and ss2 != long_strike:
+            short_strike, net_debit, long_row, short_row = ss2, nd2, lr2, sr2
+            width = abs(short_strike - long_strike)
+    if net_debit and width and net_debit / width > DEBIT_RATIO_FALLBACK:
+        _rw = f"debit/width {net_debit / width:.0%} > {DEBIT_RATIO_FALLBACK:.0%}"
+        warning = (warning + "; " + _rw) if warning else _rw
 
     max_loss = (net_debit or 0) * 100
     max_profit = ((width - (net_debit or 0)) * 100) if net_debit else None
