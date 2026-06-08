@@ -464,6 +464,15 @@ def run_pass(
                     o_ticker = (_ord.get("ticker") or "").upper()
                     if o_ticker and o_ticker != ticker.upper():
                         continue
+                    # Bug B fix: an option order shares the underlying's ticker
+                    # (NVDA puts vs NVDA stock), so a ticker-only match would
+                    # adopt a put's LMT as the stock short's take-profit — its
+                    # premium (~1.43) paired with the stock entry (~210) minted
+                    # the fake $20,857 closes. This adopt path is for
+                    # stock/futures/forex; options reconcile on their own path.
+                    o_sec = (_ord.get("secType") or _ord.get("sec_type") or "").upper()
+                    if o_sec == "OPT" or _ord.get("right") or _ord.get("strike"):
+                        continue
                     o_side = (_ord.get("side") or "").upper()
                     if o_side != exit_side:
                         continue
