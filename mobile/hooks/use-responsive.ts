@@ -11,15 +11,19 @@ const CONTENT_MAX_WIDTH = 820;
  * Responsive sizing that updates live on rotation (useWindowDimensions).
  *
  * `contentStyle` is meant to be merged into a ScrollView/FlatList
- * `contentContainerStyle`: on wide screens it caps the content to a centered
- * column; on phones it's `undefined` (no change).
+ * `contentContainerStyle`. On wide screens it centers content in a readable
+ * column via symmetric horizontal padding — NOT maxWidth/alignSelf, which
+ * would shrink the scroll/touch region to the column and break dragging from
+ * the side margins. The content container stays full-width so scrolling works
+ * edge-to-edge. On phones it's `undefined` (no change).
  */
 export function useResponsive() {
   const { width, height } = useWindowDimensions();
   const isWide = width >= WIDE_BREAKPOINT;
   const isLandscape = width > height;
-  const contentStyle = isWide
-    ? { maxWidth: CONTENT_MAX_WIDTH, width: '100%' as const, alignSelf: 'center' as const }
+  const sidePad = Math.max(0, (width - CONTENT_MAX_WIDTH) / 2);
+  const contentStyle = isWide && sidePad > 0
+    ? { paddingHorizontal: sidePad }
     : undefined;
   return { width, height, isWide, isLandscape, contentStyle };
 }
