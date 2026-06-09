@@ -16,35 +16,54 @@ from lumisignals.schwab_client import SchwabAuth
 from lumisignals.bot import load_config
 
 
-def main():
-    config = load_config("config.yaml")
-    schwab_cfg = config.get("schwab", {})
+def _load_creds():
+    """Schwab client_id/secret + token path. Prefer env (how the prod
+    services are configured — SCHWAB_CLIENT_ID/SECRET in the systemd env
+    files); fall back to config.yaml for local runs."""
+    cid = os.environ.get("SCHWAB_CLIENT_ID", "")
+    csec = os.environ.get("SCHWAB_CLIENT_SECRET", "")
+    if not cid or not csec:
+        try:
+            schwab_cfg = load_config("config.yaml").get("schwab", {})
+            cid = cid or schwab_cfg.get("client_id", "")
+            csec = csec or schwab_cfg.get("client_secret", "")
+        except Exception:
+            pass
+    # Save to the SAME file the bot reads (web/sync default this path).
+    token_file = os.environ.get("SCHWAB_TOKEN_FILE", "/opt/lumisignals/schwab_tokens.json")
+    return cid, csec, token_file
 
-    if not schwab_cfg.get("client_id"):
-        print("Error: No Schwab client_id in config.yaml")
+
+def main():
+    cid, csec, token_file = _load_creds()
+    if not cid or not csec:
+        print("Error: no Schwab creds. Set SCHWAB_CLIENT_ID/SECRET env "
+              "(source the systemd env file) or provide config.yaml.")
         sys.exit(1)
 
-    auth = SchwabAuth(
-        client_id=schwab_cfg["client_id"],
-        client_secret=schwab_cfg["client_secret"],
-    )
-
+    auth = SchwabAuth(client_id=cid, client_secret=csec, token_file=token_file)
     auth_url = auth.get_authorization_url()
 
     print(f"""
 ==========================================================
-  Schwab Authorization
+  Schwab Authorization   (tokens will save to {token_file})
 ==========================================================
 
-1. Opening Schwab login in your browser...
-2. Log in and click 'Allow'
-3. You'll see 'Safari cannot connect' — THAT'S OK
-4. Look at the ADDRESS BAR — copy the FULL URL
-5. Come back here and paste it IMMEDIATELY (codes expire in 30s)
+1. Open this URL in a browser (your Mac), log in, click 'Allow':
+
+   {auth_url}
+
+2. You'll be redirected to https://127.0.0.1?code=...
+   The browser will say it 'cannot connect' — THAT'S OK.
+3. Copy the FULL URL from the address bar.
+4. Paste it below IMMEDIATELY (the code expires in ~30s).
 
 """)
 
-    webbrowser.open(auth_url)
+    try:
+        webbrowser.open(auth_url)   # no-op on a headless server; URL is printed above
+    except Exception:
+        pass
 
     redirect_url = input("Paste the redirect URL here → ").strip()
 
