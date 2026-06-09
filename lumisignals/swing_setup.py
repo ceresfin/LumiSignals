@@ -523,6 +523,52 @@ def _strike_increment(strikes) -> Optional[float]:
     return diffs[len(diffs) // 2] if diffs else None
 
 
+def _chain_source() -> str:
+    """Which options-chain feed to use: 'ib' (default) or 'schwab'. Runtime
+    override via Redis key `options:chain_source`, else env
+    OPTIONS_CHAIN_SOURCE, else 'ib'. (Mirrors the equity:orders_enabled
+    Redis-flag pattern.)"""
+    try:
+        import redis as _redis
+        rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+        v = rdb.get("options:chain_source")
+        if v:
+            v = (v.decode() if isinstance(v, bytes) else str(v)).strip().lower()
+            if v in ("ib", "schwab"):
+                return v
+    except Exception:
+        pass
+    return os.environ.get("OPTIONS_CHAIN_SOURCE", "ib").strip().lower()
+
+
+def _call_chain_source(src, ticker, cfg, spread_type, underlying_price):
+    """Fetch from one source. IB is sourced from the same IBeam gateway used
+    for orders; Schwab is the legacy /chains path (kept intact)."""
+    if src == "ib":
+        try:
+            from .ib_options_chain import fetch_ib_chain
+            return fetch_ib_chain(ticker, cfg, spread_type, underlying_price)
+        except Exception as e:
+            return None, f"IB chain error: {e}"
+    return _fetch_schwab_chain(ticker, cfg, spread_type)
+
+
+def _fetch_chain(ticker, cfg, spread_type, underlying_price):
+    """Source dispatcher with visible auto-fallback. Tries the selected
+    source first; on error/empty falls back to the other and flags it.
+    Returns (chain, error, used_source, fallback_warning)."""
+    primary = _chain_source() if _chain_source() in ("ib", "schwab") else "ib"
+    order = ["ib", "schwab"] if primary == "ib" else ["schwab", "ib"]
+    last_err = None
+    for i, src in enumerate(order):
+        chain, err = _call_chain_source(src, ticker, cfg, spread_type, underlying_price)
+        if chain and not err:
+            fb = f"options chain via {src} (fallback from {order[0]})" if i else None
+            return chain, None, src, fb
+        last_err = err or f"{src} returned no options data"
+    return None, last_err, primary, None
+
+
 def _pick_options_spread(api_key: str, ticker: str, underlying_price: float,
                          cfg: _ModeCfg, direction: str, spread_type: str,
                          max_risk_usd: float) -> Tuple[dict, Optional[str]]:
@@ -540,12 +586,12 @@ def _pick_options_spread(api_key: str, ticker: str, underlying_price: float,
     Returns (spec_dict, warning_or_None). api_key is unused (kept for
     signature compatibility with the prior Polygon path).
     """
-    chain, err = _fetch_schwab_chain(ticker, cfg, spread_type)
+    chain, err, chain_source, fb_warn = _fetch_chain(
+        ticker, cfg, spread_type, underlying_price)
     if err:
         return _empty_options_spec(cfg, err), err
     if not chain:
-        return _empty_options_spec(cfg, "empty chain"), \
-               "Schwab returned no options data"
+        return _empty_options_spec(cfg, "empty chain"), "no options data"
 
     # Pick the expiration nearest cfg.dte_target from those returned.
     expiries = sorted({c["expiry"] for c in chain})
@@ -668,11 +714,17 @@ def _pick_options_spread(api_key: str, ticker: str, underlying_price: float,
         "max_profit_per_spread": round(max_profit, 2) if max_profit is not None else None,
         "contracts": contracts,
         "contracts_reason": contracts_reason,
+        # Which feed sourced this chain ("ib" / "schwab") — visible so a
+        # fallback is never silent.
+        "chain_source": chain_source,
         # Underlying price at the moment of breakeven at expiry.
         # Call debit: breakeven = long_strike + net_debit
         # Put  debit: breakeven = long_strike - net_debit
         "breakeven": _breakeven(long_strike, net_debit, spread_type),
     }
+    # Surface a fallback ("used Schwab because IB failed") in the warning.
+    if fb_warn:
+        warning = f"{fb_warn}; {warning}" if warning else fb_warn
     return spec, warning
 
 
