@@ -3376,40 +3376,43 @@ def _resolve_option_conid(client, symbol, expiration, strike, right):
         return None
 
 
-def _close_option_leg(client, conid, side, qty, price, strategy):
-    """Place ONE single-leg close. Marketable LMT when a price is known, else
-    MKT. Walks the /iserver/reply confirm loop and tags the perm_id with the
-    owning strategy. Returns the order_id (or None)."""
-    if price and price > 0:
-        order = {"conid": conid, "orderType": "LMT", "side": side,
-                 "quantity": qty, "price": round(price, 2), "tif": "DAY"}
-    else:
-        order = {"conid": conid, "orderType": "MKT", "side": side,
-                 "quantity": qty, "tif": "DAY"}
+def _close_to_float(v):
+    """Parse a CPAPI snapshot price (string, sometimes 'C19.77'). -> float|None."""
     try:
-        result = client.place_order({"orders": [order]})
-        while isinstance(result, list) and result and "id" in result[0] and "order_id" not in result[0]:
-            result = client._request("POST", "/iserver/reply/" + result[0]["id"],
-                                     json_data={"confirmed": True})
-        record_strategy_for_perm(result, strategy)
-    except Exception as e:
-        logger.warning("close leg %s conid=%s failed: %s", side, conid, e)
+        if v in (None, ""):
+            return None
+        return float(str(v).lstrip("CHc "))
+    except (TypeError, ValueError):
         return None
-    if isinstance(result, list) and result and result[0].get("order_id"):
-        return str(result[0]["order_id"])
-    if isinstance(result, dict) and result.get("order_id"):
-        return str(result["order_id"])
-    return None
+
+
+def _close_quote(client, conid):
+    """Fresh (bid, ask) for a conid after warm-up; (0,0) if unavailable."""
+    for _ in range(8):
+        try:
+            r = client._request("GET", "/iserver/marketdata/snapshot",
+                                params={"conids": str(conid), "fields": "84,86"})
+        except Exception:
+            r = None
+        if isinstance(r, list) and r:
+            b = _close_to_float(r[0].get("84")); a = _close_to_float(r[0].get("86"))
+            if b or a:
+                return b or 0.0, a or 0.0
+        time.sleep(0.4)
+    return 0.0, 0.0
 
 
 def _close_spread(client, spread: dict, reason: str):
-    """Close an open spread with TWO single-leg orders (a CPAPI combo close
-    submits but never fills — see git history). Marketable-LMT first, then
-    escalate any unfilled leg to MKT so we never leave a half-closed spread
-    (one filled leg = a naked option)."""
+    """Close an open option spread as a SINGLE defined-risk COMBO order
+    (marketable LMT). Spreads are always traded as combos — never legged out —
+    which (a) stays inside the account's spread permissions (a lone option leg
+    is rejected as a naked-short 'options strategy'), and (b) is atomic, so
+    there's no half-closed / double-fill risk. The original combo close failed
+    only because it used orderType=MKT; the entry combo proves the conidex
+    works with LMT, and so does this. Builds via client.build_combo_order."""
     symbol = spread["symbol"]
     expiration = spread.get("expiration", "")
-    right = spread.get("right", "")
+    right = _norm_right(spread.get("right", ""))
     long_strike = spread.get("long_strike", 0)
     short_strike = spread.get("short_strike", 0)
     quantity = int(spread.get("quantity", 0))
@@ -3418,51 +3421,81 @@ def _close_spread(client, spread: dict, reason: str):
         logger.error("Missing data to close spread: %s", spread)
         return
 
-    # Resolve conIds for the legs
-    right = _norm_right(right)
     long_conid = _resolve_option_conid(client, symbol, expiration, long_strike, right)
     short_conid = _resolve_option_conid(client, symbol, expiration, short_strike, right)
-
     if not long_conid or not short_conid:
         logger.error("Could not resolve conIds for spread close: %s %s/%s", symbol, long_strike, short_strike)
         return
 
-    # Close sides: a DEBIT spread holds long=BUY (own → SELL to close) and
-    # short=SELL (owe → BUY to close); a CREDIT spread inverts.
     is_credit = "credit" in str(spread.get("spread_type", "")).lower()
-    long_side = "BUY" if is_credit else "SELL"
-    short_side = "SELL" if is_credit else "BUY"
     strat = diary.strategy_slug(spread.get("strategy") or "") or spread.get("strategy") or "manual_close"
 
-    # Marketable-LMT pricing from warmed quotes (sell the long at bid, buy the
-    # short back at ask); MKT fallback if no quote.
+    # Price the combo marketably from fresh leg quotes.
     try:
-        from .orb_butterfly_handler import _warm_quotes, _fetch_quote
+        from .orb_butterfly_handler import _warm_quotes
         _warm_quotes(client, [long_conid, short_conid])
-        lbid, lask = _fetch_quote(client, long_conid)
-        sbid, sask = _fetch_quote(client, short_conid)
     except Exception:
-        lbid = lask = sbid = sask = 0
-    long_px = (lbid if long_side == "SELL" else lask) or 0
-    short_px = (sask if short_side == "BUY" else sbid) or 0
+        pass
+    lbid, lask = _close_quote(client, long_conid)
+    sbid, sask = _close_quote(client, short_conid)
 
-    legs = [("long", long_conid, long_side, long_px),
-            ("short", short_conid, short_side, short_px)]
-    order_ids = {tag: _close_option_leg(client, conid, side, quantity, px, strat)
-                 for tag, conid, side, px in legs}
+    # Combo legs + net price. build_combo_order convention: price POSITIVE =
+    # pay a debit, NEGATIVE = receive a credit; per-leg sign is the ratio.
+    #   DEBIT spread close  -> SELL long / BUY short -> receive credit (neg px)
+    #   CREDIT spread close -> BUY long / SELL short -> pay debit     (pos px)
+    if not is_credit:
+        legs = [(long_conid, "SELL", 1), (short_conid, "BUY", 1)]
+        credit = max(0.01, (lbid or 0) - (sask or 0))      # sell long@bid, buy short@ask
+        price = -round(credit, 2)
+    else:
+        legs = [(long_conid, "BUY", 1), (short_conid, "SELL", 1)]
+        debit = max(0.01, (lask or 0) - (sbid or 0))
+        price = round(debit, 2)
 
-    # Never leave a half-closed spread: re-push any leg that didn't fill at
-    # MKT (one filled leg = a naked option carrying open risk).
-    for tag, conid, side, _px in legs:
-        oid = order_ids.get(tag)
-        fill = client.get_order_fill(oid, max_wait=5) if oid else {"filled": False}
-        if not fill.get("filled"):
-            logger.warning("Close leg %s/%s not filled (%s) — escalating to MKT",
-                           symbol, tag, (fill or {}).get("status"))
-            order_ids[tag] = _close_option_leg(client, conid, side, quantity, 0, strat)
+    import uuid as _uuid
+    coid = f"lumi_close_{_uuid.uuid4().hex[:10]}"
 
-    status = "Closed (2-leg)"
-    logger.info("Close order for %s: status=%s reason=%s legs=%s", symbol, status, reason, order_ids)
+    def _place_combo(px):
+        try:
+            payload = client.build_combo_order(
+                legs=legs, quantity=quantity, limit_price=px,
+                order_type="LMT", tif="DAY", coid=coid)
+            r = client.place_order(payload)
+            while isinstance(r, list) and r and "id" in r[0] and "order_id" not in r[0]:
+                r = client._request("POST", "/iserver/reply/" + r[0]["id"],
+                                    json_data={"confirmed": True})
+            record_strategy_for_perm(r, strat)
+        except Exception as e:
+            logger.warning("combo close place failed: %s", e)
+            return None
+        if isinstance(r, list) and r and r[0].get("order_id"):
+            return str(r[0]["order_id"])
+        if isinstance(r, dict) and r.get("order_id"):
+            return str(r["order_id"])
+        logger.warning("combo close returned no order_id: %s", str(r)[:160])
+        return None
+
+    oid = _place_combo(price)
+    filled = bool(oid) and client.get_order_fill(oid, max_wait=12).get("filled", False)
+
+    # One aggressive re-price if needed — cancel first (it's a single atomic
+    # combo, so cancel-then-replace can't leave a half-closed spread). Give up
+    # ~0.20 of edge to force the fill.
+    if oid and not filled:
+        try:
+            client.cancel_order(oid)
+        except Exception:
+            pass
+        time.sleep(1)
+        price2 = -round(max(0.01, (-price) - 0.20), 2) if not is_credit else round(price + 0.20, 2)
+        oid = _place_combo(price2)
+        filled = bool(oid) and client.get_order_fill(oid, max_wait=12).get("filled", False)
+
+    status = "Closed (combo)" if filled else "UNFILLED — needs review"
+    if not filled:
+        logger.error("Combo close %s NOT confirmed filled (order %s) — review", symbol, oid)
+    logger.info("Close combo for %s: status=%s reason=%s order=%s price=%s",
+                symbol, status, reason, oid, price)
 
     # Send alert
     try:
