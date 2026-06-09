@@ -6,6 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/auth';
 import { Colors } from '@/constants/theme';
+import { useResponsive } from '@/hooks/use-responsive';
 import { strategyBadgeText } from '@/lib/strategyLabel';
 import IbStatusBanner from '@/components/ib-status-banner';
 import ReconcileBanner from '@/components/reconcile-banner';
@@ -514,6 +515,7 @@ function PositionRow({ position, onChartPress, onClose, closing, livePrice,
 export default function Positions() {
   const { user } = useAuth();
   const router = useRouter();
+  const { contentStyle } = useResponsive();
   const [allPositions, setAllPositions] = useState<Position[]>([]);
   const [activeTab, setActiveTab] = useState('forex');
   const [refreshing, setRefreshing] = useState(false);
@@ -834,7 +836,7 @@ export default function Positions() {
           })}
         />}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-        contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 20 }}
+        contentContainerStyle={[{ paddingHorizontal: 16, paddingBottom: 20 }, contentStyle]}
         ListEmptyComponent={
           <View style={styles.empty}>
             <Text style={styles.emptyText}>No open positions</Text>

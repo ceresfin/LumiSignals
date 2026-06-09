@@ -8,6 +8,7 @@ import { Picker } from '@react-native-picker/picker';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/auth';
 import { Colors } from '@/constants/theme';
+import { useResponsive } from '@/hooks/use-responsive';
 
 type Profile = Record<string, any>;
 
@@ -48,6 +49,7 @@ function NumberInput({ value, onChange, step = 1, min, max }: {
 
 export default function Settings() {
   const { user, signOut } = useAuth();
+  const { contentStyle } = useResponsive();
   const [profile, setProfile] = useState<Profile>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -359,7 +361,8 @@ export default function Settings() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
+      <ScrollView contentContainerStyle={contentStyle}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
         <View style={styles.header}>
           <Text style={styles.headerTitle}>Settings</Text>
           <TouchableOpacity style={styles.saveBtn} onPress={save} disabled={saving}>

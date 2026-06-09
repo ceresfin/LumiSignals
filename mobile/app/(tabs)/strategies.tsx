@@ -6,6 +6,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Colors } from '@/constants/theme';
+import { useResponsive } from '@/hooks/use-responsive';
 
 // Each pair card shows: status, fingerprint metrics, since-when, reason
 // when paused.  Tap → drill-in modal with the full flip history.
@@ -242,6 +243,7 @@ function HistoryModal({
 
 export default function Strategies() {
   const router = useRouter();
+  const { contentStyle } = useResponsive();
   const [data, setData] = useState<Record<string, StrategyView> | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [drilledPair, setDrilledPair] = useState<RegimePairState | null>(null);
@@ -287,7 +289,7 @@ export default function Strategies() {
   return (
     <SafeAreaView style={styles.root}>
       <ScrollView
-        contentContainerStyle={styles.scroll}
+        contentContainerStyle={[styles.scroll, contentStyle]}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
         <View style={styles.titleRow}>
