@@ -2170,6 +2170,42 @@ def create_app():
             "rows": rows[:60],
         })
 
+    @app.route("/api/ibkr/orb/source", methods=["GET", "POST"])
+    def api_orb_source():
+        """Read/set the native-vs-TradingView source for ORB, and read the
+        recent native triggers. Sync-key authed."""
+        sync_key = request.headers.get("X-Sync-Key", "")
+        if sync_key != os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026"):
+            return jsonify({"error": "Invalid sync key"}), 403
+        import redis as _redis
+        rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+        if request.method == "POST":
+            new = (request.get_json(silent=True) or {}).get("source", "").strip().lower()
+            if new not in ("tradingview", "shadow", "native", "off"):
+                return jsonify({"error": "source must be tradingview|shadow|native|off"}), 400
+            rdb.set("ibkr:orb:source", new)
+            logger.info("ORB source set to %s", new)
+        cur = rdb.get("ibkr:orb:source")
+        native = [json.loads(x) for x in rdb.lrange("ibkr:orb:native", 0, 19)]
+        return jsonify({"source": cur.decode() if cur else "tradingview", "native": native})
+
+    @app.route("/api/ibkr/orb/parity")
+    def api_orb_parity():
+        """ORB native trigger stream vs the TradingView ORB alert stream.
+        ORB fires at most ~2x/day in the morning, so we just return both
+        streams (newest first) rather than bar-aligning. Sync-key authed."""
+        sync_key = request.headers.get("X-Sync-Key", "")
+        if sync_key != os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026"):
+            return jsonify({"error": "Invalid sync key"}), 403
+        import redis as _redis
+        rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+        native = [json.loads(x) for x in rdb.lrange("ibkr:orb:native", 0, 49)]
+        tv = [json.loads(x) for x in rdb.lrange("ibkr:orb:tv", 0, 49)]
+        return jsonify({
+            "summary": {"native_total": len(native), "tv_total": len(tv)},
+            "native": native, "tv": tv,
+        })
+
     @app.route("/api/ibkr/exit-rules")
     def api_ibkr_exit_rules():
         """Return options exit rules for the sync script."""
@@ -5094,6 +5130,24 @@ def create_app():
         # targets, OR context, VIX, reversal flag). Hand off to the dedicated
         # state machine in orb_butterfly_handler.
         if strategy == "orb_butterfly":
+            # ORB source guard: when the native generator owns ORB, ignore TV's
+            # butterfly alert (record it first for parity). Mirrors futures_2n20.
+            try:
+                _ro = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+                _osrc = _ro.get("ibkr:orb:source")
+                _osrc = _osrc.decode().strip().lower() if _osrc else "tradingview"
+                _ro.lpush("ibkr:orb:tv", json.dumps({
+                    "leg": "butterfly", "direction": direction, "strategy": strategy,
+                    "spread_type": data.get("spread_type"),
+                    "received_at": datetime.now(timezone.utc).isoformat()}))
+                _ro.ltrim("ibkr:orb:tv", 0, 99)
+            except Exception:
+                _osrc = "tradingview"
+            if _osrc in ("native", "off"):
+                logger.info("orb_butterfly ignored — source=%s", _osrc)
+                return jsonify({"status": "skipped", "reason": f"orb_source_{_osrc}",
+                                "strategy": strategy}), 200
+
             # Hard #5 (audit): restart-safety gate. Refuse butterflies
             # until ibkr-sync has reconciled — same as the futures path.
             try:
@@ -5173,6 +5227,28 @@ def create_app():
                                 direction, ticker, _src)
                     return jsonify({"status": "skipped",
                                     "reason": f"source_{_src}",
+                                    "strategy": strategy, "ticker": ticker,
+                                    "direction": direction}), 200
+
+            # ORB source guard (MES breakout leg) — mirror of the butterfly
+            # guard above so native owns the whole ORB trigger. Record the TV
+            # alert for parity, then skip when native/off.
+            if strategy.startswith("orb"):
+                try:
+                    rdb.lpush("ibkr:orb:tv", json.dumps({
+                        "leg": "mes", "direction": direction, "strategy": strategy,
+                        "stop_price": data.get("stop_price"),
+                        "received_at": datetime.now(timezone.utc).isoformat()}))
+                    rdb.ltrim("ibkr:orb:tv", 0, 99)
+                    _osrc = rdb.get("ibkr:orb:source")
+                    _osrc = _osrc.decode().strip().lower() if _osrc else "tradingview"
+                except Exception:
+                    _osrc = "tradingview"
+                if _osrc in ("native", "off"):
+                    logger.info("%s %s %s ignored — source=%s",
+                                strategy, direction, ticker, _osrc)
+                    return jsonify({"status": "skipped",
+                                    "reason": f"orb_source_{_osrc}",
                                     "strategy": strategy, "ticker": ticker,
                                     "direction": direction}), 200
 

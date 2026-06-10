@@ -751,6 +751,26 @@ def run_bot_for_user(user_data, stop_check):
     else:
         log("[2n20_MES] Hard-disabled (INTERNAL_MES_2N20=0)")
 
+    # --- Native ORB (MES breakout + SPX butterfly), runtime-governed ---
+    # One trigger (opening-range breakout) fires both legs. Always instantiated;
+    # the Redis flag `ibkr:orb:source` (tradingview|shadow|native|off) governs
+    # whether it trades. Default tradingview = no change.
+    orb_native = None
+    if massive_key and os.environ.get("INTERNAL_ORB", "1") != "0":
+        try:
+            from lumisignals.orb_native import ORBNative
+
+            def orb_signal_cb(sig):
+                log(f"[ORB] {sig.get('direction','')} {sig.get('ticker','')} — {sig.get('reason', sig.get('strategy',''))}")
+
+            orb_contracts = max(1, int(user_data.get("orb_futures_contracts", 1) or 1))
+            orb_native = ORBNative(massive_key, signal_callback=orb_signal_cb,
+                                   contract_count=orb_contracts)
+            log(f"[ORB] Native generator ready — MES+SPX from IB ({orb_contracts} contracts); "
+                f"runtime source flag governs trading (default: TradingView)")
+        except Exception as e:
+            log(f"[ORB] Setup error: {e}")
+
     # ─── THREADED STRATEGY RUNNERS ─────────────────────────────────────
     # Each strategy runs in its own thread with its own loop speed.
     # They don't wait for each other — the 2n20 scalp fires every 10s
@@ -773,6 +793,11 @@ def run_bot_for_user(user_data, stop_check):
                     mes_scalp.scan()
                 except Exception as e:
                     logger.debug("[2n20_MES] Scan error: %s", e)
+            if orb_native:
+                try:
+                    orb_native.scan()
+                except Exception as e:
+                    logger.debug("[ORB] Scan error: %s", e)
             _stop_event.wait(10)
         log("[Thread-2n20] Stopped")
 
