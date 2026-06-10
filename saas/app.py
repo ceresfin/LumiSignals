@@ -1313,6 +1313,12 @@ def create_app():
         if assets:
             wanted = {a.strip().lower() for a in assets.split(",") if a.strip()}
             rows = [r for r in rows if r.get("asset_class") in wanted]
+        # `group` is the finer cut: high_vol/megacap/largecap/etf for stocks,
+        # else == asset_class (index/fx/crypto).
+        group = request.args.get("group", "")
+        if group:
+            wanted_g = {g.strip().lower() for g in group.split(",") if g.strip()}
+            rows = [r for r in rows if r.get("group") in wanted_g]
         side = (request.args.get("side") or "").upper()
         if side in ("LONG", "SHORT"):
             rows = [r for r in rows if r.get("side") == side]

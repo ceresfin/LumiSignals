@@ -20,6 +20,7 @@ type ScanRow = {
   ticker: string;
   name?: string;
   asset_class: 'stock' | 'index' | 'fx' | 'crypto';
+  group?: string;
   price: number | null;
   side: 'LONG' | 'SHORT';
   tf: string;
@@ -41,10 +42,13 @@ type ScanResponse = {
   total?: number;
 };
 
-const ASSETS: { key: string; label: string }[] = [
+const GROUPS: { key: string; label: string }[] = [
   { key: '', label: 'All' },
-  { key: 'stock', label: 'Stocks' },
-  { key: 'index', label: 'Indices' },
+  { key: 'high_vol', label: 'High Vol' },
+  { key: 'megacap', label: 'Megacap' },
+  { key: 'largecap', label: 'Large' },
+  { key: 'etf', label: 'ETF' },
+  { key: 'index', label: 'Index' },
   { key: 'fx', label: 'FX' },
   { key: 'crypto', label: 'Crypto' },
 ];
@@ -54,8 +58,11 @@ const SIDES: { key: string; label: string }[] = [
   { key: 'SHORT', label: 'Short' },
 ];
 
-const ASSET_LABEL: Record<string, string> = {
-  stock: 'Stock',
+const GROUP_LABEL: Record<string, string> = {
+  high_vol: 'High Vol',
+  megacap: 'Megacap',
+  largecap: 'Large',
+  etf: 'ETF',
   index: 'Index',
   fx: 'FX',
   crypto: 'Crypto',
@@ -105,7 +112,7 @@ function Row({ item }: { item: ScanRow }) {
           {item.approx ? '≈ ' : ''}
           {item.ticker}
         </Text>
-        <Text style={styles.asset}>{ASSET_LABEL[item.asset_class] || item.asset_class}</Text>
+        <Text style={styles.asset}>{GROUP_LABEL[item.group || ''] || item.asset_class}</Text>
         <View style={[styles.sideBadge, { backgroundColor: sideBg }]}>
           <Text style={[styles.sideText, { color: sideColor }]}>{item.side}</Text>
         </View>
@@ -163,12 +170,12 @@ export default function Scanner() {
   });
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [asset, setAsset] = useState('');
+  const [group, setGroup] = useState('');
   const [side, setSide] = useState('');
 
   const load = useCallback(async () => {
     const qs: string[] = ['sort=dist'];
-    if (asset) qs.push('asset_class=' + asset);
+    if (group) qs.push('group=' + group);
     if (side) qs.push('side=' + side);
     try {
       const resp = await fetch(API + '?' + qs.join('&'));
@@ -185,7 +192,7 @@ export default function Scanner() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [asset, side]);
+  }, [group, side]);
 
   // Refetch on filter change.
   useEffect(() => {
@@ -222,8 +229,8 @@ export default function Scanner() {
 
       <View style={styles.filters}>
         <View style={styles.chipRow}>
-          {ASSETS.map((a) => (
-            <Chip key={a.key || 'all'} label={a.label} active={asset === a.key} onPress={() => setAsset(a.key)} />
+          {GROUPS.map((g) => (
+            <Chip key={g.key || 'all'} label={g.label} active={group === g.key} onPress={() => setGroup(g.key)} />
           ))}
         </View>
         <View style={styles.chipRow}>

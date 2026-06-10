@@ -291,7 +291,7 @@ def _alignment_score(side, near_levels, chosen_dist, near_pct, vol_rank):
 
 
 def scan_market(store, universe, near_pct, asset_class="stock",
-                names=None, approx=False, min_hv=0.0):
+                names=None, approx=False, min_hv=0.0, groups=None):
     """For each ticker compute untouched D/W/M levels and flag any sitting
     within `near_pct` of price right now. Returns canonical rows, closest
     first. `asset_class` tags the rows; `approx` marks feeds (fx/crypto)
@@ -345,7 +345,8 @@ def scan_market(store, universe, near_pct, asset_class="stock",
         vol_rank = rank_1_5(today_hv, series)
         rows.append(dict(
             ticker=_display_ticker(t), name=names.get(t, ""),
-            asset_class=asset_class, price=round(price, 4), side=side,
+            asset_class=asset_class, group=((groups or {}).get(t) or asset_class),
+            price=round(price, 4), side=side,
             tf=tf, level_name=lname, level=round(L, 4),
             dist=dist, dist_pct=round(dist * 100, 2),
             hv=(round(today_hv, 4) if today_hv is not None else None),

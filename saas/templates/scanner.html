@@ -82,11 +82,14 @@ tr:hover { background: rgba(0,0,0,0.015); }
       <span id="qsBanner" style="font-size:0.72rem;font-weight:400;color:var(--text-light)"></span>
     </h2>
     <div class="controls">
-      <label>Asset:</label>
-      <select id="qsAsset">
+      <label>Group:</label>
+      <select id="qsGroup">
         <option value="">All</option>
-        <option value="stock">Stocks</option>
-        <option value="index">Indices</option>
+        <option value="high_vol">High Vol</option>
+        <option value="megacap">Megacap</option>
+        <option value="largecap">Large-cap</option>
+        <option value="etf">ETF</option>
+        <option value="index">Index</option>
         <option value="fx">FX</option>
         <option value="crypto">Crypto</option>
       </select>
@@ -156,11 +159,11 @@ function loadQuickScan() {
   var status = document.getElementById('qsStatus');
   btn.disabled = true; btn.textContent = 'Loading…';
   var qs = [];
-  var asset = document.getElementById('qsAsset').value;
+  var group = document.getElementById('qsGroup').value;
   var side = document.getElementById('qsSide').value;
   var score = document.getElementById('qsScore').value;
   var sort = document.getElementById('qsSort').value;
-  if (asset) qs.push('asset_class=' + asset);
+  if (group) qs.push('group=' + group);
   if (side) qs.push('side=' + side);
   if (score && score !== '0') qs.push('min_score=' + score);
   if (sort) qs.push('sort=' + sort);
@@ -186,14 +189,14 @@ function loadQuickScan() {
         return;
       }
       var html = '<table><tr>';
-      html += '<th>Ticker</th><th>Name</th><th>Asset</th><th>Price</th><th>Bias</th>';
+      html += '<th>Ticker</th><th>Name</th><th>Group</th><th>Price</th><th>Bias</th>';
       html += '<th>Level</th><th>TF</th><th>Dist</th><th>Vol 1-5</th><th>Lean</th><th>Suggested</th><th>Score</th>';
       html += '</tr>';
       rows.forEach(function(s) {
         var dirClass = s.side === 'LONG' ? 'dir-buy' : 'dir-sell';
         var scoreClass = s.score >= 3 ? 'score-3' : s.score >= 2 ? 'score-2' : s.score >= 1 ? 'score-1' : 'score-0';
         var approx = s.approx ? '<span title="feed differs slightly from TradingView/OANDA" style="color:var(--text-light)">≈</span> ' : '';
-        var assetLbl = { stock: 'Stock', index: 'Index', fx: 'FX', crypto: 'Crypto' }[s.asset_class] || s.asset_class;
+        var assetLbl = { high_vol: 'High Vol', megacap: 'Megacap', largecap: 'Large', etf: 'ETF', index: 'Index', fx: 'FX', crypto: 'Crypto' }[s.group] || s.asset_class;
         var price = (s.price != null) ? s.price.toFixed(s.price < 10 ? 4 : 2) : '—';
         var level = (s.level != null) ? s.level.toFixed(s.level < 10 ? 4 : 2) : '—';
         html += '<tr>';
@@ -219,7 +222,7 @@ function loadQuickScan() {
       document.getElementById('qsResults').innerHTML = '<div class="loading" style="color:var(--red)">Error: ' + e.message + '</div>';
     });
 }
-['qsAsset','qsSide','qsScore','qsSort'].forEach(function(id) {
+['qsGroup','qsSide','qsScore','qsSort'].forEach(function(id) {
   document.addEventListener('DOMContentLoaded', function() {
     document.getElementById(id).addEventListener('change', loadQuickScan);
   });
