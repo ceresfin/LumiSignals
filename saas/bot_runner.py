@@ -727,13 +727,14 @@ def run_bot_for_user(user_data, stop_check):
         except Exception as e:
             log(f"[H1ZONE] Setup error: {e}")
 
-    # --- 2n20 MES Futures Scalp (server-side) ---
-    # Disabled by default: TradingView's Pine Script alert is the source for MES
-    # signals because the IB account lacks a CME real-time market data subscription,
-    # so internally-polled bars lag 2-3 min. TV fires on bar close in real-time
-    # and POSTs to /api/webhook/tradingview. Set INTERNAL_MES_2N20=1 to re-enable.
+    # --- 2n20 MES Futures Scalp (server-side, IB real-time bars) ---
+    # Always instantiated; its behavior is governed at RUNTIME by the Redis flag
+    # `ibkr:mes_2n20:source` (tradingview=idle / shadow=log-only / native=trade /
+    # off=idle), so we can shadow-validate and cut over without a restart. The
+    # strategy reads IB-pushed 2m bars (/api/ibkr/futures-bars/MES) — now that the
+    # CME real-time subscription is active. Set INTERNAL_MES_2N20=0 to hard-disable.
     mes_scalp = None
-    if massive_key and os.environ.get("INTERNAL_MES_2N20") == "1":
+    if massive_key and os.environ.get("INTERNAL_MES_2N20", "1") != "0":
         try:
             from lumisignals.futures_scalp_2n20 import FuturesScalp2n20
 
@@ -743,11 +744,12 @@ def run_bot_for_user(user_data, stop_check):
             contract_count = max(1, int(user_data.get("futures_contracts", 1) or 1))
             mes_scalp = FuturesScalp2n20(massive_key, signal_callback=mes_signal_cb,
                                           contract_count=contract_count)
-            log(f"[2n20_MES] Server-side futures scalp active — MES via Polygon + IB ({contract_count} contracts/entry)")
+            log(f"[2n20_MES] Server-side scalp ready — MES via IB bars ({contract_count} contracts/entry); "
+                f"runtime source flag governs trading (default: TradingView)")
         except Exception as e:
             log(f"[2n20_MES] Setup error: {e}")
     else:
-        log("[2n20_MES] Internal strategy disabled — using TradingView webhook for MES signals")
+        log("[2n20_MES] Hard-disabled (INTERNAL_MES_2N20=0)")
 
     # ─── THREADED STRATEGY RUNNERS ─────────────────────────────────────
     # Each strategy runs in its own thread with its own loop speed.

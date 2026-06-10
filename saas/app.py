@@ -2082,6 +2082,32 @@ def create_app():
             "last_synced": data.get("last_synced", ""),
         })
 
+    @app.route("/api/ibkr/mes-2n20/source", methods=["GET", "POST"])
+    def api_mes_2n20_source():
+        """Read/set the native-vs-TradingView source for the MES 2n20 strategy,
+        and read the recent shadow-signal log. Sync-key authed.
+
+        GET  → {source, shadow: [recent signals]}
+        POST {source: tradingview|shadow|native|off} → sets the flag.
+        """
+        sync_key = request.headers.get("X-Sync-Key", "")
+        if sync_key != os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026"):
+            return jsonify({"error": "Invalid sync key"}), 403
+        import redis as _redis
+        rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+        if request.method == "POST":
+            new = (request.get_json(silent=True) or {}).get("source", "").strip().lower()
+            if new not in ("tradingview", "shadow", "native", "off"):
+                return jsonify({"error": "source must be tradingview|shadow|native|off"}), 400
+            rdb.set("ibkr:mes_2n20:source", new)
+            logger.info("MES 2n20 source set to %s", new)
+        cur = rdb.get("ibkr:mes_2n20:source")
+        shadow = [json.loads(x) for x in rdb.lrange("ibkr:mes_2n20:shadow", 0, 49)]
+        return jsonify({
+            "source": cur.decode() if cur else "tradingview",
+            "shadow": shadow,
+        })
+
     @app.route("/api/ibkr/exit-rules")
     def api_ibkr_exit_rules():
         """Return options exit rules for the sync script."""
@@ -5050,6 +5076,24 @@ def create_app():
         if trade_type == "futures":
             rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
             today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+            # Source guard: when the native MES 2n20 generator owns the signal
+            # (ibkr:mes_2n20:source = native/off), ignore TradingView's 2n20
+            # alerts entirely so the two can't double-trade or fight over the
+            # same position. Only 2n20 variants are gated — ORB et al. unaffected.
+            if strategy.startswith("futures_2n20"):
+                try:
+                    _src = rdb.get("ibkr:mes_2n20:source")
+                    _src = _src.decode().strip().lower() if _src else "tradingview"
+                except Exception:
+                    _src = "tradingview"
+                if _src in ("native", "off"):
+                    logger.info("futures_2n20 %s %s ignored — source=%s",
+                                direction, ticker, _src)
+                    return jsonify({"status": "skipped",
+                                    "reason": f"source_{_src}",
+                                    "strategy": strategy, "ticker": ticker,
+                                    "direction": direction}), 200
 
             # Restart-safety gate — refuse ALL futures signals (including
             # closes) until ibkr-sync has completed at least one reconcile

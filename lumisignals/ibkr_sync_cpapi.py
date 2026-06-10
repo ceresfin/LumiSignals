@@ -541,7 +541,9 @@ def _lookup_signal_metadata(signal_log: dict, trade_id: str, instrument: str,
 
 
 _last_mes_bars_push = 0
-MES_BARS_PUSH_INTERVAL = 60  # seconds
+# 20s so the native 2n20 generator detects a freshly-closed 2m bar within ~20s
+# instead of up to 60s. ~3x more get_historical_bars calls — trivial.
+MES_BARS_PUSH_INTERVAL = 20  # seconds
 _last_missed_signal_check = 0
 MISSED_SIGNAL_CHECK_INTERVAL = 300  # 5 minutes
 
