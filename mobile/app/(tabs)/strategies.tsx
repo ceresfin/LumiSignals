@@ -301,6 +301,12 @@ export default function Strategies() {
           </View>
           <TouchableOpacity
             style={styles.compareBtn}
+            onPress={() => router.push('/mes-parity')}
+          >
+            <Text style={styles.compareBtnText}>2n20 ⚖</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.compareBtn}
             onPress={() => router.push('/compare')}
           >
             <Text style={styles.compareBtnText}>Compare</Text>
