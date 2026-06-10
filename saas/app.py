@@ -2102,10 +2102,72 @@ def create_app():
             rdb.set("ibkr:mes_2n20:source", new)
             logger.info("MES 2n20 source set to %s", new)
         cur = rdb.get("ibkr:mes_2n20:source")
-        shadow = [json.loads(x) for x in rdb.lrange("ibkr:mes_2n20:shadow", 0, 49)]
+        signals = [json.loads(x) for x in rdb.lrange("ibkr:mes_2n20:native", 0, 49)]
         return jsonify({
             "source": cur.decode() if cur else "tradingview",
-            "shadow": shadow,
+            "signals": signals,
+        })
+
+    @app.route("/api/ibkr/mes-2n20/parity")
+    def api_mes_2n20_parity():
+        """Compare the native 2n20 signal stream against the TradingView alert
+        stream, aligned by bar (tolerant ±1 bar / same direction). Sync-key
+        authed. Shows agree / mismatch / native-only / tv-only so you can
+        confirm parity without eyeballing TradingView."""
+        sync_key = request.headers.get("X-Sync-Key", "")
+        if sync_key != os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026"):
+            return jsonify({"error": "Invalid sync key"}), 403
+        import redis as _redis
+        rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+        tv = [json.loads(x) for x in rdb.lrange("ibkr:mes_2n20:tv", 0, 99)]
+        native = [json.loads(x) for x in rdb.lrange("ibkr:mes_2n20:native", 0, 99)]
+
+        def _bt(rec):
+            try:
+                return int(rec.get("bar_time") or 0)
+            except (TypeError, ValueError):
+                return 0
+
+        TOL = 120  # one 2m bar of slack between the two streams' bar stamps
+        used = set()
+        rows = []
+        for n in native:
+            nbt, ndir = _bt(n), n.get("direction")
+            match = None
+            for i, t in enumerate(tv):
+                if i in used:
+                    continue
+                # same kind/direction within ±1 bar
+                same_dir = (t.get("direction") == ndir) or (
+                    n.get("kind") == "EXIT" and t.get("kind") == "EXIT")
+                if same_dir and abs(_bt(t) - nbt) <= TOL:
+                    match = i
+                    break
+            if match is not None:
+                used.add(match)
+            rows.append({
+                "bar_time": nbt, "kind": n.get("kind"), "native_dir": ndir,
+                "tv_dir": tv[match].get("direction") if match is not None else None,
+                "native_traded": n.get("traded"),
+                "status": "agree" if match is not None else "native_only",
+            })
+        # TV alerts with no native match
+        for i, t in enumerate(tv):
+            if i not in used:
+                rows.append({
+                    "bar_time": _bt(t), "kind": t.get("kind"),
+                    "native_dir": None, "tv_dir": t.get("direction"),
+                    "native_traded": False, "status": "tv_only",
+                })
+        rows.sort(key=lambda r: r["bar_time"], reverse=True)
+        agree = sum(1 for r in rows if r["status"] == "agree")
+        return jsonify({
+            "summary": {
+                "agree": agree, "native_only": sum(1 for r in rows if r["status"] == "native_only"),
+                "tv_only": sum(1 for r in rows if r["status"] == "tv_only"),
+                "native_total": len(native), "tv_total": len(tv),
+            },
+            "rows": rows[:60],
         })
 
     @app.route("/api/ibkr/exit-rules")
@@ -5082,6 +5144,25 @@ def create_app():
             # alerts entirely so the two can't double-trade or fight over the
             # same position. Only 2n20 variants are gated — ORB et al. unaffected.
             if strategy.startswith("futures_2n20"):
+                # Parity log — record EVERY TV 2n20 alert (acted on OR ignored)
+                # with the bar it fired on, so the native signal stream
+                # (ibkr:mes_2n20:native) can be diffed against TradingView.
+                try:
+                    _bt = None
+                    _braw = rdb.get(f"ibkr:bars:{ticker}:2m")
+                    if _braw:
+                        _bars = json.loads(_braw).get("bars", [])
+                        if _bars:
+                            _bt = _bars[-1].get("time")
+                    rdb.lpush("ibkr:mes_2n20:tv", json.dumps({
+                        "kind": "ENTRY" if direction in ("BUY", "SELL") else "EXIT",
+                        "direction": direction, "strategy": strategy, "bar_time": _bt,
+                        "received_at": datetime.now(timezone.utc).isoformat(),
+                    }))
+                    rdb.ltrim("ibkr:mes_2n20:tv", 0, 199)
+                except Exception:
+                    pass
+
                 try:
                     _src = rdb.get("ibkr:mes_2n20:source")
                     _src = _src.decode().strip().lower() if _src else "tradingview"

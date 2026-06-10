@@ -109,38 +109,45 @@ class FuturesScalp2n20:
         except Exception as e:
             logger.warning("[2n20_MES] state seed failed: %s", e)
 
-    def _log_shadow_signal(self, kind: str, direction: str, reason: str,
-                           bar_time, price, vwap):
-        """Record a would-be native signal (no order) for shadow validation."""
+    def _record_signal(self, kind: str, direction: str, reason: str,
+                       bar_time, price, vwap, traded: bool):
+        """Log EVERY native-generated signal (shadow or live) to the parity
+        stream `ibkr:mes_2n20:native`, keyed by bar_time, so it can be diffed
+        against the TradingView 2n20 alert stream (`ibkr:mes_2n20:tv`)."""
         rec = {
             "kind": kind, "direction": direction, "reason": reason,
-            "bar_time": bar_time, "price": price, "vwap": vwap,
+            "bar_time": bar_time, "price": price,
+            "vwap": round(vwap, 2) if vwap else None,
+            "traded": bool(traded),
             "logged_at": datetime.now(timezone.utc).isoformat(),
         }
-        logger.info("[2n20_MES SHADOW] %s %s @ %.2f vwap=%s reason=%s bar=%s",
+        logger.info("[2n20_MES SIGNAL] %s %s @ %.2f vwap=%s reason=%s bar=%s traded=%s",
                     kind, direction, price or 0,
-                    ("%.2f" % vwap) if vwap else "-", reason, bar_time)
+                    ("%.2f" % vwap) if vwap else "-", reason, bar_time, traded)
         try:
             rdb = _rdb()
-            rdb.lpush("ibkr:mes_2n20:shadow", json.dumps(rec))
-            rdb.ltrim("ibkr:mes_2n20:shadow", 0, 199)  # keep last 200
+            rdb.lpush("ibkr:mes_2n20:native", json.dumps(rec))
+            rdb.ltrim("ibkr:mes_2n20:native", 0, 199)  # keep last 200
         except Exception:
             pass
 
     def _do_entry(self, source: str, direction: str, price: float, bar_time, vwap):
+        self._record_signal("ENTRY", direction, "overwhelm", bar_time, price, vwap,
+                            traded=(source == "native"))
         if source == "shadow":
             self.shadow_state.in_long = direction == "BUY"
             self.shadow_state.in_short = direction == "SELL"
             self.shadow_state.entry_price = price
             self.shadow_state.entry_time = datetime.now(timezone.utc)
-            self._log_shadow_signal("ENTRY", direction, "overwhelm", bar_time, price, vwap)
         else:
             self._send_entry(direction, price)
 
     def _do_close(self, source: str, reason: str, bar_time, price, vwap):
+        st = self.shadow_state if source == "shadow" else self.state
+        side = "CLOSE_LONG" if st.in_long else "CLOSE_SHORT"
+        self._record_signal("EXIT", side, reason, bar_time, price, vwap,
+                            traded=(source == "native"))
         if source == "shadow":
-            side = "CLOSE_LONG" if self.shadow_state.in_long else "CLOSE_SHORT"
-            self._log_shadow_signal("EXIT", side, reason, bar_time, price, vwap)
             self.shadow_state.in_long = False
             self.shadow_state.in_short = False
             self.shadow_state.entry_price = 0.0
