@@ -58,9 +58,14 @@ YEARS = float(os.environ.get("SCANNER_YEARS", "4"))
 NEAR_BY_ASSET = {
     "stock": NEAR_PCT,
     "index": NEAR_PCT,
-    "fx": float(os.environ.get("SCANNER_NEAR_FX", "0.005")),     # ~50 pips
+    # FX barely moves, so a loose band flags nearly every pair. ~25 pips.
+    "fx": float(os.environ.get("SCANNER_NEAR_FX", "0.0025")),
     "crypto": float(os.environ.get("SCANNER_NEAR_CRYPTO", "0.02")),
 }
+# Annualized-HV floor for the stock universe: drops near-zero-vol
+# money-market / T-bill ETFs (SGOV/SHV/BIL ~1%) that sit "at" a level every
+# day. Real equities run >10%, so a 5% floor only removes the flat ones.
+MIN_HV_STOCK = float(os.environ.get("SCANNER_MIN_HV", "0.05"))
 
 # Curated FX pairs (grouped fx keys are C:EURUSD).
 FX_PAIRS = [
@@ -151,17 +156,18 @@ class GroupedMarket:
         self.names = {t: TICKER_NAMES.get(t, "") for t in universe}
         self.store, warm = warm_store(self.session, self.key, universe,
                                       YEARS, WORKERS, self.market)
-        log.info("warmed %s: %d/%d tickers, %d calls in %.0fs",
+        log.info("warmed %s: %d/%d tickers, %d calls in %.0fs (%d errors)",
                  self.market, len(self.store), len(universe),
-                 warm["calls"], warm["secs"])
+                 warm["calls"], warm["secs"], warm.get("errors", 0))
 
     def scan(self):
         self.ensure_warm()
         _refresh_recent(self.session, self.key, self.store, self.uni, self.market)
         near = NEAR_BY_ASSET.get(self.asset_class, NEAR_PCT)
+        min_hv = MIN_HV_STOCK if self.asset_class == "stock" else 0.0
         return scan_market(self.store, list(self.uni), near,
                            asset_class=self.asset_class, names=self.names,
-                           approx=self.approx)
+                           approx=self.approx, min_hv=min_hv)
 
 
 class IndexMarket:

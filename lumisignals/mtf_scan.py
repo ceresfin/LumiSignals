@@ -54,15 +54,24 @@ def pooled_session(pool):
 # ─────────────────────────── grouped-daily warm ──────────────────────────
 
 def _grouped(session, key, date_str, market="stocks"):
-    """One grouped-daily call → list of {T,o,h,l,c,v,t} rows (empty on holiday)."""
-    r = session.get(BASE_URL + MARKETS[market].format(date=date_str),
-                    params={"adjusted": "true", "apiKey": key}, timeout=30)
+    """One grouped-daily call → list of {T,o,h,l,c,v,t} rows (empty on holiday).
+    Network/HTTP failures return the "error" sentinel rather than raising, so a
+    single flaky day (Polygon ReadTimeout) can't abort an entire multi-year
+    warm — the caller just skips that day."""
+    try:
+        r = session.get(BASE_URL + MARKETS[market].format(date=date_str),
+                        params={"adjusted": "true", "apiKey": key}, timeout=30)
+    except requests.exceptions.RequestException:
+        return "error"
     if r.status_code == 429:
         return "throttled"
     if r.status_code == 403:           # beyond the plan's history window
         return "forbidden"
-    r.raise_for_status()
-    return r.json().get("results", [])
+    try:
+        r.raise_for_status()
+        return r.json().get("results", [])
+    except Exception:
+        return "error"
 
 
 def most_recent_trading_day(session, key, market="stocks"):
@@ -109,6 +118,7 @@ def warm_store(session, key, universe, years, workers, market="stocks"):
     store = defaultdict(list)
     throttled = [0]
     forbidden = [0]
+    errors = [0]
     earliest = [None]
     t0 = time.time()
 
@@ -119,6 +129,9 @@ def warm_store(session, key, universe, years, workers, market="stocks"):
             return []
         if rows == "forbidden":
             forbidden[0] += 1
+            return []
+        if not isinstance(rows, list):     # "error" — flaky day, skip it
+            errors[0] += 1
             return []
         if rows and (earliest[0] is None or ds < earliest[0]):
             earliest[0] = ds
@@ -138,7 +151,7 @@ def warm_store(session, key, universe, years, workers, market="stocks"):
         store[t].sort(key=lambda b: b["t"])
     return store, dict(calls=len(dates), secs=time.time() - t0,
                        throttled=throttled[0], forbidden=forbidden[0],
-                       earliest=earliest[0])
+                       errors=errors[0], earliest=earliest[0])
 
 
 def bars_from_candles(candles):
@@ -278,12 +291,14 @@ def _alignment_score(side, near_levels, chosen_dist, near_pct, vol_rank):
 
 
 def scan_market(store, universe, near_pct, asset_class="stock",
-                names=None, approx=False):
+                names=None, approx=False, min_hv=0.0):
     """For each ticker compute untouched D/W/M levels and flag any sitting
     within `near_pct` of price right now. Returns canonical rows, closest
     first. `asset_class` tags the rows; `approx` marks feeds (fx/crypto)
     whose levels drift slightly from TradingView/OANDA. `names` maps ticker
-    → display name."""
+    → display name. `min_hv` drops near-zero-volatility instruments
+    (money-market / T-bill ETFs like SGOV/SHV/BIL that barely move, so they
+    sit microscopically 'at' a level every day and pollute the shortlist)."""
     names = names or {}
     rows = []
     for t in universe:
@@ -323,6 +338,10 @@ def scan_market(store, universe, near_pct, asset_class="stock",
         dist, tf, lname, L, side = best
         series = hv_series(daily, 20, 252)
         today_hv = series[-1] if series else None
+        # Volatility floor: a flat instrument (annualized HV below the floor)
+        # is always "near" a level and never a real setup — drop it.
+        if min_hv and today_hv is not None and today_hv < min_hv:
+            continue
         vol_rank = rank_1_5(today_hv, series)
         rows.append(dict(
             ticker=_display_ticker(t), name=names.get(t, ""),
