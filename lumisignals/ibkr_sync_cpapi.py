@@ -228,11 +228,37 @@ def check_stop_fills(client):
     except Exception as e:
         logger.debug("check_stop_fills: get_open_orders failed: %s", e)
         return
+    # IMPORTANT: CPAPI's order list returns recent orders of EVERY status
+    # (Filled / Cancelled / Submitted / …), not just live working orders. If
+    # we treat the whole list as "open", a stop that has ALREADY FILLED stays
+    # in open_ids forever, so `stop_gone` is never true and the strat_pos is
+    # never cleared — the phantom that blocks the next entry (and recurs for
+    # every bracket scalp). Only genuinely-live orders count as "open"; a stop
+    # in a terminal state (filled/cancelled/expired/…) is, for our purposes,
+    # gone.
+    _DEAD_STATUSES = {"filled", "cancelled", "canceled", "expired",
+                      "rejected", "apicancelled", "inactive"}
     open_ids = set()
     for o in open_orders:
         oid = o.get("orderId") or o.get("order_id")
-        if oid:
-            open_ids.add(str(oid))
+        if not oid:
+            continue
+        status = str(o.get("status") or o.get("orderStatus") or "").strip().lower()
+        if status in _DEAD_STATUSES:
+            continue
+        open_ids.add(str(oid))
+
+    # Index bracket children by their parent order id (ANY status) so we can
+    # backfill a strat_pos that lost its stop/target id to a placement-time
+    # race — CPAPI sometimes hadn't published the children within the ~2.5s
+    # settle window when save_strat_pos ran (ORB has hit this). Without the id
+    # check_stop_fills can never see the exit, and the reconciler is
+    # detection-only, so the position would stay a phantom forever.
+    children_by_parent = {}
+    for o in open_orders:
+        pid = str(o.get("parentId") or "")
+        if pid and pid != "0":
+            children_by_parent.setdefault(pid, []).append(o)
 
     try:
         keys = list(rdb.scan_iter("ibkr:strat_pos:*"))
@@ -254,6 +280,38 @@ def check_stop_fills(client):
                 continue
             stop_id = str(sp.get("stop_order_id") or "")
             target_id = str(sp.get("target_order_id") or "")
+
+            # Backfill a missing stop/target id from the bracket's children so
+            # a placement-time race can't leave the position permanently
+            # unmonitorable. Match the entry (perm_id) against children
+            # parentId; persist whatever we find back into strat_pos.
+            if not (stop_id and stop_id != "0"):
+                parent = str(sp.get("perm_id") or "")
+                new_stop = new_tgt = ""
+                for c in children_by_parent.get(parent, []):
+                    ot = (c.get("orderType") or "").upper()
+                    cid = str(c.get("orderId") or c.get("order_id") or "")
+                    if not cid:
+                        continue
+                    if not new_stop and ot in ("STP", "STOP", "STOP_LIMIT"):
+                        new_stop = cid
+                    elif not new_tgt and ot in ("LMT", "LIMIT", "LIMIT_ON_CLOSE"):
+                        new_tgt = cid
+                if new_stop or new_tgt:
+                    if new_stop:
+                        sp["stop_order_id"] = new_stop
+                        stop_id = new_stop
+                    if new_tgt and not (target_id and target_id != "0"):
+                        sp["target_order_id"] = new_tgt
+                        target_id = new_tgt
+                    try:
+                        rdb.set(key, json.dumps(sp))
+                        logger.info("Backfilled bracket ids for %s [%s]: stop=%s tgt=%s",
+                                    sp.get("ticker", ""), sp.get("strategy", ""),
+                                    new_stop or "-", new_tgt or "-")
+                    except Exception as _be:
+                        logger.debug("strat_pos backfill persist failed: %s", _be)
+
             stop_gone   = bool(stop_id   and stop_id   != "0" and stop_id   not in open_ids)
             target_gone = bool(target_id and target_id != "0" and target_id not in open_ids)
             if not stop_gone and not target_gone:
