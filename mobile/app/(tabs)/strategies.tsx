@@ -307,6 +307,12 @@ export default function Strategies() {
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.compareBtn}
+            onPress={() => router.push('/orb-parity')}
+          >
+            <Text style={styles.compareBtnText}>ORB ⚖</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.compareBtn}
             onPress={() => router.push('/compare')}
           >
             <Text style={styles.compareBtnText}>Compare</Text>
