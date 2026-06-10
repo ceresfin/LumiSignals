@@ -1,30 +1,25 @@
 #!/usr/bin/env python3
 """Prototype + benchmark: run the MTF level scan over ~700 tickers, fast.
 
-Validates the two-tier architecture against the live Massive (Polygon) API:
+The reusable scan core now lives in ``lumisignals/mtf_scan.py`` (so the
+background daemon and this benchmark share one implementation); this script
+imports it and adds the benchmark-only tiers + the verify-vs-TradingView tool.
 
   TIER 1 — SWING (1d / 1w / 1mo)
-    Uses the GROUPED DAILY endpoint:
-        /v2/aggs/grouped/locale/us/market/stocks/{date}
-    One request returns EVERY US stock's daily bar for that date. We warm a
-    local {ticker: [daily bars]} store over the trailing window (one call per
-    trading day — concurrent), then derive Daily/Weekly/Monthly for all 700
-    tickers IN-MEMORY (no per-ticker calls) and run find_htf_levels.
-    Steady-state this is 1 call/day to append "today".
+    GROUPED DAILY endpoint: one request returns EVERY US stock's daily bar
+    for a date. Warm a local {ticker: [daily bars]} store over the trailing
+    window (one call per trading day — concurrent), derive D/W/M for all 700
+    tickers IN-MEMORY and run find_htf_levels. Steady-state = 1 call/day.
 
   TIER 2 — INTRADAY (15m / 1h / 4h)
-    No grouped intraday endpoint exists, so this is per-ticker. We fan out
-    700 tickers through a thread pool over the REAL MassiveClient (so the
-    5m->1h/4h aggregation matches production) and time it. This is the test
-    of the "paid plan = unlimited requests" claim.
-
-Levels come from the production algorithm (lumisignals.untouched_levels.
-find_htf_levels) and the production lookback table (HTF_TF_LOOKBACK), so the
-numbers this prints ARE the numbers the app would produce.
+    No grouped intraday endpoint exists, so this is per-ticker. Fan out
+    700 tickers through a thread pool to measure real concurrent throughput.
 
 Run:
     MASSIVE_API_KEY=... python3 scripts/bench_mtf_scan.py [--universe 700] \
         [--years 5] [--workers 50] [--skip-intraday]
+    MASSIVE_API_KEY=... python3 scripts/bench_mtf_scan.py --scan
+    MASSIVE_API_KEY=... python3 scripts/bench_mtf_scan.py --verify SPY,QQQ
 """
 import argparse
 import concurrent.futures as cf
@@ -35,151 +30,17 @@ import time
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
-import requests
-
-# Production algorithm + lookbacks — import the real thing.
+# Reusable scan core — the production module both this and the daemon use.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from lumisignals.untouched_levels import find_htf_levels, HTF_TF_LOOKBACK  # noqa: E402
-
-BASE_URL = "https://api.polygon.io"
-# Grouped-daily path per market. Stocks=weekdays only; crypto=24/7.
-MARKETS = {
-    "stocks": "/v2/aggs/grouped/locale/us/market/stocks/{date}",
-    "crypto": "/v2/aggs/grouped/locale/global/market/crypto/{date}",
-    "fx":     "/v2/aggs/grouped/locale/global/market/fx/{date}",
-}
+from lumisignals.mtf_scan import (  # noqa: E402
+    BASE_URL, MARKETS, pooled_session, _grouped, most_recent_trading_day,
+    pick_universe, warm_store, to_weekly, to_monthly, _agg, levels_for,
+    hv_series, rank_1_5, VOL_LEAN, scan_actionable,
+)
 
 
-def pooled_session(pool):
-    """A Session whose connection pool matches our worker count. Default
-    urllib3 pool_maxsize is 10 — the real cap behind '19 req/s on 50 threads'.
-    Production MassiveClient has the same default; this is the fix it needs."""
-    s = requests.Session()
-    a = requests.adapters.HTTPAdapter(pool_connections=pool, pool_maxsize=pool)
-    s.mount("https://", a)
-    return s
-
-
-# ─────────────────────────── grouped-daily warm ──────────────────────────
-
-def _grouped(session, key, date_str, market="stocks"):
-    """One grouped-daily call → list of {T,o,h,l,c,v,t} rows (empty on holiday)."""
-    r = session.get(BASE_URL + MARKETS[market].format(date=date_str),
-                    params={"adjusted": "true", "apiKey": key}, timeout=30)
-    if r.status_code == 429:
-        return "throttled"
-    if r.status_code == 403:           # beyond the plan's history window
-        return "forbidden"
-    r.raise_for_status()
-    return r.json().get("results", [])
-
-
-def most_recent_trading_day(session, key, market="stocks"):
-    """Walk back from today until a grouped call returns rows."""
-    d = datetime.now(timezone.utc).date()
-    for _ in range(9):
-        rows = _grouped(session, key, d.isoformat(), market)
-        # Only a non-empty list is real data; skip weekends/holidays (empty
-        # list) and "throttled"/"forbidden" sentinels (strings).
-        if isinstance(rows, list) and rows:
-            return d, rows
-        d -= timedelta(days=1)
-    raise RuntimeError("no trading day found in last 9 days")
-
-
-def pick_universe(rows, n):
-    """Top-N liquid names by dollar-volume (close*volume), price > $5."""
-    liquid = [(row["T"], row["c"] * row.get("v", 0))
-              for row in rows if row.get("c", 0) > 5 and row.get("v", 0) > 0]
-    liquid.sort(key=lambda x: x[1], reverse=True)
-    return [t for t, _ in liquid[:n]]
-
-
-def warm_store(session, key, universe, years, workers, market="stocks"):
-    """Concurrently pull grouped-daily for the trailing window, keep only the
-    universe. Returns {ticker: [bars sorted oldest->newest]}, plus stats."""
-    uni = set(universe)
-    end, _ = most_recent_trading_day(session, key, market)
-    all_days = market != "stocks"   # crypto/fx trade weekends (crypto 24/7)
-    dates, d = [], end
-    while d > end - timedelta(days=int(years * 365.25)):
-        if all_days or d.weekday() < 5:
-            dates.append(d.isoformat())
-        d -= timedelta(days=1)
-
-    store = defaultdict(list)
-    throttled = [0]
-    forbidden = [0]
-    earliest = [None]
-    t0 = time.time()
-
-    def fetch(ds):
-        rows = _grouped(session, key, ds, market)
-        if rows == "throttled":
-            throttled[0] += 1
-            return []
-        if rows == "forbidden":
-            forbidden[0] += 1
-            return []
-        if rows and (earliest[0] is None or ds < earliest[0]):
-            earliest[0] = ds
-        return [(ds, row) for row in rows if row["T"] in uni]
-
-    with cf.ThreadPoolExecutor(max_workers=workers) as ex:
-        for chunk in ex.map(fetch, dates):
-            for ds, row in chunk:
-                store[row["T"]].append(row)
-
-    # Each ticker's bars arrived out of date-order (threads); sort by ts.
-    for t in store:
-        store[t].sort(key=lambda b: b["t"])
-    return store, dict(calls=len(dates), secs=time.time() - t0,
-                       throttled=throttled[0], forbidden=forbidden[0],
-                       earliest=earliest[0])
-
-
-# ──────────────────── daily → weekly / monthly (prod logic) ───────────────
-
-def to_weekly(daily):
-    """Monday-start ISO weeks — mirrors _get_monday_weekly_candles."""
-    weeks = defaultdict(list)
-    for b in daily:
-        dt = datetime.fromtimestamp(b["t"] / 1000, tz=timezone.utc)
-        iso = dt.isocalendar()
-        weeks[(iso[0], iso[1])].append(b)
-    return _agg(weeks)
-
-
-def to_monthly(daily):
-    """Calendar months — mirrors _get_calendar_monthly_candles."""
-    months = defaultdict(list)
-    for b in daily:
-        dt = datetime.fromtimestamp(b["t"] / 1000, tz=timezone.utc)
-        months[(dt.year, dt.month)].append(b)
-    return _agg(months)
-
-
-def _agg(groups):
-    out = []
-    for key in sorted(groups):
-        bars = groups[key]
-        out.append(dict(o=bars[0]["o"],
-                        h=max(b["h"] for b in bars),
-                        l=min(b["l"] for b in bars),
-                        c=bars[-1]["c"], t=bars[0]["t"]))
-    return out
-
-
-def levels_for(bars, tf):
-    """find_htf_levels on a chronological bar list. Returns (s1,s2,d1,d2)."""
-    if len(bars) < 3:
-        return None
-    lb = HTF_TF_LOOKBACK.get(tf, 50)
-    price = bars[-1]["c"]
-    highs = [b["h"] for b in reversed(bars)]   # most-recent-first
-    lows = [b["l"] for b in reversed(bars)]
-    return find_htf_levels(highs, lows, price, lookback=lb)
-
+# ───────────────────── benchmark tier 1: pure local compute ───────────────
 
 def swing_scan(store, universe):
     """Pure local compute: D/W/M levels for every ticker. The ≤20s target."""
@@ -255,12 +116,10 @@ def intraday_scan(key, universe, workers):
     return stats, time.time() - t0
 
 
-# ─────────────────────────────── the actual scan ─────────────────────────
+# ───────────────────── scan presentation (IV regime hints) ────────────────
 
 def realized_vol(daily, window=20):
-    """Annualized historical (realized) volatility from daily closes — the
-    baseline IV is judged against. Free from the grouped store we already
-    have. Returns a fraction (0.28 = 28%) or None."""
+    """Annualized historical (realized) volatility from daily closes."""
     closes = [b["c"] for b in daily[-(window + 1):]]
     if len(closes) < window + 1:
         return None
@@ -273,45 +132,8 @@ def realized_vol(daily, window=20):
     return (var ** 0.5) * (252 ** 0.5)
 
 
-def hv_series(daily, window=20, lookback=252):
-    """Rolling annualized HV(window) over the last `lookback` trading days —
-    the ticker's OWN volatility history, from price alone. This is what we
-    rank today's reading against until we've logged real IV history (then
-    feed the logged IV series to rank_1_5 instead — same scale)."""
-    closes = [b["c"] for b in daily]
-    rets = [math.log(closes[i] / closes[i - 1]) for i in range(1, len(closes))
-            if closes[i - 1] > 0]
-    out = []
-    for end in range(window, len(rets) + 1):
-        w = rets[end - window:end]
-        mean = sum(w) / window
-        var = sum((r - mean) ** 2 for r in w) / (window - 1)
-        out.append((var ** 0.5) * (252 ** 0.5))
-    return out[-lookback:]
-
-
-def rank_1_5(value, series):
-    """Where does `value` sit in its own historical range → a 1-5 band.
-    Classic IV-Rank style (min-max position): 1 = at/near its low, 5 = at/
-    near its high. Works for any volatility series (realized now, implied
-    once logged)."""
-    if value is None or len(series) < 20:
-        return None
-    lo, hi = min(series), max(series)
-    if hi <= lo:
-        return 3
-    pos = (value - lo) / (hi - lo)            # 0..1 within its own range
-    return min(5, max(1, int(pos * 5) + 1))   # 1..5 bands of 20% each
-
-
-# Vol band → which side of the options trade it favors.
-VOL_LEAN = {1: "DEBIT", 2: "DEBIT", 3: "—", 4: "CREDIT", 5: "CREDIT"}
-
-
 def iv_regime(iv, hv):
-    """Given current IV and our HV baseline, classify the options regime and
-    name the spread that fits. IV/HV is the comparable signal (true IV-Rank
-    needs IV history we'd start logging). Returns (regime, ratio) or (None,_).
+    """Given current IV and our HV baseline, classify the options regime.
       ratio >~1.3  IV rich  -> sell premium (CREDIT)
       ratio <~1.1  IV cheap -> buy premium  (DEBIT)
     """
@@ -334,59 +156,6 @@ def spread_for(side, regime):
         ("SHORT", "RICH"):  "bear call CREDIT",
     }
     return table.get((side, regime), "—")
-
-
-def scan_actionable(store, universe, near_pct):
-    """What a 700-ticker SWING scan produces: for each ticker, compute the
-    untouched D/W/M levels (the validated find_htf_levels) and flag any that
-    price is sitting within `near_pct` of RIGHT NOW. A demand level just below
-    price = a long pullback; a supply level just above = a short. Returns the
-    actionable shortlist, closest-first — the whole point of a scanner."""
-    TF = [("D", "1d", lambda d: d),
-          ("W", "1w", to_weekly),
-          ("M", "1mo", to_monthly)]
-    LEVELS = [("S1", 0, "SHORT"), ("S2", 1, "SHORT"),   # supply = resistance
-              ("D1", 2, "LONG"),  ("D2", 3, "LONG")]    # demand = support
-    rows = []
-    for t in universe:
-        daily = store.get(t, [])
-        if len(daily) < 30:
-            continue
-        price = daily[-1]["c"]
-        best = None   # (dist, tf, level_name, level_price, side)
-        for tf, gtf, derive in TF:
-            bars = derive(daily)
-            lv = levels_for(bars, gtf)
-            if not lv:
-                continue
-            cur_low = bars[-1]["l"]   # find_htf_levels' demand-fallback value
-            for name, i, side in LEVELS:
-                L = lv[i]
-                if L is None:
-                    continue
-                # Side-correct: you pull DOWN to demand (below price) and rally
-                # UP to supply (above price). A level on the wrong side isn't a
-                # setup. Tiny tolerance so "exactly at" still counts.
-                if side == "LONG" and L > price * 1.001:
-                    continue
-                if side == "SHORT" and L < price * 0.999:
-                    continue
-                # Drop the demand fallback: when demand == this bar's own low,
-                # it's "price at its low", not a pullback into a prior zone.
-                if side == "LONG" and abs(L - cur_low) < 1e-9:
-                    continue
-                dist = abs(price - L) / price
-                if dist <= near_pct and (best is None or dist < best[0]):
-                    best = (dist, tf, name, L, side)
-        if best:
-            dist, tf, name, L, side = best
-            series = hv_series(daily, 20, 252)
-            today_hv = series[-1] if series else None
-            rows.append(dict(ticker=t, price=price, side=side, tf=tf,
-                             level_name=name, level=L, dist=dist,
-                             hv=today_hv, vol_rank=rank_1_5(today_hv, series)))
-    rows.sort(key=lambda r: r["dist"])
-    return rows
 
 
 def run_scan(session, key, n, years, workers, near_pct):
@@ -422,7 +191,7 @@ def run_scan(session, key, n, years, workers, near_pct):
         print(f"  ... +{len(hits)-40} more")
 
 
-# ─────────────────────────────────── main ────────────────────────────────
+# ─────────────────────── verify vs SRV + TradingView ──────────────────────
 
 def to_quarterly(daily):
     """Calendar quarters (Jan-Mar, Apr-Jun, ...) from daily bars."""
@@ -436,9 +205,6 @@ def to_quarterly(daily):
 def verify_vs_tv(session, key, tickers, years, workers, market="stocks"):
     """Compute D/W/M (+Q) via the grouped path, then diff against the live
     compare endpoint's SRV (per-ticker path) AND TradingView levels.
-
-    If grouped == SRV, the grouped path is a faithful substitute (SRV already
-    matches TV on the compare page). The TV column is the end-to-end check.
 
     market: 'stocks' | 'crypto' | 'fx'. Crypto grouped keys tickers as
     'X:BTCUSD', so we warm with the prefixed key but query the endpoint with
@@ -501,6 +267,8 @@ def verify_vs_tv(session, key, tickers, years, workers, market="stocks"):
 def _fmt(x):
     return "None" if x is None else f"{x:.4f}"
 
+
+# ─────────────────────────────────── main ────────────────────────────────
 
 def main():
     ap = argparse.ArgumentParser()

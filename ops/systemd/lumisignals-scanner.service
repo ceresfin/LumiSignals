@@ -1,0 +1,42 @@
+# /etc/systemd/system/lumisignals-scanner.service
+#
+# Background MTF scanner daemon. Keeps trimmed grouped-daily stores warm in
+# memory and re-scans the universe on a loop, writing the shortlist to Redis
+# (mtf:scan:latest) that GET /api/mtf-scan serves. Secrets (MASSIVE_API_KEY,
+# REDIS_URL) come from the web app's env file.
+#
+# Memory-constrained: this runs on a 2GB box alongside gunicorn + bot + IBeam.
+# MemoryHigh throttles (reclaim into swap) before MemoryMax hard-kills, so the
+# scanner can spike during a cold warm without OOM-killing OTHER services. The
+# StartLimit backoff stops a crash-loop storm if it does die.
+
+[Unit]
+Description=LumiSignals MTF Scanner Daemon
+After=network.target redis.service
+StartLimitIntervalSec=900
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/lumisignals/app
+Environment=PYTHONPATH=/opt/lumisignals/app
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=/etc/lumisignals/web-app.env
+ExecStart=/opt/lumisignals/venv/bin/python3 scripts/scanner_daemon.py
+Restart=always
+RestartSec=30
+
+# Contain the scanner so it can never starve the box again.
+MemoryHigh=550M
+MemoryMax=750M
+# Yield CPU/IO to web + bot on the single core.
+Nice=10
+CPUWeight=20
+IOWeight=20
+
+StandardOutput=append:/var/log/lumisignals_scanner.log
+StandardError=append:/var/log/lumisignals_scanner.log
+
+[Install]
+WantedBy=multi-user.target

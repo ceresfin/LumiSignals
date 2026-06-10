@@ -1269,6 +1269,87 @@ def create_app():
     # All login_required (Flask session). Both order endpoints gated on
     # Redis key `equity:orders_enabled=1` (off by default until verified).
 
+    @app.route("/api/mtf-scan")
+    def api_mtf_scan():
+        """Serve the latest fast MTF scan (produced by the scanner daemon).
+
+        Public read (market data only, no user state). Reads the cached
+        shortlist the background daemon writes to Redis `mtf:scan:latest` and
+        applies optional filters — the scan itself is NOT computed here, so the
+        response is an instant cache read regardless of universe size.
+
+        Query params (all optional):
+          asset_class — stock | index | fx | crypto (repeatable, comma-sep)
+          side        — LONG | SHORT
+          min_score   — 0..3
+          sort        — dist | score | vol_rank   (default dist, asc)
+          limit       — cap rows returned
+        Empty cache (daemon not warmed yet) → {results: [], warming: true}.
+        """
+        import redis as _redis
+        rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+        raw = rdb.get("mtf:scan:latest")
+        if not raw:
+            return jsonify({"results": [], "warming": True,
+                            "scanned_at": None, "stale": True})
+
+        payload = json.loads(raw)
+        rows = payload.get("results", [])
+
+        # Staleness: scan older than ~10 min (daemon cadence is 5 min RTH).
+        stale = True
+        scanned_at = payload.get("scanned_at")
+        if scanned_at:
+            try:
+                from datetime import datetime, timezone
+                ts = datetime.fromisoformat(scanned_at)
+                age = (datetime.now(timezone.utc) - ts).total_seconds()
+                stale = age > 600
+            except Exception:
+                pass
+
+        # Filters
+        assets = request.args.get("asset_class", "")
+        if assets:
+            wanted = {a.strip().lower() for a in assets.split(",") if a.strip()}
+            rows = [r for r in rows if r.get("asset_class") in wanted]
+        side = (request.args.get("side") or "").upper()
+        if side in ("LONG", "SHORT"):
+            rows = [r for r in rows if r.get("side") == side]
+        min_score = request.args.get("min_score")
+        if min_score:
+            try:
+                ms = int(min_score)
+                rows = [r for r in rows if (r.get("score") or 0) >= ms]
+            except ValueError:
+                pass
+
+        # Sort
+        sort = (request.args.get("sort") or "dist").lower()
+        if sort == "score":
+            rows = sorted(rows, key=lambda r: (-(r.get("score") or 0), r.get("dist", 1)))
+        elif sort == "vol_rank":
+            rows = sorted(rows, key=lambda r: (-(r.get("vol_rank") or 0), r.get("dist", 1)))
+        else:
+            rows = sorted(rows, key=lambda r: r.get("dist", 1))
+
+        limit = request.args.get("limit")
+        if limit:
+            try:
+                rows = rows[:max(0, int(limit))]
+            except ValueError:
+                pass
+
+        return jsonify({
+            "results": rows,
+            "warming": False,
+            "stale": stale,
+            "scanned_at": scanned_at,
+            "near_pct": payload.get("near_pct"),
+            "counts": payload.get("counts", {}),
+            "total": len(rows),
+        })
+
     @app.route("/api/swing-setup")
     def api_swing_setup():
         """Compute a front-side options debit-spread setup.
