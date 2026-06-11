@@ -387,8 +387,16 @@ def check_stop_fills(client, orders=None, held_tickers=None):
                 # the fills snapshot) is never touched.
                 has_monitorable = (stop_id and stop_id != "0") or (target_id and target_id != "0")
                 tkr = sp.get("ticker", "")
+                _strat = sp.get("strategy", "")
+                _at = (sp.get("asset_type") or "").lower()
+                # ONLY the bot's own futures/stock BRACKET phantoms. Never touch
+                # an adopted "manual" position or an option: those are managed by
+                # the reconciler / options paths, and the ticker-keyed fills net
+                # isn't a reliable "is it closed" signal for an option underlying
+                # (a real NVDA/SPY options trade could look flat by ticker).
                 if (not has_monitorable and held_tickers is not None
-                        and tkr and tkr not in held_tickers):
+                        and tkr and tkr not in held_tickers
+                        and _strat != "manual" and _at in ("futures", "stock")):
                     _flat_strat_seen[key] = _flat_strat_seen.get(key, 0) + 1
                     if _flat_strat_seen[key] >= 2:
                         try:
