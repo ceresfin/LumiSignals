@@ -73,7 +73,42 @@ class ORBNative:
         self.signal_callback = signal_callback
         self.contract_count = max(1, int(contract_count or 1))
         self._spx_conid = None
+        self._mes_conid = None
+        self._cpapi = None  # persistent client keeps the MES snapshot warm
         self._scan_count = 0
+
+    def _client(self):
+        """Lazily build + reuse one CPAPIClient so the MES market-data
+        subscription stays warm between scans (real-time last price)."""
+        if self._cpapi is None:
+            from lumisignals.ibkr_cpapi import CPAPIClient
+            self._cpapi = CPAPIClient(base_url=CPAPI_BASE_URL)
+        try:
+            self._cpapi.ensure_session()
+        except Exception:
+            pass
+        return self._cpapi
+
+    def _mes_last_price(self):
+        """Real-time MES last price (CPAPI snapshot field 31) for tick-level
+        breakout detection — fires the instant price crosses the level instead
+        of waiting for a 2m bar to close. Returns None if not yet warm."""
+        try:
+            client = self._client()
+            if not self._mes_conid:
+                fut = client.search_futures(MES_TICKER)
+                self._mes_conid = int(fut["conid"]) if fut and fut.get("conid") else None
+            if not self._mes_conid:
+                return None
+            snap = client.get_market_snapshot([self._mes_conid], fields=["31"]) or {}
+            row = snap.get(self._mes_conid) or snap.get(str(self._mes_conid)) or {}
+            v = row.get("31")
+            if v in (None, ""):
+                return None
+            return float(str(v).replace(",", ""))
+        except Exception as e:
+            logger.debug("[ORB] MES last price failed: %s", e)
+            return None
 
     # ── runtime source switch ──
     def _source(self):
@@ -141,12 +176,7 @@ class ORBNative:
     def _spx_bars(self):
         """Real-time SPX index 1-min bars from IB (for the SPX OR / strikes)."""
         try:
-            from lumisignals.ibkr_cpapi import CPAPIClient
-            client = CPAPIClient(base_url=CPAPI_BASE_URL)
-            try:
-                client.ensure_session()
-            except Exception:
-                pass
+            client = self._client()
             conid = self._resolve_spx(client)
             if not conid:
                 return []
@@ -248,27 +278,33 @@ class ORBNative:
             logger.info("[ORB] first trade (%s @ %.2f) closed at a loss — reversal armed", fd, fe)
 
     def _check_breakout(self, state, hhmm, source):
-        bars = self._mes_bars()
-        if not bars:
-            return
-        close = float(bars[-1]["close"])
+        # Tick-level detection: fire the instant the LIVE MES price crosses the
+        # level, not when a 2m bar closes — catches the break itself (~the same
+        # moment it prints on the 1m chart). Falls back to the last closed bar
+        # only if the real-time snapshot isn't warm yet.
+        price = self._mes_last_price()
+        if price is None:
+            bars = self._mes_bars()
+            if not bars:
+                return
+            price = float(bars[-1]["close"])
         hi, lo = state["mes_or_high"], state["mes_or_low"]
         first = state["trades_taken"] == 0
 
         # First trade (entry window) — break either side.
         if first and hhmm <= ENTRY_END:
-            if close > hi + OFFSET:
+            if price > hi + OFFSET:
                 self._fire("BUY", hi + OFFSET, state, source, reversal=False)
-            elif close < lo - OFFSET:
+            elif price < lo - OFFSET:
                 self._fire("SELL", lo - OFFSET, state, source, reversal=False)
             return
 
         # Reversal (one, opposite of a stopped-out first trade) until 11:15.
         if (not first and state.get("stopped_out")
                 and state["trades_taken"] < 2 and hhmm <= REVERSAL_END):
-            if state["first_dir"] == "SELL" and close > hi + OFFSET:
+            if state["first_dir"] == "SELL" and price > hi + OFFSET:
                 self._fire("BUY", hi + OFFSET, state, source, reversal=True)
-            elif state["first_dir"] == "BUY" and close < lo - OFFSET:
+            elif state["first_dir"] == "BUY" and price < lo - OFFSET:
                 self._fire("SELL", lo - OFFSET, state, source, reversal=True)
 
     def _vix_stop(self, or_range, vix):
