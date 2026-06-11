@@ -207,6 +207,55 @@ def record_strategy_for_perm(place_result, strategy: str) -> None:
         logger.debug("recorded perm→strategy mapping: %s → %s", perm_ids, strategy)
 
 
+_orphan_stop_seen = {}
+_FUT_TICKERS = {"MES", "MNQ", "MGC", "MCL"}
+
+
+def cancel_orphan_futures_stops(client, held_tickers, orders):
+    """Cancel working futures STOP orders on a contract we're flat in.
+
+    A bracket leaves an orphan stop whenever its position closes via a path
+    that didn't remove the child — an atomic STP→MKT modify that returned OK
+    without transforming, a survivor-cancel that failed, or a parent that never
+    filled. A lone working stop on a FLAT contract WILL fire into a naked
+    position if price reaches it (we found a live MES SELL Stop doing exactly
+    this). `held_tickers` = futures tickers with a non-zero fills-based net;
+    `orders` = the already-fetched order snapshot (reused so we don't issue a
+    second large get_open_orders per cycle). Requires an order to be seen flat
+    for 2 consecutive cycles before we cancel, so a freshly-placed bracket
+    (position not yet in the fills snapshot) is never touched. Scoped to futures
+    STOPs only — never options/equity/combo orders."""
+    alive = {"submitted", "presubmitted", "pendingsubmit"}
+    cands = []
+    for o in orders or []:
+        tk = str(o.get("ticker") or "")
+        ot = str(o.get("orderType") or "").upper()
+        st = str(o.get("status") or "").strip().lower()
+        if (tk in _FUT_TICKERS and ot in ("STOP", "STP", "STOP_LIMIT")
+                and st in alive and tk not in held_tickers):
+            cands.append(o)
+    cur = {str(o.get("orderId")) for o in cands}
+    for oid in [k for k in _orphan_stop_seen if k not in cur]:
+        _orphan_stop_seen.pop(oid, None)
+    for o in cands:
+        oid = str(o.get("orderId") or "")
+        if not oid:
+            continue
+        _orphan_stop_seen[oid] = _orphan_stop_seen.get(oid, 0) + 1
+        if _orphan_stop_seen[oid] < 2:
+            continue  # placement-race guard — confirm flat on a second cycle
+        try:
+            r = client.cancel_order(int(oid))
+            if isinstance(r, dict) and r.get("error"):
+                logger.debug("orphan stop %s cancel rejected: %s", oid, str(r.get("error"))[:80])
+            else:
+                logger.warning("Cancelled ORPHAN futures stop %s (%s %s) — flat, no position",
+                               oid, o.get("ticker"), o.get("side"))
+            _orphan_stop_seen.pop(oid, None)
+        except Exception as e:
+            logger.debug("orphan stop %s cancel raised: %s", oid, e)
+
+
 def check_stop_fills(client):
     """Detect stop-loss order fills and close the matching strat_pos.
 
@@ -3996,6 +4045,13 @@ def main():
                 # backstop. Catches positions the fills stream wouldn't
                 # see (manual IB GUI entries, holdings >7d). Self-throttles.
                 reconciler.slow_tier_pass("ib", data.get("positions", []))
+                # Sweep orphaned futures bracket stops (a working stop on a
+                # contract we're flat in → would fire into a naked position).
+                try:
+                    cancel_orphan_futures_stops(client, set(ib_qty.keys()),
+                                                list(ord_snap.values()))
+                except Exception as _os:
+                    logger.debug("orphan stop sweep failed: %s", _os)
             except Exception as e:
                 logger.debug("reconciler pass failed: %s", e)
 
