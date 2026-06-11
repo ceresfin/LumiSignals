@@ -370,13 +370,24 @@ def run_pass(
             last_order_id = (fill_details or {}).get(ticker, {}).get("last_order_id") or ""
             last_price = float((fill_details or {}).get(ticker, {}).get("last_price") or 0)
             order_ref = ""
-            adopt_asset = ""   # asset class of the adopted orphan (for strat_pos)
+            # asset class of the adopted orphan (for strat_pos). Prefer the
+            # fill's OWN secType — it rides on the same /trades record that
+            # gave us last_order_id, so there's no id-matching to miss. The
+            # order_status_by_id lookup below is a fallback; it misses when
+            # /trades order_id ≠ /orders orderId, which left adopted manual
+            # options tagged asset_type='' (NVDA/SPY, 2026-06).
+            _SEC_TO_ASSET = {"OPT": "options", "FUT": "futures",
+                             "CASH": "forex", "FX": "forex", "STK": "stock"}
+            _fill_sec = str(
+                (fill_details or {}).get(ticker, {}).get("last_sec_type") or ""
+            ).upper()
+            adopt_asset = _SEC_TO_ASSET.get(_fill_sec, "")
             if last_order_id and order_status_by_id:
                 ord_row = order_status_by_id.get(str(last_order_id)) or {}
                 order_ref = str(ord_row.get("order_ref") or "")
-                _sec = str(ord_row.get("secType") or ord_row.get("sec_type") or "").upper()
-                adopt_asset = {"OPT": "options", "FUT": "futures",
-                               "CASH": "forex", "STK": "stock"}.get(_sec, "")
+                if not adopt_asset:
+                    _sec = str(ord_row.get("secType") or ord_row.get("sec_type") or "").upper()
+                    adopt_asset = _SEC_TO_ASSET.get(_sec, "")
 
             # Decode strategy from lumi_<slug>_<hash>
             decoded_strategy = None
@@ -697,6 +708,11 @@ def net_positions_from_fills(client) -> Dict[str, Dict]:
             "last_side": t.get("side", ""),
             "last_price": last_price,
             "last_order_id": str(t.get("order_id") or ""),
+            # secType straight off the fill (OPT/FUT/STK/CASH). Lets the
+            # adoption path tag asset_type without depending on the
+            # /trades-order_id ↔ /orders-orderId match (which often diverges,
+            # leaving adopted manual options tagged asset_type='').
+            "last_sec_type": str(t.get("secType") or t.get("sec_type") or "").upper(),
         }
     return by_ticker
 
