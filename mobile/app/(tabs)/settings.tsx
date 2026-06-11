@@ -97,6 +97,18 @@ export default function Settings() {
        trades_today: 0, consecutive_losses: 0 });
   const [rgwSaving, setRgwSaving] = useState(false);
   const [rgwResetting, setRgwResetting] = useState(false);
+  // Runaway-guard scope. Caps are PER-STRATEGY — each strategy keeps its own
+  // cap + loss streak. 'Global' edits the legacy fallback key, which any
+  // strategy with its own code default (2n20 / ORB / Swing / FX) ignores; so
+  // to change the cap that actually governs 2n20 you must select it here.
+  const RGW_SCOPES: { key: string; label: string }[] = [
+    { key: '', label: 'Global' },
+    { key: 'futures_2n20', label: '2n20' },
+    { key: 'orb_breakout', label: 'ORB' },
+    { key: 'swing_setup', label: 'Swing' },
+    { key: 'fx_h1_zone_scalp', label: 'FX' },
+  ];
+  const [rgwStrategy, setRgwStrategy] = useState<string>('');
 
   const loadProfile = async () => {
     if (!user) return;
@@ -263,10 +275,11 @@ export default function Settings() {
     }
   };
 
-  const loadRunawayGuard = async () => {
+  const loadRunawayGuard = async (strategy: string = rgwStrategy) => {
     try {
       const syncKey = process.env.EXPO_PUBLIC_LUMI_SYNC_KEY || '';
-      const r = await fetch('https://bot.lumitrade.ai/api/risk/runaway-guard', {
+      const qs = strategy ? `?strategy=${encodeURIComponent(strategy)}` : '';
+      const r = await fetch(`https://bot.lumitrade.ai/api/risk/runaway-guard${qs}`, {
         headers: { 'X-Sync-Key': syncKey },
       });
       if (!r.ok) return;
@@ -284,7 +297,8 @@ export default function Settings() {
       const next = { ...rgwCfg, ...patch };
       setRgwCfg(next); // optimistic
       const syncKey = process.env.EXPO_PUBLIC_LUMI_SYNC_KEY || '';
-      const r = await fetch('https://bot.lumitrade.ai/api/risk/runaway-guard', {
+      const qs = rgwStrategy ? `?strategy=${encodeURIComponent(rgwStrategy)}` : '';
+      const r = await fetch(`https://bot.lumitrade.ai/api/risk/runaway-guard${qs}`, {
         method: 'PUT',
         headers: { 'X-Sync-Key': syncKey, 'Content-Type': 'application/json' },
         body: JSON.stringify(patch),
@@ -304,7 +318,8 @@ export default function Settings() {
     setRgwResetting(true);
     try {
       const syncKey = process.env.EXPO_PUBLIC_LUMI_SYNC_KEY || '';
-      const r = await fetch('https://bot.lumitrade.ai/api/risk/runaway-guard/reset', {
+      const qs = rgwStrategy ? `?strategy=${encodeURIComponent(rgwStrategy)}` : '';
+      const r = await fetch(`https://bot.lumitrade.ai/api/risk/runaway-guard/reset${qs}`, {
         method: 'POST',
         headers: { 'X-Sync-Key': syncKey },
       });
@@ -724,6 +739,30 @@ export default function Settings() {
 
         {/* Runaway Guard */}
         <Section title="7b. Runaway Guard">
+          {/* Scope selector — caps are per-strategy. Editing here targets the
+              selected strategy's own cap (or the legacy Global key). */}
+          <View style={styles.rgwScopeRow}>
+            {RGW_SCOPES.map(s => {
+              const active = rgwStrategy === s.key;
+              return (
+                <TouchableOpacity
+                  key={s.key || 'global'}
+                  style={[styles.rgwChip, active && styles.rgwChipActive]}
+                  onPress={() => { setRgwStrategy(s.key); loadRunawayGuard(s.key); }}
+                  disabled={rgwSaving || rgwResetting}
+                >
+                  <Text style={[styles.rgwChipText, active && styles.rgwChipTextActive]}>
+                    {s.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+          <Text style={[styles.fieldHint, { marginTop: 0, marginBottom: 8 }]}>
+            {rgwStrategy
+              ? `Editing the ${RGW_SCOPES.find(s => s.key === rgwStrategy)?.label} strategy's own cap + loss streak.`
+              : 'Editing the legacy Global cap. Strategies with their own default (2n20 / ORB / Swing / FX) ignore it — pick one above to change its limit.'}
+          </Text>
           <View style={styles.row}>
             <Text style={styles.fieldLabel}>Enabled</Text>
             <Switch
@@ -943,6 +982,14 @@ const styles = StyleSheet.create({
   fieldLabel: { fontSize: 13, fontWeight: '500', color: Colors.dark, marginBottom: 4 },
   fieldValue: { fontSize: 14, color: Colors.textLight },
   fieldHint: { fontSize: 11, color: Colors.textLight, marginTop: 2 },
+  rgwScopeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 8 },
+  rgwChip: {
+    paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16,
+    backgroundColor: Colors.cream, borderWidth: 1, borderColor: '#e8e6e1',
+  },
+  rgwChipActive: { backgroundColor: Colors.olive, borderColor: Colors.olive },
+  rgwChipText: { fontSize: 12, fontWeight: '600', color: Colors.textMedium },
+  rgwChipTextActive: { color: Colors.white },
   input: {
     backgroundColor: Colors.cream, borderRadius: 8, padding: 10,
     fontSize: 15, color: Colors.dark, borderWidth: 1, borderColor: '#e8e6e1',
