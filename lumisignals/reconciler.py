@@ -369,6 +369,17 @@ def run_pass(
         if diary_qty == 0 and broker_qty != 0:
             last_order_id = (fill_details or {}).get(ticker, {}).get("last_order_id") or ""
             last_price = float((fill_details or {}).get(ticker, {}).get("last_price") or 0)
+            # Real entry time from the fill, so the adopted strat_pos shows
+            # the true held-duration rather than the adoption moment. ms epoch.
+            _fill_ms = (fill_details or {}).get(ticker, {}).get("last_trade_at_ms") or 0
+            adopt_opened_at = ""
+            if _fill_ms:
+                try:
+                    from datetime import datetime as _dt_ad, timezone as _tz_ad
+                    adopt_opened_at = _dt_ad.fromtimestamp(
+                        int(_fill_ms) / 1000.0, _tz_ad.utc).isoformat()
+                except Exception:
+                    adopt_opened_at = ""
             order_ref = ""
             # asset class of the adopted orphan (for strat_pos). Prefer the
             # fill's OWN secType — it rides on the same /trades record that
@@ -551,6 +562,7 @@ def run_pass(
                         metadata={"model": adopt_model} if adopt_model else None,
                         asset_type=adopt_asset,
                         caller="reconciler_adopt",
+                        opened_at=adopt_opened_at,
                     )
                 except Exception as _e:
                     logger.warning(

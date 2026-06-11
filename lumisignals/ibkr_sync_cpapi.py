@@ -124,7 +124,8 @@ def save_strat_pos(ticker: str, strategy: str, direction: str,
                     stop_order_id: str = "", stop_price: float = 0,
                     target_order_id: str = "", target_price: float = 0,
                     multiplier: float = 1, metadata: dict = None,
-                    asset_type: str = "", caller: str = ""):
+                    asset_type: str = "", caller: str = "",
+                    opened_at: str = ""):
     """Persist per-strategy position state. stop_order_id lets the
     stop-fill watcher know which IB order belongs to this strategy's
     SL — when that order leaves IB's open-orders list, the strategy
@@ -136,9 +137,27 @@ def save_strat_pos(ticker: str, strategy: str, direction: str,
     if rdb is None:
         return
     from datetime import datetime as _dt, timezone as _tz
+    # opened_at is the held-duration clock. It must NOT move once a position
+    # is open — this function is also called on every reconcile re-adopt and
+    # on stop/target linking, and a fresh now() each time reset the clock
+    # (observed: adopted manual spreads perpetually showed "7m" because the
+    # reconciler re-stamped them every pass). Priority: an already-stored
+    # value wins (preserve), else an explicit caller-supplied entry time
+    # (e.g. the adoption passing the real fill time), else now.
+    _now_iso = _dt.now(_tz.utc).isoformat()
+    _key = _strat_pos_key(ticker, strategy)
+    _open_ts = ""
+    try:
+        _prev = rdb.get(_key)
+        if _prev:
+            _open_ts = (json.loads(_prev) or {}).get("opened_at") or ""
+    except Exception:
+        _open_ts = ""
+    if not _open_ts:
+        _open_ts = opened_at or _now_iso
     try:
         rdb.setex(
-            _strat_pos_key(ticker, strategy),
+            _key,
             86400 * 7,
             json.dumps({
                 "ticker": ticker, "strategy": strategy,
@@ -156,7 +175,7 @@ def save_strat_pos(ticker: str, strategy: str, direction: str,
                 # them. Empty = legacy/unknown (guarded by a sanity check).
                 "asset_type": (asset_type or "").lower(),
                 "metadata": metadata or {},
-                "opened_at": _dt.now(_tz.utc).isoformat(),
+                "opened_at": _open_ts,
             }),
         )
         logger.info(
