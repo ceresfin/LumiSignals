@@ -59,6 +59,10 @@ _write_queue: "queue.Queue[dict]" = queue.Queue(maxsize=10000)
 _drain_thread: Optional[threading.Thread] = None
 _drain_lock = threading.Lock()
 _drain_started = False
+# Tickers we've already ensured exist in symbol_metadata this process (the
+# trade_events.ticker FK rejects events for unknown symbols — HTTP 409). One
+# idempotent upsert per ticker, then cached.
+_ensured_symbols = set()
 
 
 def _drain_loop():
@@ -72,6 +76,9 @@ def _drain_loop():
             time.sleep(1)
             continue
         try:
+            # The trade_events.ticker FK references symbol_metadata — auto-
+            # register the symbol first so the event isn't rejected (409).
+            _ensure_symbol(row.get("ticker"))
             _rest_request(
                 "POST", "trade_events", body=row,
                 prefer="return=minimal",
@@ -199,6 +206,50 @@ def _rest_request(method: str, path: str, *, body=None, params=None,
     except Exception as e:
         logger.warning("diary REST %s %s failed: %s", method, path, e)
     return None
+
+
+_FUT_MULT = {"MES": 5, "MNQ": 2, "MGC": 10, "MCL": 100, "ES": 50, "NQ": 20,
+             "M2K": 5, "RTY": 50, "MYM": 0.5, "YM": 5}
+_INDEX_SYMS = {"SPX", "NDX", "RUT", "RUI", "DJI", "COMP", "XSP", "XND", "SOX",
+               "VIX", "VIX1D", "MXEF", "MXEA"}
+
+
+def _symbol_defaults(ticker: str) -> dict:
+    """Minimal symbol_metadata row for a ticker we've never seen. asset_class /
+    exchange / multiplier inferred from the symbol; tick_size 0.01 is a safe
+    placeholder (only the FK presence matters for the diary)."""
+    t = (ticker or "").upper()
+    if t.startswith("I:"):
+        ac, mult, exch = "index", 1, "CBOE"
+    elif t.startswith("X:"):
+        ac, mult, exch = "crypto", 1, "PAXOS"
+    elif t.startswith("C:"):
+        ac, mult, exch = "forex", 1, "IDEALPRO"
+    elif t in _FUT_MULT:
+        ac, mult, exch = "futures", _FUT_MULT[t], "CME"
+    elif t in _INDEX_SYMS:
+        ac, mult, exch = "index", 1, "CBOE"
+    else:
+        ac, mult, exch = "stock", 1, "SMART"
+    return {"ticker": t, "asset_class": ac, "exchange": exch,
+            "tick_size": 0.01, "multiplier": mult, "quote_currency": "USD",
+            "active": True}
+
+
+def _ensure_symbol(ticker: str) -> None:
+    """Idempotently register `ticker` in symbol_metadata so the trade_events FK
+    accepts events for it. Cached per process; only marks done on a successful
+    upsert so a transient failure retries on the next event."""
+    if not ticker or ticker in _ensured_symbols:
+        return
+    res = _rest_request(
+        "POST", "symbol_metadata", body=_symbol_defaults(ticker),
+        prefer="resolution=ignore-duplicates,return=minimal",
+    )
+    if res is not None:  # 200/201 (inserted or ignored) — both return non-None
+        _ensured_symbols.add(ticker)
+    else:
+        logger.debug("diary: ensure symbol %s failed — will retry next event", ticker)
 
 
 def record_event(
