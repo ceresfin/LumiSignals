@@ -208,6 +208,7 @@ def record_strategy_for_perm(place_result, strategy: str) -> None:
 
 
 _orphan_stop_seen = {}
+_flat_strat_seen = {}
 _FUT_TICKERS = {"MES", "MNQ", "MGC", "MCL"}
 
 
@@ -256,8 +257,12 @@ def cancel_orphan_futures_stops(client, held_tickers, orders):
             logger.debug("orphan stop %s cancel raised: %s", oid, e)
 
 
-def check_stop_fills(client, orders=None):
+def check_stop_fills(client, orders=None, held_tickers=None):
     """Detect stop-loss order fills and close the matching strat_pos.
+
+    `held_tickers`: futures/stock tickers with a non-zero fills-based net (or
+    None when that snapshot is unavailable — then the broker-flat phantom clear
+    below is skipped, fail-safe). An empty set means "broker holds nothing".
 
     Each entry stores the IB order ID of its protective stop. We poll IB's
     open orders each cycle; if a tracked stop_order_id is no longer open,
@@ -372,6 +377,31 @@ def check_stop_fills(client, orders=None):
             stop_gone   = bool(stop_id   and stop_id   != "0" and stop_id   not in open_ids)
             target_gone = bool(target_id and target_id != "0" and target_id not in open_ids)
             if not stop_gone and not target_gone:
+                # Neither protective child fired. If we have NO monitorable
+                # stop/target at all (the bracket-id discovery raced and the
+                # position has since closed), this strat_pos can NEVER be
+                # cleared by the stop-fill path — it silently blocks the
+                # strategy from re-entering (a live 2n20 was dark 4h this way).
+                # Clear it when the broker is flat for this ticker, confirmed
+                # over 2 cycles so a freshly-placed bracket (position not yet in
+                # the fills snapshot) is never touched.
+                has_monitorable = (stop_id and stop_id != "0") or (target_id and target_id != "0")
+                tkr = sp.get("ticker", "")
+                if (not has_monitorable and held_tickers is not None
+                        and tkr and tkr not in held_tickers):
+                    _flat_strat_seen[key] = _flat_strat_seen.get(key, 0) + 1
+                    if _flat_strat_seen[key] >= 2:
+                        try:
+                            rdb.delete(key)
+                            logger.warning(
+                                "Cleared phantom strat_pos %s [%s] — broker flat, no "
+                                "monitorable stop (was blocking re-entry)",
+                                tkr, sp.get("strategy", ""))
+                        except Exception as _de:
+                            logger.debug("phantom strat_pos clear failed: %s", _de)
+                        _flat_strat_seen.pop(key, None)
+                else:
+                    _flat_strat_seen.pop(key, None)
                 continue  # both children still active (or neither tracked)
 
             # Decide which child fired — whichever is gone wins. If BOTH are
@@ -4035,12 +4065,14 @@ def main():
             #
             # Safe to call every tick — self-throttles to MIN_INTERVAL.
             ord_snap = {}  # shared order snapshot, reused by check_stop_fills below
+            held_tickers = None  # fills-based held set; None until computed (fail-safe)
             try:
                 # Fast tier (every ~5s): fills-based net positions + order
                 # status. Catches scalp closes within seconds, INTENT_OPEN
                 # confirmations, and per-trade lifecycle transitions.
                 fill_details = reconciler.net_positions_from_fills(client)
                 ib_qty = {s: d["qty"] for s, d in fill_details.items() if d["qty"] != 0}
+                held_tickers = set(ib_qty.keys())  # valid (possibly empty) held set
                 # Multipliers used to compute realized_pl on RECONCILE_GONE.
                 # Hardcoded for now; future step is to read from
                 # symbol_metadata table (cached in Redis).
@@ -4075,7 +4107,8 @@ def main():
             # the next signal to reconcile drift. Reuse the reconciler's order
             # snapshot (falls back to its own fetch if that pass failed) so we
             # don't pull the 100+ order list twice per cycle.
-            check_stop_fills(client, orders=(list(ord_snap.values()) or None))
+            check_stop_fills(client, orders=(list(ord_snap.values()) or None),
+                             held_tickers=held_tickers)
 
             # Drive any active SPX 0DTE leg-in butterflies one tick forward.
             # Each butterfly's state lives in ibkr:butterfly:* in Redis;
