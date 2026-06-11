@@ -114,6 +114,10 @@ function statePillStyle(state: string, direction: SignalEvent['direction']) {
   if (state === 'INTENT_CLOSE' || state === 'CLOSED') {
     return { bg: '#eceff1', fg: Colors.dark };
   }
+  if (state === 'STOP_FIRED') {
+    // A stop-out is a closing event too — flag it red so it reads as a loss.
+    return { bg: '#fdecea', fg: Colors.red };
+  }
   if (state === 'MISSED') {
     return { bg: '#fff3e0', fg: Colors.amber };
   }
@@ -228,7 +232,10 @@ export default function SignalsScreen() {
     if (stateFilter === 'entries') {
       return events.filter(e => e.state === 'INTENT_OPEN' || e.state === 'OPEN');
     }
-    return events.filter(e => e.state === 'CLOSED');
+    // "Closed" = every exit, signal-based (CLOSED) AND stop-outs (STOP_FIRED).
+    // Stops are real closed trades; excluding them made the counts look
+    // unbalanced (15 entries / 3 closed hid 12 stop-outs).
+    return events.filter(e => e.state === 'CLOSED' || e.state === 'STOP_FIRED');
   }, [events, missed, stateFilter, ticker, strategy]);
 
   const totalPl = useMemo(() => {
@@ -248,12 +255,13 @@ export default function SignalsScreen() {
           {stateFilter === 'missed'
             ? `${missed.length} missed (expected but no webhook arrived)`
             : stateFilter === 'closed'
-              ? `${visibleEvents.length} closed trades${totalPl != null ? `  ·  ${totalPl >= 0 ? '+' : ''}$${totalPl.toFixed(2)}` : ''}`
+              ? `${counts.CLOSED || 0} closed · ${counts.STOP_FIRED || 0} stopped${totalPl != null ? `  ·  ${totalPl >= 0 ? '+' : ''}$${totalPl.toFixed(2)}` : ''}`
               : stateFilter === 'entries'
                 ? `${visibleEvents.length} entry signals`
                 : `${events.length} events`
                   + (counts.INTENT_OPEN ? `  ·  ${counts.INTENT_OPEN} entries` : '')
                   + (counts.CLOSED ? `  ·  ${counts.CLOSED} closed` : '')
+                  + (counts.STOP_FIRED ? `  ·  ${counts.STOP_FIRED} stopped` : '')
                   + (missed.length ? `  ·  ${missed.length} missed` : '')}
         </Text>
       </View>
@@ -310,7 +318,7 @@ export default function SignalsScreen() {
           ItemSeparatorComponent={() => <View style={styles.sep} />}
           renderItem={({ item }) => {
             const pill = statePillStyle(item.state, item.direction);
-            const isClosed = item.state === 'CLOSED';
+            const isClosed = item.state === 'CLOSED' || item.state === 'STOP_FIRED';
             return (
               <View style={styles.row}>
                 <View style={styles.rowTopLine}>
