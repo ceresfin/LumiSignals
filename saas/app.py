@@ -3421,25 +3421,46 @@ def create_app():
         rows = query_events(strategy_id=strategy, ticker=ticker,
                             since=since, until=until, limit=limit)
 
-        # Enrich CLOSED rows with entry_time + entry_price from the matching
-        # OPEN event. Entries on overnight trades often happen outside the
-        # requested window, so a fresh query by broker_trade_id is needed.
+        # Enrich exit rows with entry_time + entry_price from the matching
+        # OPEN event. Both signal-closes (CLOSED) and stop-outs (STOP_FIRED)
+        # are exits, so the held-duration stamp applies to both. Entries on
+        # overnight trades often happen outside the requested window, so a
+        # fresh query by broker_trade_id is needed.
+        _EXIT_STATES = ("CLOSED", "STOP_FIRED")
+        # The entry side may be a clean OPEN or a reconciler-adopted fill
+        # (RECONCILE_ADOPTED) — most futures_2n20 entries are adopted, so a
+        # bare state="OPEN" lookup misses them (10/12 stops had no entry_time).
+        _ENTRY_STATES = ("OPEN", "RECONCILE_ADOPTED")
+        # An adopted entry is keyed "adopted:<order_id>" while its exit row is
+        # keyed "<order_id>" — same trade, different spelling. Normalize to the
+        # bare order id so they link, and query BOTH spellings so the fetch
+        # actually returns the adopted entry rows.
+        def _norm_btid(b):
+            return (b or "").rsplit(":", 1)[-1]
         closed_ids = [r.get("broker_trade_id") for r in rows
-                      if r.get("state") == "CLOSED" and r.get("broker_trade_id")]
+                      if r.get("state") in _EXIT_STATES and r.get("broker_trade_id")]
         if closed_ids:
-            opens = fetch_events_by_broker_ids(closed_ids, state="OPEN")
+            lookup_ids = set()
+            for cid in closed_ids:
+                base = _norm_btid(cid)
+                lookup_ids.update((cid, base, f"adopted:{base}"))
+            entry_events = [o for o in fetch_events_by_broker_ids(list(lookup_ids))
+                            if o.get("state") in _ENTRY_STATES and o.get("broker_trade_id")]
+            # Prefer a true OPEN over an adopted fill, then the earliest.
+            _rank = {"OPEN": 0, "RECONCILE_ADOPTED": 1}
+            entry_events.sort(key=lambda o: (_rank.get(o.get("state"), 9),
+                                             o.get("event_time") or ""))
             open_by_id: dict = {}
-            for o in opens:
-                tid = o.get("broker_trade_id")
-                if tid and tid not in open_by_id:
-                    open_by_id[tid] = o
+            for o in entry_events:
+                nid = _norm_btid(o.get("broker_trade_id"))
+                if nid and nid not in open_by_id:
+                    open_by_id[nid] = o
             for r in rows:
-                if r.get("state") == "CLOSED":
-                    tid = r.get("broker_trade_id")
-                    m = open_by_id.get(tid)
+                if r.get("state") in _EXIT_STATES:
+                    m = open_by_id.get(_norm_btid(r.get("broker_trade_id")))
                     if m:
                         r["entry_time"] = m.get("event_time")
-                        # If the CLOSED row didn't carry the entry price
+                        # If the exit row didn't carry the entry price
                         # itself, fall back to the OPEN's fill price.
                         if r.get("entry_price") is None and m.get("entry_price") is not None:
                             r["entry_price"] = m.get("entry_price")
