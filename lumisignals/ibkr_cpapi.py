@@ -36,20 +36,41 @@ class CPAPIClient:
 
     def _request(self, method: str, path: str, json_data: dict = None,
                  params: dict = None) -> dict:
-        """Central request method with error handling."""
+        """Central request method with error handling.
+
+        Large responses (the 100+ order list on /iserver/account/orders) come
+        back from IBeam occasionally truncated mid-JSON. For GET (idempotent),
+        retry once on a parse failure so a transient truncation self-heals in
+        the same cycle instead of returning empty and skipping reconciliation.
+        Non-GET is never retried — re-POSTing an order would double-submit."""
         url = f"{self.base_url}{path}"
-        try:
-            resp = self.session.request(method, url, json=json_data, params=params, timeout=15)
-            if resp.status_code == 200:
-                return resp.json() if resp.text else {}
-            logger.warning("CPAPI %s %s → %d: %s", method, path, resp.status_code, resp.text[:200])
-            return {"error": resp.text[:200], "status_code": resp.status_code}
-        except requests.exceptions.ConnectionError:
-            logger.error("CPAPI connection failed — is the gateway running?")
-            return {"error": "Connection refused"}
-        except Exception as e:
-            logger.error("CPAPI request error: %s", e)
-            return {"error": str(e)}
+        is_get = method.upper() == "GET"
+        for attempt in range(2 if is_get else 1):
+            try:
+                resp = self.session.request(method, url, json=json_data,
+                                            params=params, timeout=15)
+                if resp.status_code == 200:
+                    if not resp.text:
+                        return {}
+                    try:
+                        return resp.json()
+                    except ValueError as je:
+                        if is_get and attempt == 0:
+                            logger.warning("CPAPI GET %s: JSON parse failed (%d bytes) — retrying: %s",
+                                           path, len(resp.text), je)
+                            time.sleep(0.3)
+                            continue
+                        logger.error("CPAPI %s %s: JSON parse failed: %s", method, path, je)
+                        return {"error": f"json parse: {je}"}
+                logger.warning("CPAPI %s %s → %d: %s", method, path, resp.status_code, resp.text[:200])
+                return {"error": resp.text[:200], "status_code": resp.status_code}
+            except requests.exceptions.ConnectionError:
+                logger.error("CPAPI connection failed — is the gateway running?")
+                return {"error": "Connection refused"}
+            except Exception as e:
+                logger.error("CPAPI request error: %s", e)
+                return {"error": str(e)}
+        return {"error": "json parse: retry exhausted"}
 
     # ─── AUTH / SESSION ─────────────────────────────────────────────────
 

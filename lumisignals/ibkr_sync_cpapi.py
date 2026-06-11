@@ -256,7 +256,7 @@ def cancel_orphan_futures_stops(client, held_tickers, orders):
             logger.debug("orphan stop %s cancel raised: %s", oid, e)
 
 
-def check_stop_fills(client):
+def check_stop_fills(client, orders=None):
     """Detect stop-loss order fills and close the matching strat_pos.
 
     Each entry stores the IB order ID of its protective stop. We poll IB's
@@ -265,6 +265,11 @@ def check_stop_fills(client):
     is out — book the closed trade with reason "Stop Loss" and clear the
     strat_pos so the next entry signal can fire cleanly.
 
+    `orders`: pass the reconciler's already-fetched order snapshot to avoid a
+    SECOND large get_open_orders per cycle (the 100+ order list is what
+    occasionally truncates mid-JSON). Falls back to its own fetch when not
+    supplied or empty.
+
     Cancelled (but not filled) stops are rare (only via manual cancel in
     the IB UI). We treat them the same as filled for state purposes —
     strat_pos gets cleared. P&L attribution may be 0 in that case, which
@@ -272,11 +277,14 @@ def check_stop_fills(client):
     rdb = _rdb()
     if rdb is None:
         return
-    try:
-        open_orders = client.get_open_orders() or []
-    except Exception as e:
-        logger.debug("check_stop_fills: get_open_orders failed: %s", e)
-        return
+    if orders:
+        open_orders = orders
+    else:
+        try:
+            open_orders = client.get_open_orders() or []
+        except Exception as e:
+            logger.debug("check_stop_fills: get_open_orders failed: %s", e)
+            return
     # IMPORTANT: CPAPI's order list returns recent orders of EVERY status
     # (Filled / Cancelled / Submitted / …), not just live working orders. If
     # we treat the whole list as "open", a stop that has ALREADY FILLED stays
@@ -4026,6 +4034,7 @@ def main():
             # (which lagged 4.5min on 2026-05-22) is no longer used here.
             #
             # Safe to call every tick — self-throttles to MIN_INTERVAL.
+            ord_snap = {}  # shared order snapshot, reused by check_stop_fills below
             try:
                 # Fast tier (every ~5s): fills-based net positions + order
                 # status. Catches scalp closes within seconds, INTENT_OPEN
@@ -4063,8 +4072,10 @@ def main():
             # Watch for stop-loss fills. When a strategy's SL fires, its
             # tracked stop_order_id disappears from open orders — clear the
             # strat_pos and record the closed trade so we don't wait for
-            # the next signal to reconcile drift.
-            check_stop_fills(client)
+            # the next signal to reconcile drift. Reuse the reconciler's order
+            # snapshot (falls back to its own fetch if that pass failed) so we
+            # don't pull the 100+ order list twice per cycle.
+            check_stop_fills(client, orders=(list(ord_snap.values()) or None))
 
             # Drive any active SPX 0DTE leg-in butterflies one tick forward.
             # Each butterfly's state lives in ibkr:butterfly:* in Redis;
