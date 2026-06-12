@@ -276,7 +276,8 @@ def cancel_orphan_futures_stops(client, held_tickers, orders):
             logger.debug("orphan stop %s cancel raised: %s", oid, e)
 
 
-def check_stop_fills(client, orders=None, held_tickers=None):
+def check_stop_fills(client, orders=None, held_tickers=None,
+                     held_opt_underlyings=None):
     """Detect stop-loss order fills and close the matching strat_pos.
 
     `held_tickers`: futures/stock tickers with a non-zero fills-based net (or
@@ -353,11 +354,35 @@ def check_stop_fills(client, orders=None, held_tickers=None):
                 continue
             sp = json.loads(raw)
             asset_type = (sp.get("asset_type") or "").lower()
-            # Options + forex book through their own dedicated close paths
-            # (option-spread reconciliation / OANDA sync). This futures/stock
-            # bracket detector must skip them — else it mislabels them as
-            # "futures" and computes P&L from mismatched price units.
-            if asset_type in ("options", "forex"):
+            # Forex books through its own path (OANDA sync) — skip entirely.
+            if asset_type == "forex":
+                continue
+            # Options don't have a monitorable bracket stop here, so the
+            # bracket detector below can't book them. But a closed/expired
+            # option (esp. an adopted 0DTE manual) leaves a phantom strat_pos
+            # that lingers until the 7-day TTL and shows as "bot open / IB
+            # flat" in the audit. Clear it when the broker holds NO option on
+            # this underlying — the per-contract positions snapshot
+            # (held_opt_underlyings) cleanly distinguishes a closed option from
+            # a live one on the same name (the ticker-keyed fills net can't).
+            # 2-cycle confirm; None snapshot → skip (fail-safe).
+            if asset_type == "options":
+                tkr = sp.get("ticker", "")
+                if (held_opt_underlyings is not None and tkr
+                        and tkr not in held_opt_underlyings):
+                    _flat_strat_seen[key] = _flat_strat_seen.get(key, 0) + 1
+                    if _flat_strat_seen[key] >= 2:
+                        try:
+                            rdb.delete(key)
+                            logger.warning(
+                                "Cleared phantom options strat_pos %s [%s] — no "
+                                "option position at broker (closed/expired)",
+                                tkr, sp.get("strategy", ""))
+                        except Exception as _de:
+                            logger.debug("options phantom clear failed: %s", _de)
+                        _flat_strat_seen.pop(key, None)
+                else:
+                    _flat_strat_seen.pop(key, None)
                 continue
             stop_id = str(sp.get("stop_order_id") or "")
             target_id = str(sp.get("target_order_id") or "")
@@ -4134,8 +4159,25 @@ def main():
             # the next signal to reconcile drift. Reuse the reconciler's order
             # snapshot (falls back to its own fetch if that pass failed) so we
             # don't pull the 100+ order list twice per cycle.
+            # Underlyings with a live option position at the broker — built from
+            # the per-contract positions snapshot (this cycle's get_positions),
+            # so check_stop_fills can clear phantom options strat_pos (closed /
+            # expired manuals) without the ticker conflation the fills net has.
+            # None → snapshot unavailable this cycle, sweep skipped (fail-safe).
+            held_opt_underlyings = None
+            try:
+                _pos = data.get("positions")
+                if isinstance(_pos, list):
+                    held_opt_underlyings = {
+                        p.get("symbol") for p in _pos
+                        if p.get("sec_type") == "OPT" and p.get("symbol")
+                        and float(p.get("quantity") or 0) != 0
+                    }
+            except Exception:
+                held_opt_underlyings = None
             check_stop_fills(client, orders=(list(ord_snap.values()) or None),
-                             held_tickers=held_tickers)
+                             held_tickers=held_tickers,
+                             held_opt_underlyings=held_opt_underlyings)
 
             # Drive any active SPX 0DTE leg-in butterflies one tick forward.
             # Each butterfly's state lives in ibkr:butterfly:* in Redis;
