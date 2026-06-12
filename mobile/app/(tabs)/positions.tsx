@@ -317,6 +317,14 @@ function PositionRow({ position, onChartPress, onClose, closing, livePrice,
 
       <View style={styles.posDetails}>
         <View style={styles.posDetail}>
+          <Text style={styles.posDetailLabel}>{isOptions ? 'Contracts' : 'Size'}</Text>
+          <Text style={styles.posDetailValue}>
+            {isOptions
+              ? (position.contracts || 1)
+              : (position.contracts || position.units || '--')}
+          </Text>
+        </View>
+        <View style={styles.posDetail}>
           <Text style={styles.posDetailLabel}>Entry</Text>
           <Text style={styles.posDetailValue}>
             {position.entry_price ? position.entry_price.toFixed(position.instrument.includes('JPY') ? 3 : 5) : '--'}
