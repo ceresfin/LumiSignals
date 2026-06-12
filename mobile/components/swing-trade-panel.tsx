@@ -346,7 +346,25 @@ export function SwingTradePanel({ initialTicker, initialMode }: {
     : setup?.direction === 'SELL' ? 'SHORT ▼' : '—';
 
   const onOpenTrade = () => {
-    if (!setup || !opt || !tradeReady) return;
+    if (!setup || !tradeReady) return;
+    // Shares vehicle — buy/sell at market with a protective stop.
+    if (vehicle === 'shares') {
+      if (!sh || !sh.qty || sh.stop == null) return;
+      const verb = setup.direction === 'SELL' ? 'Short' : 'Buy';
+      Alert.alert(
+        'Open Shares Trade?',
+        `${verb} ${sh.qty} ${ticker} at MARKET\n` +
+        `Stop ${sh.stop?.toFixed(2)}` +
+        (sh.target != null ? `  ·  Target ${sh.target.toFixed(2)}` : '') + '\n' +
+        `Risk ~$${rrView.potentialLoss != null ? rrView.potentialLoss.toFixed(0) : '—'}`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: `${verb} at Market`, style: 'default', onPress: () => submitShares(setup, sh) },
+        ],
+      );
+      return;
+    }
+    if (!opt) return;
     Alert.alert(
       'Open Trade?',
       `${setup.direction} ${ticker} ${opt.spread_type}\n` +
@@ -358,6 +376,33 @@ export function SwingTradePanel({ initialTicker, initialMode }: {
         { text: 'Open', style: 'default', onPress: () => submitOrder(setup, opt) },
       ],
     );
+  };
+
+  const submitShares = async (s: Setup, plan: NonNullable<Setup['shares']>) => {
+    try {
+      const r = await fetch(`${API_BASE}/api/shares/order`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Sync-Key': SYNC_KEY },
+        body: JSON.stringify({
+          ticker: s.ticker, direction: s.direction,
+          quantity: plan.qty, stop_price: plan.stop, target_price: plan.target,
+          max_risk_usd: parseFloat(maxRiskInput) || 200,
+          ref_price: s.underlying_price,
+          mode,   // swing only for now
+        }),
+      });
+      const j = await r.json();
+      if (r.ok && j.order_id) {
+        Alert.alert('Shares Order Placed',
+          `${j.direction} ${j.quantity} ${j.ticker}\n` +
+          `Order ${j.order_id}\nStop ${j.stop_price}` +
+          (j.stop_order_id ? '' : '\n⚠️ stop not placed — set one manually'));
+      } else {
+        Alert.alert('Order Failed', j.reason || j.error || JSON.stringify(j));
+      }
+    } catch (e) {
+      Alert.alert('Order Failed', String(e));
+    }
   };
 
   const submitOrder = async (s: Setup, o: NonNullable<Setup['options']>) => {

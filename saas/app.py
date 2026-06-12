@@ -1714,6 +1714,178 @@ def create_app():
             "coid": coid,
         })
 
+    @app.route("/api/shares/order", methods=["POST"])
+    def api_shares_order():
+        """Place a market SHARES order with a protective stop, from the MTF
+        swing setup — same trigger as the options path, shares vehicle.
+
+        Buys/sells `quantity` shares at market, then attaches a STP at
+        stop_price. Swing-mode equities/ETFs only (cash indices can't trade
+        shares). Auth: X-Sync-Key. Gated on Redis equity:orders_enabled=1.
+
+        Body: { ticker, direction "BUY"|"SELL", quantity, stop_price,
+                target_price?, max_risk_usd?, mode, ref_price? }
+        """
+        sync_key = request.headers.get("X-Sync-Key", "")
+        if sync_key != os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026"):
+            return jsonify({"error": "unauthorized"}), 401
+
+        import redis as _redis
+        rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+        if not rdb.get("equity:orders_enabled"):
+            return jsonify({"status": "skipped", "reason": "equity_orders_disabled"}), 503
+
+        body = request.get_json(silent=True) or {}
+        ticker = (body.get("ticker") or "").upper()
+        direction = (body.get("direction") or "").upper()
+        quantity = int(body.get("quantity") or 0)
+        stop_price = body.get("stop_price")
+        target_price = body.get("target_price")
+        max_risk_usd = float(body.get("max_risk_usd") or 200)
+        mode = (body.get("mode") or "swing").lower()
+        ref_price = body.get("ref_price")
+
+        if mode != "swing":
+            return jsonify({"error": "shares trading is swing-only for now"}), 400
+        missing = [k for k, v in (("ticker", ticker), ("direction", direction),
+                                  ("quantity", quantity), ("stop_price", stop_price))
+                   if not v]
+        if missing:
+            return jsonify({"error": "missing fields: " + ",".join(missing)}), 400
+        if direction not in ("BUY", "SELL"):
+            return jsonify({"error": "direction must be BUY or SELL"}), 400
+
+        # Risk gates — identical order to the options path.
+        try:
+            from lumisignals import reconcile_gate
+            if reconcile_gate.is_locked():
+                return jsonify({"status": "skipped",
+                                "reason": "reconcile_gate_locked"}), 503
+        except Exception as e:
+            logger.warning("reconcile_gate check failed (fail-closed): %s", e)
+            return jsonify({"status": "skipped",
+                            "reason": "reconcile_gate_check_failed"}), 503
+        try:
+            from lumisignals import kill_switch
+            if kill_switch.is_blocking_entry():
+                st = kill_switch.get_state()
+                return jsonify({"status": "skipped", "reason": "kill_switch_tripped",
+                                "day_pnl": round(st.get("day_pnl", 0.0), 2)}), 200
+        except Exception as e:
+            logger.warning("kill switch check failed (fail-open): %s", e)
+        from lumisignals import runaway_guard
+        try:
+            if runaway_guard.is_blocking_entry("swing_setup"):
+                st = runaway_guard.get_state("swing_setup")
+                return jsonify({"status": "skipped", "reason": "runaway_guard_tripped",
+                                "trip_reason": st.get("trip_reason")}), 200
+        except Exception as e:
+            logger.warning("runaway_guard check failed (fail-open): %s", e)
+        try:
+            from lumisignals import cooldown
+            if cooldown.is_active("swing_setup", ticker):
+                return jsonify({"status": "skipped", "reason": "cooldown_active",
+                                "ttl_seconds": cooldown.ttl("swing_setup", ticker)}), 200
+        except Exception as e:
+            logger.warning("cooldown check failed (fail-open): %s", e)
+
+        # CPAPI session + stock conid (errors out for cash indices).
+        try:
+            from lumisignals.ibkr_cpapi import CPAPIClient
+            client = CPAPIClient()
+            client.ensure_session()
+        except Exception as e:
+            return jsonify({"error": f"CPAPI session failed: {e}"}), 503
+        try:
+            results = client.search_contract(ticker, "STK") or []
+            conid = results[0].get("conid") if results else None
+        except Exception as e:
+            return jsonify({"error": f"conid lookup failed: {e}"}), 502
+        if not conid:
+            return jsonify({"error": f"no shares contract for {ticker} "
+                                     f"(cash indices can't trade shares)"}), 422
+
+        import uuid as _uuid
+        coid = f"lumi_swing_shares_{_uuid.uuid4().hex[:10]}"
+
+        try:
+            from lumisignals import diary
+            diary.record_event(
+                broker="ib", strategy_id="swing_setup", ticker=ticker,
+                state=diary.State.INTENT_OPEN, client_intent_id=coid,
+                expected_qty=quantity,
+                meta={"coid": coid, "vehicle": "shares", "mode": mode,
+                      "stop_price": stop_price, "target_price": target_price})
+        except Exception as e:
+            logger.warning("diary INTENT_OPEN (shares) failed: %s", e)
+
+        # 1) Market entry.
+        entry_order = {"conid": int(conid), "orderType": "MKT", "side": direction,
+                       "quantity": quantity, "tif": "DAY", "cOID": coid}
+        try:
+            result = client.place_order({"orders": [entry_order]})
+        except Exception as e:
+            return jsonify({"error": f"entry place_order failed: {e}"}), 502
+        order_id = None
+        if isinstance(result, list) and result:
+            order_id = result[0].get("order_id") or result[0].get("orderId")
+        elif isinstance(result, dict):
+            order_id = result.get("order_id") or result.get("orderId")
+        if not order_id:
+            return jsonify({"status": "rejected", "response": result,
+                            "coid": coid}), 502
+
+        try:
+            from lumisignals.ibkr_sync_cpapi import record_strategy_for_perm
+            record_strategy_for_perm(result, "swing_setup")
+            rdb.setex(f"ibkr:model_by_perm:{order_id}", 86400, mode)
+        except Exception as _e:
+            logger.debug("shares perm tagging failed: %s", _e)
+
+        # 2) Protective stop (opposite side, GTC). Best-effort: the entry
+        #    still stands if it fails; check_stop_fills falls back to qty-gone.
+        exit_side = "SELL" if direction == "BUY" else "BUY"
+        stop_order_id = ""
+        try:
+            stop_order = {"conid": int(conid), "orderType": "STP", "side": exit_side,
+                          "quantity": quantity, "price": float(stop_price),
+                          "tif": "GTC", "cOID": coid + "_stp"}
+            stop_res = client.place_order({"orders": [stop_order]})
+            if isinstance(stop_res, list) and stop_res:
+                stop_order_id = str(stop_res[0].get("order_id")
+                                    or stop_res[0].get("orderId") or "")
+            elif isinstance(stop_res, dict):
+                stop_order_id = str(stop_res.get("order_id")
+                                    or stop_res.get("orderId") or "")
+        except Exception as _se:
+            logger.warning("shares stop place_order failed for %s: %s", ticker, _se)
+
+        # 3) strat_pos so the reconciler + check_stop_fills track + book it.
+        try:
+            from lumisignals.ibkr_sync_cpapi import save_strat_pos
+            save_strat_pos(
+                ticker=ticker, strategy="swing_setup", direction=direction,
+                contracts=quantity, entry_price=float(ref_price or 0),
+                perm_id=str(order_id), stop_order_id=stop_order_id,
+                stop_price=float(stop_price or 0),
+                target_price=float(target_price or 0),
+                asset_type="stock", metadata={"model": mode},
+                caller="shares_order")
+        except Exception as _pe:
+            logger.warning("shares strat_pos save failed: %s", _pe)
+
+        try:
+            runaway_guard.record_entry("swing_setup")
+        except Exception:
+            pass
+
+        return jsonify({
+            "status": "queued", "strategy": "swing_setup", "vehicle": "shares",
+            "ticker": ticker, "direction": direction, "quantity": quantity,
+            "stop_price": stop_price, "stop_order_id": stop_order_id,
+            "target_price": target_price,
+            "order_id": str(order_id), "coid": coid})
+
     @app.route("/api/option-spread/close", methods=["POST"])
     def api_option_spread_close():
         """Close an open option spread at market via reverse combo.
