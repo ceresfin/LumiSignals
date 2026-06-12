@@ -870,6 +870,21 @@ export default function Positions() {
               </TouchableOpacity>
               {auditExpanded && (
                 <View style={{ marginTop: 8 }}>
+                  <View style={styles.auditLegend}>
+                    <Text style={styles.auditLegendText}>
+                      Compares your live IB account to what the bot is tracking,
+                      per instrument.{'\n'}
+                      <Text style={{ fontWeight: '600' }}>IB</Text> = the broker
+                      (the truth) · <Text style={{ fontWeight: '600' }}>Bot</Text>
+                      {' '}= what the bot thinks it holds.{'\n'}
+                      <Text style={{ color: Colors.green, fontWeight: '600' }}>Matched</Text>
+                      {' '}= they agree. A red row is an{' '}
+                      <Text style={{ fontWeight: '600' }}>orphan</Text> (IB has it,
+                      bot doesn’t) or{' '}
+                      <Text style={{ fontWeight: '600' }}>phantom</Text> (bot has
+                      it, IB is flat) to look into.
+                    </Text>
+                  </View>
                   {(!audit.rows || audit.rows.length === 0) && (
                     <View style={styles.auditRow}>
                       <Text style={[styles.auditInst, { textAlign: 'center', color: Colors.green }]}>
@@ -1164,12 +1179,23 @@ export default function Positions() {
                             const isStop = f.source === 'bracket_stop';
                             const isTarget = f.source === 'bracket_target';
                             const isBot = typeof f.source === 'string' && f.source.startsWith('bot:');
+                            // Only surface a tag when it's meaningful; a bare
+                            // "other"/manual fill just clutters the row.
                             const tag =
                               isUntagged ? '⚠️ untagged'
-                                : isStop ? '🛡 bracket stop'
-                                : isTarget ? '🎯 bracket target'
+                                : isStop ? '🛡 stop hit'
+                                : isTarget ? '🎯 target hit'
                                 : isBot ? f.source.replace('bot:', '')
-                                : (f.source || 'other');
+                                : (f.source && !['other', 'manual', 'untracked'].includes(f.source)
+                                    ? f.source : '');
+                            // Decode the broker side code into plain words.
+                            const sideCode = String(f.side || '').toUpperCase();
+                            const sideWord = sideCode === 'B' ? 'Bought'
+                              : sideCode === 'S' ? 'Sold'
+                              : sideCode === 'X' ? 'Expired'
+                              : sideCode === 'U' ? 'Assigned'
+                              : (f.side || '');
+                            const isZeroPx = !Number(f.price);  // expiry/assign land at 0
                             return (
                               <Text
                                 key={i}
@@ -1178,7 +1204,9 @@ export default function Positions() {
                                   isUntagged && styles.fillUntagged,
                                 ]}
                               >
-                                {t}  {f.side} {f.qty} @ {Number(f.price).toFixed(2)}  ·  {tag}
+                                {t}  {sideWord} {f.qty}
+                                {isZeroPx ? '' : ` @ ${Number(f.price).toFixed(2)}`}
+                                {tag ? `  ·  ${tag}` : ''}
                               </Text>
                             );
                           })}
@@ -1520,6 +1548,10 @@ const styles = StyleSheet.create({
   auditInst: { fontSize: 12, fontWeight: '700', color: Colors.text },
   auditStatus: { fontSize: 11, fontWeight: '700', marginTop: 2, textAlign: 'right' },
   auditDetail: { fontSize: 12, color: Colors.textLight, marginTop: 2 },
+  auditLegend: {
+    backgroundColor: Colors.cream, borderRadius: 8, padding: 10, marginBottom: 10,
+  },
+  auditLegendText: { fontSize: 11, lineHeight: 17, color: Colors.textMedium },
   uPL: { fontWeight: '700' },
   dteBadge: { fontSize: 12, fontWeight: '700', color: Colors.textMedium, marginTop: 3 },
   auditSynced: { fontSize: 11, color: Colors.textLight, marginTop: 6, fontStyle: 'italic', textAlign: 'right' },
