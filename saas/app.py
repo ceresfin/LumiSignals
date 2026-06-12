@@ -1288,9 +1288,16 @@ def create_app():
         """
         import redis as _redis
         rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
-        raw = rdb.get("mtf:scan:latest")
+        # mode = swing (default) | intraday | scalp. Swing falls back to the
+        # legacy mtf:scan:latest key; the fast modes read their own shortlist.
+        mode = (request.args.get("mode") or "swing").lower()
+        if mode not in ("swing", "intraday", "scalp"):
+            mode = "swing"
+        raw = rdb.get(f"mtf:scan:{mode}:latest")
+        if not raw and mode == "swing":
+            raw = rdb.get("mtf:scan:latest")
         if not raw:
-            return jsonify({"results": [], "warming": True,
+            return jsonify({"results": [], "warming": True, "mode": mode,
                             "scanned_at": None, "stale": True})
 
         payload = json.loads(raw)

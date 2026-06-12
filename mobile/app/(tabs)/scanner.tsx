@@ -205,7 +205,7 @@ export default function Scanner() {
   const [mode, setMode] = useState<'scalp' | 'intraday' | 'swing'>('swing');
 
   const load = useCallback(async () => {
-    const qs: string[] = ['sort=dist'];
+    const qs: string[] = ['sort=dist', 'mode=' + mode];
     if (group) qs.push('group=' + group);
     if (side) qs.push('side=' + side);
     try {
@@ -223,7 +223,7 @@ export default function Scanner() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [group, side]);
+  }, [group, side, mode]);
 
   // Refetch on filter change.
   useEffect(() => {
@@ -272,19 +272,6 @@ export default function Scanner() {
         ))}
       </View>
 
-      {mode !== 'swing' ? (
-        <View style={styles.center}>
-          <Text style={styles.constructionEmoji}>🚧</Text>
-          <Text style={styles.constructionTitle}>
-            {mode.charAt(0).toUpperCase() + mode.slice(1)} scanner — in construction
-          </Text>
-          <Text style={styles.constructionBody}>
-            Lower-timeframe scanning ({mode === 'scalp' ? '5m / 15m / 1h' : '15m / 1h / 4h'})
-            isn’t wired up yet. Swing (daily / weekly / monthly) is live — switch
-            back to it above.
-          </Text>
-        </View>
-      ) : (
       <>
       <View style={styles.filters}>
         <View style={styles.chipRow}>
@@ -330,7 +317,6 @@ export default function Scanner() {
         />
       )}
       </>
-      )}
     </SafeAreaView>
   );
 }

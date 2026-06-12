@@ -202,6 +202,35 @@ def _agg(groups):
     return out
 
 
+# ──────────────── 5m → 15m / 1h / 4h (intraday/scalp, prod logic) ─────────
+# RTH-open aligned, matching MassiveClient._get_market_aligned_candles so the
+# scanner's intraday zones line up with the bot/TradingView: 1h = 9:30-10:29…,
+# 4h = 9:30-1:29 / 1:30-3:59. Open hardcoded to 13:30 UTC (9:30 ET, EDT) like
+# the rest of the module (off 1h in EST winter — known, file-wide).
+_RTH_OPEN_MIN = 13 * 60 + 30
+
+def _intraday_bucket(bars5m, bucket_min):
+    """Aggregate RTH 5m bars into `bucket_min` buckets aligned to the session
+    open. Input/output chronological. (get_candles already RTH-filters stock
+    5m, so all bars here are in-session.)"""
+    groups = defaultdict(list)
+    for b in bars5m:
+        dt = datetime.fromtimestamp(b["t"] / 1000, tz=timezone.utc)
+        idx = ((dt.hour * 60 + dt.minute) - _RTH_OPEN_MIN) // bucket_min
+        groups[(dt.date(), idx)].append(b)
+    return _agg(groups)
+
+
+def to_15m(b5):
+    return _intraday_bucket(b5, 15)
+
+def to_1h(b5):
+    return _intraday_bucket(b5, 60)
+
+def to_4h(b5):
+    return _intraday_bucket(b5, 240)
+
+
 def levels_for(bars, tf):
     """find_htf_levels on a chronological bar list. Returns (s1,s2,d1,d2)."""
     if len(bars) < 3:
@@ -269,6 +298,11 @@ def spread_for(side, vol_rank):
 _TF = [("D", "1d", lambda d: d),
        ("W", "1w", to_weekly),
        ("M", "1mo", to_monthly)]
+# Fast stacks (built from a 5m base store): intraday = 15m/1h/4h,
+# scalp = 5m/15m/1h. Same Russian-doll shape as swing, reusing levels_for.
+_TF_INTRADAY = [("15m", "15m", to_15m), ("1h", "1h", to_1h), ("4h", "4h", to_4h)]
+_TF_SCALP    = [("5m", "5m", lambda b: b), ("15m", "15m", to_15m), ("1h", "1h", to_1h)]
+TF_STACKS = {"swing": _TF, "intraday": _TF_INTRADAY, "scalp": _TF_SCALP}
 _LEVELS = [("S1", 0, "SHORT"), ("S2", 1, "SHORT"),
            ("D1", 2, "LONG"),  ("D2", 3, "LONG")]
 
@@ -291,7 +325,8 @@ def _alignment_score(side, near_levels, chosen_dist, near_pct, vol_rank):
 
 
 def scan_market(store, universe, near_pct, asset_class="stock",
-                names=None, approx=False, min_hv=0.0, groups=None):
+                names=None, approx=False, min_hv=0.0, groups=None,
+                tf_stack=None, mode="swing"):
     """For each ticker compute untouched D/W/M levels and flag any sitting
     within `near_pct` of price right now. Returns canonical rows, closest
     first. `asset_class` tags the rows; `approx` marks feeds (fx/crypto)
@@ -300,6 +335,7 @@ def scan_market(store, universe, near_pct, asset_class="stock",
     (money-market / T-bill ETFs like SGOV/SHV/BIL that barely move, so they
     sit microscopically 'at' a level every day and pollute the shortlist)."""
     names = names or {}
+    tf_stack = tf_stack if tf_stack is not None else _TF
     rows = []
     for t in universe:
         daily = store.get(t, [])
@@ -308,7 +344,7 @@ def scan_market(store, universe, near_pct, asset_class="stock",
         price = daily[-1]["c"]
         near_levels = []                       # (tf, side, dist) within band
         best = None                            # (dist, tf, name, level, side)
-        for tf, gtf, derive in _TF:
+        for tf, gtf, derive in tf_stack:
             bars = derive(daily)
             lv = levels_for(bars, gtf)
             if not lv:
@@ -346,6 +382,7 @@ def scan_market(store, universe, near_pct, asset_class="stock",
         rows.append(dict(
             ticker=_display_ticker(t), name=names.get(t, ""),
             asset_class=asset_class, group=((groups or {}).get(t) or asset_class),
+            mode=mode,
             price=round(price, 4), side=side,
             tf=tf, level_name=lname, level=round(L, 4),
             dist=dist, dist_pct=round(dist * 100, 2),

@@ -34,7 +34,7 @@ import redis as _redis  # noqa: E402
 
 from lumisignals.mtf_scan import (  # noqa: E402
     pooled_session, _grouped, most_recent_trading_day, warm_store,
-    scan_market, bars_from_candles, compact_bar, MARKET_PREFIX,
+    scan_market, bars_from_candles, compact_bar, MARKET_PREFIX, TF_STACKS,
 )
 from lumisignals.massive_client import get_shared_client, TICKER_NAMES  # noqa: E402
 
@@ -93,6 +93,24 @@ STOCK_GROUPS = {
 # Flatten to [(ticker, group)].
 STOCK_SYMBOLS = [(t, g) for g, ts in STOCK_GROUPS.items() for t in ts]
 
+# ── Fast modes (intraday + scalp) run on a SMALL liquid universe only — the
+#    cost scales with names × cadence, so ~25 names keeps it affordable on the
+#    current data plan / 1-vCPU box. One 5m fetch per name, derive 15m/1h/4h.
+SCALP_UNIVERSE = [
+    ("NVDA", "high_vol"), ("TSLA", "high_vol"), ("AMD", "high_vol"),
+    ("AAPL", "megacap"), ("MSFT", "megacap"), ("META", "megacap"),
+    ("AMZN", "megacap"), ("GOOGL", "megacap"), ("NFLX", "megacap"),
+    ("AVGO", "high_vol"), ("PLTR", "high_vol"), ("COIN", "high_vol"),
+    ("MU", "high_vol"), ("SMCI", "high_vol"), ("MARA", "high_vol"),
+    ("MSTR", "high_vol"),
+    ("SPY", "etf"), ("QQQ", "etf"), ("IWM", "etf"),
+    ("TQQQ", "high_vol"), ("SQQQ", "high_vol"), ("SOXL", "high_vol"),
+    ("SOXS", "high_vol"),
+]
+FAST_NEAR_PCT = float(os.environ.get("SCANNER_NEAR_FAST", "0.01"))   # 1% band
+FAST_5M_BARS = int(os.environ.get("SCANNER_FAST_5M_BARS", "3000"))   # ~57 RTH days
+FAST_INTERVAL = int(os.environ.get("SCANNER_FAST_INTERVAL", "90"))   # seconds, RTH
+
 # Crypto + indices: per-ticker via get_candles (X: / I: prefixes).
 CRYPTO_SYMBOLS = [
     "X:BTCUSD", "X:ETHUSD", "X:SOLUSD", "X:XRPUSD", "X:DOGEUSD", "X:ADAUSD",
@@ -150,6 +168,46 @@ class PerTickerMarket:
                            NEAR_BY_ASSET.get(self.asset_class, NEAR_PCT),
                            asset_class=self.asset_class, names=names,
                            groups=groups, approx=self.approx, min_hv=self.min_hv)
+
+
+class FastMarket:
+    """Intraday + scalp scan on the small SCALP_UNIVERSE. One 5m fetch per
+    name (get_candles RTH-filters stock 5m); mtf_scan derives 15m/1h/4h from
+    it and scans the intraday and scalp stacks off the SAME store. Returns
+    {mode: rows}."""
+
+    def __init__(self, massive_key, symbols):
+        self.client = get_shared_client(massive_key)
+        self.symbols = symbols
+        self.asset_class = "fast"
+        self.label = "fast"
+
+    def scan(self):
+        store, names, groups = {}, {}, {}
+
+        def fetch(sg):
+            sym, grp = sg
+            try:
+                candles = self.client.get_candles(sym, "5m", FAST_5M_BARS)
+            except Exception as e:
+                log.warning("fast %s fetch failed: %s", sym, e)
+                return sym, grp, None
+            return sym, grp, bars_from_candles(candles)
+
+        with cf.ThreadPoolExecutor(max_workers=WORKERS) as ex:
+            for sym, grp, bars in ex.map(fetch, self.symbols):
+                if bars and len(bars) >= 60:
+                    store[sym] = bars
+                    groups[sym] = grp
+                    names[sym] = TICKER_NAMES.get(sym, "")
+
+        out = {}
+        for mode in ("intraday", "scalp"):
+            out[mode] = scan_market(
+                store, list(store), FAST_NEAR_PCT, asset_class="stock",
+                names=names, groups=groups, min_hv=0.0,
+                tf_stack=TF_STACKS[mode], mode=mode)
+        return out
 
 
 class GroupedMarket:
@@ -238,6 +296,8 @@ def run_cycle(rdb, markets):
         "results": rows,
     }
     rdb.setex(REDIS_KEY, REDIS_TTL, json.dumps(payload, default=str))
+    # mode-keyed copy so /api/mtf-scan?mode=swing reads the same shortlist.
+    rdb.setex("mtf:scan:swing:latest", REDIS_TTL, json.dumps(payload, default=str))
     by_asset = {}
     for row in rows:
         by_asset.setdefault(row["asset_class"], []).append(row)
@@ -246,6 +306,20 @@ def run_cycle(rdb, markets):
                   json.dumps({"scanned_at": payload["scanned_at"],
                               "results": arows}, default=str))
     return counts, len(rows)
+
+
+def run_fast_cycle(rdb, fast):
+    """Run the intraday + scalp scan and write per-mode shortlists."""
+    by_mode = fast.scan()
+    now = datetime.now(timezone.utc).isoformat()
+    counts = {}
+    for mode, rows in by_mode.items():
+        rows.sort(key=lambda x: x["dist"])
+        counts[mode] = len(rows)
+        rdb.setex(f"mtf:scan:{mode}:latest", REDIS_TTL,
+                  json.dumps({"scanned_at": now, "near_pct": FAST_NEAR_PCT,
+                              "results": rows}, default=str))
+    return counts
 
 
 def main():
@@ -262,19 +336,35 @@ def main():
                         default_group="crypto"),
         GroupedMarket(session, massive_key, "fx", "fx", approx=True),
     ]
+    fast_market = FastMarket(massive_key, SCALP_UNIVERSE)
 
-    log.info("scanner daemon starting (%d stocks, %d crypto, %d indices, %d fx; "
-             "years=%g, near=%.1f%%)", len(STOCK_SYMBOLS), len(CRYPTO_SYMBOLS),
-             len(INDEX_SYMBOLS), len(FX_PAIRS), YEARS, NEAR_PCT * 100)
+    log.info("scanner daemon starting (swing: %d stocks/%d crypto/%d idx/%d fx @ "
+             "%ds; fast: %d names @ %ds RTH)", len(STOCK_SYMBOLS),
+             len(CRYPTO_SYMBOLS), len(INDEX_SYMBOLS), len(FX_PAIRS), 300,
+             len(SCALP_UNIVERSE), FAST_INTERVAL)
+
+    # Dual cadence in one loop: fast modes every FAST_INTERVAL during RTH,
+    # the heavier swing scan every ~5 min (and off-hours / at startup).
+    last_swing = 0.0
     while True:
         t0 = time.time()
-        try:
-            counts, total = run_cycle(rdb, markets)
-            log.info("cycle done in %.1fs: %d hits %s", time.time() - t0,
-                     total, counts)
-        except Exception as e:
-            log.exception("cycle error: %s", e)
-        time.sleep(300 if _is_rth() else 1800)
+        rth = _is_rth()
+        if rth:
+            try:
+                fc = run_fast_cycle(rdb, fast_market)
+                log.info("fast cycle %.1fs: %s", time.time() - t0, fc)
+            except Exception as e:
+                log.exception("fast cycle error: %s", e)
+        if (time.time() - last_swing) >= 300 or not rth:
+            ts = time.time()
+            try:
+                counts, total = run_cycle(rdb, markets)
+                log.info("swing cycle %.1fs: %d hits %s", time.time() - ts,
+                         total, counts)
+            except Exception as e:
+                log.exception("swing cycle error: %s", e)
+            last_swing = time.time()
+        time.sleep(FAST_INTERVAL if rth else 1800)
 
 
 if __name__ == "__main__":
