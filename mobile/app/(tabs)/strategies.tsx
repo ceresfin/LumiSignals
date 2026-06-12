@@ -54,6 +54,31 @@ type StrategyView = {
   chart_strategy?: string;
 };
 
+// Multi-timeframe scanner row (from /api/mtf-scan). Price approaching an
+// untouched higher-TF zone with the trend stack aligned.
+type MtfResult = {
+  ticker: string;
+  name?: string;
+  asset_class?: string;
+  price?: number;
+  side?: string;          // LONG | SHORT
+  tf?: string;            // D | W | …
+  level_name?: string;    // S1 | D1 | …
+  level?: number;
+  dist_pct?: number;
+  score?: number;         // 0..3
+  suggested_spread?: string;
+  vol_lean?: string;      // DEBIT | CREDIT
+};
+
+type MtfScan = {
+  results: MtfResult[];
+  warming?: boolean;
+  stale?: boolean;
+  scanned_at?: string | null;
+  total?: number;
+};
+
 function formatSince(iso: string): string {
   try {
     const d = new Date(iso);
@@ -190,6 +215,52 @@ function H1ZonePairCard({ state, onChart }: {
   );
 }
 
+// Multi-timeframe setup card — same shell as the regime pair cards. Pill is
+// the trade direction (LONG green / SHORT red); tap opens the chart with the
+// HTF-zone overlay so you see the level the setup is built on.
+function MtfSetupCard({ r, onChart }: { r: MtfResult; onChart: () => void }) {
+  const long = (r.side || '').toUpperCase() === 'LONG';
+  const sideColor = long ? Colors.green : Colors.red;
+  const detail = [r.asset_class, r.suggested_spread].filter(Boolean).join(' · ');
+  const levelStr = r.level != null
+    ? `${r.tf || ''} ${r.level_name || ''} @ ${r.level}`.trim() : '';
+  return (
+    <TouchableOpacity style={styles.pairCard} onPress={onChart}>
+      <View style={styles.pairCardHeader}>
+        <Text style={styles.pairName}>{r.ticker}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <View style={[styles.statusPill, { backgroundColor: sideColor + '22' }]}>
+            <Text style={[styles.statusText, { color: sideColor }]}>
+              {long ? '▲ LONG' : '▼ SHORT'}
+            </Text>
+          </View>
+          <TouchableOpacity onPress={(e) => { e.stopPropagation(); onChart(); }} style={styles.chartBtn}>
+            <Text style={styles.chartBtnText}>chart</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+      <View style={styles.metricsRow}>
+        <Text style={styles.metric}>
+          dist <Text style={styles.metricValue}>{(r.dist_pct ?? 0).toFixed(2)}%</Text>
+        </Text>
+        <Text style={styles.metric}>
+          score <Text style={styles.metricValue}>{r.score ?? 0}/3</Text>
+        </Text>
+        {r.vol_lean ? (
+          <Text style={styles.metric}>
+            vol <Text style={styles.metricValue}>{r.vol_lean}</Text>
+          </Text>
+        ) : null}
+      </View>
+      {(detail || levelStr) ? (
+        <Text style={styles.sinceLine}>
+          {[detail, levelStr].filter(Boolean).join('  ·  ')}
+        </Text>
+      ) : null}
+    </TouchableOpacity>
+  );
+}
+
 function HistoryModal({
   pair, visible, onClose,
 }: {
@@ -248,6 +319,7 @@ export default function Strategies() {
   const [refreshing, setRefreshing] = useState(false);
   const [drilledPair, setDrilledPair] = useState<RegimePairState | null>(null);
   const [rulesOpen, setRulesOpen] = useState(false);
+  const [mtfScan, setMtfScan] = useState<MtfScan | null>(null);
 
   const openChart = useCallback((pair: string, chartStrategy: string) => {
     // chartStrategy gets passed through to mobile_chart.html so the
@@ -267,6 +339,12 @@ export default function Strategies() {
       setData(json.strategies || {});
     } catch (e) {
       console.warn('regime fetch failed', e);
+    }
+    try {
+      const r = await fetch(`${API_BASE}/api/mtf-scan?limit=15`);
+      if (r.ok) setMtfScan(await r.json());
+    } catch (e) {
+      console.warn('mtf scan fetch failed', e);
     }
   }, []);
 
@@ -375,6 +453,40 @@ export default function Strategies() {
             </View>
           )}
         </View>
+
+        {/* Multi-Timeframe scanner — styled as a strategy section to match
+            the others. Rows come from /api/mtf-scan (background daemon). */}
+        {mtfScan && (
+          <View style={styles.strategySection}>
+            <View style={styles.strategyHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.strategyName}>Multi-Timeframe</Text>
+                <Text style={styles.strategySubtitle}>MTF · OPTIONS SCANNER</Text>
+              </View>
+              <Text style={styles.strategyCount}>
+                {mtfScan.warming ? 'WARMING' : `${(mtfScan.results || []).length} NEAR`}
+              </Text>
+            </View>
+            <Text style={styles.strategyDescription}>
+              Scans ~100 liquid names for price approaching an untouched
+              higher-timeframe zone with the trend stack aligned. Sorted by
+              distance to the trigger — the top rows are the most actionable.
+            </Text>
+            {mtfScan.warming ? (
+              <Text style={styles.emptyText}>Scanner warming — first pass runs shortly.</Text>
+            ) : (mtfScan.results || []).length === 0 ? (
+              <Text style={styles.emptyText}>No setups near a trigger right now.</Text>
+            ) : (
+              (mtfScan.results || []).map((r, i) => (
+                <MtfSetupCard
+                  key={`${r.ticker}-${i}`}
+                  r={r}
+                  onChart={() => openChart(r.ticker, 'htf_levels')}
+                />
+              ))
+            )}
+          </View>
+        )}
 
         {Object.entries(data).map(([sid, s]) => {
           const sortedPairs = s.universe
