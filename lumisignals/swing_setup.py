@@ -275,7 +275,8 @@ def compute_setup(ticker: str, mode: str,
     if mode == "swing" and atr_bot > 0:
         _side = "BUY" if direction_dir == "UP" else "SELL"
         zone_watch = _zone_touch_15m(massive, poly_t, trigger_level,
-                                     prox_threshold, _side)
+                                     prox_threshold, _side,
+                                     fresh_n=mtf_config.zone_fresh_15m(mtf_cfg))
     wick_triggered = bool(zone_watch and (zone_watch["in_zone_now"]
                                           or zone_watch["triggered"]))
 
@@ -843,13 +844,14 @@ def _atr14(bars) -> float:
     return sum(trs) / len(trs) if trs else 0.0
 
 
-# How many trailing 15m candles count as a "fresh" touch (the setup just
-# triggered) vs merely "touched in the window" (context). ~1 RTH session.
+# Default trailing 15m candles that count as a "fresh" touch (the setup just
+# triggered) vs merely "touched in the window". ~1 RTH session. Settings-
+# tunable via mtf_config.zone_fresh_15m.
 _ZONE_FRESH_15M = 26
 
 
 def _zone_touch_15m(massive, poly_t: str, level: float, half_width: float,
-                    side: str, count: int = 300):
+                    side: str, count: int = 300, fresh_n: int = _ZONE_FRESH_15M):
     """Scan recent 15m candles for a wick that pierced the entry zone band
     [level ± half_width]. The daily/weekly close can miss a fast wick-and-
     bounce, so we watch the finer TF: a 15m high/low inside the band is a
@@ -891,8 +893,8 @@ def _zone_touch_15m(massive, poly_t: str, level: float, half_width: float,
         "zone_high": round(zhi, 2),
         "in_zone_now": bool(last_i is not None and last_i == n - 1),
         "touched": bool(hits),
-        # Fresh = wicked in within the last ~session → "just triggered".
-        "triggered": bool(last_i is not None and last_i >= n - _ZONE_FRESH_15M),
+        # Fresh = wicked in within the last fresh_n candles → "just triggered".
+        "triggered": bool(last_i is not None and last_i >= n - fresh_n),
         "touch_count": len(hits),
         "last_touch_at": last_at,
         "last_touch_extreme": round(extreme, 2) if extreme is not None else None,

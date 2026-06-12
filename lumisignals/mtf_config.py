@@ -35,10 +35,15 @@ DEFAULT_CONFIG = {
     "rr_floor_scalp": 1.5,
     "rr_floor_intraday": 2.0,
     "rr_floor_swing": 3.0,
+    # Zone-watch "fresh" window: a 15m wick within this many trailing 15m
+    # candles counts as a just-triggered touch (swing only for now).
+    "zone_fresh_15m": 26.0,
 }
 
-# Keys that must stay > 0 when set.
-_POSITIVE_KEYS = set(DEFAULT_CONFIG.keys())
+# Integer-count keys (clamped to >= 1, rounded).
+_COUNT_KEYS = {"zone_fresh_15m"}
+# Keys that must stay > 0 when set (the multiplier knobs).
+_POSITIVE_KEYS = set(DEFAULT_CONFIG.keys()) - _COUNT_KEYS
 
 # Legacy flat keys (pre per-mode) → per-mode prefix. Migrated on read so a
 # stored flat value carries into all three modes instead of being dropped.
@@ -91,7 +96,9 @@ def set_config(updates: dict) -> dict:
             fv = float(v)
         except (TypeError, ValueError):
             continue
-        if k in _POSITIVE_KEYS:
+        if k in _COUNT_KEYS:
+            fv = float(max(1, round(fv)))   # integer candle count, >= 1
+        elif k in _POSITIVE_KEYS:
             fv = max(0.1, fv)   # never zero/negative — would disable the gate
         cfg[k] = fv
     rdb = _rdb()
@@ -122,3 +129,12 @@ def rr_floor(mode: str, cfg: Optional[dict] = None) -> float:
     cfg = cfg or get_config()
     return float(cfg.get(f"rr_floor_{mode}",
                          DEFAULT_CONFIG.get(f"rr_floor_{mode}", 2.0)))
+
+
+def zone_fresh_15m(cfg: Optional[dict] = None) -> int:
+    """Trailing 15m-candle count that still counts as a fresh zone touch."""
+    cfg = cfg or get_config()
+    try:
+        return max(1, int(round(float(cfg.get("zone_fresh_15m", 26)))))
+    except (TypeError, ValueError):
+        return 26

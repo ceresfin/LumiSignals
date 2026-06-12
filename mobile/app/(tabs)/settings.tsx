@@ -140,6 +140,7 @@ export default function Settings() {
     stop_atr_mult_scalp: 2, stop_atr_mult_intraday: 2, stop_atr_mult_swing: 2,
     proximity_atr_mult_scalp: 1, proximity_atr_mult_intraday: 1, proximity_atr_mult_swing: 1,
     rr_floor_scalp: 1.5, rr_floor_intraday: 2, rr_floor_swing: 3,
+    zone_fresh_15m: 26,
   });
   const [mtfSaving, setMtfSaving] = useState(false);
   const [mtfMode, setMtfMode] = useState<'scalp' | 'intraday' | 'swing'>('scalp');
@@ -974,6 +975,15 @@ export default function Settings() {
             onSave={n => saveMtfConfig({ [`rr_floor_${mtfMode}`]: n })}
             editable={!mtfSaving}
           />
+          {mtfMode === 'swing' && (
+            <DecimalField
+              label="Zone-watch fresh window (15m bars)"
+              hint="A 15m wick into the monthly zone counts as a just-triggered touch for this many trailing bars (~26 = 1 session). Longer = setup stays flagged longer after the wick."
+              value={mtfCfg.zone_fresh_15m}
+              onSave={n => saveMtfConfig({ zone_fresh_15m: Math.round(n) })}
+              editable={!mtfSaving}
+            />
+          )}
         </Section>
 
         {/* Restart-Safety Gate */}
