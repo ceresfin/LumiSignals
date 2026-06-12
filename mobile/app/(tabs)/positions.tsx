@@ -273,7 +273,14 @@ function PositionRow({ position, onChartPress, onClose, closing, livePrice,
   // realtime channel, this updates within ms of the IB CPAPI snapshot.
   // Falls back to the row's unrealized_pl when no live price yet.
   let pl = position.unrealized_pl || 0;
-  if (livePrice && position.entry_price && position.contracts) {
+  // Client-side live recompute ONLY for instruments whose livePrice and
+  // entry_price are the same price series (futures/forex/stocks). For an
+  // OPTION the livePrice is the *underlying* and entry_price is the option's
+  // net debit, so this formula is nonsense — e.g. a SPY put debit spread
+  // (entry $31.26) showed (730 − 31.26)×−1 = −$698. Options always use the
+  // server-computed unrealized_pl (value − cost).
+  if (livePrice && position.entry_price && position.contracts
+      && position.asset_type !== 'options') {
     const mult = (position as any).multiplier || (
       position.instrument === 'MES' ? 5 :
       position.instrument === 'MNQ' ? 2 :
