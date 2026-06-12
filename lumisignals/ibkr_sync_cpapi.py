@@ -1712,16 +1712,8 @@ def _detect_spreads(positions: list) -> list:
 
                 net_cost = (best_long["avg_cost"] - short_leg["avg_cost"]) * qty / qty if qty else 0
 
-                # P&L
-                long_pnl = (best_long.get("unrealized_pnl", 0) or 0)
-                short_pnl = (short_leg.get("unrealized_pnl", 0) or 0)
-                # Scale P&L if quantities don't match exactly
-                if abs(best_long["quantity"]) != qty:
-                    long_pnl = long_pnl * qty / abs(best_long["quantity"])
-                if abs(short_leg["quantity"]) != qty:
-                    short_pnl = short_pnl * qty / abs(short_leg["quantity"])
-                spread_pnl = round(long_pnl + short_pnl, 2)
-
+                # Current liquidation value = signed market value of both legs
+                # (long positive, short negative), scaled to the spread qty.
                 long_mkt = (best_long.get("market_value", 0) or 0)
                 short_mkt = (short_leg.get("market_value", 0) or 0)
                 if abs(best_long["quantity"]) != qty:
@@ -1729,6 +1721,14 @@ def _detect_spreads(positions: list) -> list:
                 if abs(short_leg["quantity"]) != qty:
                     short_mkt = short_mkt * qty / abs(short_leg["quantity"])
                 current_value = round(long_mkt + short_mkt, 2)
+
+                # P&L = current value − cost basis. Robust and naturally
+                # bounded (a debit spread can't lose more than its debit).
+                # Summing the legs' IB unrealized_pnl was the old approach but
+                # IB returns None / stale values for 0DTE & illiquid options,
+                # producing impossible figures (a $5-wide spread showing -$698).
+                # net_cost is per-spread, so scale by qty to match current_value.
+                spread_pnl = round(current_value - net_cost * qty, 2)
 
                 spreads.append({
                     "symbol": symbol,
