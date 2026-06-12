@@ -12,6 +12,29 @@ import { useResponsive } from '@/hooks/use-responsive';
 // when paused.  Tap → drill-in modal with the full flip history.
 const API_BASE = 'https://bot.lumitrade.ai';
 
+// Options-capable asset classes get the swing panel (it builds debit
+// spreads); FX/crypto have no options here, so they fall back to the chart.
+const OPTIONS_CLASSES = ['stock', 'index', 'etf'];
+function isOptionsCapable(ac?: string): boolean {
+  return OPTIONS_CLASSES.includes((ac || '').toLowerCase());
+}
+
+// The MTF scanner level TF → swing-panel mode. Most rows are daily (D).
+function tfToMode(tf?: string): 'scalp' | 'intraday' | 'swing' {
+  const t = (tf || '').toUpperCase();
+  if (t === 'H4' || t === '4H' || t === 'H1' || t === '1H') return 'intraday';
+  if (/\d+M$/.test(t)) return 'scalp';      // 5M / 15M
+  return 'swing';                            // D / W / M → swing
+}
+
+// FX scanner tickers are 6 letters (EURCAD); the chart expects EUR_CAD.
+function chartSymbol(r: MtfResult): string {
+  if ((r.asset_class || '').toLowerCase() === 'fx' && /^[A-Za-z]{6}$/.test(r.ticker)) {
+    return `${r.ticker.slice(0, 3)}_${r.ticker.slice(3)}`.toUpperCase();
+  }
+  return r.ticker;
+}
+
 type RegimeHistoryEntry = {
   ts: string;
   eligible: boolean;
@@ -216,16 +239,19 @@ function H1ZonePairCard({ state, onChart }: {
 }
 
 // Multi-timeframe setup card — same shell as the regime pair cards. Pill is
-// the trade direction (LONG green / SHORT red); tap opens the chart with the
-// HTF-zone overlay so you see the level the setup is built on.
-function MtfSetupCard({ r, onChart }: { r: MtfResult; onChart: () => void }) {
+// the trade direction (LONG green / SHORT red). Card tap opens the setup
+// (swing panel for options-capable names, chart otherwise); the chart chip
+// always opens the chart with the HTF-zone overlay.
+function MtfSetupCard({ r, onPress, onChart }: {
+  r: MtfResult; onPress: () => void; onChart: () => void;
+}) {
   const long = (r.side || '').toUpperCase() === 'LONG';
   const sideColor = long ? Colors.green : Colors.red;
   const detail = [r.asset_class, r.suggested_spread].filter(Boolean).join(' · ');
   const levelStr = r.level != null
     ? `${r.tf || ''} ${r.level_name || ''} @ ${r.level}`.trim() : '';
   return (
-    <TouchableOpacity style={styles.pairCard} onPress={onChart}>
+    <TouchableOpacity style={styles.pairCard} onPress={onPress}>
       <View style={styles.pairCardHeader}>
         <Text style={styles.pairName}>{r.ticker}</Text>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
@@ -481,7 +507,12 @@ export default function Strategies() {
                 <MtfSetupCard
                   key={`${r.ticker}-${i}`}
                   r={r}
-                  onChart={() => openChart(r.ticker, 'htf_levels')}
+                  onPress={() =>
+                    isOptionsCapable(r.asset_class)
+                      ? router.push({ pathname: '/swing',
+                          params: { ticker: r.ticker, mode: tfToMode(r.tf) } })
+                      : openChart(chartSymbol(r), 'htf_levels')}
+                  onChart={() => openChart(chartSymbol(r), 'htf_levels')}
                 />
               ))
             )}

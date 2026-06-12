@@ -125,13 +125,17 @@ type ReturnRiskView = {
   rrRatio: number | null;
 };
 
-export function SwingTradePanel() {
+export function SwingTradePanel({ initialTicker, initialMode }: {
+  initialTicker?: string;
+  initialMode?: typeof MODES[number];
+} = {}) {
   if (!ENABLED) return null;
 
   // Free-form now (was limited to SUPPORTED_TICKERS) — the search bar lets
-  // the user add any ticker the backend can analyze.
-  const [ticker, setTicker] = useState<string>('SPX');
-  const [mode, setMode] = useState<typeof MODES[number]>('swing');
+  // the user add any ticker the backend can analyze. initialTicker/initialMode
+  // let callers (e.g. the MTF scanner card) deep-link straight to a setup.
+  const [ticker, setTicker] = useState<string>(initialTicker || 'SPX');
+  const [mode, setMode] = useState<typeof MODES[number]>(initialMode || 'swing');
   // Custom watchlist + the search/upload box text.
   const [watchlist, setWatchlist] = useState<string[]>([]);
   const [query, setQuery] = useState('');
