@@ -200,6 +200,9 @@ export default function Scanner() {
   const [refreshing, setRefreshing] = useState(false);
   const [group, setGroup] = useState('');
   const [side, setSide] = useState('');
+  // Scanner mode. Only 'swing' is built today; scalp/intraday are stubbed
+  // with an "in construction" screen as a reminder to wire the lower-TF scans.
+  const [mode, setMode] = useState<'scalp' | 'intraday' | 'swing'>('swing');
 
   const load = useCallback(async () => {
     const qs: string[] = ['sort=dist'];
@@ -250,11 +253,39 @@ export default function Scanner() {
     <SafeAreaView style={styles.container} edges={['top']}>
       <View style={styles.header}>
         <Text style={styles.title}>Scanner</Text>
-        {banner ? (
+        {mode === 'swing' && banner ? (
           <Text style={[styles.banner, meta.stale && { color: Colors.red }]}>{banner}</Text>
         ) : null}
       </View>
 
+      {/* Mode toggle — only Swing is live today. */}
+      <View style={styles.modeRow}>
+        {(['scalp', 'intraday', 'swing'] as const).map((m) => (
+          <TouchableOpacity
+            key={m}
+            style={[styles.modeTab, mode === m && styles.modeTabActive]}
+            onPress={() => setMode(m)}>
+            <Text style={[styles.modeTabText, mode === m && styles.modeTabTextActive]}>
+              {m.charAt(0).toUpperCase() + m.slice(1)}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      {mode !== 'swing' ? (
+        <View style={styles.center}>
+          <Text style={styles.constructionEmoji}>🚧</Text>
+          <Text style={styles.constructionTitle}>
+            {mode.charAt(0).toUpperCase() + mode.slice(1)} scanner — in construction
+          </Text>
+          <Text style={styles.constructionBody}>
+            Lower-timeframe scanning ({mode === 'scalp' ? '5m / 15m / 1h' : '15m / 1h / 4h'})
+            isn’t wired up yet. Swing (daily / weekly / monthly) is live — switch
+            back to it above.
+          </Text>
+        </View>
+      ) : (
+      <>
       <View style={styles.filters}>
         <View style={styles.chipRow}>
           {GROUPS.map((g) => (
@@ -298,6 +329,8 @@ export default function Scanner() {
           }
         />
       )}
+      </>
+      )}
     </SafeAreaView>
   );
 }
@@ -307,6 +340,18 @@ const styles = StyleSheet.create({
   header: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4 },
   title: { fontSize: 26, fontWeight: '600', color: Colors.dark },
   banner: { fontSize: 12, color: Colors.textLight, marginTop: 2 },
+  modeRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4 },
+  modeTab: {
+    flex: 1, paddingVertical: 8, borderRadius: 10, alignItems: 'center',
+    backgroundColor: Colors.white, borderWidth: 1, borderColor: '#e8e6e1',
+  },
+  modeTabActive: { backgroundColor: Colors.olive, borderColor: Colors.olive },
+  modeTabText: { fontSize: 13, fontWeight: '700', color: Colors.textMedium },
+  modeTabTextActive: { color: Colors.white },
+  constructionEmoji: { fontSize: 44, marginBottom: 12 },
+  constructionTitle: { fontSize: 17, fontWeight: '700', color: Colors.dark, marginBottom: 8, textAlign: 'center' },
+  constructionBody: { fontSize: 13, lineHeight: 20, color: Colors.textMedium,
+                      textAlign: 'center', paddingHorizontal: 32 },
   filters: { paddingHorizontal: 16, paddingTop: 6, paddingBottom: 8, gap: 6 },
   chipRow: { flexDirection: 'row', gap: 6, flexWrap: 'wrap' },
   chip: {
