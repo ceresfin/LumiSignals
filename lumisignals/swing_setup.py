@@ -113,10 +113,10 @@ MAX_WIDTH_PCT = 0.10               # TUNING: cap spread width at 10% of price
 
 # Shares-vehicle stop/target tuning (per user spec 2026-06-01):
 #   - Entry  = HTF supply/demand level (the bars_top zone)
-#   - Stop   = 3 × bottom-TF ATR beyond the entry level
+#   - Stop   = 2 × bottom-TF ATR beyond the entry level
 #   - Target = next opposite zone on the same TF as entry; if none,
 #              fall back to a per-mode R:R floor.
-SHARES_ATR_STOP_MULT = 4.5
+SHARES_ATR_STOP_MULT = 2.0
 SHARES_RR_FLOOR = {"scalp": 1.5, "intraday": 2.0, "swing": 3.0}
 DEBIT_RATIO_FALLBACK = 0.30        # TUNING: if net_debit/width > 30%, try wider
 ADX_STRONG_TREND_THRESHOLD = 25    # TUNING: ADX >= this on M or W = Strong
