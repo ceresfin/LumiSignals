@@ -1806,7 +1806,7 @@ def create_app():
                                      f"(cash indices can't trade shares)"}), 422
 
         import uuid as _uuid
-        coid = f"lumi_swing_shares_{_uuid.uuid4().hex[:10]}"
+        coid = f"lumi_swing_setup_{_uuid.uuid4().hex[:10]}"
 
         try:
             from lumisignals import diary
@@ -1819,18 +1819,36 @@ def create_app():
         except Exception as e:
             logger.warning("diary INTENT_OPEN (shares) failed: %s", e)
 
-        # 1) Market entry.
-        entry_order = {"conid": int(conid), "orderType": "MKT", "side": direction,
-                       "quantity": quantity, "tif": "DAY", "cOID": coid}
+        # Atomic bracket: market entry + OCA stop/target. The SL and TP cancel
+        # each other (one fills → the other auto-cancels), and stay
+        # PreSubmitted until the parent fills, so the position is never
+        # unprotected and never leaves an orphan. GTC children persist across
+        # the swing hold; the parent is forced to DAY (fills now / next open).
+        payload = CPAPIClient.build_stock_bracket(
+            conid=int(conid), entry_side=direction, quantity=quantity,
+            stop_price=float(stop_price), entry_type="MKT",
+            target_price=(float(target_price) if target_price else None),
+            tif="GTC", entry_coid=coid)
+        payload["orders"][0]["tif"] = "DAY"
         try:
-            result = client.place_order({"orders": [entry_order]})
+            result = client.place_order(payload)
         except Exception as e:
-            return jsonify({"error": f"entry place_order failed: {e}"}), 502
-        order_id = None
-        if isinstance(result, list) and result:
-            order_id = result[0].get("order_id") or result[0].get("orderId")
-        elif isinstance(result, dict):
-            order_id = result.get("order_id") or result.get("orderId")
+            return jsonify({"error": f"bracket place_order failed: {e}"}), 502
+
+        # Map returned ids to parent / sl / tp via local_order_id (the cOID).
+        by_coid = {}
+        rows = result if isinstance(result, list) else [result]
+        for row in rows:
+            if isinstance(row, dict):
+                lc = str(row.get("local_order_id") or row.get("cOID") or "")
+                oid = row.get("order_id") or row.get("orderId")
+                if lc and oid:
+                    by_coid[lc] = str(oid)
+        order_id = by_coid.get(coid)
+        if not order_id and rows and isinstance(rows[0], dict):
+            order_id = str(rows[0].get("order_id") or rows[0].get("orderId") or "")
+        stop_order_id = by_coid.get(coid + "sl", "")
+        target_order_id = by_coid.get(coid + "tp", "")
         if not order_id:
             return jsonify({"status": "rejected", "response": result,
                             "coid": coid}), 502
@@ -1838,29 +1856,13 @@ def create_app():
         try:
             from lumisignals.ibkr_sync_cpapi import record_strategy_for_perm
             record_strategy_for_perm(result, "swing_setup")
-            rdb.setex(f"ibkr:model_by_perm:{order_id}", 86400, mode)
+            for pid in {order_id, stop_order_id, target_order_id}:
+                if pid:
+                    rdb.setex(f"ibkr:model_by_perm:{pid}", 86400, mode)
         except Exception as _e:
             logger.debug("shares perm tagging failed: %s", _e)
 
-        # 2) Protective stop (opposite side, GTC). Best-effort: the entry
-        #    still stands if it fails; check_stop_fills falls back to qty-gone.
-        exit_side = "SELL" if direction == "BUY" else "BUY"
-        stop_order_id = ""
-        try:
-            stop_order = {"conid": int(conid), "orderType": "STP", "side": exit_side,
-                          "quantity": quantity, "price": float(stop_price),
-                          "tif": "GTC", "cOID": coid + "_stp"}
-            stop_res = client.place_order({"orders": [stop_order]})
-            if isinstance(stop_res, list) and stop_res:
-                stop_order_id = str(stop_res[0].get("order_id")
-                                    or stop_res[0].get("orderId") or "")
-            elif isinstance(stop_res, dict):
-                stop_order_id = str(stop_res.get("order_id")
-                                    or stop_res.get("orderId") or "")
-        except Exception as _se:
-            logger.warning("shares stop place_order failed for %s: %s", ticker, _se)
-
-        # 3) strat_pos so the reconciler + check_stop_fills track + book it.
+        # strat_pos so the reconciler + check_stop_fills track + book it.
         try:
             from lumisignals.ibkr_sync_cpapi import save_strat_pos
             save_strat_pos(
@@ -1868,6 +1870,7 @@ def create_app():
                 contracts=quantity, entry_price=float(ref_price or 0),
                 perm_id=str(order_id), stop_order_id=stop_order_id,
                 stop_price=float(stop_price or 0),
+                target_order_id=target_order_id,
                 target_price=float(target_price or 0),
                 asset_type="stock", metadata={"model": mode},
                 caller="shares_order")
@@ -1883,7 +1886,7 @@ def create_app():
             "status": "queued", "strategy": "swing_setup", "vehicle": "shares",
             "ticker": ticker, "direction": direction, "quantity": quantity,
             "stop_price": stop_price, "stop_order_id": stop_order_id,
-            "target_price": target_price,
+            "target_price": target_price, "target_order_id": target_order_id,
             "order_id": str(order_id), "coid": coid})
 
     @app.route("/api/option-spread/close", methods=["POST"])

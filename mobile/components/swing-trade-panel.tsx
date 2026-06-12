@@ -394,9 +394,13 @@ export function SwingTradePanel({ initialTicker, initialMode }: {
       const j = await r.json();
       if (r.ok && j.order_id) {
         Alert.alert('Shares Order Placed',
-          `${j.direction} ${j.quantity} ${j.ticker}\n` +
-          `Order ${j.order_id}\nStop ${j.stop_price}` +
-          (j.stop_order_id ? '' : '\n⚠️ stop not placed — set one manually'));
+          `${j.direction} ${j.quantity} ${j.ticker} at market\n` +
+          `Stop ${j.stop_price}` +
+          (j.target_price != null ? `  ·  Target ${j.target_price}` : '') +
+          (j.stop_order_id && j.target_order_id
+            ? '\nStop + target linked (OCO)'
+            : j.stop_order_id ? '\nStop placed (no target)'
+            : '\n⚠️ protective stop not placed — set one manually'));
       } else {
         Alert.alert('Order Failed', j.reason || j.error || JSON.stringify(j));
       }
