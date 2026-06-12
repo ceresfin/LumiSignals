@@ -3626,6 +3626,33 @@ def _close_spread(client, spread: dict, reason: str):
         logger.error("Could not resolve conIds for spread close: %s %s/%s", symbol, long_strike, short_strike)
         return
 
+    # Position-aware cap: only close what's actually held, so pressing Close
+    # repeatedly (or a stale quantity) can NEVER reverse the spread into a new
+    # opposite position. The closeable spread count is the smaller of the two
+    # legs' held sizes; if either leg is already flat there's nothing to close.
+    try:
+        held = {}
+        for p in client.get_positions() or []:
+            cid = p.get("con_id") or p.get("conid")
+            try:
+                cid = int(cid)
+            except (TypeError, ValueError):
+                continue
+            held[cid] = held.get(cid, 0) + int(round(float(p.get("quantity") or 0)))
+        closeable = min(abs(held.get(int(long_conid), 0)),
+                        abs(held.get(int(short_conid), 0)))
+        if closeable <= 0:
+            logger.info("Close spread %s %s/%s: already flat — nothing to close",
+                        symbol, long_strike, short_strike)
+            return
+        if closeable < quantity:
+            logger.info("Close spread %s %s/%s: capping qty %d → %d (held)",
+                        symbol, long_strike, short_strike, quantity, closeable)
+        quantity = closeable
+    except Exception as e:
+        logger.warning("close spread position check failed (%s) — proceeding "
+                       "with requested qty %d", e, quantity)
+
     is_credit = "credit" in str(spread.get("spread_type", "")).lower()
     strat = diary.strategy_slug(spread.get("strategy") or "") or spread.get("strategy") or "manual_close"
 

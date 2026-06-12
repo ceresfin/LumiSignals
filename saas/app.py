@@ -3021,6 +3021,16 @@ def create_app():
             import redis as _redis
             import uuid as _uuid
             rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+            # 30s dedup so rapid Close taps coalesce into a single queued close.
+            # First line of defence; the execution path (_close_spread) also caps
+            # to the held quantity, so even two queued closes can't reverse.
+            _dedup_key = (f"manual_close:opt:{instrument}:{data.get('right','')}:"
+                          f"{data.get('sell_strike') or 0}:{data.get('buy_strike') or 0}")
+            _existing = rdb.get(_dedup_key)
+            if _existing:
+                return jsonify({"status": "skipped",
+                                "reason": "An identical close was just queued",
+                                "order_id": _existing.decode() if isinstance(_existing, bytes) else _existing}), 200
             order_id = str(_uuid.uuid4())[:8]
             order = {
                 "order_id": order_id,
@@ -3039,6 +3049,7 @@ def create_app():
                 "status": "queued",
             }
             rdb.setex(f"ibkr:order:pending:{order_id}", 86400, json.dumps(order))
+            rdb.setex(_dedup_key, 30, order_id)
             return jsonify({"status": "queued", "broker": "ib",
                             "action": "options_close", "ticker": instrument,
                             "order_id": order_id})
