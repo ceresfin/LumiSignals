@@ -9,12 +9,36 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 
 import { Colors } from '@/constants/theme';
 import { useAuth } from '@/contexts/auth';
 import { useResponsive } from '@/hooks/use-responsive';
 
 const API = 'https://bot.lumitrade.ai/api/mtf-scan';
+
+// The scanner finds daily/weekly/monthly (swing-stack) levels, so its rows
+// are swing setups. Helper is future-proofed for when lower TFs are added.
+function modeLabel(tf: string): string {
+  const t = (tf || '').toUpperCase();
+  if (['5M', '15M', '1H'].includes(t)) return 'SCALP';
+  if (['H1', 'H4', '4H'].includes(t)) return 'INTRADAY';
+  return 'SWING'; // D / W / M
+}
+
+// Options-capable names open the swing panel (debit spreads); FX/crypto have
+// no options here, so they open the chart.
+function isOptionsCapable(ac?: string): boolean {
+  return ['stock', 'index', 'etf'].includes((ac || '').toLowerCase());
+}
+
+// FX scanner tickers are 6 letters (EURCAD); the chart expects EUR_CAD.
+function chartSymbol(r: { ticker: string; asset_class?: string }): string {
+  if ((r.asset_class || '').toLowerCase() === 'fx' && /^[A-Za-z]{6}$/.test(r.ticker)) {
+    return `${r.ticker.slice(0, 3)}_${r.ticker.slice(3)}`.toUpperCase();
+  }
+  return r.ticker;
+}
 
 type ScanRow = {
   ticker: string;
@@ -102,11 +126,11 @@ function Chip({
   );
 }
 
-function Row({ item }: { item: ScanRow }) {
+function Row({ item, onPress }: { item: ScanRow; onPress: () => void }) {
   const sideColor = item.side === 'LONG' ? Colors.green : Colors.red;
   const sideBg = item.side === 'LONG' ? '#e8f5e9' : '#fdecea';
   return (
-    <View style={styles.row}>
+    <TouchableOpacity style={styles.row} onPress={onPress} activeOpacity={0.6}>
       <View style={styles.rowTop}>
         <Text style={styles.ticker}>
           {item.approx ? '≈ ' : ''}
@@ -115,6 +139,9 @@ function Row({ item }: { item: ScanRow }) {
         <Text style={styles.asset}>{GROUP_LABEL[item.group || ''] || item.asset_class}</Text>
         <View style={[styles.sideBadge, { backgroundColor: sideBg }]}>
           <Text style={[styles.sideText, { color: sideColor }]}>{item.side}</Text>
+        </View>
+        <View style={styles.modeBadge}>
+          <Text style={styles.modeText}>{modeLabel(item.tf)}</Text>
         </View>
         <View style={{ flex: 1 }} />
         <View
@@ -154,13 +181,14 @@ function Row({ item }: { item: ScanRow }) {
       {item.suggested_spread && item.suggested_spread !== '—' ? (
         <Text style={styles.spread}>{item.suggested_spread}</Text>
       ) : null}
-    </View>
+    </TouchableOpacity>
   );
 }
 
 export default function Scanner() {
   const { user } = useAuth();
   const { contentStyle } = useResponsive();
+  const router = useRouter();
 
   const [rows, setRows] = useState<ScanRow[]>([]);
   const [meta, setMeta] = useState<{ warming: boolean; stale: boolean; scannedAt: string | null }>({
@@ -248,7 +276,17 @@ export default function Scanner() {
         <FlatList
           data={rows}
           keyExtractor={(item, i) => item.ticker + ':' + item.tf + ':' + item.level_name + ':' + i}
-          renderItem={({ item }) => <Row item={item} />}
+          renderItem={({ item }) => (
+            <Row
+              item={item}
+              onPress={() =>
+                isOptionsCapable(item.asset_class)
+                  ? router.push({ pathname: '/swing',
+                      params: { ticker: item.ticker, mode: modeLabel(item.tf).toLowerCase() } })
+                  : router.push({ pathname: '/chart',
+                      params: { symbol: chartSymbol(item), strategy: 'htf_levels', interval: '1d' } })}
+            />
+          )}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
           contentContainerStyle={[{ paddingHorizontal: 16, paddingBottom: 24 }, contentStyle]}
           ListEmptyComponent={
@@ -295,6 +333,9 @@ const styles = StyleSheet.create({
   asset: { fontSize: 11, color: Colors.textLight },
   sideBadge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8 },
   sideText: { fontSize: 11, fontWeight: '700' },
+  modeBadge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8,
+               backgroundColor: '#eef0e8', marginLeft: 6 },
+  modeText: { fontSize: 10, fontWeight: '700', letterSpacing: 0.5, color: Colors.olive },
   scoreBadge: { paddingHorizontal: 9, paddingVertical: 2, borderRadius: 10 },
   scoreText: { fontSize: 12, fontWeight: '700' },
   rowMid: { marginTop: 6 },
