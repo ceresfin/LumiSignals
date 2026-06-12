@@ -78,6 +78,18 @@ type Setup = {
   tradeable?: boolean;   // false in "prospective" mode (no pullback yet) — Open Trade disabled but levels still show
   momentum: 'Strong' | 'Weak' | null;
   trends: Record<string, 'UP' | 'DOWN' | 'SIDE'> | null;
+  // 15m wick-into-zone watch (swing mode only; null otherwise).
+  zone_watch?: {
+    tf: string;
+    zone_low: number; zone_high: number;
+    in_zone_now: boolean;
+    touched: boolean;
+    triggered: boolean;
+    touch_count: number;
+    last_touch_at: string | null;
+    last_touch_extreme: number | null;
+    candles_scanned: number;
+  } | null;
   trigger_level: number | null;
   underlying_price: number | null;
   vehicle: 'options' | 'shares' | null;
@@ -680,6 +692,39 @@ export function SwingTradePanel({ initialTicker, initialMode }: {
         </View>
       )}
 
+      {/* 15m zone watch — did an intraday wick pierce the monthly zone?
+          Catches a fast touch-and-bounce the daily/weekly close would miss. */}
+      {setup?.zone_watch && setup.zone_watch.touched && (() => {
+        const zw = setup.zone_watch!;
+        const color = zw.in_zone_now ? Colors.green
+          : zw.triggered ? Colors.amber : Colors.textLight;
+        const label = zw.in_zone_now ? '⚡ In zone now'
+          : zw.triggered ? '⚡ Wicked into zone'
+          : '○ Touched earlier';
+        const when = zw.last_touch_at
+          ? new Date(zw.last_touch_at).toLocaleString([], {
+              month: 'short', day: 'numeric', hour: '2-digit',
+              minute: '2-digit', hour12: false })
+          : '';
+        return (
+          <View style={[styles.zoneCard, { borderColor: color }]}>
+            <View style={styles.zoneTop}>
+              <Text style={[styles.zoneLabel, { color }]}>{label}</Text>
+              <Text style={styles.zoneTf}>{zw.tf} · monthly zone</Text>
+            </View>
+            <Text style={styles.zoneDetail}>
+              Zone {zw.zone_low}–{zw.zone_high}
+              {zw.last_touch_extreme != null ? `   reached ${zw.last_touch_extreme}` : ''}
+            </Text>
+            {when ? (
+              <Text style={styles.zoneDetail}>
+                Last wick {when}   ·   {zw.touch_count}× in window
+              </Text>
+            ) : null}
+          </View>
+        );
+      })()}
+
       {/* ADJUST placeholder (v2) */}
       <TouchableOpacity disabled style={styles.adjustButton}>
         <Text style={styles.adjustText}>ADJUST</Text>
@@ -922,6 +967,12 @@ const styles = StyleSheet.create({
   specCard: { backgroundColor: Colors.cream, borderRadius: 12, padding: 12, marginBottom: 10 },
   specLine: { fontSize: 12, color: Colors.dark, marginVertical: 1 },
   trendsCard: { backgroundColor: Colors.white, borderRadius: 12, padding: 12, marginBottom: 10 },
+  zoneCard: { backgroundColor: Colors.white, borderRadius: 12, padding: 12,
+              marginBottom: 10, borderWidth: 1.5 },
+  zoneTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  zoneLabel: { fontSize: 14, fontWeight: '700' },
+  zoneTf: { fontSize: 11, color: Colors.textLight, fontWeight: '600' },
+  zoneDetail: { fontSize: 12, color: Colors.textMedium, marginTop: 3 },
   trendRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 },
   trendTf: { fontSize: 12, fontWeight: '500', color: Colors.textLight },
   trendDir: { fontSize: 12, fontWeight: '600' },

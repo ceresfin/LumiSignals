@@ -866,8 +866,14 @@ def _zone_touch_15m(massive, poly_t: str, level: float, half_width: float,
     if not candles:
         return None
     zlo, zhi = level - half_width, level + half_width
-    # Indices of candles whose [low, high] overlaps the zone band.
-    hits = [i for i, c in enumerate(candles) if c.low <= zhi and c.high >= zlo]
+    # Directional touch: a demand zone (BUY) is pierced by the candle's LOW
+    # reaching down into the band; a supply zone (SELL) by the HIGH poking up
+    # into it. (A bare range-overlap would over-count — e.g. a high near a
+    # demand level isn't a touch.)
+    if side == "BUY":
+        hits = [i for i, c in enumerate(candles) if zlo <= c.low <= zhi]
+    else:
+        hits = [i for i, c in enumerate(candles) if zlo <= c.high <= zhi]
     n = len(candles)
     last_i = hits[-1] if hits else None
     last_c = candles[last_i] if last_i is not None else None
