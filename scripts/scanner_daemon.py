@@ -107,7 +107,11 @@ SCALP_UNIVERSE = [
     ("TQQQ", "high_vol"), ("SQQQ", "high_vol"), ("SOXL", "high_vol"),
     ("SOXS", "high_vol"),
 ]
-FAST_NEAR_PCT = float(os.environ.get("SCANNER_NEAR_FAST", "0.01"))   # 1% band
+# Proximity band for the fast modes is ATR-based (1× the smallest-TF ATR —
+# 15m for intraday, 5m for scalp — like the swing setup). FAST_NEAR_PCT is the
+# fallback only when ATR can't be computed.
+FAST_ATR_MULT = float(os.environ.get("SCANNER_FAST_ATR_MULT", "1.0"))
+FAST_NEAR_PCT = float(os.environ.get("SCANNER_NEAR_FAST", "0.01"))   # fallback band
 FAST_5M_BARS = int(os.environ.get("SCANNER_FAST_5M_BARS", "3000"))   # ~57 RTH days
 FAST_INTERVAL = int(os.environ.get("SCANNER_FAST_INTERVAL", "90"))   # seconds, RTH
 
@@ -206,7 +210,8 @@ class FastMarket:
             out[mode] = scan_market(
                 store, list(store), FAST_NEAR_PCT, asset_class="stock",
                 names=names, groups=groups, min_hv=0.0,
-                tf_stack=TF_STACKS[mode], mode=mode)
+                tf_stack=TF_STACKS[mode], mode=mode,
+                band_atr_mult=FAST_ATR_MULT)
         return out
 
 

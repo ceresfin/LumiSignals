@@ -231,6 +231,18 @@ def to_4h(b5):
     return _intraday_bucket(b5, 240)
 
 
+def _atr14_bars(bars, period=14):
+    """Mean of the last `period` true ranges on {o,h,l,c} bars — the same ATR
+    the swing setup uses, here on the scanner's bar dicts."""
+    if len(bars) < 2:
+        return 0.0
+    trs = []
+    for i in range(len(bars) - 1, max(0, len(bars) - 1 - period), -1):
+        c, p = bars[i], bars[i - 1]
+        trs.append(max(c["h"] - c["l"], abs(c["h"] - p["c"]), abs(c["l"] - p["c"])))
+    return sum(trs) / len(trs) if trs else 0.0
+
+
 def levels_for(bars, tf):
     """find_htf_levels on a chronological bar list. Returns (s1,s2,d1,d2)."""
     if len(bars) < 3:
@@ -326,7 +338,7 @@ def _alignment_score(side, near_levels, chosen_dist, near_pct, vol_rank):
 
 def scan_market(store, universe, near_pct, asset_class="stock",
                 names=None, approx=False, min_hv=0.0, groups=None,
-                tf_stack=None, mode="swing"):
+                tf_stack=None, mode="swing", band_atr_mult=None):
     """For each ticker compute untouched D/W/M levels and flag any sitting
     within `near_pct` of price right now. Returns canonical rows, closest
     first. `asset_class` tags the rows; `approx` marks feeds (fx/crypto)
@@ -342,6 +354,17 @@ def scan_market(store, universe, near_pct, asset_class="stock",
         if len(daily) < 30:
             continue
         price = daily[-1]["c"]
+        # Proximity band. ATR-based for the fast modes (band = band_atr_mult ×
+        # ATR of the SMALLEST TF in the stack — 15m for intraday, 5m for scalp
+        # — matching the swing setup's bottom-TF-ATR proximity), else a flat
+        # near_pct of price. Expressed as a per-ticker fraction so the rest of
+        # the loop is unchanged.
+        if band_atr_mult is not None and price:
+            _trig = tf_stack[0][2](daily)
+            _atr = _atr14_bars(_trig)
+            eff_near = (band_atr_mult * _atr / price) if _atr > 0 else near_pct
+        else:
+            eff_near = near_pct
         near_levels = []                       # (tf, side, dist) within band
         best = None                            # (dist, tf, name, level, side)
         for tf, gtf, derive in tf_stack:
@@ -365,7 +388,7 @@ def scan_market(store, universe, near_pct, asset_class="stock",
                 if side == "LONG" and abs(L - cur_low) < 1e-9:
                     continue
                 dist = abs(price - L) / price
-                if dist <= near_pct:
+                if dist <= eff_near:
                     near_levels.append((tf, side, dist))
                     if best is None or dist < best[0]:
                         best = (dist, tf, lname, L, side)
@@ -389,7 +412,7 @@ def scan_market(store, universe, near_pct, asset_class="stock",
             hv=(round(today_hv, 4) if today_hv is not None else None),
             vol_rank=vol_rank, vol_lean=(VOL_LEAN.get(vol_rank) if vol_rank else "—"),
             suggested_spread=spread_for(side, vol_rank),
-            score=_alignment_score(side, near_levels, dist, near_pct, vol_rank),
+            score=_alignment_score(side, near_levels, dist, eff_near, vol_rank),
             approx=approx,
         ))
     rows.sort(key=lambda r: r["dist"])
