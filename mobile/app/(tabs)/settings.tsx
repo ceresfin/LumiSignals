@@ -135,13 +135,14 @@ export default function Settings() {
     { key: 'fx_h1_zone_scalp', label: 'FX' },
   ];
   const [rgwStrategy, setRgwStrategy] = useState<string>('');
-  // MTF / swing-setup tuning (stop ×ATR, proximity ×ATR, target R:R floors).
-  const [mtfCfg, setMtfCfg] = useState<{
-    stop_atr_mult: number; proximity_atr_mult: number;
-    rr_floor_scalp: number; rr_floor_intraday: number; rr_floor_swing: number;
-  }>({ stop_atr_mult: 2, proximity_atr_mult: 1,
-       rr_floor_scalp: 1.5, rr_floor_intraday: 2, rr_floor_swing: 3 });
+  // MTF / swing-setup tuning — per mode (stop ×ATR, proximity ×ATR, R:R floor).
+  const [mtfCfg, setMtfCfg] = useState<Record<string, number>>({
+    stop_atr_mult_scalp: 2, stop_atr_mult_intraday: 2, stop_atr_mult_swing: 2,
+    proximity_atr_mult_scalp: 1, proximity_atr_mult_intraday: 1, proximity_atr_mult_swing: 1,
+    rr_floor_scalp: 1.5, rr_floor_intraday: 2, rr_floor_swing: 3,
+  });
   const [mtfSaving, setMtfSaving] = useState(false);
+  const [mtfMode, setMtfMode] = useState<'scalp' | 'intraday' | 'swing'>('scalp');
 
   const loadProfile = async () => {
     if (!user) return;
@@ -379,7 +380,7 @@ export default function Settings() {
     }
   };
 
-  const saveMtfConfig = async (patch: Partial<typeof mtfCfg>) => {
+  const saveMtfConfig = async (patch: Record<string, number>) => {
     setMtfSaving(true);
     try {
       setMtfCfg(prev => ({ ...prev, ...patch })); // optimistic
@@ -927,44 +928,50 @@ export default function Settings() {
           </Text>
         </Section>
 
-        {/* MTF / Swing Setup tuning */}
+        {/* MTF / Swing Setup tuning — per mode */}
         <Section title="7c. MTF / Swing Setups">
-          <Text style={[styles.fieldHint, { marginTop: 0, marginBottom: 10 }]}>
-            Tunes the multi-timeframe scanner + swing panel. Distances are in
-            ATRs of the trigger timeframe (5m scalp / 15m intraday / daily
-            swing), so they scale to each symbol’s volatility.
+          <Text style={[styles.fieldHint, { marginTop: 0, marginBottom: 8 }]}>
+            Per-mode tuning for the scanner + swing panel. Distances are in ATRs
+            of the trigger timeframe (5m scalp / 15m intraday / daily swing), so
+            they scale to each symbol’s volatility.
           </Text>
+          {/* Mode selector — each mode keeps its own stop / proximity / R:R. */}
+          <View style={styles.rgwScopeRow}>
+            {(['scalp', 'intraday', 'swing'] as const).map(m => {
+              const active = mtfMode === m;
+              return (
+                <TouchableOpacity
+                  key={m}
+                  style={[styles.rgwChip, active && styles.rgwChipActive]}
+                  onPress={() => setMtfMode(m)}
+                  disabled={mtfSaving}
+                >
+                  <Text style={[styles.rgwChipText, active && styles.rgwChipTextActive]}>
+                    {m.charAt(0).toUpperCase() + m.slice(1)}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
           <DecimalField
-            label="Shares stop (× ATR)"
+            label="Stop (× ATR)"
             hint="Stop sits this many trigger-TF ATRs beyond the entry zone."
-            value={mtfCfg.stop_atr_mult}
-            onSave={n => saveMtfConfig({ stop_atr_mult: n })}
+            value={mtfCfg[`stop_atr_mult_${mtfMode}`]}
+            onSave={n => saveMtfConfig({ [`stop_atr_mult_${mtfMode}`]: n })}
             editable={!mtfSaving}
           />
           <DecimalField
-            label="Entry proximity (× ATR)"
+            label="Proximity (× ATR)"
             hint="Tradeable only when price is within this many trigger-TF ATRs of the zone; farther = prospective (watch)."
-            value={mtfCfg.proximity_atr_mult}
-            onSave={n => saveMtfConfig({ proximity_atr_mult: n })}
+            value={mtfCfg[`proximity_atr_mult_${mtfMode}`]}
+            onSave={n => saveMtfConfig({ [`proximity_atr_mult_${mtfMode}`]: n })}
             editable={!mtfSaving}
           />
           <DecimalField
-            label="Target R:R — Scalp"
+            label="Target R:R"
             hint="Reward:risk floor used when no opposite zone is in view."
-            value={mtfCfg.rr_floor_scalp}
-            onSave={n => saveMtfConfig({ rr_floor_scalp: n })}
-            editable={!mtfSaving}
-          />
-          <DecimalField
-            label="Target R:R — Intraday"
-            value={mtfCfg.rr_floor_intraday}
-            onSave={n => saveMtfConfig({ rr_floor_intraday: n })}
-            editable={!mtfSaving}
-          />
-          <DecimalField
-            label="Target R:R — Swing"
-            value={mtfCfg.rr_floor_swing}
-            onSave={n => saveMtfConfig({ rr_floor_swing: n })}
+            value={mtfCfg[`rr_floor_${mtfMode}`]}
+            onSave={n => saveMtfConfig({ [`rr_floor_${mtfMode}`]: n })}
             editable={!mtfSaving}
           />
         </Section>

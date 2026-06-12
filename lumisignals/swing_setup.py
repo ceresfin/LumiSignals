@@ -262,13 +262,13 @@ def compute_setup(ticker: str, mode: str,
     mtf_cfg = mtf_config.get_config()
     atr_bot = _atr14(bars_bot)
     bot_label = TF_LABELS.get(tf_bot, tf_bot)
+    prox_mult = mtf_config.proximity_mult(mode, mtf_cfg)
     prox_dist = abs(current_price - trigger_level)
-    prox_threshold = mtf_cfg["proximity_atr_mult"] * atr_bot
+    prox_threshold = prox_mult * atr_bot
     if atr_bot > 0 and prox_dist > prox_threshold and prospective_reason is None:
         prospective_reason = (
             f"price {prox_dist / atr_bot:.1f}× {bot_label} ATR from trigger "
-            f"level; wait for closer approach "
-            f"(threshold {mtf_cfg['proximity_atr_mult']:.1f}× ATR)"
+            f"level; wait for closer approach (threshold {prox_mult:.1f}× ATR)"
         )
 
     # Translate direction to BUY/SELL + spread_type.
@@ -291,7 +291,7 @@ def compute_setup(ticker: str, mode: str,
     shares_spec = _pick_shares_plan(
         bars_bot, bars_top, current_price, trigger_level,
         direction, max_risk_usd, mode, lookback=top_lookback,
-        stop_mult=mtf_cfg["stop_atr_mult"],
+        stop_mult=mtf_config.stop_mult(mode, mtf_cfg),
         rr=mtf_config.rr_floor(mode, mtf_cfg),
     )
     # Attach the bottom-TF label so the panel can render "4.5× ATR(5M)"
