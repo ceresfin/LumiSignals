@@ -10,7 +10,7 @@
 // Recommended chart: 15-min or 1-hour (enough history for all HTFs)
 // One alert per ticker covers all 3 durations.
 //@version=6
-indicator("HTF Strategy Scanner", overlay=true, max_lines_count=20, max_labels_count=20)
+indicator("HTF Strategy Scanner", overlay=true, max_lines_count=20, max_labels_count=20, max_bars_back=500)
 
 // ==================== INPUTS ====================
 adxPeriod  = input.int(14, "ADX Period", minval=1, group="Indicators")
@@ -23,15 +23,26 @@ showSignals = input.bool(false, "Show Signal Markers on Chart", group="Display")
 showDash    = input.bool(true, "Show Dashboard", group="Display")
 
 // Colors (matching untouched_hl v5)
-colorM  = color.orange
-colorW  = color.yellow
-colorD  = color.blue
-color4H = #CF9FFF
+colorM   = color.orange
+colorW   = color.yellow
+colorD   = color.blue
+color4H  = #CF9FFF
+color30M = color.teal
+color15M = color.gray
 
 // ==================== HTF LEVEL + TREND FUNCTION ====================
-// Combined: finds ADX trend + 2 untouched supply (S1/S2) + 2 untouched demand (D1/D2)
-// Uses a loop with 10-bar lookback for deeper level detection
-findAll(int adxLen) =>
+// Finds ADX trend + 2 untouched supply (S1/S2) + 2 untouched demand (D1/D2)
+// over a per-TF lookback window passed in by the caller.
+//
+// Supply detection: maxH seeds at the in-progress bar's high so the
+// immediately-preceding bar (high[1]) can qualify as S1 when its high
+// exceeds the current bar's running high. The "high[i] > close" filter
+// plus the absence of a sup1 fallback is enough to keep a bullish in-
+// progress bar making a fresh high from registering its own high as S1
+// — there's no past bar above it, no fallback, so sup1 stays NA.
+// Demand keeps the original behavior — current bar's low is a useful
+// intraday demand marker.
+findAll(int adxLen, int lookback) =>
     [dp, dm, adx] = ta.dmi(adxLen, adxLen)
     dir = dp > (dm + 2) ? 1 : dp < (dm - 2) ? -1 : 0
     atrVal = ta.atr(14)
@@ -43,8 +54,8 @@ findAll(int adxLen) =>
     float dem1 = na
     float dem2 = na
 
-    for i = 1 to 10
-        if high[i] > maxH
+    for i = 1 to lookback
+        if high[i] > maxH and high[i] > close
             if na(sup1)
                 sup1 := high[i]
             else if na(sup2)
@@ -57,35 +68,44 @@ findAll(int adxLen) =>
                 dem2 := low[i]
         minL := math.min(minL, low[i])
 
-    if na(sup1)
-        sup1 := high
+    // No supply fallback — let sup1 stay NA so the dashboard shows "—"
+    // instead of the misleading current-bar high
     if na(dem1)
         dem1 := low
 
     [dir, adx, atrVal, sup1, sup2, dem1, dem2]
 
 // ==================== HTF DATA VIA request.security ====================
-// Monthly + Quarterly use lookahead_on to get current period's actual high/low
-// (without this, lower chart TFs see last completed month/quarter = stale baseline)
-[mDir,  mAdx,  mAtr,  mSupply,  mSupply2,  mDemand,  mDemand2]  = request.security(syminfo.tickerid, "M",   findAll(adxPeriod), lookahead=barmerge.lookahead_on)
-[qDir,  qAdx,  qAtr,  qSupply,  qSupply2,  qDemand,  qDemand2]  = request.security(syminfo.tickerid, "3M",  findAll(adxPeriod), lookahead=barmerge.lookahead_on)
+// Per-TF lookback (raised to reach further-back peaks for pairs at multi-year
+// highs like USDJPY — every recent peak gets NA'd by the "above-close" filter,
+// so we need a deeper window to find the next surviving overhead level):
+//   Q   60 = 15 years        D   100 ≈ 5 months
+//   M   60 = 5 years         4H  120 ≈ 4 weeks
+//   W  100 ≈ 2 years         1H  200 ≈ 8 weeks (stock) / ~1.5w (forex 24/5)
+//                            30M 300 ≈ 6 weeks (stock) / ~1.3w (forex)
+//                            15M 500 ≈ 5 weeks (stock) / ~1.0w (forex)
+// Monthly + Quarterly use lookahead_on to capture the in-progress period's high.
+[mDir,  mAdx,  mAtr,  mSupply,  mSupply2,  mDemand,  mDemand2]  = request.security(syminfo.tickerid, "M",   findAll(adxPeriod, 60),  lookahead=barmerge.lookahead_on)
+[qDir,  qAdx,  qAtr,  qSupply,  qSupply2,  qDemand,  qDemand2]  = request.security(syminfo.tickerid, "3M",  findAll(adxPeriod, 60),  lookahead=barmerge.lookahead_on)
 // Weekly and below: default (lookahead_off) is fine — completed bars are recent enough
-[wDir,  wAdx,  wAtr,  wSupply,  wSupply2,  wDemand,  wDemand2]  = request.security(syminfo.tickerid, "W",   findAll(adxPeriod))
-[dDir,  dAdx,  dAtr,  dSupply,  dSupply2,  dDemand,  dDemand2]  = request.security(syminfo.tickerid, "D",   findAll(adxPeriod))
-[h4Dir, h4Adx, h4Atr, h4Supply, h4Supply2, h4Demand, h4Demand2] = request.security(syminfo.tickerid, "240", findAll(adxPeriod))
-[h1Dir, h1Adx, h1Atr, h1Supply, h1Supply2, h1Demand, h1Demand2] = request.security(syminfo.tickerid, "60",  findAll(adxPeriod))
-[m30Dir, m30Adx, m30Atr, m30Supply, m30Supply2, m30Demand, m30Demand2] = request.security(syminfo.tickerid, "30", findAll(adxPeriod))
-[m15Dir, m15Adx, m15Atr, m15Supply, m15Supply2, m15Demand, m15Demand2] = request.security(syminfo.tickerid, "15", findAll(adxPeriod))
+[wDir,  wAdx,  wAtr,  wSupply,  wSupply2,  wDemand,  wDemand2]  = request.security(syminfo.tickerid, "W",   findAll(adxPeriod, 100))
+[dDir,  dAdx,  dAtr,  dSupply,  dSupply2,  dDemand,  dDemand2]  = request.security(syminfo.tickerid, "D",   findAll(adxPeriod, 100))
+[h4Dir, h4Adx, h4Atr, h4Supply, h4Supply2, h4Demand, h4Demand2] = request.security(syminfo.tickerid, "240", findAll(adxPeriod, 120))
+[h1Dir, h1Adx, h1Atr, h1Supply, h1Supply2, h1Demand, h1Demand2] = request.security(syminfo.tickerid, "60",  findAll(adxPeriod, 200))
+[m30Dir, m30Adx, m30Atr, m30Supply, m30Supply2, m30Demand, m30Demand2] = request.security(syminfo.tickerid, "30", findAll(adxPeriod, 300))
+[m15Dir, m15Adx, m15Atr, m15Supply, m15Supply2, m15Demand, m15Demand2] = request.security(syminfo.tickerid, "15", findAll(adxPeriod, 500))
 
-// Fix stale levels from request.security — supply must be above price, demand below
-mSupply  := not na(mSupply) and mSupply < close ? close : mSupply
-wSupply  := not na(wSupply) and wSupply < close ? close : wSupply
-dSupply  := not na(dSupply) and dSupply < close ? close : dSupply
-h4Supply := not na(h4Supply) and h4Supply < close ? close : h4Supply
-h1Supply  := not na(h1Supply) and h1Supply < close ? close : h1Supply
-m30Supply := not na(m30Supply) and m30Supply < close ? close : m30Supply
-m15Supply := not na(m15Supply) and m15Supply < close ? close : m15Supply
-qSupply   := not na(qSupply) and qSupply < close ? close : qSupply
+// Defensive: drop any supply at or below current price (was force-bumping
+// up to close, which surfaced as a fake "supply at current price" — now we
+// honestly show "—" via NA).
+mSupply  := not na(mSupply) and mSupply <= close ? na : mSupply
+wSupply  := not na(wSupply) and wSupply <= close ? na : wSupply
+dSupply  := not na(dSupply) and dSupply <= close ? na : dSupply
+h4Supply := not na(h4Supply) and h4Supply <= close ? na : h4Supply
+h1Supply  := not na(h1Supply) and h1Supply <= close ? na : h1Supply
+m30Supply := not na(m30Supply) and m30Supply <= close ? na : m30Supply
+m15Supply := not na(m15Supply) and m15Supply <= close ? na : m15Supply
+qSupply   := not na(qSupply) and qSupply <= close ? na : qSupply
 mSupply2  := not na(mSupply2) and mSupply2 < close ? na : mSupply2
 wSupply2  := not na(wSupply2) and wSupply2 < close ? na : wSupply2
 dSupply2  := not na(dSupply2) and dSupply2 < close ? na : dSupply2
@@ -160,25 +180,31 @@ fBuy       = fBuyRaw and fBuyScore >= minScore
 // ==================== WEBHOOK ALERTS ====================
 tk = syminfo.ticker
 
+// Skip trade alerts on forex/crypto — the server's stock-options webhook
+// path uses Polygon's equity endpoint, which doesn't resolve bare 'EURUSD'
+// (needs 'C:' prefix) and crypto symbols. Indices/stocks/futures continue
+// to send. The levels-sync alert below still fires for every asset class.
+tradeable = syminfo.type != "forex" and syminfo.type != "crypto"
+
 // --- Daily duration ---
-if dSell
+if dSell and tradeable
     alert('{"ticker":"' + tk + '","direction":"SELL","strategy":"htf_supply_demand","key":"' + webhookKey + '","type":"stock","spread_type":"both","trade_duration":"daily","score":' + str.tostring(dSellScore) + ',"level_price":' + str.tostring(dSellLvl) + ',"level_tf":"' + dSellTf + '","htf_trends":"W:' + dirStr(wDir) + ' M:' + dirStr(mDir) + '","msg":"HTF SELL ' + tk + ' — ' + dSellTf + ' S1' + str.tostring(dSellLvl, format.mintick) + ' | W:' + dirStr(wDir) + ' M:' + dirStr(mDir) + ' | Score ' + str.tostring(dSellScore) + '/3"}', alert.freq_once_per_bar_close)
 
-if dBuy
+if dBuy and tradeable
     alert('{"ticker":"' + tk + '","direction":"BUY","strategy":"htf_supply_demand","key":"' + webhookKey + '","type":"stock","spread_type":"both","trade_duration":"daily","score":' + str.tostring(dBuyScore) + ',"level_price":' + str.tostring(dBuyLvl) + ',"level_tf":"' + dBuyTf + '","htf_trends":"W:' + dirStr(wDir) + ' M:' + dirStr(mDir) + '","msg":"HTF BUY ' + tk + ' — ' + dBuyTf + ' D1' + str.tostring(dBuyLvl, format.mintick) + ' | W:' + dirStr(wDir) + ' M:' + dirStr(mDir) + ' | Score ' + str.tostring(dBuyScore) + '/3"}', alert.freq_once_per_bar_close)
 
 // --- Hourly duration ---
-if hSell
+if hSell and tradeable
     alert('{"ticker":"' + tk + '","direction":"SELL","strategy":"htf_supply_demand","key":"' + webhookKey + '","type":"stock","spread_type":"both","trade_duration":"hourly","score":' + str.tostring(hSellScore) + ',"level_price":' + str.tostring(dSupply) + ',"level_tf":"D","htf_trends":"D:' + dirStr(dDir) + ' W:' + dirStr(wDir) + '","msg":"HTF SELL ' + tk + ' — D S1' + str.tostring(dSupply, format.mintick) + ' | D:' + dirStr(dDir) + ' W:' + dirStr(wDir) + ' | Score ' + str.tostring(hSellScore) + '/3"}', alert.freq_once_per_bar_close)
 
-if hBuy
+if hBuy and tradeable
     alert('{"ticker":"' + tk + '","direction":"BUY","strategy":"htf_supply_demand","key":"' + webhookKey + '","type":"stock","spread_type":"both","trade_duration":"hourly","score":' + str.tostring(hBuyScore) + ',"level_price":' + str.tostring(dDemand) + ',"level_tf":"D","htf_trends":"D:' + dirStr(dDir) + ' W:' + dirStr(wDir) + '","msg":"HTF BUY ' + tk + ' — D D1' + str.tostring(dDemand, format.mintick) + ' | D:' + dirStr(dDir) + ' W:' + dirStr(wDir) + ' | Score ' + str.tostring(hBuyScore) + '/3"}', alert.freq_once_per_bar_close)
 
 // --- 5-min duration ---
-if fSell
+if fSell and tradeable
     alert('{"ticker":"' + tk + '","direction":"SELL","strategy":"htf_supply_demand","key":"' + webhookKey + '","type":"stock","spread_type":"both","trade_duration":"5min","score":' + str.tostring(fSellScore) + ',"level_price":' + str.tostring(h4Supply) + ',"level_tf":"4H","htf_trends":"4H:' + dirStr(h4Dir) + ' D:' + dirStr(dDir) + ' 1H:' + dirStr(h1Dir) + '","msg":"HTF SELL ' + tk + ' — 4H S1' + str.tostring(h4Supply, format.mintick) + ' | 4H:' + dirStr(h4Dir) + ' D:' + dirStr(dDir) + ' 1H:' + dirStr(h1Dir) + ' | Score ' + str.tostring(fSellScore) + '/4"}', alert.freq_once_per_bar_close)
 
-if fBuy
+if fBuy and tradeable
     alert('{"ticker":"' + tk + '","direction":"BUY","strategy":"htf_supply_demand","key":"' + webhookKey + '","type":"stock","spread_type":"both","trade_duration":"5min","score":' + str.tostring(fBuyScore) + ',"level_price":' + str.tostring(h4Demand) + ',"level_tf":"4H","htf_trends":"4H:' + dirStr(h4Dir) + ' D:' + dirStr(dDir) + ' 1H:' + dirStr(h1Dir) + '","msg":"HTF BUY ' + tk + ' — 4H D1' + str.tostring(h4Demand, format.mintick) + ' | 4H:' + dirStr(h4Dir) + ' D:' + dirStr(dDir) + ' 1H:' + dirStr(h1Dir) + ' | Score ' + str.tostring(fBuyScore) + '/4"}', alert.freq_once_per_bar_close)
 
 // --- Levels sync (pushes current levels + trends to server for comparison dashboard) ---
@@ -193,6 +219,10 @@ if syncLevels
     string h4DemStr = not na(h4Demand) ? str.tostring(h4Demand, format.mintick) : "null"
     string h1SupStr = not na(h1Supply) ? str.tostring(h1Supply, format.mintick) : "null"
     string h1DemStr = not na(h1Demand) ? str.tostring(h1Demand, format.mintick) : "null"
+    string m30SupStr = not na(m30Supply) ? str.tostring(m30Supply, format.mintick) : "null"
+    string m30DemStr = not na(m30Demand) ? str.tostring(m30Demand, format.mintick) : "null"
+    string m15SupStr = not na(m15Supply) ? str.tostring(m15Supply, format.mintick) : "null"
+    string m15DemStr = not na(m15Demand) ? str.tostring(m15Demand, format.mintick) : "null"
     string qSupStr = not na(qSupply) ? str.tostring(qSupply, format.mintick) : "null"
     string qDemStr = not na(qDemand) ? str.tostring(qDemand, format.mintick) : "null"
     string mSup2Str = not na(mSupply2) ? str.tostring(mSupply2, format.mintick) : "null"
@@ -205,6 +235,10 @@ if syncLevels
     string h4Dem2Str = not na(h4Demand2) ? str.tostring(h4Demand2, format.mintick) : "null"
     string h1Sup2Str = not na(h1Supply2) ? str.tostring(h1Supply2, format.mintick) : "null"
     string h1Dem2Str = not na(h1Demand2) ? str.tostring(h1Demand2, format.mintick) : "null"
+    string m30Sup2Str = not na(m30Supply2) ? str.tostring(m30Supply2, format.mintick) : "null"
+    string m30Dem2Str = not na(m30Demand2) ? str.tostring(m30Demand2, format.mintick) : "null"
+    string m15Sup2Str = not na(m15Supply2) ? str.tostring(m15Supply2, format.mintick) : "null"
+    string m15Dem2Str = not na(m15Demand2) ? str.tostring(m15Demand2, format.mintick) : "null"
     string qSup2Str = not na(qSupply2) ? str.tostring(qSupply2, format.mintick) : "null"
     string qDem2Str = not na(qDemand2) ? str.tostring(qDemand2, format.mintick) : "null"
 
@@ -214,19 +248,25 @@ if syncLevels
     syncJson += '"W":{"supply":' + wSupStr + ',"supply2":' + wSup2Str + ',"demand":' + wDemStr + ',"demand2":' + wDem2Str + '},'
     syncJson += '"D":{"supply":' + dSupStr + ',"supply2":' + dSup2Str + ',"demand":' + dDemStr + ',"demand2":' + dDem2Str + '},'
     syncJson += '"4H":{"supply":' + h4SupStr + ',"supply2":' + h4Sup2Str + ',"demand":' + h4DemStr + ',"demand2":' + h4Dem2Str + '},'
-    syncJson += '"1H":{"supply":' + h1SupStr + ',"supply2":' + h1Sup2Str + ',"demand":' + h1DemStr + ',"demand2":' + h1Dem2Str + '}},'
+    syncJson += '"1H":{"supply":' + h1SupStr + ',"supply2":' + h1Sup2Str + ',"demand":' + h1DemStr + ',"demand2":' + h1Dem2Str + '},'
+    syncJson += '"30M":{"supply":' + m30SupStr + ',"supply2":' + m30Sup2Str + ',"demand":' + m30DemStr + ',"demand2":' + m30Dem2Str + '},'
+    syncJson += '"15M":{"supply":' + m15SupStr + ',"supply2":' + m15Sup2Str + ',"demand":' + m15DemStr + ',"demand2":' + m15Dem2Str + '}},'
     string qAdxStr = not na(qAdx) ? str.tostring(qAdx, "#.#") : "0"
     string mAdxStr = not na(mAdx) ? str.tostring(mAdx, "#.#") : "0"
     string wAdxStr = not na(wAdx) ? str.tostring(wAdx, "#.#") : "0"
     string dAdxStr = not na(dAdx) ? str.tostring(dAdx, "#.#") : "0"
     string h4AdxStr = not na(h4Adx) ? str.tostring(h4Adx, "#.#") : "0"
     string h1AdxStr = not na(h1Adx) ? str.tostring(h1Adx, "#.#") : "0"
+    string m30AdxStr = not na(m30Adx) ? str.tostring(m30Adx, "#.#") : "0"
+    string m15AdxStr = not na(m15Adx) ? str.tostring(m15Adx, "#.#") : "0"
     syncJson += '"trends":{"Q":{"dir":"' + dirStr(qDir) + '","adx":' + qAdxStr + '},'
     syncJson += '"M":{"dir":"' + dirStr(mDir) + '","adx":' + mAdxStr + '},'
     syncJson += '"W":{"dir":"' + dirStr(wDir) + '","adx":' + wAdxStr + '},'
     syncJson += '"D":{"dir":"' + dirStr(dDir) + '","adx":' + dAdxStr + '},'
     syncJson += '"4H":{"dir":"' + dirStr(h4Dir) + '","adx":' + h4AdxStr + '},'
-    syncJson += '"1H":{"dir":"' + dirStr(h1Dir) + '","adx":' + h1AdxStr + '}}}'
+    syncJson += '"1H":{"dir":"' + dirStr(h1Dir) + '","adx":' + h1AdxStr + '},'
+    syncJson += '"30M":{"dir":"' + dirStr(m30Dir) + '","adx":' + m30AdxStr + '},'
+    syncJson += '"15M":{"dir":"' + dirStr(m15Dir) + '","adx":' + m15AdxStr + '}}}'
 
     alert(syncJson, alert.freq_once_per_bar_close)
 
@@ -238,56 +278,89 @@ plotshape(showSignals and hBuy,  "Hourly Buy",   shape.triangleup,   location.be
 plotshape(showSignals and fSell, "5m Sell",     shape.triangledown, location.abovebar, color.fuchsia, size=size.tiny,   text="5m S")
 plotshape(showSignals and fBuy,  "5m Buy",      shape.triangleup,   location.belowbar, color.aqua,    size=size.tiny,   text="5m B")
 
-// ==================== LEVEL LINES ====================
-var line mSupLine = na, var line mDemLine = na
-var line wSupLine = na, var line wDemLine = na
-var line dSupLine = na, var line dDemLine = na
-var line h4SupLine = na, var line h4DemLine = na
-var label mSupLbl = na, var label mDemLbl = na
-var label wSupLbl = na, var label wDemLbl = na
-var label dSupLbl = na, var label dDemLbl = na
-var label h4SupLbl = na, var label h4DemLbl = na
+// ==================== LEVEL LINES (with auto-merge for overlaps) ====================
+mergeOverlap = input.bool(true,  "Merge Overlapping Levels", group="Display", tooltip="When multiple TF levels sit within tolerance, combine into a single label like '4H/30M/15M Supply'. Hover the merged label to see each TF's trend + ADX.")
+overlapPct   = input.float(0.05, "Overlap Tolerance (% of price)", step=0.01, minval=0.0, group="Display", tooltip="Levels within this percentage of each other get merged. 0.05 = ~$0.11 on a $220 stock.")
 
-line.delete(mSupLine),  line.delete(mDemLine)
-line.delete(wSupLine),  line.delete(wDemLine)
-line.delete(dSupLine),  line.delete(dDemLine)
-line.delete(h4SupLine), line.delete(h4DemLine)
-label.delete(mSupLbl),  label.delete(mDemLbl)
-label.delete(wSupLbl),  label.delete(wDemLbl)
-label.delete(dSupLbl),  label.delete(dDemLbl)
-label.delete(h4SupLbl), label.delete(h4DemLbl)
+var array<line>  levelLines  = array.new<line>()
+var array<label> levelLabels = array.new<label>()
 
 futureTime = time + (time - time[1]) * 20
 
-if showLevels
-    // Monthly
-    if not na(mSupply)
-        mSupLine := line.new(time, mSupply, futureTime, mSupply, xloc.bar_time, extend.none, colorM, line.style_dashed, 3)
-        mSupLbl  := label.new(futureTime, mSupply, "M Supply", xloc.bar_time, yloc.price, color.new(colorM, 80), label.style_label_left, colorM, size.small, tooltip="Monthly Supply: " + str.tostring(mSupply, format.mintick) + "\nTrend: " + dirStr(mDir) + " | ADX: " + str.tostring(mAdx, "#.#"))
-    if not na(mDemand)
-        mDemLine := line.new(time, mDemand, futureTime, mDemand, xloc.bar_time, extend.none, colorM, line.style_dashed, 3)
-        mDemLbl  := label.new(futureTime, mDemand, "M Demand", xloc.bar_time, yloc.price, color.new(colorM, 80), label.style_label_left, colorM, size.small, tooltip="Monthly Demand: " + str.tostring(mDemand, format.mintick) + "\nTrend: " + dirStr(mDir) + " | ADX: " + str.tostring(mAdx, "#.#"))
-    // Weekly
-    if not na(wSupply)
-        wSupLine := line.new(time, wSupply, futureTime, wSupply, xloc.bar_time, extend.none, colorW, line.style_dashed, 2)
-        wSupLbl  := label.new(futureTime, wSupply, "W Supply", xloc.bar_time, yloc.price, color.new(colorW, 80), label.style_label_left, colorW, size.small, tooltip="Weekly Supply: " + str.tostring(wSupply, format.mintick) + "\nTrend: " + dirStr(wDir) + " | ADX: " + str.tostring(wAdx, "#.#"))
-    if not na(wDemand)
-        wDemLine := line.new(time, wDemand, futureTime, wDemand, xloc.bar_time, extend.none, colorW, line.style_dashed, 2)
-        wDemLbl  := label.new(futureTime, wDemand, "W Demand", xloc.bar_time, yloc.price, color.new(colorW, 80), label.style_label_left, colorW, size.small, tooltip="Weekly Demand: " + str.tostring(wDemand, format.mintick) + "\nTrend: " + dirStr(wDir) + " | ADX: " + str.tostring(wAdx, "#.#"))
-    // Daily
-    if not na(dSupply)
-        dSupLine := line.new(time, dSupply, futureTime, dSupply, xloc.bar_time, extend.none, colorD, line.style_dashed, 1)
-        dSupLbl  := label.new(futureTime, dSupply, "D Supply", xloc.bar_time, yloc.price, color.new(colorD, 80), label.style_label_left, colorD, size.small, tooltip="Daily Supply: " + str.tostring(dSupply, format.mintick) + "\nTrend: " + dirStr(dDir) + " | ADX: " + str.tostring(dAdx, "#.#"))
-    if not na(dDemand)
-        dDemLine := line.new(time, dDemand, futureTime, dDemand, xloc.bar_time, extend.none, colorD, line.style_dashed, 1)
-        dDemLbl  := label.new(futureTime, dDemand, "D Demand", xloc.bar_time, yloc.price, color.new(colorD, 80), label.style_label_left, colorD, size.small, tooltip="Daily Demand: " + str.tostring(dDemand, format.mintick) + "\nTrend: " + dirStr(dDir) + " | ADX: " + str.tostring(dAdx, "#.#"))
-    // 4-Hour
-    if not na(h4Supply)
-        h4SupLine := line.new(time, h4Supply, futureTime, h4Supply, xloc.bar_time, extend.none, color4H, line.style_dashed, 1)
-        h4SupLbl  := label.new(futureTime, h4Supply, "4H Supply", xloc.bar_time, yloc.price, color.new(color4H, 80), label.style_label_left, color4H, size.small, tooltip="4H Supply: " + str.tostring(h4Supply, format.mintick) + "\nTrend: " + dirStr(h4Dir) + " | ADX: " + str.tostring(h4Adx, "#.#"))
-    if not na(h4Demand)
-        h4DemLine := line.new(time, h4Demand, futureTime, h4Demand, xloc.bar_time, extend.none, color4H, line.style_dashed, 1)
-        h4DemLbl  := label.new(futureTime, h4Demand, "4H Demand", xloc.bar_time, yloc.price, color.new(color4H, 80), label.style_label_left, color4H, size.small, tooltip="4H Demand: " + str.tostring(h4Demand, format.mintick) + "\nTrend: " + dirStr(h4Dir) + " | ADX: " + str.tostring(h4Adx, "#.#"))
+// Only redraw on the latest bar — for an indicator that's all that's
+// rendered anyway, and gating this saves running the merge/draw loop
+// over thousands of historical bars during compile.
+if barstate.islast and showLevels
+    // Wipe previous drawings (only happens on each new latest-bar tick)
+    for ln in levelLines
+        line.delete(ln)
+    array.clear(levelLines)
+    for lb in levelLabels
+        label.delete(lb)
+    array.clear(levelLabels)
+
+    // 6 TFs in priority order: M, W, D, 4H, 30M, 15M (highest first wins color + width)
+    tfTags    = array.from("M",      "W",     "D",     "4H",     "30M",     "15M")
+    tfColors  = array.from(colorM,   colorW,  colorD,  color4H,  color30M,  color15M)
+    tfWidths  = array.from(3,        2,       1,       1,        1,         1)
+    tfDirs    = array.from(mDir,     wDir,    dDir,    h4Dir,    m30Dir,    m15Dir)
+    tfAdxs    = array.from(mAdx,     wAdx,    dAdx,    h4Adx,    m30Adx,    m15Adx)
+    supPrices = array.from(mSupply,  wSupply, dSupply, h4Supply, m30Supply, m15Supply)
+    demPrices = array.from(mDemand,  wDemand, dDemand, h4Demand, m30Demand, m15Demand)
+
+    // Process each side (0 = supply, 1 = demand) with the same grouping logic
+    for side = 0 to 1
+        kindStr = side == 0 ? "Supply" : "Demand"
+        prices  = side == 0 ? supPrices : demPrices
+
+        // Group accumulators (rebuilt each side)
+        gPrice = array.new<float>()
+        gTags  = array.new<string>()
+        gColor = array.new<color>()
+        gWidth = array.new<int>()
+        gTip   = array.new<string>()
+
+        // Walk TFs in priority order; merge into existing group if within tolerance
+        for i = 0 to 5
+            p = array.get(prices, i)
+            if not na(p)
+                t = array.get(tfTags,   i)
+                c = array.get(tfColors, i)
+                w = array.get(tfWidths, i)
+                d = array.get(tfDirs,   i)
+                a = array.get(tfAdxs,   i)
+                detail = t + ": " + dirStr(d) + " (ADX " + str.tostring(a, "#.#") + ")"
+
+                matched = -1
+                if mergeOverlap and array.size(gPrice) > 0
+                    for g = 0 to array.size(gPrice) - 1
+                        gp = array.get(gPrice, g)
+                        if math.abs(gp - p) <= gp * overlapPct / 100.0
+                            matched := g
+                            break
+
+                if matched >= 0
+                    array.set(gTags, matched, array.get(gTags, matched) + "/" + t)
+                    array.set(gTip,  matched, array.get(gTip,  matched) + "\n" + detail)
+                else
+                    array.push(gPrice, p)
+                    array.push(gTags,  t)
+                    array.push(gColor, c)
+                    array.push(gWidth, w)
+                    array.push(gTip,   detail)
+
+        // Draw each group as one line + one label
+        if array.size(gPrice) > 0
+            for g = 0 to array.size(gPrice) - 1
+                p = array.get(gPrice, g)
+                tagStr = array.get(gTags,  g)
+                c = array.get(gColor, g)
+                w = array.get(gWidth, g)
+                tip = "Price: " + str.tostring(p, format.mintick) + "\n" + array.get(gTip, g)
+                ln = line.new(time, p, futureTime, p, xloc.bar_time, extend.none, c, line.style_dashed, w)
+                lb = label.new(futureTime, p, tagStr + " " + kindStr, xloc.bar_time, yloc.price, color.new(c, 80), label.style_label_left, c, size.small, tooltip=tip)
+                array.push(levelLines,  ln)
+                array.push(levelLabels, lb)
 
 // ==================== DASHBOARD TABLE ====================
 var table dash = table.new(position.top_right, 6, 11, bgcolor=color.rgb(20, 20, 30), border_width=1, border_color=color.gray)

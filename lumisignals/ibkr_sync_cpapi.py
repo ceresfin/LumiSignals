@@ -124,7 +124,8 @@ def save_strat_pos(ticker: str, strategy: str, direction: str,
                     stop_order_id: str = "", stop_price: float = 0,
                     target_order_id: str = "", target_price: float = 0,
                     multiplier: float = 1, metadata: dict = None,
-                    caller: str = ""):
+                    asset_type: str = "", caller: str = "",
+                    opened_at: str = ""):
     """Persist per-strategy position state. stop_order_id lets the
     stop-fill watcher know which IB order belongs to this strategy's
     SL — when that order leaves IB's open-orders list, the strategy
@@ -136,9 +137,27 @@ def save_strat_pos(ticker: str, strategy: str, direction: str,
     if rdb is None:
         return
     from datetime import datetime as _dt, timezone as _tz
+    # opened_at is the held-duration clock. It must NOT move once a position
+    # is open — this function is also called on every reconcile re-adopt and
+    # on stop/target linking, and a fresh now() each time reset the clock
+    # (observed: adopted manual spreads perpetually showed "7m" because the
+    # reconciler re-stamped them every pass). Priority: an already-stored
+    # value wins (preserve), else an explicit caller-supplied entry time
+    # (e.g. the adoption passing the real fill time), else now.
+    _now_iso = _dt.now(_tz.utc).isoformat()
+    _key = _strat_pos_key(ticker, strategy)
+    _open_ts = ""
+    try:
+        _prev = rdb.get(_key)
+        if _prev:
+            _open_ts = (json.loads(_prev) or {}).get("opened_at") or ""
+    except Exception:
+        _open_ts = ""
+    if not _open_ts:
+        _open_ts = opened_at or _now_iso
     try:
         rdb.setex(
-            _strat_pos_key(ticker, strategy),
+            _key,
             86400 * 7,
             json.dumps({
                 "ticker": ticker, "strategy": strategy,
@@ -150,8 +169,13 @@ def save_strat_pos(ticker: str, strategy: str, direction: str,
                 "target_order_id": str(target_order_id or ""),
                 "target_price": float(target_price or 0),
                 "multiplier": float(multiplier or 1),
+                # Asset class so the close detectors know which one owns this
+                # position. "options"/"forex" are booked by their own paths;
+                # check_stop_fills (the futures/stock bracket detector) skips
+                # them. Empty = legacy/unknown (guarded by a sanity check).
+                "asset_type": (asset_type or "").lower(),
                 "metadata": metadata or {},
-                "opened_at": _dt.now(_tz.utc).isoformat(),
+                "opened_at": _open_ts,
             }),
         )
         logger.info(
@@ -163,14 +187,113 @@ def save_strat_pos(ticker: str, strategy: str, direction: str,
         logger.warning("strat_pos save failed for %s/%s: %s", ticker, strategy, e)
 
 
-def check_stop_fills(client):
+def record_strategy_for_perm(place_result, strategy: str) -> None:
+    """Write {IB orderId: strategy_slug} to Redis for every order_id in
+    the place_order response.
+
+    The reconciler can then look up strategy attribution by perm_id even
+    when IB's order_ref echo is unreliable (observed 2026-06-01: every
+    fill landed with empty order_ref, so the reconciler adopted every
+    trade as strategy="manual", producing 55 duplicate diary events for
+    today's MES alone).
+
+    Walks the response shape from `client.place_order()`:
+      [{"order_id": "933424993", ...}, {"order_id": "933424994", ...}]
+    or a single-order dict. TTL 24h — fills always reconcile in minutes.
+
+    Maps EVERY order_id (parent + SL + TP) to the same strategy slug so
+    a child-leg fill (SL/TP) decodes correctly too.
+    """
+    if not strategy:
+        return
+    rdb = _rdb()
+    if rdb is None:
+        return
+    perm_ids: list[str] = []
+    candidates = place_result if isinstance(place_result, list) else [place_result]
+    for c in candidates:
+        if not isinstance(c, dict):
+            continue
+        oid = c.get("order_id") or c.get("orderId")
+        if oid:
+            perm_ids.append(str(oid))
+    for pid in perm_ids:
+        try:
+            rdb.setex(f"ibkr:strategy_by_perm:{pid}", 86400, strategy)
+        except Exception as e:
+            logger.debug("record_strategy_for_perm setex failed %s: %s", pid, e)
+    if perm_ids:
+        logger.debug("recorded perm→strategy mapping: %s → %s", perm_ids, strategy)
+
+
+_orphan_stop_seen = {}
+_flat_strat_seen = {}
+_FUT_TICKERS = {"MES", "MNQ", "MGC", "MCL"}
+
+
+def cancel_orphan_futures_stops(client, held_tickers, orders):
+    """Cancel working futures STOP orders on a contract we're flat in.
+
+    A bracket leaves an orphan stop whenever its position closes via a path
+    that didn't remove the child — an atomic STP→MKT modify that returned OK
+    without transforming, a survivor-cancel that failed, or a parent that never
+    filled. A lone working stop on a FLAT contract WILL fire into a naked
+    position if price reaches it (we found a live MES SELL Stop doing exactly
+    this). `held_tickers` = futures tickers with a non-zero fills-based net;
+    `orders` = the already-fetched order snapshot (reused so we don't issue a
+    second large get_open_orders per cycle). Requires an order to be seen flat
+    for 2 consecutive cycles before we cancel, so a freshly-placed bracket
+    (position not yet in the fills snapshot) is never touched. Scoped to futures
+    STOPs only — never options/equity/combo orders."""
+    alive = {"submitted", "presubmitted", "pendingsubmit"}
+    cands = []
+    for o in orders or []:
+        tk = str(o.get("ticker") or "")
+        ot = str(o.get("orderType") or "").upper()
+        st = str(o.get("status") or "").strip().lower()
+        if (tk in _FUT_TICKERS and ot in ("STOP", "STP", "STOP_LIMIT")
+                and st in alive and tk not in held_tickers):
+            cands.append(o)
+    cur = {str(o.get("orderId")) for o in cands}
+    for oid in [k for k in _orphan_stop_seen if k not in cur]:
+        _orphan_stop_seen.pop(oid, None)
+    for o in cands:
+        oid = str(o.get("orderId") or "")
+        if not oid:
+            continue
+        _orphan_stop_seen[oid] = _orphan_stop_seen.get(oid, 0) + 1
+        if _orphan_stop_seen[oid] < 2:
+            continue  # placement-race guard — confirm flat on a second cycle
+        try:
+            r = client.cancel_order(int(oid))
+            if isinstance(r, dict) and r.get("error"):
+                logger.debug("orphan stop %s cancel rejected: %s", oid, str(r.get("error"))[:80])
+            else:
+                logger.warning("Cancelled ORPHAN futures stop %s (%s %s) — flat, no position",
+                               oid, o.get("ticker"), o.get("side"))
+            _orphan_stop_seen.pop(oid, None)
+        except Exception as e:
+            logger.debug("orphan stop %s cancel raised: %s", oid, e)
+
+
+def check_stop_fills(client, orders=None, held_tickers=None,
+                     held_opt_underlyings=None):
     """Detect stop-loss order fills and close the matching strat_pos.
+
+    `held_tickers`: futures/stock tickers with a non-zero fills-based net (or
+    None when that snapshot is unavailable — then the broker-flat phantom clear
+    below is skipped, fail-safe). An empty set means "broker holds nothing".
 
     Each entry stores the IB order ID of its protective stop. We poll IB's
     open orders each cycle; if a tracked stop_order_id is no longer open,
     the stop has filled (or was cancelled). Filled stops mean the strategy
     is out — book the closed trade with reason "Stop Loss" and clear the
     strat_pos so the next entry signal can fire cleanly.
+
+    `orders`: pass the reconciler's already-fetched order snapshot to avoid a
+    SECOND large get_open_orders per cycle (the 100+ order list is what
+    occasionally truncates mid-JSON). Falls back to its own fetch when not
+    supplied or empty.
 
     Cancelled (but not filled) stops are rare (only via manual cancel in
     the IB UI). We treat them the same as filled for state purposes —
@@ -179,16 +302,45 @@ def check_stop_fills(client):
     rdb = _rdb()
     if rdb is None:
         return
-    try:
-        open_orders = client.get_open_orders() or []
-    except Exception as e:
-        logger.debug("check_stop_fills: get_open_orders failed: %s", e)
-        return
+    if orders:
+        open_orders = orders
+    else:
+        try:
+            open_orders = client.get_open_orders() or []
+        except Exception as e:
+            logger.debug("check_stop_fills: get_open_orders failed: %s", e)
+            return
+    # IMPORTANT: CPAPI's order list returns recent orders of EVERY status
+    # (Filled / Cancelled / Submitted / …), not just live working orders. If
+    # we treat the whole list as "open", a stop that has ALREADY FILLED stays
+    # in open_ids forever, so `stop_gone` is never true and the strat_pos is
+    # never cleared — the phantom that blocks the next entry (and recurs for
+    # every bracket scalp). Only genuinely-live orders count as "open"; a stop
+    # in a terminal state (filled/cancelled/expired/…) is, for our purposes,
+    # gone.
+    _DEAD_STATUSES = {"filled", "cancelled", "canceled", "expired",
+                      "rejected", "apicancelled", "inactive"}
     open_ids = set()
     for o in open_orders:
         oid = o.get("orderId") or o.get("order_id")
-        if oid:
-            open_ids.add(str(oid))
+        if not oid:
+            continue
+        status = str(o.get("status") or o.get("orderStatus") or "").strip().lower()
+        if status in _DEAD_STATUSES:
+            continue
+        open_ids.add(str(oid))
+
+    # Index bracket children by their parent order id (ANY status) so we can
+    # backfill a strat_pos that lost its stop/target id to a placement-time
+    # race — CPAPI sometimes hadn't published the children within the ~2.5s
+    # settle window when save_strat_pos ran (ORB has hit this). Without the id
+    # check_stop_fills can never see the exit, and the reconciler is
+    # detection-only, so the position would stay a phantom forever.
+    children_by_parent = {}
+    for o in open_orders:
+        pid = str(o.get("parentId") or "")
+        if pid and pid != "0":
+            children_by_parent.setdefault(pid, []).append(o)
 
     try:
         keys = list(rdb.scan_iter("ibkr:strat_pos:*"))
@@ -201,11 +353,107 @@ def check_stop_fills(client):
             if not raw:
                 continue
             sp = json.loads(raw)
+            asset_type = (sp.get("asset_type") or "").lower()
+            # Forex books through its own path (OANDA sync) — skip entirely.
+            if asset_type == "forex":
+                continue
+            # Options don't have a monitorable bracket stop here, so the
+            # bracket detector below can't book them. But a closed/expired
+            # option (esp. an adopted 0DTE manual) leaves a phantom strat_pos
+            # that lingers until the 7-day TTL and shows as "bot open / IB
+            # flat" in the audit. Clear it when the broker holds NO option on
+            # this underlying — the per-contract positions snapshot
+            # (held_opt_underlyings) cleanly distinguishes a closed option from
+            # a live one on the same name (the ticker-keyed fills net can't).
+            # 2-cycle confirm; None snapshot → skip (fail-safe).
+            if asset_type == "options":
+                tkr = sp.get("ticker", "")
+                if (held_opt_underlyings is not None and tkr
+                        and tkr not in held_opt_underlyings):
+                    _flat_strat_seen[key] = _flat_strat_seen.get(key, 0) + 1
+                    if _flat_strat_seen[key] >= 2:
+                        try:
+                            rdb.delete(key)
+                            logger.warning(
+                                "Cleared phantom options strat_pos %s [%s] — no "
+                                "option position at broker (closed/expired)",
+                                tkr, sp.get("strategy", ""))
+                        except Exception as _de:
+                            logger.debug("options phantom clear failed: %s", _de)
+                        _flat_strat_seen.pop(key, None)
+                else:
+                    _flat_strat_seen.pop(key, None)
+                continue
             stop_id = str(sp.get("stop_order_id") or "")
             target_id = str(sp.get("target_order_id") or "")
+
+            # Backfill a missing stop/target id from the bracket's children so
+            # a placement-time race can't leave the position permanently
+            # unmonitorable. Match the entry (perm_id) against children
+            # parentId; persist whatever we find back into strat_pos.
+            if not (stop_id and stop_id != "0"):
+                parent = str(sp.get("perm_id") or "")
+                new_stop = new_tgt = ""
+                for c in children_by_parent.get(parent, []):
+                    ot = (c.get("orderType") or "").upper()
+                    cid = str(c.get("orderId") or c.get("order_id") or "")
+                    if not cid:
+                        continue
+                    if not new_stop and ot in ("STP", "STOP", "STOP_LIMIT"):
+                        new_stop = cid
+                    elif not new_tgt and ot in ("LMT", "LIMIT", "LIMIT_ON_CLOSE"):
+                        new_tgt = cid
+                if new_stop or new_tgt:
+                    if new_stop:
+                        sp["stop_order_id"] = new_stop
+                        stop_id = new_stop
+                    if new_tgt and not (target_id and target_id != "0"):
+                        sp["target_order_id"] = new_tgt
+                        target_id = new_tgt
+                    try:
+                        rdb.set(key, json.dumps(sp))
+                        logger.info("Backfilled bracket ids for %s [%s]: stop=%s tgt=%s",
+                                    sp.get("ticker", ""), sp.get("strategy", ""),
+                                    new_stop or "-", new_tgt or "-")
+                    except Exception as _be:
+                        logger.debug("strat_pos backfill persist failed: %s", _be)
+
             stop_gone   = bool(stop_id   and stop_id   != "0" and stop_id   not in open_ids)
             target_gone = bool(target_id and target_id != "0" and target_id not in open_ids)
             if not stop_gone and not target_gone:
+                # Neither protective child fired. If we have NO monitorable
+                # stop/target at all (the bracket-id discovery raced and the
+                # position has since closed), this strat_pos can NEVER be
+                # cleared by the stop-fill path — it silently blocks the
+                # strategy from re-entering (a live 2n20 was dark 4h this way).
+                # Clear it when the broker is flat for this ticker, confirmed
+                # over 2 cycles so a freshly-placed bracket (position not yet in
+                # the fills snapshot) is never touched.
+                has_monitorable = (stop_id and stop_id != "0") or (target_id and target_id != "0")
+                tkr = sp.get("ticker", "")
+                _strat = sp.get("strategy", "")
+                _at = (sp.get("asset_type") or "").lower()
+                # ONLY the bot's own futures/stock BRACKET phantoms. Never touch
+                # an adopted "manual" position or an option: those are managed by
+                # the reconciler / options paths, and the ticker-keyed fills net
+                # isn't a reliable "is it closed" signal for an option underlying
+                # (a real NVDA/SPY options trade could look flat by ticker).
+                if (not has_monitorable and held_tickers is not None
+                        and tkr and tkr not in held_tickers
+                        and _strat != "manual" and _at in ("futures", "stock")):
+                    _flat_strat_seen[key] = _flat_strat_seen.get(key, 0) + 1
+                    if _flat_strat_seen[key] >= 2:
+                        try:
+                            rdb.delete(key)
+                            logger.warning(
+                                "Cleared phantom strat_pos %s [%s] — broker flat, no "
+                                "monitorable stop (was blocking re-entry)",
+                                tkr, sp.get("strategy", ""))
+                        except Exception as _de:
+                            logger.debug("phantom strat_pos clear failed: %s", _de)
+                        _flat_strat_seen.pop(key, None)
+                else:
+                    _flat_strat_seen.pop(key, None)
                 continue  # both children still active (or neither tracked)
 
             # Decide which child fired — whichever is gone wins. If BOTH are
@@ -239,6 +487,18 @@ def check_stop_fills(client):
 
             pnl = 0
             if entry_price and exit_price:
+                # Sanity guard: a real futures/stock bracket never closes at
+                # <50% / >200% of entry. If it does, entry and exit are in
+                # mismatched units (e.g. a strike/stock entry paired with an
+                # option-premium target) — booking it would mint a fake P&L.
+                # Skip and flag for review instead. (Protects legacy/untagged
+                # positions even before the asset_type tag is in place.)
+                if exit_price < entry_price * 0.5 or exit_price > entry_price * 2.0:
+                    logger.warning(
+                        "Skipping implausible close %s/%s: entry=%.2f exit=%.2f "
+                        "asset_type=%s — mismatched units, not booking",
+                        ticker, strategy, entry_price, exit_price, asset_type or "?")
+                    continue
                 if direction == "BUY":
                     pnl = (exit_price - entry_price) * contracts * multiplier
                 else:
@@ -249,7 +509,7 @@ def check_stop_fills(client):
                 requests.post(
                     f"{SERVER_URL}/api/ibkr/closed-trade",
                     json={
-                        "symbol": ticker, "type": "futures",
+                        "symbol": ticker, "type": asset_type or "futures",
                         "direction": "LONG" if direction == "BUY" else "SHORT",
                         "contracts": contracts,
                         "entry_price": round(entry_price, 2),
@@ -309,7 +569,8 @@ def check_stop_fills(client):
             # Feed the streak counter from the actual realized P&L.
             try:
                 from .runaway_guard import record_close
-                record_close(float(pnl or 0))
+                record_close(float(pnl or 0),
+                             strategy=(diary.strategy_slug(strategy) or strategy))
             except Exception as _rg:
                 logger.warning("runaway_guard record_close (STOP_FIRED) failed: %s", _rg)
             # Cooldown: a stop-out triggers a pause on this (strategy,
@@ -419,7 +680,9 @@ def _lookup_signal_metadata(signal_log: dict, trade_id: str, instrument: str,
 
 
 _last_mes_bars_push = 0
-MES_BARS_PUSH_INTERVAL = 60  # seconds
+# 20s so the native 2n20 generator detects a freshly-closed 2m bar within ~20s
+# instead of up to 60s. ~3x more get_historical_bars calls — trivial.
+MES_BARS_PUSH_INTERVAL = 20  # seconds
 _last_missed_signal_check = 0
 MISSED_SIGNAL_CHECK_INTERVAL = 300  # 5 minutes
 
@@ -900,6 +1163,157 @@ def sync_positions_to_supabase(positions: list):
         logger.debug("stale-row sweep failed: %s", e)
 
 
+def sync_spreads_to_supabase(spreads: list):
+    """Mirror open IB option spreads into the Supabase `positions` table.
+
+    Bot-opened spreads (htf_levels, swing_setup via the MTF dashboard, etc.)
+    were previously invisible to the mobile Open Positions tab because the
+    Pine/dashboard path only wrote Redis strat_pos — never inserted a
+    Supabase row. Mobile reads Supabase for Open Positions, so spreads
+    showed up only in the IB Direct audit panel.
+
+    Keyed by perm_id when available, falling back to a synthetic id
+    derived from symbol+expiry+strikes so identical legs adopted from
+    different orders still get distinct rows.
+    """
+    try:
+        from .supabase_client import get_client
+    except Exception as e:
+        logger.debug("supabase_client unavailable: %s", e)
+        return
+    sb = get_client()
+    if not sb:
+        return
+    user_id = os.environ.get("SUPABASE_USER_ID", "")
+    if not user_id:
+        return
+
+    seen_tids = set()  # broker_trade_ids touched this cycle
+
+    for sp in spreads or []:
+        sym = sp.get("symbol", "")
+        qty = int(sp.get("quantity", 0) or 0)
+        if not sym or qty <= 0:
+            continue
+
+        spread_type = sp.get("spread_type", "")
+        long_strike = float(sp.get("long_strike", 0) or 0)
+        short_strike = float(sp.get("short_strike", 0) or 0)
+        expiration = str(sp.get("expiration", ""))
+        right = str(sp.get("right", ""))
+        net_cost = float(sp.get("net_cost", 0) or 0)
+        unreal = float(sp.get("unrealized_pnl", 0) or 0)
+
+        # Pull strategy / model / direction from the matching strat_pos
+        # so dashboard-placed trades land with their proper attribution
+        # (otherwise they'd show up as untagged in the Open Positions tab).
+        spread_strategy = sp.get("strategy", "")
+        spread_model = sp.get("model", "")
+        spread_direction = ""
+        spread_opened_at = sp.get("opened_at", "")
+        spread_metadata_extra = {}
+        try:
+            rdb = _rdb()
+            if rdb:
+                for k in rdb.scan_iter(f"ibkr:strat_pos:{sym}:*"):
+                    raw = rdb.get(k)
+                    if not raw:
+                        continue
+                    sp_rec = json.loads(raw)
+                    spread_strategy = spread_strategy or sp_rec.get("strategy", "")
+                    spread_direction = spread_direction or sp_rec.get("direction", "")
+                    spread_opened_at = spread_opened_at or sp_rec.get("opened_at", "")
+                    md = sp_rec.get("metadata") or {}
+                    if md.get("model"):
+                        spread_model = spread_model or md["model"]
+                    spread_metadata_extra = md
+                    break
+        except Exception as e:
+            logger.debug("strat_pos lookup for %s failed: %s", sym, e)
+
+        # Direction fallback when no strat_pos exists: derive from
+        # spread_type semantics. Bull setups → BUY, Bear → SELL. Mirrors
+        # the bot's existing convention for OPT bias tracking.
+        if not spread_direction:
+            st_l = spread_type.lower()
+            if "bull" in st_l or ("call" in st_l and "debit" in st_l) or ("put" in st_l and "credit" in st_l):
+                spread_direction = "BUY"
+            elif "bear" in st_l or ("call" in st_l and "credit" in st_l) or ("put" in st_l and "debit" in st_l):
+                spread_direction = "SELL"
+            else:
+                spread_direction = "BUY"
+
+        # broker_trade_id: prefer perm_id (set by record_strategy_for_perm
+        # for bot-placed orders), else synthesize a stable key. Synthesized
+        # keys still upsert cleanly across cycles since the spread structure
+        # is deterministic.
+        perm_id = str(sp.get("perm_id", "") or "")
+        broker_trade_id = perm_id or (
+            f"spread:{sym}:{expiration}:{long_strike:g}/{short_strike:g}:{right}"
+        )
+        seen_tids.add(broker_trade_id)
+
+        row = {
+            "user_id": user_id,
+            "broker": "ib",
+            "broker_trade_id": broker_trade_id,
+            "instrument": sym,
+            "asset_type": "options",
+            "direction": spread_direction,
+            "contracts": qty,
+            "entry_price": round(net_cost, 4),
+            "unrealized_pl": round(unreal, 2),
+            "strategy": spread_strategy or "",
+            "model": spread_model or spread_strategy or "",
+            "spread_type": spread_type,
+            "sell_strike": short_strike,
+            "buy_strike": long_strike,
+            "right": right,
+            "expiration": expiration,
+            "metadata": {
+                **(spread_metadata_extra or {}),
+                "long_strike": long_strike,
+                "short_strike": short_strike,
+                "width": sp.get("width", 0),
+                "max_profit": sp.get("max_profit", 0),
+                "max_risk": sp.get("max_risk", 0),
+                "current_value": sp.get("current_value", 0),
+            },
+            "updated_at": time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime()),
+        }
+        if spread_opened_at:
+            row["opened_at"] = spread_opened_at
+
+        row = {k: v for k, v in row.items() if v is not None}
+        try:
+            sb.table("positions").upsert(
+                row, on_conflict="user_id,broker,broker_trade_id"
+            ).execute()
+        except Exception as e:
+            logger.debug("spread upsert failed for %s (%s): %s",
+                          sym, broker_trade_id, e)
+
+    # Sweep stale OPT rows — any options position in Supabase for this
+    # user that wasn't touched this cycle has closed (or never matched
+    # an IB spread). Drop it so the mobile doesn't show ghost rows.
+    try:
+        existing = sb.table("positions").select("id, broker_trade_id") \
+            .eq("user_id", user_id).eq("broker", "ib") \
+            .eq("asset_type", "options") \
+            .execute().data or []
+        for r in existing:
+            tid = str(r.get("broker_trade_id") or "")
+            if tid and tid not in seen_tids:
+                try:
+                    sb.table("positions").delete().eq("id", r["id"]).execute()
+                    logger.info("Cleared stale OPT spread row: tid=%s", tid)
+                except Exception as e:
+                    logger.debug("stale OPT row delete failed (id=%s): %s",
+                                  r.get("id"), e)
+    except Exception as e:
+        logger.debug("stale OPT sweep failed: %s", e)
+
+
 def collect_ib_data(client) -> dict:
     """Collect all relevant data from IB via Client Portal API."""
 
@@ -1298,16 +1712,8 @@ def _detect_spreads(positions: list) -> list:
 
                 net_cost = (best_long["avg_cost"] - short_leg["avg_cost"]) * qty / qty if qty else 0
 
-                # P&L
-                long_pnl = (best_long.get("unrealized_pnl", 0) or 0)
-                short_pnl = (short_leg.get("unrealized_pnl", 0) or 0)
-                # Scale P&L if quantities don't match exactly
-                if abs(best_long["quantity"]) != qty:
-                    long_pnl = long_pnl * qty / abs(best_long["quantity"])
-                if abs(short_leg["quantity"]) != qty:
-                    short_pnl = short_pnl * qty / abs(short_leg["quantity"])
-                spread_pnl = round(long_pnl + short_pnl, 2)
-
+                # Current liquidation value = signed market value of both legs
+                # (long positive, short negative), scaled to the spread qty.
                 long_mkt = (best_long.get("market_value", 0) or 0)
                 short_mkt = (short_leg.get("market_value", 0) or 0)
                 if abs(best_long["quantity"]) != qty:
@@ -1315,6 +1721,14 @@ def _detect_spreads(positions: list) -> list:
                 if abs(short_leg["quantity"]) != qty:
                     short_mkt = short_mkt * qty / abs(short_leg["quantity"])
                 current_value = round(long_mkt + short_mkt, 2)
+
+                # P&L = current value − cost basis. Robust and naturally
+                # bounded (a debit spread can't lose more than its debit).
+                # Summing the legs' IB unrealized_pnl was the old approach but
+                # IB returns None / stale values for 0DTE & illiquid options,
+                # producing impossible figures (a $5-wide spread showing -$698).
+                # net_cost is per-spread, so scale by qty to match current_value.
+                spread_pnl = round(current_value - net_cost * qty, 2)
 
                 spreads.append({
                     "symbol": symbol,
@@ -1462,7 +1876,12 @@ def check_order_requests(client):
             if order.get("type") == "futures":
                 direction = order.get("direction", "")
                 contracts = int(order.get("contracts", 1))
-                strategy_name = order.get("strategy", "")
+                # Canonicalize the slug — the webhook receiver normally
+                # maps before storing, but in-flight orders queued before
+                # that fix landed could still hold a raw Pine slug. Map
+                # here so strat_pos always lands under the canonical key.
+                raw_strategy = order.get("strategy", "")
+                strategy_name = diary.strategy_slug(raw_strategy) or raw_strategy
 
                 # Weekend lockout: between Friday 17:00 ET flatten and
                 # Sunday 18:00 ET open, futures should not re-enter on
@@ -1957,6 +2376,12 @@ def check_order_requests(client):
                                 fut_conid, close_action, contracts, "MKT", tif="GTC",
                             )
                             trade_result = client.place_order(order_payload)
+                            # Tag the close order's perm_id with the strategy
+                            # so the reconciler labels the resulting fill.
+                            record_strategy_for_perm(
+                                trade_result,
+                                diary.strategy_slug(strategy_name) or strategy_name,
+                            )
 
                         # TP child cancel (atomic-close path doesn't auto-handle TP).
                         # In the atomic path, the SL becomes the close, but a
@@ -2085,7 +2510,8 @@ def check_order_requests(client):
                             # streak crosses the configured cap.
                             try:
                                 from .runaway_guard import record_close
-                                record_close(float(pnl or 0))
+                                record_close(float(pnl or 0),
+                                             strategy=diary_strategy_id)
                             except Exception as _rg:
                                 logger.warning("runaway_guard record_close (CLOSED) failed: %s", _rg)
                             # Push notification: trade closed.
@@ -2365,6 +2791,12 @@ def check_order_requests(client):
 
                         trade_result = client.place_order(bracket_payload)
 
+                        # Tag perm_id → strategy in Redis for the reconciler's
+                        # fallback lookup. Without this, fills land with empty
+                        # order_ref echo from IB and get adopted as "manual"
+                        # (see record_strategy_for_perm docstring).
+                        record_strategy_for_perm(trade_result, diary_strategy_id)
+
                         # Hard #1: validate the response. CPAPI can return
                         # error dicts that we'd otherwise parse as empty
                         # order_ids and silently proceed. Detect failure here
@@ -2629,6 +3061,7 @@ def check_order_requests(client):
                                        target_price=tp_price,
                                        multiplier=multiplier,
                                        metadata=strat_meta,
+                                       asset_type="futures",
                                        caller=f"entry_fill:{strategy_name}")
 
                         # If this was a close-and-reverse, the PRIOR strat_pos's
@@ -2840,6 +3273,10 @@ def check_order_requests(client):
                     sell_conid, buy_conid, quantity, limit_price, is_credit, tif="GTC"
                 )
                 trade_result = client.place_order(spread_payload)
+                # Tag perm_id → strategy for the reconciler's fallback lookup
+                record_strategy_for_perm(
+                    trade_result, diary.strategy_slug(strategy_name) or strategy_name,
+                )
                 time.sleep(3)
 
                 # Extract order ID from CPAPI response
@@ -2937,8 +3374,34 @@ def push_to_server(data: dict):
         logger.error("Failed to push to server: %s", e)
 
 
+# Per-mode debit-spread exit defaults (take-profit %, stop-loss %), used when
+# the spread carries no per-trade tp_pct/sl_pct override. TP is % of MAX
+# PROFIT; SL is % of debit paid (a debit spread's max loss == its debit).
+MODE_EXIT_DEFAULTS = {
+    "scalp":    (50, 50),
+    "intraday": (60, 50),
+    "swing":    (75, 50),
+}
+# Per-mode DTE time-stop. None = no DTE stop (scalps are 0-2 DTE and managed
+# by the minute time-stop + pre-expiry force-close instead).
+MODE_DTE_STOP = {"scalp": None, "intraday": 0, "swing": None}
+# Cash-settled index options settle to cash at expiry (no share assignment) →
+# allowed to expire. Everything else — single stocks AND ETFs (SPY/QQQ/IWM) —
+# physically settles and MUST be force-closed before expiry.
+CASH_SETTLED_INDEX = {"SPX", "NDX", "RUT", "VIX", "DJI", "XSP", "XND"}
+
+
+def _spread_mode(spread) -> str:
+    """Trade mode for a spread (scalp/intraday/swing); 'swing' (most
+    conservative) when unknown or tagged generically (e.g. 'mtf')."""
+    m = str(spread.get("mode") or spread.get("model") or "").lower()
+    return m if m in MODE_EXIT_DEFAULTS else "swing"
+
+
 def monitor_spreads(client, spreads: list):
-    """Monitor open spreads and auto-close when TP/SL/time stop is hit."""
+    """Monitor open spreads and auto-close when TP/SL/time stop is hit, and
+    force-close physically-settled (stock/ETF) options before expiry so they
+    never exercise/assign into shares."""
     if not spreads:
         return
 
@@ -2976,6 +3439,7 @@ def monitor_spreads(client, spreads: list):
         spread_tp = spread.get("tp_pct")
         spread_sl = spread.get("sl_pct")
         spread_time_stop_min = spread.get("time_stop_min", 0)
+        mode = _spread_mode(spread)
 
         if not net_cost or not expiration or not quantity:
             continue
@@ -3001,13 +3465,17 @@ def monitor_spreads(client, spreads: list):
                 close_reason = f"STOP LOSS — loss exceeded {sl_pct}% of credit (P&L: ${pnl:+.2f})"
         else:
             debit_paid = net_cost
-            tp_pct = spread_tp if spread_tp else default_debit_tp
-            sl_pct = spread_sl if spread_sl else default_debit_sl
+            m_tp, m_sl = MODE_EXIT_DEFAULTS.get(mode, (default_debit_tp, default_debit_sl))
+            tp_pct = spread_tp if spread_tp else m_tp
+            sl_pct = spread_sl if spread_sl else m_sl
+            max_profit = abs(spread.get("max_profit", 0) or 0)
 
-            if pnl > 0 and pnl >= debit_paid * (tp_pct / 100):
-                close_reason = f"TAKE PROFIT — {tp_pct}% gain (P&L: ${pnl:+.2f})"
+            # TP = % of MAX PROFIT; SL = % of debit paid (debit spread max
+            # loss == the debit). Per user spec: default 50% / 50%.
+            if pnl > 0 and max_profit > 0 and pnl >= max_profit * (tp_pct / 100):
+                close_reason = f"TAKE PROFIT — {tp_pct}% of max profit (P&L: ${pnl:+.2f})"
             elif pnl < 0 and abs(pnl) >= debit_paid * (sl_pct / 100):
-                close_reason = f"STOP LOSS — {sl_pct}% loss (P&L: ${pnl:+.2f})"
+                close_reason = f"STOP LOSS — {sl_pct}% of debit (P&L: ${pnl:+.2f})"
 
         # Minute-based time stop (for 0DTE scalps)
         if not close_reason and spread_time_stop_min > 0:
@@ -3024,9 +3492,23 @@ def monitor_spreads(client, spreads: list):
                 except Exception:
                     pass
 
-        # DTE-based time stop (for swing trades)
-        if not close_reason and dte <= time_stop_dte:
-            close_reason = f"TIME STOP — {dte} DTE remaining (limit: {time_stop_dte})"
+        # DTE-based time stop — per mode (None = none; scalps ride on the
+        # minute stop + force-close). Avoids insta-closing a 0-2 DTE scalp,
+        # which the old blanket `dte <= 7` rule would have done.
+        if not close_reason:
+            dte_stop = MODE_DTE_STOP.get(mode, time_stop_dte)
+            if dte_stop is not None and dte <= dte_stop:
+                close_reason = f"TIME STOP — {dte} DTE remaining (limit: {dte_stop})"
+
+        # Pre-expiry hard close for PHYSICALLY-settled options (single stocks
+        # + ETFs). They exercise/assign into shares at expiry — flatten them
+        # ~30 min before the close on expiry day, regardless of P&L. Cash-
+        # settled index options (SPX/NDX/...) are exempt — they settle to cash.
+        if (not close_reason and dte <= 0
+                and symbol.upper() not in CASH_SETTLED_INDEX):
+            et = _et_now()
+            if et is not None and (et.hour, et.minute) >= (15, 30):
+                close_reason = "PRE-EXPIRY FORCE CLOSE (physical settlement)"
 
         if close_reason:
             # Dedup: after we fire a close order, the spread may still show
@@ -3036,27 +3518,32 @@ def monitor_spreads(client, spreads: list):
             # new Telegram/push notification. At SYNC_INTERVAL=2s a single
             # close was generating 5+ duplicate notifications.
             dedup_rdb = _rdb()
-            close_key = (
-                f"ibkr:spread_closing:{symbol}:{expiration}:"
-                f"{spread.get('long_strike',0)}:{spread.get('short_strike',0)}:"
-                f"{spread.get('right','')}"
-            )
+            ident = (f"{symbol}:{expiration}:{spread.get('long_strike',0)}:"
+                     f"{spread.get('short_strike',0)}:{spread.get('right','')}")
+            close_key = f"ibkr:spread_closing:{ident}"      # 90s in-flight lock
+            closed_key = f"ibkr:spread_closed:{ident}"      # 10m post-close marker
             if dedup_rdb is not None:
                 try:
-                    if dedup_rdb.get(close_key):
-                        # Close already in flight — skip this tick.
+                    # Skip if a close is in flight OR recently completed (IB can
+                    # be slow to drop the position from /positions; without the
+                    # closed-marker the next tick would re-fire after the 90s
+                    # lock expired). This is the zombie-order fix (54 stale).
+                    if dedup_rdb.get(close_key) or dedup_rdb.get(closed_key):
                         continue
-                    # 90s lock: long enough for fill + position propagation,
-                    # short enough to recover if the close failed silently.
                     dedup_rdb.setex(close_key, 90, "1")
                 except Exception:
                     pass
             logger.info("CLOSING %s %s: %s", symbol, spread_type, close_reason)
             try:
                 _close_spread(client, spread, close_reason)
+                if dedup_rdb is not None:
+                    try:
+                        dedup_rdb.setex(closed_key, 600, "1")
+                    except Exception:
+                        pass
             except Exception as e:
                 logger.error("Failed to close %s spread: %s", symbol, e)
-                # Clear the lock so the next tick can retry
+                # Clear the in-flight lock so the next tick can retry
                 if dedup_rdb is not None:
                     try:
                         dedup_rdb.delete(close_key)
@@ -3064,11 +3551,67 @@ def monitor_spreads(client, spreads: list):
                         pass
 
 
+def _norm_right(right: str) -> str:
+    """Normalize call/put markers to the 'C'/'P' that secdef/info expects."""
+    r = str(right or "").upper()
+    if r in ("C", "CALL"):
+        return "C"
+    if r in ("P", "PUT"):
+        return "P"
+    return r[:1]
+
+
+def _resolve_option_conid(client, symbol, expiration, strike, right):
+    """Conid for one option leg. search_option_contract looks the underlying
+    up as STK; index underlyings (SPX/NDX/...) resolve under IND, so fall
+    back to the orb helper which tries IND then STK."""
+    conid = client.search_option_contract(symbol, expiration, strike, right)
+    if conid:
+        return conid
+    try:
+        from .orb_butterfly_handler import _lookup_option_conid
+        return _lookup_option_conid(client, symbol, expiration, strike, right)
+    except Exception:
+        return None
+
+
+def _close_to_float(v):
+    """Parse a CPAPI snapshot price (string, sometimes 'C19.77'). -> float|None."""
+    try:
+        if v in (None, ""):
+            return None
+        return float(str(v).lstrip("CHc "))
+    except (TypeError, ValueError):
+        return None
+
+
+def _close_quote(client, conid):
+    """Fresh (bid, ask) for a conid after warm-up; (0,0) if unavailable."""
+    for _ in range(8):
+        try:
+            r = client._request("GET", "/iserver/marketdata/snapshot",
+                                params={"conids": str(conid), "fields": "84,86"})
+        except Exception:
+            r = None
+        if isinstance(r, list) and r:
+            b = _close_to_float(r[0].get("84")); a = _close_to_float(r[0].get("86"))
+            if b or a:
+                return b or 0.0, a or 0.0
+        time.sleep(0.4)
+    return 0.0, 0.0
+
+
 def _close_spread(client, spread: dict, reason: str):
-    """Close an open spread by placing an opposite market order."""
+    """Close an open option spread as a SINGLE defined-risk COMBO order
+    (marketable LMT). Spreads are always traded as combos — never legged out —
+    which (a) stays inside the account's spread permissions (a lone option leg
+    is rejected as a naked-short 'options strategy'), and (b) is atomic, so
+    there's no half-closed / double-fill risk. The original combo close failed
+    only because it used orderType=MKT; the entry combo proves the conidex
+    works with LMT, and so does this. Builds via client.build_combo_order."""
     symbol = spread["symbol"]
     expiration = spread.get("expiration", "")
-    right = spread.get("right", "")
+    right = _norm_right(spread.get("right", ""))
     long_strike = spread.get("long_strike", 0)
     short_strike = spread.get("short_strike", 0)
     quantity = int(spread.get("quantity", 0))
@@ -3077,23 +3620,108 @@ def _close_spread(client, spread: dict, reason: str):
         logger.error("Missing data to close spread: %s", spread)
         return
 
-    # Resolve conIds for the legs
-    long_conid = client.search_option_contract(symbol, expiration, long_strike, right)
-    short_conid = client.search_option_contract(symbol, expiration, short_strike, right)
-
+    long_conid = _resolve_option_conid(client, symbol, expiration, long_strike, right)
+    short_conid = _resolve_option_conid(client, symbol, expiration, short_strike, right)
     if not long_conid or not short_conid:
         logger.error("Could not resolve conIds for spread close: %s %s/%s", symbol, long_strike, short_strike)
         return
 
-    # Build and place closing order (reverse legs)
-    close_payload = client.build_close_spread_order(long_conid, short_conid, quantity)
-    trade_result = client.place_order(close_payload)
-    time.sleep(3)
+    # Position-aware cap: only close what's actually held, so pressing Close
+    # repeatedly (or a stale quantity) can NEVER reverse the spread into a new
+    # opposite position. The closeable spread count is the smaller of the two
+    # legs' held sizes; if either leg is already flat there's nothing to close.
+    try:
+        held = {}
+        for p in client.get_positions() or []:
+            cid = p.get("con_id") or p.get("conid")
+            try:
+                cid = int(cid)
+            except (TypeError, ValueError):
+                continue
+            held[cid] = held.get(cid, 0) + int(round(float(p.get("quantity") or 0)))
+        closeable = min(abs(held.get(int(long_conid), 0)),
+                        abs(held.get(int(short_conid), 0)))
+        if closeable <= 0:
+            logger.info("Close spread %s %s/%s: already flat — nothing to close",
+                        symbol, long_strike, short_strike)
+            return
+        if closeable < quantity:
+            logger.info("Close spread %s %s/%s: capping qty %d → %d (held)",
+                        symbol, long_strike, short_strike, quantity, closeable)
+        quantity = closeable
+    except Exception as e:
+        logger.warning("close spread position check failed (%s) — proceeding "
+                       "with requested qty %d", e, quantity)
 
-    status = "Submitted"
-    if isinstance(trade_result, list) and trade_result:
-        status = trade_result[0].get("order_status", "Submitted") if isinstance(trade_result[0], dict) else "Submitted"
-    logger.info("Close order for %s: status=%s reason=%s", symbol, status, reason)
+    is_credit = "credit" in str(spread.get("spread_type", "")).lower()
+    strat = diary.strategy_slug(spread.get("strategy") or "") or spread.get("strategy") or "manual_close"
+
+    # Price the combo marketably from fresh leg quotes.
+    try:
+        from .orb_butterfly_handler import _warm_quotes
+        _warm_quotes(client, [long_conid, short_conid])
+    except Exception:
+        pass
+    lbid, lask = _close_quote(client, long_conid)
+    sbid, sask = _close_quote(client, short_conid)
+
+    # Combo legs + net price. build_combo_order convention: price POSITIVE =
+    # pay a debit, NEGATIVE = receive a credit; per-leg sign is the ratio.
+    #   DEBIT spread close  -> SELL long / BUY short -> receive credit (neg px)
+    #   CREDIT spread close -> BUY long / SELL short -> pay debit     (pos px)
+    if not is_credit:
+        legs = [(long_conid, "SELL", 1), (short_conid, "BUY", 1)]
+        credit = max(0.01, (lbid or 0) - (sask or 0))      # sell long@bid, buy short@ask
+        price = -round(credit, 2)
+    else:
+        legs = [(long_conid, "BUY", 1), (short_conid, "SELL", 1)]
+        debit = max(0.01, (lask or 0) - (sbid or 0))
+        price = round(debit, 2)
+
+    import uuid as _uuid
+    coid = f"lumi_close_{_uuid.uuid4().hex[:10]}"
+
+    def _place_combo(px):
+        try:
+            payload = client.build_combo_order(
+                legs=legs, quantity=quantity, limit_price=px,
+                order_type="LMT", tif="DAY", coid=coid)
+            r = client.place_order(payload)
+            while isinstance(r, list) and r and "id" in r[0] and "order_id" not in r[0]:
+                r = client._request("POST", "/iserver/reply/" + r[0]["id"],
+                                    json_data={"confirmed": True})
+            record_strategy_for_perm(r, strat)
+        except Exception as e:
+            logger.warning("combo close place failed: %s", e)
+            return None
+        if isinstance(r, list) and r and r[0].get("order_id"):
+            return str(r[0]["order_id"])
+        if isinstance(r, dict) and r.get("order_id"):
+            return str(r["order_id"])
+        logger.warning("combo close returned no order_id: %s", str(r)[:160])
+        return None
+
+    oid = _place_combo(price)
+    filled = bool(oid) and client.get_order_fill(oid, max_wait=12).get("filled", False)
+
+    # One aggressive re-price if needed — cancel first (it's a single atomic
+    # combo, so cancel-then-replace can't leave a half-closed spread). Give up
+    # ~0.20 of edge to force the fill.
+    if oid and not filled:
+        try:
+            client.cancel_order(oid)
+        except Exception:
+            pass
+        time.sleep(1)
+        price2 = -round(max(0.01, (-price) - 0.20), 2) if not is_credit else round(price + 0.20, 2)
+        oid = _place_combo(price2)
+        filled = bool(oid) and client.get_order_fill(oid, max_wait=12).get("filled", False)
+
+    status = "Closed (combo)" if filled else "UNFILLED — needs review"
+    if not filled:
+        logger.error("Combo close %s NOT confirmed filled (order %s) — review", symbol, oid)
+    logger.info("Close combo for %s: status=%s reason=%s order=%s price=%s",
+                symbol, status, reason, oid, price)
 
     # Send alert
     try:
@@ -3378,6 +4006,8 @@ def weekend_flatten_futures(client):
                     order_type="MKT", tif="DAY",
                 )
                 resp = client.place_order(payload)
+                # Tag this safety-flatten close so the reconciler labels it
+                record_strategy_for_perm(resp, "weekend_flatten")
                 logger.info("WEEKEND FLATTEN (residual): %s %s %d → %s",
                             side, sym, abs(residual), resp)
                 flattened.append(f"residual {side} {sym} ×{abs(residual)}")
@@ -3499,6 +4129,7 @@ def main():
             # reads Supabase directly, so the rows would otherwise stay frozen
             # at order-placement-time values).
             sync_positions_to_supabase(data.get("positions", []))
+            sync_spreads_to_supabase(data.get("spreads", []))
             sync_oanda_positions_to_supabase()
 
             # Diary reconciler: compare what the trade-event diary thinks
@@ -3512,12 +4143,15 @@ def main():
             # (which lagged 4.5min on 2026-05-22) is no longer used here.
             #
             # Safe to call every tick — self-throttles to MIN_INTERVAL.
+            ord_snap = {}  # shared order snapshot, reused by check_stop_fills below
+            held_tickers = None  # fills-based held set; None until computed (fail-safe)
             try:
                 # Fast tier (every ~5s): fills-based net positions + order
                 # status. Catches scalp closes within seconds, INTENT_OPEN
                 # confirmations, and per-trade lifecycle transitions.
                 fill_details = reconciler.net_positions_from_fills(client)
                 ib_qty = {s: d["qty"] for s, d in fill_details.items() if d["qty"] != 0}
+                held_tickers = set(ib_qty.keys())  # valid (possibly empty) held set
                 # Multipliers used to compute realized_pl on RECONCILE_GONE.
                 # Hardcoded for now; future step is to read from
                 # symbol_metadata table (cached in Redis).
@@ -3531,6 +4165,13 @@ def main():
                 # backstop. Catches positions the fills stream wouldn't
                 # see (manual IB GUI entries, holdings >7d). Self-throttles.
                 reconciler.slow_tier_pass("ib", data.get("positions", []))
+                # Sweep orphaned futures bracket stops (a working stop on a
+                # contract we're flat in → would fire into a naked position).
+                try:
+                    cancel_orphan_futures_stops(client, set(ib_qty.keys()),
+                                                list(ord_snap.values()))
+                except Exception as _os:
+                    logger.debug("orphan stop sweep failed: %s", _os)
             except Exception as e:
                 logger.debug("reconciler pass failed: %s", e)
 
@@ -3542,8 +4183,28 @@ def main():
             # Watch for stop-loss fills. When a strategy's SL fires, its
             # tracked stop_order_id disappears from open orders — clear the
             # strat_pos and record the closed trade so we don't wait for
-            # the next signal to reconcile drift.
-            check_stop_fills(client)
+            # the next signal to reconcile drift. Reuse the reconciler's order
+            # snapshot (falls back to its own fetch if that pass failed) so we
+            # don't pull the 100+ order list twice per cycle.
+            # Underlyings with a live option position at the broker — built from
+            # the per-contract positions snapshot (this cycle's get_positions),
+            # so check_stop_fills can clear phantom options strat_pos (closed /
+            # expired manuals) without the ticker conflation the fills net has.
+            # None → snapshot unavailable this cycle, sweep skipped (fail-safe).
+            held_opt_underlyings = None
+            try:
+                _pos = data.get("positions")
+                if isinstance(_pos, list):
+                    held_opt_underlyings = {
+                        p.get("symbol") for p in _pos
+                        if p.get("sec_type") == "OPT" and p.get("symbol")
+                        and float(p.get("quantity") or 0) != 0
+                    }
+            except Exception:
+                held_opt_underlyings = None
+            check_stop_fills(client, orders=(list(ord_snap.values()) or None),
+                             held_tickers=held_tickers,
+                             held_opt_underlyings=held_opt_underlyings)
 
             # Drive any active SPX 0DTE leg-in butterflies one tick forward.
             # Each butterfly's state lives in ibkr:butterfly:* in Redis;
@@ -3582,17 +4243,32 @@ def main():
             # Check for pending orders to place
             check_order_requests(client)
 
-            # Monitor open spreads for TP/SL/time stop — DISABLED.
-            # The close path (build_close_spread_order) uses CPAPI combo
-            # orders which fail silently: IB returns "Submitted" but never
-            # executes. With monitor_spreads running, every sync tick re-
-            # fired the close attempt, generating a notification each
-            # time and accumulating zombie orders at IB (saw 54 stale
-            # MES Markets + 4 SPX legs in one inventory). Re-enable only
-            # after rewriting _close_spread to use two-leg singles like
-            # orb_butterfly_handler does.
-            # if data.get("spreads"):
-            #     monitor_spreads(client, data["spreads"])
+            # Monitor open spreads: %-based TP/SL, per-mode time-stop, and a
+            # pre-expiry FORCE CLOSE for physically-settled (stock/ETF)
+            # options so they never exercise into shares (cash-settled index
+            # options are exempt). RE-ENABLED now that _close_spread places
+            # two-leg singles (the old combo "submitted but never executed",
+            # and the unhardened dedup left 54 zombie orders). Gated on the
+            # reconcile gate so closes never fire against unvalidated state.
+            # Kill switch — DEFAULT OFF until paper-verified during market
+            # hours (run the V2-V6 suite first). Enable with:
+            #   redis-cli set ibkr:spread_monitor:enabled 1
+            # Disable instantly with: redis-cli del ibkr:spread_monitor:enabled
+            if data.get("spreads"):
+                _mon_on = False
+                try:
+                    _r = _rdb()
+                    _mon_on = bool(_r and _r.get("ibkr:spread_monitor:enabled"))
+                except Exception:
+                    _mon_on = False
+                if _mon_on:
+                    try:
+                        from .reconcile_gate import is_locked as _rg_locked
+                        _gated = _rg_locked()
+                    except Exception:
+                        _gated = False
+                    if not _gated:
+                        monitor_spreads(client, data["spreads"])
 
             # Tick completed without exception — reset the crash-loop counter
             consecutive_errors = 0

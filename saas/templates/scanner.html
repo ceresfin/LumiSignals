@@ -78,6 +78,47 @@ tr:hover { background: rgba(0,0,0,0.015); }
 </div>
 <div class="container">
   <div class="card">
+    <h2>Quick Scan — Fast MTF
+      <span id="qsBanner" style="font-size:0.72rem;font-weight:400;color:var(--text-light)"></span>
+    </h2>
+    <div class="controls">
+      <label>Group:</label>
+      <select id="qsGroup">
+        <option value="">All</option>
+        <option value="high_vol">High Vol</option>
+        <option value="megacap">Megacap</option>
+        <option value="largecap">Large-cap</option>
+        <option value="etf">ETF</option>
+        <option value="index">Index</option>
+        <option value="fx">FX</option>
+        <option value="crypto">Crypto</option>
+      </select>
+      <label>Side:</label>
+      <select id="qsSide">
+        <option value="">All</option>
+        <option value="LONG">Long</option>
+        <option value="SHORT">Short</option>
+      </select>
+      <label>Min Score:</label>
+      <select id="qsScore">
+        <option value="0">Any</option>
+        <option value="1">1+</option>
+        <option value="2">2+</option>
+        <option value="3">3</option>
+      </select>
+      <label>Sort:</label>
+      <select id="qsSort">
+        <option value="dist">Distance</option>
+        <option value="score">Score</option>
+        <option value="vol_rank">Volatility</option>
+      </select>
+      <button class="scan-btn" id="qsBtn" onclick="loadQuickScan()">Refresh</button>
+      <span id="qsStatus" style="font-size:0.72rem; color:var(--text-light)"></span>
+    </div>
+    <div id="qsResults"><div class="loading">Loading latest scan…</div></div>
+  </div>
+
+  <div class="card">
     <h2>Supply / Demand Scanner</h2>
     <div class="controls">
       <label>Proximity:</label>
@@ -105,6 +146,89 @@ tr:hover { background: rgba(0,0,0,0.015); }
 </div>
 
 <script>
+// ───────────────────────── Quick Scan (daemon-backed) ─────────────────────
+function volDots(rank) {
+  if (!rank) return '<span style="color:var(--text-light)">—</span>';
+  var s = '';
+  for (var i = 1; i <= 5; i++) s += (i <= rank ? '●' : '○');
+  return '<span style="letter-spacing:1px;color:var(--olive)">' + s + '</span> ' + rank;
+}
+
+function loadQuickScan() {
+  var btn = document.getElementById('qsBtn');
+  var status = document.getElementById('qsStatus');
+  btn.disabled = true; btn.textContent = 'Loading…';
+  var qs = [];
+  var group = document.getElementById('qsGroup').value;
+  var side = document.getElementById('qsSide').value;
+  var score = document.getElementById('qsScore').value;
+  var sort = document.getElementById('qsSort').value;
+  if (group) qs.push('group=' + group);
+  if (side) qs.push('side=' + side);
+  if (score && score !== '0') qs.push('min_score=' + score);
+  if (sort) qs.push('sort=' + sort);
+
+  fetch('/api/mtf-scan' + (qs.length ? '?' + qs.join('&') : ''))
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      btn.disabled = false; btn.textContent = 'Refresh';
+      var banner = document.getElementById('qsBanner');
+      if (data.warming) {
+        banner.innerHTML = '<span style="color:#f39c12">— warming up, the scanner is building its first pass…</span>';
+        document.getElementById('qsResults').innerHTML = '<div class="loading">Scanner is warming up. Check back in a minute.</div>';
+        status.textContent = '';
+        return;
+      }
+      var when = data.scanned_at ? new Date(data.scanned_at).toLocaleTimeString() : '—';
+      var staleTxt = data.stale ? ' <span style="color:#c0392b">(stale)</span>' : '';
+      banner.innerHTML = '— as of ' + when + staleTxt;
+      var rows = data.results || [];
+      status.textContent = rows.length + ' setups near a level';
+      if (rows.length === 0) {
+        document.getElementById('qsResults').innerHTML = '<div class="loading">No setups match these filters right now.</div>';
+        return;
+      }
+      var html = '<table><tr>';
+      html += '<th>Ticker</th><th>Name</th><th>Group</th><th>Price</th><th>Bias</th>';
+      html += '<th>Level</th><th>TF</th><th>Dist</th><th>Vol 1-5</th><th>Lean</th><th>Suggested</th><th>Score</th>';
+      html += '</tr>';
+      rows.forEach(function(s) {
+        var dirClass = s.side === 'LONG' ? 'dir-buy' : 'dir-sell';
+        var scoreClass = s.score >= 3 ? 'score-3' : s.score >= 2 ? 'score-2' : s.score >= 1 ? 'score-1' : 'score-0';
+        var approx = s.approx ? '<span title="feed differs slightly from TradingView/OANDA" style="color:var(--text-light)">≈</span> ' : '';
+        var assetLbl = { high_vol: 'High Vol', megacap: 'Megacap', largecap: 'Large', etf: 'ETF', index: 'Index', fx: 'FX', crypto: 'Crypto' }[s.group] || s.asset_class;
+        var price = (s.price != null) ? s.price.toFixed(s.price < 10 ? 4 : 2) : '—';
+        var level = (s.level != null) ? s.level.toFixed(s.level < 10 ? 4 : 2) : '—';
+        html += '<tr>';
+        html += '<td><strong>' + approx + s.ticker + '</strong></td>';
+        html += '<td style="font-size:0.75rem;color:var(--text-medium)">' + (s.name || '') + '</td>';
+        html += '<td style="font-size:0.75rem">' + assetLbl + '</td>';
+        html += '<td>' + price + '</td>';
+        html += '<td><span class="' + dirClass + '">' + s.side + '</span></td>';
+        html += '<td>' + s.level_name + ' ' + level + '</td>';
+        html += '<td>' + s.tf + '</td>';
+        html += '<td>' + (s.dist_pct != null ? s.dist_pct.toFixed(2) + '%' : '—') + '</td>';
+        html += '<td style="white-space:nowrap">' + volDots(s.vol_rank) + '</td>';
+        html += '<td style="font-size:0.75rem">' + (s.vol_lean || '—') + '</td>';
+        html += '<td style="font-size:0.75rem">' + (s.suggested_spread || '—') + '</td>';
+        html += '<td><span class="score-badge ' + scoreClass + '">' + s.score + '</span></td>';
+        html += '</tr>';
+      });
+      html += '</table>';
+      document.getElementById('qsResults').innerHTML = html;
+    })
+    .catch(function(e) {
+      btn.disabled = false; btn.textContent = 'Refresh';
+      document.getElementById('qsResults').innerHTML = '<div class="loading" style="color:var(--red)">Error: ' + e.message + '</div>';
+    });
+}
+['qsGroup','qsSide','qsScore','qsSort'].forEach(function(id) {
+  document.addEventListener('DOMContentLoaded', function() {
+    document.getElementById(id).addEventListener('change', loadQuickScan);
+  });
+});
+document.addEventListener('DOMContentLoaded', loadQuickScan);
+
 function runScan() {
   var btn = document.getElementById('scanBtn');
   var status = document.getElementById('scanStatus');

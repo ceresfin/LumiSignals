@@ -8,6 +8,7 @@ import { Picker } from '@react-native-picker/picker';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/auth';
 import { Colors } from '@/constants/theme';
+import { useResponsive } from '@/hooks/use-responsive';
 
 type Profile = Record<string, any>;
 
@@ -30,6 +31,32 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
   );
 }
 
+// Decimal field with a local text buffer so partial input like "1." doesn't
+// snap back mid-typing. Commits a positive float on blur, else reverts.
+function DecimalField({ label, hint, value, onSave, editable = true }: {
+  label: string; hint?: string; value: number;
+  onSave: (n: number) => void; editable?: boolean;
+}) {
+  const [text, setText] = useState(String(value));
+  useEffect(() => { setText(String(value)); }, [value]);
+  return (
+    <Field label={label} hint={hint}>
+      <TextInput
+        style={styles.input}
+        value={text}
+        onChangeText={setText}
+        onEndEditing={() => {
+          const n = parseFloat(text);
+          if (!isNaN(n) && n > 0) onSave(n);
+          else setText(String(value));
+        }}
+        keyboardType="decimal-pad"
+        editable={editable}
+      />
+    </Field>
+  );
+}
+
 function NumberInput({ value, onChange, step = 1, min, max }: {
   value: number; onChange: (v: number) => void; step?: number; min?: number; max?: number;
 }) {
@@ -48,6 +75,7 @@ function NumberInput({ value, onChange, step = 1, min, max }: {
 
 export default function Settings() {
   const { user, signOut } = useAuth();
+  const { contentStyle } = useResponsive();
   const [profile, setProfile] = useState<Profile>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -95,6 +123,27 @@ export default function Settings() {
        trades_today: 0, consecutive_losses: 0 });
   const [rgwSaving, setRgwSaving] = useState(false);
   const [rgwResetting, setRgwResetting] = useState(false);
+  // Runaway-guard scope. Caps are PER-STRATEGY — each strategy keeps its own
+  // cap + loss streak. 'Global' edits the legacy fallback key, which any
+  // strategy with its own code default (2n20 / ORB / Swing / FX) ignores; so
+  // to change the cap that actually governs 2n20 you must select it here.
+  const RGW_SCOPES: { key: string; label: string }[] = [
+    { key: '', label: 'Global' },
+    { key: 'futures_2n20', label: '2n20' },
+    { key: 'orb_breakout', label: 'ORB' },
+    { key: 'swing_setup', label: 'Swing' },
+    { key: 'fx_h1_zone_scalp', label: 'FX' },
+  ];
+  const [rgwStrategy, setRgwStrategy] = useState<string>('');
+  // MTF / swing-setup tuning — per mode (stop ×ATR, proximity ×ATR, R:R floor).
+  const [mtfCfg, setMtfCfg] = useState<Record<string, number>>({
+    stop_atr_mult_scalp: 2, stop_atr_mult_intraday: 2, stop_atr_mult_swing: 2,
+    proximity_atr_mult_scalp: 1, proximity_atr_mult_intraday: 1, proximity_atr_mult_swing: 1,
+    rr_floor_scalp: 1.5, rr_floor_intraday: 2, rr_floor_swing: 3,
+    zone_fresh_15m: 26,
+  });
+  const [mtfSaving, setMtfSaving] = useState(false);
+  const [mtfMode, setMtfMode] = useState<'scalp' | 'intraday' | 'swing'>('scalp');
 
   const loadProfile = async () => {
     if (!user) return;
@@ -261,10 +310,11 @@ export default function Settings() {
     }
   };
 
-  const loadRunawayGuard = async () => {
+  const loadRunawayGuard = async (strategy: string = rgwStrategy) => {
     try {
       const syncKey = process.env.EXPO_PUBLIC_LUMI_SYNC_KEY || '';
-      const r = await fetch('https://bot.lumitrade.ai/api/risk/runaway-guard', {
+      const qs = strategy ? `?strategy=${encodeURIComponent(strategy)}` : '';
+      const r = await fetch(`https://bot.lumitrade.ai/api/risk/runaway-guard${qs}`, {
         headers: { 'X-Sync-Key': syncKey },
       });
       if (!r.ok) return;
@@ -282,7 +332,8 @@ export default function Settings() {
       const next = { ...rgwCfg, ...patch };
       setRgwCfg(next); // optimistic
       const syncKey = process.env.EXPO_PUBLIC_LUMI_SYNC_KEY || '';
-      const r = await fetch('https://bot.lumitrade.ai/api/risk/runaway-guard', {
+      const qs = rgwStrategy ? `?strategy=${encodeURIComponent(rgwStrategy)}` : '';
+      const r = await fetch(`https://bot.lumitrade.ai/api/risk/runaway-guard${qs}`, {
         method: 'PUT',
         headers: { 'X-Sync-Key': syncKey, 'Content-Type': 'application/json' },
         body: JSON.stringify(patch),
@@ -302,7 +353,8 @@ export default function Settings() {
     setRgwResetting(true);
     try {
       const syncKey = process.env.EXPO_PUBLIC_LUMI_SYNC_KEY || '';
-      const r = await fetch('https://bot.lumitrade.ai/api/risk/runaway-guard/reset', {
+      const qs = rgwStrategy ? `?strategy=${encodeURIComponent(rgwStrategy)}` : '';
+      const r = await fetch(`https://bot.lumitrade.ai/api/risk/runaway-guard/reset${qs}`, {
         method: 'POST',
         headers: { 'X-Sync-Key': syncKey },
       });
@@ -315,9 +367,44 @@ export default function Settings() {
     }
   };
 
+  const loadMtfConfig = async () => {
+    try {
+      const syncKey = process.env.EXPO_PUBLIC_LUMI_SYNC_KEY || '';
+      const r = await fetch('https://bot.lumitrade.ai/api/strategies/mtf-config', {
+        headers: { 'X-Sync-Key': syncKey },
+      });
+      if (!r.ok) return;
+      const d = await r.json();
+      if (d?.config) setMtfCfg(d.config);
+    } catch {
+      // best-effort
+    }
+  };
+
+  const saveMtfConfig = async (patch: Record<string, number>) => {
+    setMtfSaving(true);
+    try {
+      setMtfCfg(prev => ({ ...prev, ...patch })); // optimistic
+      const syncKey = process.env.EXPO_PUBLIC_LUMI_SYNC_KEY || '';
+      const r = await fetch('https://bot.lumitrade.ai/api/strategies/mtf-config', {
+        method: 'PUT',
+        headers: { 'X-Sync-Key': syncKey, 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const d = await r.json();
+      if (d?.config) setMtfCfg(d.config);
+    } catch (e: any) {
+      Alert.alert('MTF config save failed', String(e?.message || e));
+    } finally {
+      setMtfSaving(false);
+    }
+  };
+
   useEffect(() => {
     loadProfile(); loadIbStatus(); loadKillSwitch();
     loadPositionGuard(); loadReconcileGate(); loadRunawayGuard();
+    loadMtfConfig();
   }, [user]);
   // Poll reconcile gate every 5s so the Settings screen reflects state quickly.
   useEffect(() => {
@@ -347,6 +434,7 @@ export default function Settings() {
     await Promise.all([
       loadProfile(), loadIbStatus(), loadKillSwitch(),
       loadPositionGuard(), loadReconcileGate(), loadRunawayGuard(),
+      loadMtfConfig(),
     ]);
     setRefreshing(false);
   };
@@ -359,7 +447,8 @@ export default function Settings() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
+      <ScrollView contentContainerStyle={contentStyle}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
         <View style={styles.header}>
           <Text style={styles.headerTitle}>Settings</Text>
           <TouchableOpacity style={styles.saveBtn} onPress={save} disabled={saving}>
@@ -573,9 +662,15 @@ export default function Settings() {
               <NumberInput value={profile.futures_stop_loss ?? 25}
                 onChange={v => update('futures_stop_loss', v)} min={5} step={5} />
             </Field>
-            <Field label="Contracts/Entry">
+            <Field label="2n20 Contracts/Entry" hint="MES 2n20">
               <NumberInput value={profile.futures_contracts ?? 1}
                 onChange={v => update('futures_contracts', v)} min={1} step={1} />
+            </Field>
+          </View>
+          <View style={styles.modelRow}>
+            <Field label="ORB Contracts/Entry" hint="MES ORB futures">
+              <NumberInput value={profile.orb_futures_contracts ?? 1}
+                onChange={v => update('orb_futures_contracts', v)} min={1} step={1} />
             </Field>
           </View>
         </Section>
@@ -715,6 +810,30 @@ export default function Settings() {
 
         {/* Runaway Guard */}
         <Section title="7b. Runaway Guard">
+          {/* Scope selector — caps are per-strategy. Editing here targets the
+              selected strategy's own cap (or the legacy Global key). */}
+          <View style={styles.rgwScopeRow}>
+            {RGW_SCOPES.map(s => {
+              const active = rgwStrategy === s.key;
+              return (
+                <TouchableOpacity
+                  key={s.key || 'global'}
+                  style={[styles.rgwChip, active && styles.rgwChipActive]}
+                  onPress={() => { setRgwStrategy(s.key); loadRunawayGuard(s.key); }}
+                  disabled={rgwSaving || rgwResetting}
+                >
+                  <Text style={[styles.rgwChipText, active && styles.rgwChipTextActive]}>
+                    {s.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+          <Text style={[styles.fieldHint, { marginTop: 0, marginBottom: 8 }]}>
+            {rgwStrategy
+              ? `Editing the ${RGW_SCOPES.find(s => s.key === rgwStrategy)?.label} strategy's own cap + loss streak.`
+              : 'Editing the legacy Global cap. Strategies with their own default (2n20 / ORB / Swing / FX) ignore it — pick one above to change its limit.'}
+          </Text>
           <View style={styles.row}>
             <Text style={styles.fieldLabel}>Enabled</Text>
             <Switch
@@ -808,6 +927,63 @@ export default function Settings() {
             triggers regardless of running P&L — designed to catch
             catastrophic Monday-open whipsaws.
           </Text>
+        </Section>
+
+        {/* MTF / Swing Setup tuning — per mode */}
+        <Section title="7c. MTF / Swing Setups">
+          <Text style={[styles.fieldHint, { marginTop: 0, marginBottom: 8 }]}>
+            Per-mode tuning for the scanner + swing panel. Distances are in ATRs
+            of the trigger timeframe (5m scalp / 15m intraday / daily swing), so
+            they scale to each symbol’s volatility.
+          </Text>
+          {/* Mode selector — each mode keeps its own stop / proximity / R:R. */}
+          <View style={styles.rgwScopeRow}>
+            {(['scalp', 'intraday', 'swing'] as const).map(m => {
+              const active = mtfMode === m;
+              return (
+                <TouchableOpacity
+                  key={m}
+                  style={[styles.rgwChip, active && styles.rgwChipActive]}
+                  onPress={() => setMtfMode(m)}
+                  disabled={mtfSaving}
+                >
+                  <Text style={[styles.rgwChipText, active && styles.rgwChipTextActive]}>
+                    {m.charAt(0).toUpperCase() + m.slice(1)}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+          <DecimalField
+            label="Stop (× ATR)"
+            hint="Stop sits this many trigger-TF ATRs beyond the entry zone."
+            value={mtfCfg[`stop_atr_mult_${mtfMode}`]}
+            onSave={n => saveMtfConfig({ [`stop_atr_mult_${mtfMode}`]: n })}
+            editable={!mtfSaving}
+          />
+          <DecimalField
+            label="Proximity (× ATR)"
+            hint="Tradeable only when price is within this many trigger-TF ATRs of the zone; farther = prospective (watch)."
+            value={mtfCfg[`proximity_atr_mult_${mtfMode}`]}
+            onSave={n => saveMtfConfig({ [`proximity_atr_mult_${mtfMode}`]: n })}
+            editable={!mtfSaving}
+          />
+          <DecimalField
+            label="Target R:R"
+            hint="Reward:risk floor used when no opposite zone is in view."
+            value={mtfCfg[`rr_floor_${mtfMode}`]}
+            onSave={n => saveMtfConfig({ [`rr_floor_${mtfMode}`]: n })}
+            editable={!mtfSaving}
+          />
+          {mtfMode === 'swing' && (
+            <DecimalField
+              label="Zone-watch fresh window (15m bars)"
+              hint="A 15m wick into the monthly zone counts as a just-triggered touch for this many trailing bars (~26 = 1 session). Longer = setup stays flagged longer after the wick."
+              value={mtfCfg.zone_fresh_15m}
+              onSave={n => saveMtfConfig({ zone_fresh_15m: Math.round(n) })}
+              editable={!mtfSaving}
+            />
+          )}
         </Section>
 
         {/* Restart-Safety Gate */}
@@ -934,6 +1110,14 @@ const styles = StyleSheet.create({
   fieldLabel: { fontSize: 13, fontWeight: '500', color: Colors.dark, marginBottom: 4 },
   fieldValue: { fontSize: 14, color: Colors.textLight },
   fieldHint: { fontSize: 11, color: Colors.textLight, marginTop: 2 },
+  rgwScopeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 8 },
+  rgwChip: {
+    paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16,
+    backgroundColor: Colors.cream, borderWidth: 1, borderColor: '#e8e6e1',
+  },
+  rgwChipActive: { backgroundColor: Colors.olive, borderColor: Colors.olive },
+  rgwChipText: { fontSize: 12, fontWeight: '600', color: Colors.textMedium },
+  rgwChipTextActive: { color: Colors.white },
   input: {
     backgroundColor: Colors.cream, borderRadius: 8, padding: 10,
     fontSize: 15, color: Colors.dark, borderWidth: 1, borderColor: '#e8e6e1',

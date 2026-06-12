@@ -6,9 +6,11 @@ import { useRouter } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/auth';
 import { Colors } from '@/constants/theme';
+import { useResponsive } from '@/hooks/use-responsive';
 import IbStatusBanner from '@/components/ib-status-banner';
 import ReconcileBanner from '@/components/reconcile-banner';
 import BotStatusCard from '@/components/bot-status-card';
+import { SwingTradePanel } from '@/components/swing-trade-panel';
 
 type Trade = {
   realized_pl: number | null;
@@ -371,6 +373,7 @@ const TABS = [
 export default function Dashboard() {
   const { user } = useAuth();
   const router = useRouter();
+  const { contentStyle } = useResponsive();
   const [allTrades, setAllTrades] = useState<Trade[]>([]);
   const [allPositions, setAllPositions] = useState<Position[]>([]);
   const [activeTab, setActiveTab] = useState('forex');
@@ -559,7 +562,8 @@ export default function Dashboard() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
+      <ScrollView contentContainerStyle={contentStyle}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
         {/* Header */}
         <View style={styles.header}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
@@ -871,6 +875,8 @@ export default function Dashboard() {
             )}
           </View>
         )}
+
+        <SwingTradePanel />
 
         <View style={{ height: 40 }} />
       </ScrollView>

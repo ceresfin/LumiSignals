@@ -38,7 +38,9 @@ export function strategyShortName(strategy?: string, model?: string): string {
   const m = (model || '').toLowerCase();
   if (s === 'vwap_2n20' || s === '2n20' || m.includes('2n20')) return '2N20';
   if (s === 'orb_breakout') return 'ORB';
-  if (s === 'manual' || s === 'manual_close' || s === 'manual_test') return 'MANUAL';
+  // Manually-placed trades come from the MTF analysis (swing panel), so the
+  // badge reads "<duration> MTF" (e.g. "SWING MTF") rather than "MANUAL".
+  if (s === 'manual' || s === 'manual_close' || s === 'manual_test') return 'MTF';
   // HTF Levels family is now "Tidewater" — short form drops the duration
   // since the badge text handles that separately.
   if (s === 'htf_levels' || s === 'htf_supply_demand' || m === 'htf') return 'TIDEWATER';

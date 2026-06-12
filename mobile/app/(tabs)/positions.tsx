@@ -6,6 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/auth';
 import { Colors } from '@/constants/theme';
+import { useResponsive } from '@/hooks/use-responsive';
 import { strategyBadgeText } from '@/lib/strategyLabel';
 import IbStatusBanner from '@/components/ib-status-banner';
 import ReconcileBanner from '@/components/reconcile-banner';
@@ -272,7 +273,14 @@ function PositionRow({ position, onChartPress, onClose, closing, livePrice,
   // realtime channel, this updates within ms of the IB CPAPI snapshot.
   // Falls back to the row's unrealized_pl when no live price yet.
   let pl = position.unrealized_pl || 0;
-  if (livePrice && position.entry_price && position.contracts) {
+  // Client-side live recompute ONLY for instruments whose livePrice and
+  // entry_price are the same price series (futures/forex/stocks). For an
+  // OPTION the livePrice is the *underlying* and entry_price is the option's
+  // net debit, so this formula is nonsense — e.g. a SPY put debit spread
+  // (entry $31.26) showed (730 − 31.26)×−1 = −$698. Options always use the
+  // server-computed unrealized_pl (value − cost).
+  if (livePrice && position.entry_price && position.contracts
+      && position.asset_type !== 'options') {
     const mult = (position as any).multiplier || (
       position.instrument === 'MES' ? 5 :
       position.instrument === 'MNQ' ? 2 :
@@ -315,6 +323,14 @@ function PositionRow({ position, onChartPress, onClose, closing, livePrice,
       </View>
 
       <View style={styles.posDetails}>
+        <View style={styles.posDetail}>
+          <Text style={styles.posDetailLabel}>{isOptions ? 'Contracts' : 'Size'}</Text>
+          <Text style={styles.posDetailValue}>
+            {isOptions
+              ? (position.contracts || 1)
+              : (position.contracts || position.units || '--')}
+          </Text>
+        </View>
         <View style={styles.posDetail}>
           <Text style={styles.posDetailLabel}>Entry</Text>
           <Text style={styles.posDetailValue}>
@@ -514,6 +530,7 @@ function PositionRow({ position, onChartPress, onClose, closing, livePrice,
 export default function Positions() {
   const { user } = useAuth();
   const router = useRouter();
+  const { contentStyle } = useResponsive();
   const [allPositions, setAllPositions] = useState<Position[]>([]);
   const [activeTab, setActiveTab] = useState('forex');
   const [refreshing, setRefreshing] = useState(false);
@@ -834,7 +851,7 @@ export default function Positions() {
           })}
         />}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-        contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 20 }}
+        contentContainerStyle={[{ paddingHorizontal: 16, paddingBottom: 20 }, contentStyle]}
         ListEmptyComponent={
           <View style={styles.empty}>
             <Text style={styles.emptyText}>No open positions</Text>
@@ -868,6 +885,21 @@ export default function Positions() {
               </TouchableOpacity>
               {auditExpanded && (
                 <View style={{ marginTop: 8 }}>
+                  <View style={styles.auditLegend}>
+                    <Text style={styles.auditLegendText}>
+                      Compares your live IB account to what the bot is tracking,
+                      per instrument.{'\n'}
+                      <Text style={{ fontWeight: '600' }}>IB</Text> = the broker
+                      (the truth) · <Text style={{ fontWeight: '600' }}>Bot</Text>
+                      {' '}= what the bot thinks it holds.{'\n'}
+                      <Text style={{ color: Colors.green, fontWeight: '600' }}>Matched</Text>
+                      {' '}= they agree. A red row is an{' '}
+                      <Text style={{ fontWeight: '600' }}>orphan</Text> (IB has it,
+                      bot doesn’t) or{' '}
+                      <Text style={{ fontWeight: '600' }}>phantom</Text> (bot has
+                      it, IB is flat) to look into.
+                    </Text>
+                  </View>
                   {(!audit.rows || audit.rows.length === 0) && (
                     <View style={styles.auditRow}>
                       <Text style={[styles.auditInst, { textAlign: 'center', color: Colors.green }]}>
@@ -878,16 +910,125 @@ export default function Positions() {
                       </Text>
                     </View>
                   )}
-                  {(audit.rows || []).map((row: any) => (
+                  {(audit.rows || []).map((row: any) => {
+                    const isOPT = row.asset_type === 'OPT';
+
+                    // Build the IBKR-style vertical descriptor when the
+                    // backend has provided the structured fields:
+                    //   "VERTICAL SPX 100 2 JUN 26 (0) 7610/7615 C"
+                    // Falls back to parsing `description` for older API
+                    // payloads (pre–structured-fields deploy).
+                    let optTitle = '';
+                    let bias: 'bull' | 'bear' | '' = '';
+                    let dte: number | null = null;  // hoisted so the DTE badge can render below the title
+                    if (isOPT) {
+                      const longK = Number(row.long_strike) || 0;
+                      const shortK = Number(row.short_strike) || 0;
+                      const expRaw = String(row.expiration || '');  // YYYYMMDD
+                      const right = String(row.right || '').toUpperCase();
+                      const mult = Number(row.multiplier) || 100;
+                      const spreadType = String(row.spread_type || row.description || '');
+
+                      // Bias from spread_type semantics. We don't put this
+                      // INTO the IBKR-format line (IBKR drops it too), but
+                      // we surface it as a small suffix tag for trade-setup
+                      // clarity.
+                      const lc = spreadType.toLowerCase();
+                      const callDebit = lc.includes('call') && lc.includes('debit');
+                      const putCredit = lc.includes('put') && lc.includes('credit');
+                      const callCredit = lc.includes('call') && lc.includes('credit');
+                      const putDebit = lc.includes('put') && lc.includes('debit');
+                      if (lc.includes('bull') || callDebit || putCredit ||
+                          lc === 'long call' || lc === 'short put') {
+                        bias = 'bull';
+                      } else if (lc.includes('bear') || callCredit || putDebit ||
+                                 lc === 'long put' || lc === 'short call') {
+                        bias = 'bear';
+                      }
+
+                      // Format expiry "YYYYMMDD" → "2 JUN 26". DTE goes in its
+                      // own badge below the title (used to be inline `(3)`).
+                      let expStr = '';
+                      if (/^\d{8}$/.test(expRaw)) {
+                        const y = parseInt(expRaw.slice(0, 4), 10);
+                        const mo = parseInt(expRaw.slice(4, 6), 10) - 1;
+                        const d = parseInt(expRaw.slice(6, 8), 10);
+                        const exp = new Date(Date.UTC(y, mo, d));
+                        const MONTHS = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+                        expStr = `${d} ${MONTHS[mo]} ${String(y).slice(-2)}`;
+                        const today = new Date();
+                        const todayUTC = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
+                        dte = Math.round((exp.getTime() - todayUTC) / 86400000);
+                      }
+
+                      // VERTICAL = two-leg, same-expiry, same-right spread.
+                      // Anything with both strikes nonzero qualifies.
+                      // IBKR convention: strikes shown low/high.
+                      const isVertical = longK > 0 && shortK > 0;
+                      if (isVertical) {
+                        const lo = Math.min(longK, shortK);
+                        const hi = Math.max(longK, shortK);
+                        const strikes = `${lo % 1 === 0 ? lo.toFixed(0) : lo}/${hi % 1 === 0 ? hi.toFixed(0) : hi}`;
+                        optTitle = `VERTICAL ${row.instrument} ${mult.toFixed(0)} ${expStr} ${strikes} ${right}`.trim();
+                      } else if (longK > 0 || shortK > 0) {
+                        // Single leg — show strike + right in similar format
+                        const k = longK || shortK;
+                        const side = longK > 0 ? 'LONG' : 'SHORT';
+                        const kStr = k % 1 === 0 ? k.toFixed(0) : `${k}`;
+                        optTitle = `${side} ${row.instrument} ${mult.toFixed(0)} ${expStr} ${kStr} ${right}`.trim();
+                      } else if (row.description) {
+                        // Fallback: backend hasn't deployed the structured
+                        // fields yet; show whatever description we have.
+                        optTitle = `${row.instrument} · ${row.description}`;
+                      }
+                    }
+
+                    // Format ib_avg. For OPT spreads, net_cost is dollars-per-spread:
+                    //   positive  → net debit (paid)
+                    //   negative  → net credit (received)
+                    // For everything else (FUT/STK), keep the legacy raw-number display.
+                    // Returns a JSX fragment so we can bold + color the
+                    // "credit" / "debit" word inline.
+                    const renderIbAvg = () => {
+                      if (row.ib_avg === null || row.ib_avg === undefined) return null;
+                      if (!isOPT) return <>{` @ ${row.ib_avg.toFixed(2)}`}</>;
+                      const avg = row.ib_avg;
+                      const total = Math.abs(avg) * Math.abs(row.ib_qty || 0);
+                      if (avg > 0) {
+                        return (
+                          <>
+                            {` @ $${avg.toFixed(2)} net `}
+                            <Text style={[styles.uPL, { color: Colors.green }]}>debit</Text>
+                            {`/spread (paid $${total.toFixed(2)})`}
+                          </>
+                        );
+                      }
+                      if (avg < 0) {
+                        return (
+                          <>
+                            {` @ $${Math.abs(avg).toFixed(2)} net `}
+                            <Text style={[styles.uPL, { color: Colors.red }]}>credit</Text>
+                            {`/spread (received $${total.toFixed(2)})`}
+                          </>
+                        );
+                      }
+                      return <>{' @ $0.00'}</>;
+                    };
+
+                    return (
                     <View key={row.display_key || row.instrument} style={[
                       styles.auditRow,
                       row.status !== 'matched' && row.status !== 'flat' && styles.auditRowMismatch,
                     ]}>
                       <View style={styles.auditRowTop}>
                         <Text style={styles.auditInst}>
-                          {row.instrument}
-                          {row.asset_type ? ` · ${row.asset_type}` : ''}
-                          {row.ib_qty > 0 ? ' · LONG' : row.ib_qty < 0 ? ' · SHORT' : ''}
+                          {isOPT && optTitle
+                            ? optTitle
+                            : `${row.instrument}${row.asset_type ? ` · ${row.asset_type}` : ''}${
+                                row.ib_qty > 0 ? ' · LONG' : row.ib_qty < 0 ? ' · SHORT' : ''
+                              }`}
+                          {isOPT && bias === 'bull' ? '  📈 Bull' :
+                            isOPT && bias === 'bear' ? '  📉 Bear' : ''}
                         </Text>
                         <Text style={[
                           styles.auditStatus,
@@ -896,20 +1037,201 @@ export default function Positions() {
                           {row.status_label}
                         </Text>
                       </View>
+                      {dte !== null && (
+                        <Text style={[
+                          styles.dteBadge,
+                          // 0 DTE expires today → red urgency.
+                          // 1-2 DTE → amber.
+                          // 3+ DTE → default.
+                          dte <= 0 ? { color: Colors.red } :
+                          dte <= 2 ? { color: Colors.amber } : null,
+                        ]}>
+                          {dte} DTE
+                        </Text>
+                      )}
                       <Text style={styles.auditDetail}>
                         IB: {row.ib_qty > 0 ? '+' : ''}{row.ib_qty}
-                        {row.ib_avg ? ` @ ${row.ib_avg.toFixed(2)}` : ''}
-                        {row.ib_unrealized_pl !== null && row.ib_unrealized_pl !== undefined
-                          ? `   uPL ${row.ib_unrealized_pl >= 0 ? '+' : ''}$${row.ib_unrealized_pl.toFixed(2)}` : ''}
+                        {renderIbAvg()}
+                        {row.ib_unrealized_pl !== null && row.ib_unrealized_pl !== undefined && (
+                          <>
+                            {'   uPL '}
+                            <Text style={[
+                              styles.uPL,
+                              { color: row.ib_unrealized_pl >= 0 ? Colors.green : Colors.red },
+                            ]}>
+                              {row.ib_unrealized_pl >= 0 ? '+' : ''}${row.ib_unrealized_pl.toFixed(2)}
+                            </Text>
+                          </>
+                        )}
                       </Text>
+                      {/* uPL vs max-profit progress. Per-spread max_profit
+                          comes from the backend; multiply by qty for the
+                          position total. Renders nothing when max_profit
+                          is missing (non-OPT rows / pre-deploy clients). */}
+                      {(() => {
+                        const maxPerSpread = Number(row.max_profit) || 0;
+                        const qty = Math.abs(Number(row.ib_qty) || 0);
+                        const totalMax = maxPerSpread * qty;
+                        const up = Number(row.ib_unrealized_pl);
+                        if (!totalMax || !Number.isFinite(up)) return null;
+                        const pct = Math.round((up / totalMax) * 100);
+                        return (
+                          <Text style={styles.auditDetail}>
+                            Target: <Text style={styles.uPL}>+${totalMax.toFixed(2)}</Text>
+                            {'   '}
+                            <Text style={styles.uPL}>{pct}%</Text> of max
+                          </Text>
+                        );
+                      })()}
                       <Text style={styles.auditDetail}>
                         Bot: {row.tracked_signed > 0 ? '+' : ''}{row.tracked_signed}
                         {row.strats.length > 0
-                          ? `   [${row.strats.map((s: any) => `${s.strategy}=${s.direction}${s.contracts}`).join(', ')}]`
+                          ? `   [${row.strats.map((s: any) => {
+                              // Bucket → Scalp / Intraday / Swing / Trend.
+                              // Source of truth: metadata.model when the Pine
+                              // signal sets it (e.g. htf_levels). Fallback:
+                              // infer from the strategy name itself, so
+                              // futures_2n20 / scalp_h1zone / fx_trend_4h
+                              // get sensible tags even when Pine never sent
+                              // a model field.
+                              const m = String(s.model || '').toLowerCase();
+                              const strat = String(s.strategy || '').toLowerCase();
+                              let bucket = '';
+                              // Dashboard mode (model field) is authoritative:
+                              // the user picked SCALP / INTRADAY / SWING on
+                              // the MTF panel and that's exactly the mode
+                              // sent to the backend. The 'swing' tab is
+                              // labeled MTF in Positions to match the panel
+                              // section title.
+                              if (m === 'scalp') bucket = 'Scalp';
+                              else if (m === 'intraday') bucket = 'Intraday';
+                              else if (m === 'swing' || m === 'mtf') bucket = 'MTF';
+                              // Pine-strategy models (longer strings)
+                              else if (m.includes('scalp')) bucket = 'Scalp';
+                              else if (m.includes('intraday')) bucket = 'Intraday';
+                              else if (m.includes('swing')) bucket = 'Swing';
+                              else if (m === 'trend') bucket = 'Swing';
+                              // Strategy-name fallback when model is missing
+                              else if (strat === 'swing_setup') bucket = 'MTF';
+                              else if (strat.includes('scalp') || strat.includes('2n20')) bucket = 'Scalp';
+                              else if (strat.includes('intraday')) bucket = 'Intraday';
+                              else if (strat.includes('swing') || strat.includes('trend')) bucket = 'Swing';
+                              else if (m) bucket = s.model;
+                              // htf_levels carries its own "HTF " prefix so
+                              // the user reads "HTF Swing" rather than just
+                              // "Swing" for high-timeframe setups.
+                              const isHTF = strat === 'htf_levels' || strat.startsWith('htf_');
+                              const tag = bucket ? `${isHTF ? 'HTF ' : ''}${bucket}·` : '';
+                              // Manual MTF trades read "MTF", not "manual".
+                              const stratName = strat.startsWith('manual') ? 'MTF' : s.strategy;
+                              return `${tag}${stratName}=${s.direction}${s.contracts}`;
+                            }).join(', ')}]`
                           : '   (none)'}
                       </Text>
+                      {/* Two timestamps — different stories:
+                          • Opened  = earliest IB fill (objective execution)
+                          • Tracked = strat_pos opened_at (intent / adopt /
+                            retag time set by the bot or reconciler).
+                          Same line each if they collapse to the same value;
+                          otherwise both rendered so divergence is visible. */}
+                      {(() => {
+                        const fmt = (ms: number) => {
+                          const d = new Date(ms);
+                          const today = new Date();
+                          const sameDay = d.toDateString() === today.toDateString();
+                          const time = d.toLocaleTimeString([], {
+                            hour: '2-digit', minute: '2-digit',
+                            second: '2-digit', hour12: false,
+                          });
+                          const datePart = sameDay
+                            ? 'today'
+                            : d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+                          return `${datePart} ${time}`;
+                        };
+                        // Opened = earliest IB fill (use min, since fills
+                        // are sorted newest-first the last entry isn't
+                        // always the earliest if entries got trimmed).
+                        let openedMs = NaN;
+                        if (row.recent_fills?.length) {
+                          const ts = row.recent_fills
+                            .map((f: any) => Number(f.time_ms) || 0)
+                            .filter((n: number) => n > 0);
+                          if (ts.length) openedMs = Math.min(...ts);
+                        }
+                        // Tracked = strat_pos opened_at (first strat).
+                        const trackedIso = row.strats?.[0]?.opened_at || '';
+                        const trackedMs = trackedIso ? Date.parse(trackedIso) : NaN;
+                        const haveOpen = Number.isFinite(openedMs);
+                        const haveTrack = Number.isFinite(trackedMs);
+                        if (haveOpen && haveTrack) {
+                          // Within 60s → same moment, render once.
+                          if (Math.abs(openedMs - trackedMs) < 60_000) {
+                            return (<Text style={styles.auditDetail}>Opened: {fmt(openedMs)}</Text>);
+                          }
+                          return (
+                            <>
+                              <Text style={styles.auditDetail}>Opened: {fmt(openedMs)}</Text>
+                              <Text style={styles.auditDetail}>Tracked: {fmt(trackedMs)}</Text>
+                            </>
+                          );
+                        }
+                        if (haveOpen) return (<Text style={styles.auditDetail}>Opened: {fmt(openedMs)}</Text>);
+                        if (haveTrack) return (<Text style={styles.auditDetail}>Opened: {fmt(trackedMs)}</Text>);
+                        return null;
+                      })()}
+                      {row.recent_fills && row.recent_fills.length > 0 && (
+                        <View style={styles.fillsBox}>
+                          <Text style={styles.fillsHeader}>
+                            Recent IB fills ({row.recent_fills.length})
+                          </Text>
+                          {row.recent_fills.map((f: any, i: number) => {
+                            // Format ms-since-epoch → local clock time HH:MM:SS
+                            const t = f.time_ms
+                              ? new Date(f.time_ms).toLocaleTimeString([], {
+                                  hour: '2-digit', minute: '2-digit',
+                                  second: '2-digit', hour12: false,
+                                })
+                              : '—';
+                            const isUntagged = f.source === 'untagged';
+                            const isStop = f.source === 'bracket_stop';
+                            const isTarget = f.source === 'bracket_target';
+                            const isBot = typeof f.source === 'string' && f.source.startsWith('bot:');
+                            // Only surface a tag when it's meaningful; a bare
+                            // "other"/manual fill just clutters the row.
+                            const tag =
+                              isUntagged ? '⚠️ untagged'
+                                : isStop ? '🛡 stop hit'
+                                : isTarget ? '🎯 target hit'
+                                : isBot ? f.source.replace('bot:', '')
+                                : (f.source && !['other', 'manual', 'untracked'].includes(f.source)
+                                    ? f.source : '');
+                            // Decode the broker side code into plain words.
+                            const sideCode = String(f.side || '').toUpperCase();
+                            const sideWord = sideCode === 'B' ? 'Bought'
+                              : sideCode === 'S' ? 'Sold'
+                              : sideCode === 'X' ? 'Expired'
+                              : sideCode === 'U' ? 'Assigned'
+                              : (f.side || '');
+                            const isZeroPx = !Number(f.price);  // expiry/assign land at 0
+                            return (
+                              <Text
+                                key={i}
+                                style={[
+                                  styles.fillRow,
+                                  isUntagged && styles.fillUntagged,
+                                ]}
+                              >
+                                {t}  {sideWord} {f.qty}
+                                {isZeroPx ? '' : ` @ ${Number(f.price).toFixed(2)}`}
+                                {tag ? `  ·  ${tag}` : ''}
+                              </Text>
+                            );
+                          })}
+                        </View>
+                      )}
                     </View>
-                  ))}
+                    );
+                  })}
                   {audit.last_synced && (
                     <Text style={styles.auditSynced}>
                       IB snapshot age: {Math.floor((Date.now() - new Date(audit.last_synced).getTime()) / 1000)}s
@@ -1236,11 +1558,27 @@ const styles = StyleSheet.create({
     backgroundColor: '#F8F8F4',
   },
   auditRowMismatch: { backgroundColor: '#fdecea' },
-  auditRowTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  auditInst: { fontSize: 14, fontWeight: '600', color: Colors.text },
-  auditStatus: { fontSize: 11, fontWeight: '600' },
+  // Title + status stacked vertically so long VERTICAL descriptors
+  // ("VERTICAL AMZN 100 5 JUN 26 (3) 250/255 P  📉 Bear") get the full
+  // row width to wrap into, and the status label never clips off-screen.
+  auditRowTop: { flexDirection: 'column' },
+  auditInst: { fontSize: 12, fontWeight: '700', color: Colors.text },
+  auditStatus: { fontSize: 11, fontWeight: '700', marginTop: 2, textAlign: 'right' },
   auditDetail: { fontSize: 12, color: Colors.textLight, marginTop: 2 },
+  auditLegend: {
+    backgroundColor: Colors.cream, borderRadius: 8, padding: 10, marginBottom: 10,
+  },
+  auditLegendText: { fontSize: 11, lineHeight: 17, color: Colors.textMedium },
+  uPL: { fontWeight: '700' },
+  dteBadge: { fontSize: 12, fontWeight: '700', color: Colors.textMedium, marginTop: 3 },
   auditSynced: { fontSize: 11, color: Colors.textLight, marginTop: 6, fontStyle: 'italic', textAlign: 'right' },
+  fillsBox: { marginTop: 8, paddingTop: 6, borderTopWidth: 1,
+              borderTopColor: '#e8d8d6' },
+  fillsHeader: { fontSize: 11, color: Colors.textLight, marginBottom: 3,
+                 fontWeight: '600', letterSpacing: 0.3 },
+  fillRow: { fontSize: 11, color: Colors.dark, marginTop: 2,
+             fontVariant: ['tabular-nums'] },
+  fillUntagged: { color: '#c0392b', fontWeight: '600' },
   watchlistTitle: { fontSize: 16, fontWeight: '500', color: Colors.dark, marginBottom: 12 },
   zoneCard: {
     backgroundColor: Colors.white, borderRadius: 12, padding: 14,

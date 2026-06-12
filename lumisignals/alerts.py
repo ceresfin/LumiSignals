@@ -136,14 +136,41 @@ def send_alert(
 
     Returns:
         True if sent successfully.
+
+    Delivery: prefers Telegram (HTTPS:443 — reachable). DigitalOcean blocks
+    outbound SMTP (587 times out, no IPv6 egress) on this droplet, so direct
+    email never lands here; Telegram is the working channel. Falls back to SMTP
+    only when Telegram isn't configured (portability for other hosts).
     """
+    config = ALERT_CONFIG.get(alert_type, ALERT_CONFIG[AlertType.SIGNAL])
+
+    # Shared plain-text body.
+    text = f"{config['subject_prefix']}: {title}"
+    if body:
+        text += f"\n\n{body}"
+    if details:
+        for k, v in details.items():
+            text += f"\n{k}: {v}"
+    text += f"\n\n{_get_et_time()}"
+
+    # Telegram first — the channel that actually works behind blocked SMTP.
+    if os.environ.get("TELEGRAM_BOT_TOKEN") and os.environ.get("TELEGRAM_CHAT_ID"):
+        try:
+            from lumisignals.supabase_client import send_telegram_message
+            send_telegram_message(text)
+            logger.info("Alert (Telegram): %s — %s", config["subject_prefix"], title)
+            return True
+        except Exception as e:
+            logger.warning("Telegram alert failed: %s", e)
+            return False
+
+    # SMTP fallback (no Telegram configured). May be blocked on cloud hosts.
     password = smtp_pass or SMTP_PASS
     if not password:
-        logger.warning("No email password configured — skipping alert")
+        logger.debug("No Telegram and no email password — alert dropped: %s", title)
         return False
 
     recipient = to_email or SMTP_USER
-    config = ALERT_CONFIG.get(alert_type, ALERT_CONFIG[AlertType.SIGNAL])
 
     msg = MIMEMultipart("alternative")
     msg["From"] = f"LumiSignals <{SMTP_USER}>"

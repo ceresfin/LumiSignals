@@ -67,6 +67,24 @@ _last_slow_pass_at: float = 0.0
 _recent_emits: Dict[tuple, float] = {}
 
 
+def _is_disabled() -> bool:
+    """Redis kill switch — when `ibkr:reconciler:disabled` = "1" the
+    reconciler skips every pass. Set/unset with redis-cli without a
+    redeploy. Added 2026-06-02 after the adopt path on reconciler.py:481
+    silently synthesized a 15-contract MES strat_pos from accumulated
+    orphan fills, exposing the bot to $1k of risk on a position no
+    strategy actually opened.
+    """
+    try:
+        import os
+        import redis as _redis
+        _r = _redis.from_url(os.environ.get("REDIS_URL",
+                                            "redis://localhost:6379/0"))
+        return _r.get("ibkr:reconciler:disabled") == b"1"
+    except Exception:
+        return False
+
+
 def _should_emit(key: tuple) -> bool:
     """Return True iff this mismatch wasn't already flagged recently."""
     now = time.time()
@@ -138,6 +156,8 @@ def run_pass(
 
     Idempotent within the cooldown window; safe to call every loop tick.
     """
+    if _is_disabled():
+        return
     global _last_pass_at
     now = time.time()
     if now - _last_pass_at < MIN_INTERVAL_SECONDS:
@@ -349,10 +369,36 @@ def run_pass(
         if diary_qty == 0 and broker_qty != 0:
             last_order_id = (fill_details or {}).get(ticker, {}).get("last_order_id") or ""
             last_price = float((fill_details or {}).get(ticker, {}).get("last_price") or 0)
+            # Real entry time from the fill, so the adopted strat_pos shows
+            # the true held-duration rather than the adoption moment. ms epoch.
+            _fill_ms = (fill_details or {}).get(ticker, {}).get("last_trade_at_ms") or 0
+            adopt_opened_at = ""
+            if _fill_ms:
+                try:
+                    from datetime import datetime as _dt_ad, timezone as _tz_ad
+                    adopt_opened_at = _dt_ad.fromtimestamp(
+                        int(_fill_ms) / 1000.0, _tz_ad.utc).isoformat()
+                except Exception:
+                    adopt_opened_at = ""
             order_ref = ""
+            # asset class of the adopted orphan (for strat_pos). Prefer the
+            # fill's OWN secType — it rides on the same /trades record that
+            # gave us last_order_id, so there's no id-matching to miss. The
+            # order_status_by_id lookup below is a fallback; it misses when
+            # /trades order_id ≠ /orders orderId, which left adopted manual
+            # options tagged asset_type='' (NVDA/SPY, 2026-06).
+            _SEC_TO_ASSET = {"OPT": "options", "FUT": "futures",
+                             "CASH": "forex", "FX": "forex", "STK": "stock"}
+            _fill_sec = str(
+                (fill_details or {}).get(ticker, {}).get("last_sec_type") or ""
+            ).upper()
+            adopt_asset = _SEC_TO_ASSET.get(_fill_sec, "")
             if last_order_id and order_status_by_id:
                 ord_row = order_status_by_id.get(str(last_order_id)) or {}
                 order_ref = str(ord_row.get("order_ref") or "")
+                if not adopt_asset:
+                    _sec = str(ord_row.get("secType") or ord_row.get("sec_type") or "").upper()
+                    adopt_asset = _SEC_TO_ASSET.get(_sec, "")
 
             # Decode strategy from lumi_<slug>_<hash>
             decoded_strategy = None
@@ -361,6 +407,31 @@ def run_pass(
                 inner = order_ref[5:]
                 if "_" in inner:
                     decoded_strategy = inner.rsplit("_", 1)[0] or None
+
+            # Fallback: even when /orders returns order_ref correctly,
+            # /trades' order_id sometimes uses a different ID scheme than
+            # /orders' orderId, so the lookup above misses (observed
+            # 2026-06-01: 55 fills all adopted as "manual" because of
+            # this mismatch). Look up our own Redis mapping keyed by the
+            # perm_id we get back from place_order — bulletproof against
+            # IB endpoint quirks. See record_strategy_for_perm in
+            # ibkr_sync_cpapi.py.
+            if not decoded_strategy and last_order_id:
+                try:
+                    import os
+                    import redis as _redis
+                    _rdb_fb = _redis.from_url(
+                        os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+                    raw = _rdb_fb.get(f"ibkr:strategy_by_perm:{last_order_id}")
+                    if raw:
+                        decoded_strategy = (
+                            raw.decode() if isinstance(raw, bytes) else str(raw)
+                        )
+                        # Synthesize a faux order_ref so downstream logging
+                        # still shows the source clearly.
+                        order_ref = f"lumi_{decoded_strategy}_redislookup"
+                except Exception as e:
+                    logger.debug("reconciler perm→strategy redis fallback failed: %s", e)
 
             if last_order_id:
                 # Adopt — synthetic broker_trade_id from the actual fill id
@@ -415,6 +486,15 @@ def run_pass(
                     o_ticker = (_ord.get("ticker") or "").upper()
                     if o_ticker and o_ticker != ticker.upper():
                         continue
+                    # Bug B fix: an option order shares the underlying's ticker
+                    # (NVDA puts vs NVDA stock), so a ticker-only match would
+                    # adopt a put's LMT as the stock short's take-profit — its
+                    # premium (~1.43) paired with the stock entry (~210) minted
+                    # the fake $20,857 closes. This adopt path is for
+                    # stock/futures/forex; options reconcile on their own path.
+                    o_sec = (_ord.get("secType") or _ord.get("sec_type") or "").upper()
+                    if o_sec == "OPT" or _ord.get("right") or _ord.get("strike"):
+                        continue
                     o_side = (_ord.get("side") or "").upper()
                     if o_side != exit_side:
                         continue
@@ -453,6 +533,21 @@ def run_pass(
                 # cycle at module load time.
                 try:
                     from .ibkr_sync_cpapi import save_strat_pos
+                    # If the order originated from the mobile MTF dashboard
+                    # (or a future panel that calls model_by_perm), pick up
+                    # the model so the audit row shows "MTF·" / "Scalp·" /
+                    # "Intraday·" instead of just the strategy name alone.
+                    adopt_model = ""
+                    try:
+                        if last_order_id:
+                            import redis as _redis_m
+                            rdb_m = _redis_m.from_url(os.environ.get("REDIS_URL",
+                                "redis://localhost:6379/0"))
+                            raw_m = rdb_m.get(f"ibkr:model_by_perm:{last_order_id}")
+                            if raw_m:
+                                adopt_model = (raw_m.decode() if isinstance(raw_m, bytes) else str(raw_m))
+                    except Exception as _me:
+                        logger.debug("model_by_perm lookup failed: %s", _me)
                     save_strat_pos(
                         ticker=ticker,
                         strategy=strat,
@@ -464,7 +559,10 @@ def run_pass(
                         stop_price=discovered_sl_price,
                         target_order_id=discovered_tp_id,
                         target_price=discovered_tp_price,
+                        metadata={"model": adopt_model} if adopt_model else None,
+                        asset_type=adopt_asset,
                         caller="reconciler_adopt",
+                        opened_at=adopt_opened_at,
                     )
                 except Exception as _e:
                     logger.warning(
@@ -622,6 +720,11 @@ def net_positions_from_fills(client) -> Dict[str, Dict]:
             "last_side": t.get("side", ""),
             "last_price": last_price,
             "last_order_id": str(t.get("order_id") or ""),
+            # secType straight off the fill (OPT/FUT/STK/CASH). Lets the
+            # adoption path tag asset_type without depending on the
+            # /trades-order_id ↔ /orders-orderId match (which often diverges,
+            # leaving adopted manual options tagged asset_type='').
+            "last_sec_type": str(t.get("secType") or t.get("sec_type") or "").upper(),
         }
     return by_ticker
 
@@ -645,6 +748,8 @@ def slow_tier_pass(broker: str, position_summary: Iterable[dict]) -> None:
 
     Self-throttles to SLOW_TIER_INTERVAL_SECONDS. Called by run_pass().
     """
+    if _is_disabled():
+        return
     global _last_slow_pass_at
     now = time.time()
     if now - _last_slow_pass_at < SLOW_TIER_INTERVAL_SECONDS:

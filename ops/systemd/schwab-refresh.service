@@ -1,0 +1,10 @@
+[Unit]
+Description=Schwab access-token refresh (rolls every 20 min so the 30-min token never expires mid-trade)
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/bin/schwab-refresh.sh
+StandardOutput=append:/var/log/schwab-refresh.log
+StandardError=append:/var/log/schwab-refresh.log

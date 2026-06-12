@@ -361,11 +361,16 @@ button:hover { opacity: 0.9; }
     <div class="card">
       <h2>7. Futures Settings</h2>
       <p style="font-size:0.8rem;color:var(--text-light);margin-bottom:16px;">Risk management for MES/ES futures trades (2n20 strategy, internally generated signals).</p>
-      <div class="field-row" style="grid-template-columns: 1fr 1fr 2fr;">
+      <div class="field-row" style="grid-template-columns: 1fr 1fr 1fr 2fr;">
         <div>
-          <label>Contracts per Entry</label>
+          <label>2n20 Contracts per Entry</label>
           <input type="number" name="futures_contracts" value="{{ user.futures_contracts if user.futures_contracts is not none else 1 }}" min="1" max="20" step="1">
-          <small>Buy N, exit N. Positions never stack.</small>
+          <small>MES 2n20 cap. Buy N, exit N.</small>
+        </div>
+        <div>
+          <label>ORB Contracts per Entry</label>
+          <input type="number" name="orb_futures_contracts" value="{{ user.orb_futures_contracts if user.orb_futures_contracts is not none else 1 }}" min="1" max="20" step="1">
+          <small>MES ORB futures cap. Independent of 2n20.</small>
         </div>
         <div>
           <label>Stop Loss ($ per contract)</label>

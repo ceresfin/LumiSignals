@@ -93,12 +93,22 @@ function trendLabel(d) {
   return '<span class="' + trendClass(d) + '">' + d + '</span>';
 }
 
-function diffClass(lt, tv, pct) {
-  if (lt === null || lt === undefined || tv === null || tv === undefined) return '';
-  var diff = Math.abs(lt - tv) / Math.max(lt, 0.0001) * 100;
-  if (diff <= pct * 0.5) return 'diff-ok';
-  if (diff <= pct) return 'diff-warn';
-  return 'diff-bad';
+// Combined % + $ divergence flag (vs the TV reference). Worse of the two
+// wins: a small-% but real-$ gap on a mid-priced stock (SPY hourly
+// $1.40 / 0.18%) flags amber, which pure-percentage missed. Dollar floor
+// scoped to $10–$2,000 stock prices; forex/indices use percentage only.
+function diffClass(v, ref, pct) {
+  if (v === null || v === undefined || ref === null || ref === undefined) return '';
+  var aref = Math.abs(ref);
+  var pctDiff = Math.abs(v - ref) / Math.max(aref, 0.0001) * 100;
+  var absDiff = Math.abs(v - ref);
+  var pctClass = pctDiff <= 0.15 ? 0 : pctDiff <= 0.50 ? 1 : 2;
+  var absClass = 0;
+  if (aref >= 10 && aref <= 2000) {
+    absClass = absDiff <= 1.00 ? 0 : absDiff <= 3.50 ? 1 : 2;
+  }
+  var worst = Math.max(pctClass, absClass);
+  return worst === 0 ? 'diff-ok' : worst === 1 ? 'diff-warn' : 'diff-bad';
 }
 
 function diffPct(lt, tv) {
@@ -132,6 +142,7 @@ function renderTicker(item) {
   html += '<th><span class="source-tag" style="background:#fff3e0;color:#e65100">LT</span> S1</th>';
   html += '<th><span class="source-tag tag-tv">TV</span> S2</th>';
   html += '<th><span class="source-tag tag-lt">SRV</span> S2</th>';
+  html += '<th><span class="source-tag" style="background:#fff3e0;color:#e65100">LT</span> S2</th>';
   html += '</tr>';
 
   var srvLevels = item.server || {};
@@ -149,6 +160,7 @@ function renderTicker(item) {
     html += '<td class="' + diffClass(tv.supply, lt.supply, 0.5) + '">' + fmt(lt.supply) + '</td>';
     html += '<td>' + fmt(tv.supply2) + '</td>';
     html += '<td class="' + diffClass(tv.supply2, srv.supply2, 0.5) + '">' + fmt(srv.supply2) + '</td>';
+    html += '<td class="' + diffClass(tv.supply2, lt.supply2, 0.5) + '">' + fmt(lt.supply2) + '</td>';
     html += '</tr>';
   });
   html += '</table>';
@@ -162,6 +174,7 @@ function renderTicker(item) {
   html += '<th><span class="source-tag" style="background:#fff3e0;color:#e65100">LT</span> D1</th>';
   html += '<th><span class="source-tag tag-tv">TV</span> D2</th>';
   html += '<th><span class="source-tag tag-lt">SRV</span> D2</th>';
+  html += '<th><span class="source-tag" style="background:#fff3e0;color:#e65100">LT</span> D2</th>';
   html += '</tr>';
 
   TF_ORDER.forEach(function(tf) {
@@ -175,6 +188,7 @@ function renderTicker(item) {
     html += '<td class="' + diffClass(tv.demand, lt.demand, 0.5) + '">' + fmt(lt.demand) + '</td>';
     html += '<td>' + fmt(tv.demand2) + '</td>';
     html += '<td class="' + diffClass(tv.demand2, srv.demand2, 0.5) + '">' + fmt(srv.demand2) + '</td>';
+    html += '<td class="' + diffClass(tv.demand2, lt.demand2, 0.5) + '">' + fmt(lt.demand2) + '</td>';
     html += '</tr>';
   });
   html += '</table>';

@@ -159,7 +159,13 @@ def _warm_quotes(client, conids: list):
 
 
 def _place_leg(client, conid: int, side: str, qty: int, price: float):
-    """Single-leg LMT order. Walks confirmation prompts. Returns order_id or None."""
+    """Single-leg LMT order. Walks confirmation prompts. Returns order_id or None.
+
+    Tags the resulting IB perm_id with strategy=orb_butterfly in Redis so
+    the reconciler can label the fill (IB's order_ref echo is unreliable;
+    we use our own Redis mapping as the source of truth — see
+    record_strategy_for_perm in ibkr_sync_cpapi.py).
+    """
     payload = {"orders": [{
         "conid": conid, "orderType": "LMT", "side": side,
         "quantity": qty, "price": round(price, 2), "tif": "DAY",
@@ -175,6 +181,11 @@ def _place_leg(client, conid: int, side: str, qty: int, price: float):
                                      json_data={"confirmed": True})
         except Exception:
             return None
+    try:
+        from .ibkr_sync_cpapi import record_strategy_for_perm
+        record_strategy_for_perm(result, "orb_butterfly")
+    except Exception as e:
+        logger.debug("record_strategy_for_perm (orb leg) failed: %s", e)
     if isinstance(result, list) and result and result[0].get("order_id"):
         return str(result[0]["order_id"])
     if isinstance(result, dict) and result.get("order_id"):
@@ -193,6 +204,11 @@ def _close_leg_at_market(client, conid: int, side: str, qty: int):
         while isinstance(result, list) and result and "id" in result[0] and "order_id" not in result[0]:
             result = client._request("POST", "/iserver/reply/" + result[0]["id"],
                                      json_data={"confirmed": True})
+        try:
+            from .ibkr_sync_cpapi import record_strategy_for_perm
+            record_strategy_for_perm(result, "orb_butterfly")
+        except Exception as e:
+            logger.debug("record_strategy_for_perm (orb close) failed: %s", e)
     except Exception as e:
         logger.warning("close_leg_at_market %s failed: %s", conid, e)
 

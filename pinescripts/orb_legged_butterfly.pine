@@ -1,6 +1,9 @@
 // SPX 0DTE Leg-In Butterfly — Opening Range Breakout
 // Apply to: SPX (any timeframe; 1m or 5m recommended)
-// Signal:   ES futures breakout of its first 15-min bar (9:30-9:45 ET) +/- offset
+// Signal:   ES futures wick (high/low) reaches first 15-min bar (9:30-9:45 ET) +/- offset.
+//           Switched 2026-06-01 from close-based to high/low touch — the IB bracket SL
+//           cuts wick-fakeouts so we'd rather fire on touch than miss real breakouts
+//           where the bar wicked through but closed back inside.
 // Strikes:  Computed from SPX's own first 15-min bar high/low
 //             Long-side  (calls): K1 = SPX_OR_high + 10,  K2 = +15,  K3 = +20
 //             Short-side (puts):  K1 = SPX_OR_low  - 10,  K2 = -15,  K3 = -20
@@ -115,12 +118,20 @@ if isNewSession
     stoppedOut := false
     firstDir   := ""
 
-// ─── SIGNALS (ES close vs ES breakout levels) ───
-buySignal  = orSet and isEntryWindow and not triggered and not inLong and not inShort and esClose > esBuyEntry
-sellSignal = orSet and isEntryWindow and not triggered and not inLong and not inShort and esClose < esSellEntry
+// ─── SIGNALS (ES bar HIGH/LOW vs ES breakout levels) ───
+// Switched from close-based to wick-based on 2026-06-01: a strict close >
+// rule was filtering out real breakouts where the bar's wick reached the
+// trigger but closed below (e.g., today's 9:47 ET ES bar: H=7595.50 =
+// buy threshold exactly, but C=7594.25 → close-based said no). With the
+// IB bracket SL already in place at entry (Buy SL / Sell SL above), wick
+// fakeouts get cut quickly — so we'd rather fire on touch and let the
+// stop manage the rest. Uses >= / <= so an exact-touch at the threshold
+// counts as a trigger.
+buySignal  = orSet and isEntryWindow and not triggered and not inLong and not inShort and esHigh >= esBuyEntry
+sellSignal = orSet and isEntryWindow and not triggered and not inLong and not inShort and esLow  <= esSellEntry
 
-reverseBuySignal  = orSet and isReversalWindow and stoppedOut and not reversed and not inLong and not inShort and firstDir == "SELL" and esClose > esBuyEntry
-reverseSellSignal = orSet and isReversalWindow and stoppedOut and not reversed and not inLong and not inShort and firstDir == "BUY"  and esClose < esSellEntry
+reverseBuySignal  = orSet and isReversalWindow and stoppedOut and not reversed and not inLong and not inShort and firstDir == "SELL" and esHigh >= esBuyEntry
+reverseSellSignal = orSet and isReversalWindow and stoppedOut and not reversed and not inLong and not inShort and firstDir == "BUY"  and esLow  <= esSellEntry
 
 if buySignal
     inLong    := true

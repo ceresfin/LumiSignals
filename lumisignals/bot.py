@@ -272,8 +272,8 @@ class LumiSignalsBot:
             stock_tickers = []
             massive_cfg = self.config.get("massive", {})
             if massive_cfg.get("api_key"):
-                from .massive_client import MassiveClient, DEFAULT_TICKERS
-                massive_client = MassiveClient(api_key=massive_cfg["api_key"])
+                from .massive_client import get_shared_client, DEFAULT_TICKERS
+                massive_client = get_shared_client(massive_cfg["api_key"])
                 stock_tickers = list(DEFAULT_TICKERS)
                 extra = massive_cfg.get("extra_tickers", [])
                 if extra:

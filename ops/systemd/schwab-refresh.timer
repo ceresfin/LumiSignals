@@ -1,0 +1,13 @@
+[Unit]
+Description=Refresh Schwab access token every 20 min
+After=network-online.target
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=20min
+Unit=schwab-refresh.service
+# Persistent so we catch up after a reboot in the middle of the day
+Persistent=true
+
+[Install]
+WantedBy=timers.target

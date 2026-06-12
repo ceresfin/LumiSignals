@@ -5,6 +5,7 @@ import { useRouter } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/auth';
 import { Colors } from '@/constants/theme';
+import { useResponsive } from '@/hooks/use-responsive';
 import { strategyBadgeText } from '@/lib/strategyLabel';
 import IbStatusBanner from '@/components/ib-status-banner';
 import ReconcileBanner from '@/components/reconcile-banner';
@@ -149,6 +150,7 @@ function TradeRow({ trade, onChartPress }: { trade: Trade; onChartPress: (instru
 export default function Trades() {
   const router = useRouter();
   const { user } = useAuth();
+  const { contentStyle } = useResponsive();
   const [allTrades, setAllTrades] = useState<Trade[]>([]);
   const [activeTab, setActiveTab] = useState('forex');
   const [refreshing, setRefreshing] = useState(false);
@@ -279,7 +281,7 @@ export default function Trades() {
           }
         })} />}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-        contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 20 }}
+        contentContainerStyle={[{ paddingHorizontal: 16, paddingBottom: 20 }, contentStyle]}
         ListEmptyComponent={
           <View style={styles.empty}>
             <Text style={styles.emptyText}>No trades yet</Text>

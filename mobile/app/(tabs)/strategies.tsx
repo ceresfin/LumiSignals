@@ -6,10 +6,34 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Colors } from '@/constants/theme';
+import { useResponsive } from '@/hooks/use-responsive';
 
 // Each pair card shows: status, fingerprint metrics, since-when, reason
 // when paused.  Tap → drill-in modal with the full flip history.
 const API_BASE = 'https://bot.lumitrade.ai';
+
+// Options-capable asset classes get the swing panel (it builds debit
+// spreads); FX/crypto have no options here, so they fall back to the chart.
+const OPTIONS_CLASSES = ['stock', 'index', 'etf'];
+function isOptionsCapable(ac?: string): boolean {
+  return OPTIONS_CLASSES.includes((ac || '').toLowerCase());
+}
+
+// The MTF scanner level TF → swing-panel mode. Most rows are daily (D).
+function tfToMode(tf?: string): 'scalp' | 'intraday' | 'swing' {
+  const t = (tf || '').toUpperCase();
+  if (t === 'H4' || t === '4H' || t === 'H1' || t === '1H') return 'intraday';
+  if (/\d+M$/.test(t)) return 'scalp';      // 5M / 15M
+  return 'swing';                            // D / W / M → swing
+}
+
+// FX scanner tickers are 6 letters (EURCAD); the chart expects EUR_CAD.
+function chartSymbol(r: MtfResult): string {
+  if ((r.asset_class || '').toLowerCase() === 'fx' && /^[A-Za-z]{6}$/.test(r.ticker)) {
+    return `${r.ticker.slice(0, 3)}_${r.ticker.slice(3)}`.toUpperCase();
+  }
+  return r.ticker;
+}
 
 type RegimeHistoryEntry = {
   ts: string;
@@ -51,6 +75,31 @@ type StrategyView = {
   pairs: Record<string, RegimePairState>;
   // 'fx_4h' → regime card style; 'h1_zone' → H1 Zone Scalp card style
   chart_strategy?: string;
+};
+
+// Multi-timeframe scanner row (from /api/mtf-scan). Price approaching an
+// untouched higher-TF zone with the trend stack aligned.
+type MtfResult = {
+  ticker: string;
+  name?: string;
+  asset_class?: string;
+  price?: number;
+  side?: string;          // LONG | SHORT
+  tf?: string;            // D | W | …
+  level_name?: string;    // S1 | D1 | …
+  level?: number;
+  dist_pct?: number;
+  score?: number;         // 0..3
+  suggested_spread?: string;
+  vol_lean?: string;      // DEBIT | CREDIT
+};
+
+type MtfScan = {
+  results: MtfResult[];
+  warming?: boolean;
+  stale?: boolean;
+  scanned_at?: string | null;
+  total?: number;
 };
 
 function formatSince(iso: string): string {
@@ -189,6 +238,55 @@ function H1ZonePairCard({ state, onChart }: {
   );
 }
 
+// Multi-timeframe setup card — same shell as the regime pair cards. Pill is
+// the trade direction (LONG green / SHORT red). Card tap opens the setup
+// (swing panel for options-capable names, chart otherwise); the chart chip
+// always opens the chart with the HTF-zone overlay.
+function MtfSetupCard({ r, onPress, onChart }: {
+  r: MtfResult; onPress: () => void; onChart: () => void;
+}) {
+  const long = (r.side || '').toUpperCase() === 'LONG';
+  const sideColor = long ? Colors.green : Colors.red;
+  const detail = [r.asset_class, r.suggested_spread].filter(Boolean).join(' · ');
+  const levelStr = r.level != null
+    ? `${r.tf || ''} ${r.level_name || ''} @ ${r.level}`.trim() : '';
+  return (
+    <TouchableOpacity style={styles.pairCard} onPress={onPress}>
+      <View style={styles.pairCardHeader}>
+        <Text style={styles.pairName}>{r.ticker}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <View style={[styles.statusPill, { backgroundColor: sideColor + '22' }]}>
+            <Text style={[styles.statusText, { color: sideColor }]}>
+              {long ? '▲ LONG' : '▼ SHORT'}
+            </Text>
+          </View>
+          <TouchableOpacity onPress={(e) => { e.stopPropagation(); onChart(); }} style={styles.chartBtn}>
+            <Text style={styles.chartBtnText}>chart</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+      <View style={styles.metricsRow}>
+        <Text style={styles.metric}>
+          dist <Text style={styles.metricValue}>{(r.dist_pct ?? 0).toFixed(2)}%</Text>
+        </Text>
+        <Text style={styles.metric}>
+          score <Text style={styles.metricValue}>{r.score ?? 0}/3</Text>
+        </Text>
+        {r.vol_lean ? (
+          <Text style={styles.metric}>
+            vol <Text style={styles.metricValue}>{r.vol_lean}</Text>
+          </Text>
+        ) : null}
+      </View>
+      {(detail || levelStr) ? (
+        <Text style={styles.sinceLine}>
+          {[detail, levelStr].filter(Boolean).join('  ·  ')}
+        </Text>
+      ) : null}
+    </TouchableOpacity>
+  );
+}
+
 function HistoryModal({
   pair, visible, onClose,
 }: {
@@ -242,9 +340,12 @@ function HistoryModal({
 
 export default function Strategies() {
   const router = useRouter();
+  const { contentStyle } = useResponsive();
   const [data, setData] = useState<Record<string, StrategyView> | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [drilledPair, setDrilledPair] = useState<RegimePairState | null>(null);
+  const [rulesOpen, setRulesOpen] = useState(false);
+  const [mtfScan, setMtfScan] = useState<MtfScan | null>(null);
 
   const openChart = useCallback((pair: string, chartStrategy: string) => {
     // chartStrategy gets passed through to mobile_chart.html so the
@@ -264,6 +365,12 @@ export default function Strategies() {
       setData(json.strategies || {});
     } catch (e) {
       console.warn('regime fetch failed', e);
+    }
+    try {
+      const r = await fetch(`${API_BASE}/api/mtf-scan?limit=15`);
+      if (r.ok) setMtfScan(await r.json());
+    } catch (e) {
+      console.warn('mtf scan fetch failed', e);
     }
   }, []);
 
@@ -287,7 +394,7 @@ export default function Strategies() {
   return (
     <SafeAreaView style={styles.root}>
       <ScrollView
-        contentContainerStyle={styles.scroll}
+        contentContainerStyle={[styles.scroll, contentStyle]}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
         <View style={styles.titleRow}>
@@ -299,11 +406,118 @@ export default function Strategies() {
           </View>
           <TouchableOpacity
             style={styles.compareBtn}
+            onPress={() => router.push('/mes-parity')}
+          >
+            <Text style={styles.compareBtnText}>2n20 ⚖</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.compareBtn}
+            onPress={() => router.push('/orb-parity')}
+          >
+            <Text style={styles.compareBtnText}>ORB ⚖</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.compareBtn}
             onPress={() => router.push('/compare')}
           >
             <Text style={styles.compareBtnText}>Compare</Text>
           </TouchableOpacity>
         </View>
+
+        {/* Multi-Timeframe (MTF) setup rules — the logic behind the
+            scanner + swing panel. Collapsible so it stays out of the way. */}
+        <View style={styles.rulesCard}>
+          <TouchableOpacity
+            style={styles.rulesHeader}
+            onPress={() => setRulesOpen(o => !o)}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.rulesTitle}>📐 How MTF setups work</Text>
+            <Text style={styles.rulesChevron}>{rulesOpen ? '▾' : '▸'}</Text>
+          </TouchableOpacity>
+          {rulesOpen && (
+            <View style={styles.rulesBody}>
+              <Text style={styles.ruleH}>1 · Three nested timeframes</Text>
+              <Text style={styles.ruleP}>
+                Each mode reads a trigger TF plus the two above it:{'\n'}
+                • Scalp — 5m / 15m / 1h{'\n'}
+                • Intraday — 15m / 1h / 4h{'\n'}
+                • Swing — 1d / 1w / 1mo
+              </Text>
+
+              <Text style={styles.ruleH}>2 · Bias = the top two TFs</Text>
+              <Text style={styles.ruleP}>
+                Direction comes from ADX/DMI(14) on the higher two TFs:{'\n'}
+                • Both agree → trade that way, momentum Strong{'\n'}
+                • One sideways → the other carries, Weak{'\n'}
+                • Disagree → top TF wins, Weak{'\n'}
+                • Both sideways → no trade
+              </Text>
+
+              <Text style={styles.ruleH}>3 · Trigger = bottom TF pulls back</Text>
+              <Text style={styles.ruleP}>
+                The lowest TF must counter-move against the bias (buy a dip /
+                sell a bounce). If it isn’t pulling back yet, the setup shows as
+                prospective and Open Trade stays disabled.
+              </Text>
+
+              <Text style={styles.ruleH}>4 · Entry = nearest untouched zone</Text>
+              <Text style={styles.ruleP}>
+                On the top TF: nearest demand below (longs) or supply above
+                (shorts). Price must be within ~1 ATR of the trigger TF (5m /
+                15m / daily) to be tradeable — otherwise it’s a watch. The stop
+                (2× ATR) and this proximity are tunable in Settings.
+              </Text>
+
+              <Text style={styles.ruleH}>5 · Vehicle</Text>
+              <Text style={styles.ruleP}>
+                Up → call debit spread, Down → put debit spread. Spread width
+                self-scales with the short-leg delta (scalp 0.20 / intraday 0.15
+                / swing 0.12). Shares option: stop = 2× ATR of the trigger TF,
+                target = next opposite zone or the R:R floor (1.5 / 2.0 / 3.0).
+              </Text>
+            </View>
+          )}
+        </View>
+
+        {/* Multi-Timeframe scanner — styled as a strategy section to match
+            the others. Rows come from /api/mtf-scan (background daemon). */}
+        {mtfScan && (
+          <View style={styles.strategySection}>
+            <View style={styles.strategyHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.strategyName}>Multi-Timeframe</Text>
+                <Text style={styles.strategySubtitle}>MTF · OPTIONS SCANNER</Text>
+              </View>
+              <Text style={styles.strategyCount}>
+                {mtfScan.warming ? 'WARMING' : `${(mtfScan.results || []).length} NEAR`}
+              </Text>
+            </View>
+            <Text style={styles.strategyDescription}>
+              Scans ~100 liquid names for price approaching an untouched
+              higher-timeframe zone with the trend stack aligned. Sorted by
+              distance to the trigger — the top rows are the most actionable.
+            </Text>
+            {mtfScan.warming ? (
+              <Text style={styles.emptyText}>Scanner warming — first pass runs shortly.</Text>
+            ) : (mtfScan.results || []).length === 0 ? (
+              <Text style={styles.emptyText}>No setups near a trigger right now.</Text>
+            ) : (
+              (mtfScan.results || []).map((r, i) => (
+                <MtfSetupCard
+                  key={`${r.ticker}-${i}`}
+                  r={r}
+                  onPress={() =>
+                    isOptionsCapable(r.asset_class)
+                      ? router.push({ pathname: '/swing',
+                          params: { ticker: r.ticker, mode: tfToMode(r.tf) } })
+                      : openChart(chartSymbol(r), 'htf_levels')}
+                  onChart={() => openChart(chartSymbol(r), 'htf_levels')}
+                />
+              ))
+            )}
+          </View>
+        )}
 
         {Object.entries(data).map(([sid, s]) => {
           const sortedPairs = s.universe
@@ -389,6 +603,22 @@ const styles = StyleSheet.create({
   titleRow: { flexDirection: 'row', alignItems: 'flex-start' },
   compareBtn: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8, backgroundColor: '#1d4ed8', marginTop: 6 },
   compareBtnText: { color: '#fff', fontSize: 12, fontWeight: '700', letterSpacing: 0.4 },
+  rulesCard: {
+    backgroundColor: Colors.white, borderRadius: 10, borderWidth: 1,
+    borderColor: '#eee', marginBottom: 20, overflow: 'hidden',
+  },
+  rulesHeader: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    padding: 14,
+  },
+  rulesTitle: { fontSize: 15, fontWeight: '700', color: Colors.dark },
+  rulesChevron: { fontSize: 14, color: Colors.textLight },
+  rulesBody: { paddingHorizontal: 14, paddingBottom: 14 },
+  ruleH: {
+    fontSize: 12, fontWeight: '700', color: Colors.olive,
+    letterSpacing: 0.3, marginTop: 12, marginBottom: 4,
+  },
+  ruleP: { fontSize: 13, lineHeight: 20, color: Colors.textMedium },
   strategySection: { marginBottom: 24 },
   strategyHeader: {
     flexDirection: 'row',

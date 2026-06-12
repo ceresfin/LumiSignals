@@ -19,6 +19,112 @@ login_manager = LoginManager()
 logger = logging.getLogger(__name__)
 
 
+def _get_oanda_md_client():
+    """OANDA client for compare-page forex market data, built from env
+    (OANDA_API_KEY / OANDA_ACCOUNT_ID / OANDA_ENVIRONMENT). Returns None
+    if creds are absent. Forex levels come from OANDA — the same feed the
+    bot trades on and the TradingView OANDA charts use — so they match;
+    Polygon/Massive does not carry an OANDA-comparable forex feed."""
+    ak = os.environ.get("OANDA_API_KEY", "")
+    acc = os.environ.get("OANDA_ACCOUNT_ID", "")
+    if not ak or not acc:
+        return None
+    try:
+        from lumisignals.oanda_client import OandaClient
+        return OandaClient(account_id=acc, api_key=ak,
+                           environment=os.environ.get("OANDA_ENVIRONMENT", "practice"))
+    except Exception as e:
+        logger.warning("OANDA md client init failed: %s", e)
+        return None
+
+
+# TF interval key → (display label, OANDA granularity). OANDA tops out at
+# monthly (no quarterly), and its daily candles roll at the 5pm-ET NY
+# close — exactly the FX day TradingView's OANDA charts use.
+_OANDA_TF_SPECS = [
+    ("1mo", "M", "M"), ("1w", "W", "W"), ("1d", "D", "D"),
+    ("4h", "4H", "H4"), ("1h", "1H", "H1"),
+    ("30m", "30M", "M30"), ("15m", "15M", "M15"),
+]
+
+
+def _oanda_forex_levels(oc, ticker):
+    """SRV supply/demand + trend for a forex ticker, computed from OANDA
+    bars via the same find_htf_levels used for Polygon stocks/indices.
+    Returns (server_dict, trends_dict, current_price)."""
+    from lumisignals.untouched_levels import (
+        find_htf_levels, HTF_TF_LOOKBACK, calculate_adx_direction)
+    from lumisignals.candle_classifier import CandleData
+    instrument = f"{ticker[:3]}_{ticker[3:]}"  # EURUSD -> EUR_USD
+    server, trends = {}, {}
+    current_price = None
+    for tf_key, tf_label, gran in _OANDA_TF_SPECS:
+        try:
+            lb = HTF_TF_LOOKBACK.get(tf_key, 50)
+            raw = oc.get_candles(instrument, gran, lb + 5)  # oldest-first
+            cds = [CandleData(
+                       open=float(c["mid"]["o"]), high=float(c["mid"]["h"]),
+                       low=float(c["mid"]["l"]), close=float(c["mid"]["c"]),
+                       timestamp=c["time"])
+                   for c in raw if c.get("mid")]
+            if len(cds) < 3:
+                continue
+            price = cds[-1].close
+            if current_price is None or tf_key in ("15m", "30m", "1h"):
+                current_price = price
+            highs = [c.high for c in reversed(cds)]
+            lows = [c.low for c in reversed(cds)]
+            s1, s2, d1, d2 = find_htf_levels(highs, lows, price, lookback=lb)
+            recent_highs = [c.high for c in cds[-12:]]
+            recent_lows = [c.low for c in cds[-12:]]
+            server[tf_label] = {
+                "supply": s1, "supply2": s2, "demand": d1, "demand2": d2,
+                "range_high": max(recent_highs) if recent_highs else None,
+                "range_low": min(recent_lows) if recent_lows else None,
+            }
+            direction, _adx = calculate_adx_direction(cds, period=14)
+            trends[tf_label] = direction
+        except Exception as e:
+            logger.debug("OANDA forex level err %s %s: %s", ticker, tf_key, e)
+    return server, trends, current_price
+
+
+def _polygon_levels(massive, poly_ticker):
+    """SRV supply/demand + trend from Polygon/Massive bars via the same
+    find_htf_levels. Works for stocks/indices (bare/I: ticker) and forex
+    (C: ticker, now 5pm-ET aggregated). Returns (server, trends, price)."""
+    from lumisignals.untouched_levels import (
+        find_htf_levels, HTF_TF_LOOKBACK, calculate_adx_direction)
+    interval_to_tf = {"3mo": "Q", "1mo": "M", "1w": "W", "1d": "D",
+                      "4h": "4H", "1h": "1H", "30m": "30M", "15m": "15M"}
+    server, trends = {}, {}
+    current_price = None
+    for tf, tf_label in interval_to_tf.items():
+        try:
+            lb = HTF_TF_LOOKBACK.get(tf, 50)
+            candles = massive.get_candles(poly_ticker, tf, lb + 5)
+            if not candles or len(candles) < 3:
+                continue
+            price = candles[-1].close
+            if current_price is None or tf in ("15m", "30m", "1h"):
+                current_price = price
+            highs = [c.high for c in reversed(candles)]
+            lows = [c.low for c in reversed(candles)]
+            s1, s2, d1, d2 = find_htf_levels(highs, lows, price, lookback=lb)
+            recent_highs = [c.high for c in candles[-12:]]
+            recent_lows = [c.low for c in candles[-12:]]
+            server[tf_label] = {
+                "supply": s1, "supply2": s2, "demand": d1, "demand2": d2,
+                "range_high": max(recent_highs) if recent_highs else None,
+                "range_low": min(recent_lows) if recent_lows else None,
+            }
+            direction, _adx = calculate_adx_direction(candles, period=14)
+            trends[tf_label] = direction
+        except Exception as e:
+            logger.debug("Polygon level err %s %s: %s", poly_ticker, tf, e)
+    return server, trends, current_price
+
+
 def create_app():
     app = Flask(__name__, template_folder="templates", static_folder="static")
 
@@ -126,9 +232,13 @@ def create_app():
         debit_sl_pct = db.Column(db.Float, default=50.0)      # Stop loss at X% loss
         options_time_stop_dte = db.Column(db.Integer, default=7)  # Close at X DTE
 
-        # Futures settings
+        # Futures settings — per-strategy contract caps. Each strategy
+        # has its own knob so loosening (say) ORB sizing doesn't
+        # accidentally affect 2n20, and vice versa. Hard cap is applied
+        # in the webhook handler before placing the order.
         futures_stop_loss = db.Column(db.Float, default=25.0)  # Stop loss in dollars per contract
-        futures_contracts = db.Column(db.Integer, default=1)   # N contracts per entry; exits flatten actual position
+        futures_contracts = db.Column(db.Integer, default=1)   # 2n20 MES contracts per entry
+        orb_futures_contracts = db.Column(db.Integer, default=1)  # ORB MES contracts per entry
 
     @login_manager.user_loader
     def load_user(user_id):
@@ -252,6 +362,7 @@ def create_app():
             # Futures settings
             current_user.futures_stop_loss = float(request.form.get("futures_stop_loss", 25) or 25)
             current_user.futures_contracts = max(1, int(request.form.get("futures_contracts", 1) or 1))
+            current_user.orb_futures_contracts = max(1, int(request.form.get("orb_futures_contracts", 1) or 1))
 
             db.session.commit()
             flash("Settings saved", "success")
@@ -394,8 +505,8 @@ def create_app():
         try:
             massive_key = os.environ.get("MASSIVE_API_KEY", "")
             if massive_key:
-                from lumisignals.massive_client import MassiveClient
-                _massive = MassiveClient(massive_key)
+                from lumisignals.massive_client import get_shared_client
+                _massive = get_shared_client(massive_key)
         except Exception:
             _massive = None
 
@@ -533,10 +644,10 @@ def create_app():
         massive_key = os.environ.get("MASSIVE_API_KEY", "")
         if massive_key:
             try:
-                from lumisignals.massive_client import MassiveClient
+                from lumisignals.massive_client import get_shared_client
                 from lumisignals.levels_strategy import get_builtin_snr_levels
                 from lumisignals.untouched_levels import calculate_adx_direction
-                massive = MassiveClient(massive_key)
+                massive = get_shared_client(massive_key)
                 # Always-on watchlist for the mobile UI. Lives alongside the
                 # bot's market-hours-gated scan so high-interest names are
                 # visible 24/7 (pre/post-market the bot writes 0 stock zones).
@@ -794,11 +905,15 @@ def create_app():
         if not massive_key:
             return jsonify({"candles": [], "error": "No Polygon API key"}), 400
 
-        from lumisignals.massive_client import MassiveClient
-        massive = MassiveClient(massive_key)
+        from lumisignals.massive_client import get_shared_client
+        massive = get_shared_client(massive_key)
 
         # Map display names to Polygon tickers
         TICKER_MAP = {"GOLD": "C:XAUUSD", "OIL": "C:WTICOUSD"}
+        # Cash indexes need Polygon's "I:" prefix. Plain SPX/NDX/RUT
+        # return 0 bars without it (used by the dashboard Swing Trade
+        # Panel for index option setups).
+        INDEX_SYMBOLS = {"SPX", "NDX", "RUT", "VIX", "DJI"}
         poly_ticker = TICKER_MAP.get(ticker_upper, ticker_upper)
 
         # Detect ticker type and format for Polygon.
@@ -813,6 +928,8 @@ def create_app():
         )
         if is_forex:
             poly_ticker = f"C:{ticker_upper.replace('_', '')}"
+        elif ticker_upper in INDEX_SYMBOLS:
+            poly_ticker = f"I:{ticker_upper}"
 
         try:
             candle_data = massive.get_candles(poly_ticker, timespan, count)
@@ -862,9 +979,9 @@ def create_app():
         massive_key = os.environ.get("MASSIVE_API_KEY", "")
         if massive_key:
             try:
-                from lumisignals.massive_client import MassiveClient
+                from lumisignals.massive_client import get_shared_client
                 from lumisignals.levels_strategy import get_builtin_snr_levels
-                massive = MassiveClient(massive_key)
+                massive = get_shared_client(massive_key)
                 # Detect forex: explicit underscore, C:-prefix, or a
                 # 6-letter all-alpha symbol like AUDUSD/EURUSD/GBPJPY.
                 # The chart strips the underscore before calling this
@@ -1144,6 +1261,758 @@ def create_app():
 
         return jsonify(response)
 
+    # ─── DASHBOARD SWING-TRADE PANEL ENDPOINTS ─────────────────────────
+    # Three endpoints powering the bottom-of-Dashboard trade-setup panel:
+    #   GET  /api/swing-setup           → compute setup (analysis)
+    #   POST /api/option-spread/order   → place IB combo (action)
+    #   POST /api/option-spread/close   → close IB combo (action)
+    # All login_required (Flask session). Both order endpoints gated on
+    # Redis key `equity:orders_enabled=1` (off by default until verified).
+
+    @app.route("/api/mtf-scan")
+    def api_mtf_scan():
+        """Serve the latest fast MTF scan (produced by the scanner daemon).
+
+        Public read (market data only, no user state). Reads the cached
+        shortlist the background daemon writes to Redis `mtf:scan:latest` and
+        applies optional filters — the scan itself is NOT computed here, so the
+        response is an instant cache read regardless of universe size.
+
+        Query params (all optional):
+          asset_class — stock | index | fx | crypto (repeatable, comma-sep)
+          side        — LONG | SHORT
+          min_score   — 0..3
+          sort        — dist | score | vol_rank   (default dist, asc)
+          limit       — cap rows returned
+        Empty cache (daemon not warmed yet) → {results: [], warming: true}.
+        """
+        import redis as _redis
+        rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+        # mode = swing (default) | intraday | scalp. Swing falls back to the
+        # legacy mtf:scan:latest key; the fast modes read their own shortlist.
+        mode = (request.args.get("mode") or "swing").lower()
+        if mode not in ("swing", "intraday", "scalp"):
+            mode = "swing"
+        raw = rdb.get(f"mtf:scan:{mode}:latest")
+        if not raw and mode == "swing":
+            raw = rdb.get("mtf:scan:latest")
+        if not raw:
+            return jsonify({"results": [], "warming": True, "mode": mode,
+                            "scanned_at": None, "stale": True})
+
+        payload = json.loads(raw)
+        rows = payload.get("results", [])
+
+        # Staleness: scan older than ~10 min (daemon cadence is 5 min RTH).
+        stale = True
+        scanned_at = payload.get("scanned_at")
+        if scanned_at:
+            try:
+                from datetime import datetime, timezone
+                ts = datetime.fromisoformat(scanned_at)
+                age = (datetime.now(timezone.utc) - ts).total_seconds()
+                stale = age > 600
+            except Exception:
+                pass
+
+        # Filters
+        assets = request.args.get("asset_class", "")
+        if assets:
+            wanted = {a.strip().lower() for a in assets.split(",") if a.strip()}
+            rows = [r for r in rows if r.get("asset_class") in wanted]
+        # `group` is the finer cut: high_vol/megacap/largecap/etf for stocks,
+        # else == asset_class (index/fx/crypto).
+        group = request.args.get("group", "")
+        if group:
+            wanted_g = {g.strip().lower() for g in group.split(",") if g.strip()}
+            rows = [r for r in rows if r.get("group") in wanted_g]
+        side = (request.args.get("side") or "").upper()
+        if side in ("LONG", "SHORT"):
+            rows = [r for r in rows if r.get("side") == side]
+        min_score = request.args.get("min_score")
+        if min_score:
+            try:
+                ms = int(min_score)
+                rows = [r for r in rows if (r.get("score") or 0) >= ms]
+            except ValueError:
+                pass
+
+        # Sort
+        sort = (request.args.get("sort") or "dist").lower()
+        if sort == "score":
+            rows = sorted(rows, key=lambda r: (-(r.get("score") or 0), r.get("dist", 1)))
+        elif sort == "vol_rank":
+            rows = sorted(rows, key=lambda r: (-(r.get("vol_rank") or 0), r.get("dist", 1)))
+        else:
+            rows = sorted(rows, key=lambda r: r.get("dist", 1))
+
+        limit = request.args.get("limit")
+        if limit:
+            try:
+                rows = rows[:max(0, int(limit))]
+            except ValueError:
+                pass
+
+        return jsonify({
+            "results": rows,
+            "warming": False,
+            "stale": stale,
+            "scanned_at": scanned_at,
+            "near_pct": payload.get("near_pct"),
+            "counts": payload.get("counts", {}),
+            "total": len(rows),
+        })
+
+    @app.route("/api/swing-setup")
+    def api_swing_setup():
+        """Compute a front-side options debit-spread setup.
+
+        Public read endpoint (no auth) — matches the pattern of other
+        mobile-callable bot endpoints like /api/risk/account-type. The
+        underlying analyzer only reads market data (Polygon + Schwab)
+        and returns a setup spec; it doesn't touch user-scoped state
+        or place orders.
+
+        Query params:
+          ticker        — SPY / QQQ / IWM / SPX / NDX
+          mode          — scalp | intraday | swing
+          max_risk_usd  — optional; defaults to 200 (mobile passes
+                          user's per-symbol risk once Settings wires it)
+
+        Cached server-side via Redis for 60s per (ticker, mode, risk)
+        to avoid hammering Polygon + Schwab on rapid mode switches.
+        """
+        ticker = (request.args.get("ticker") or "").upper()
+        mode = (request.args.get("mode") or "swing").lower()
+        if not ticker:
+            return jsonify({"error": "ticker required"}), 400
+        if mode not in ("scalp", "intraday", "swing"):
+            return jsonify({"error": f"unknown mode {mode!r}"}), 400
+
+        max_risk_usd = request.args.get("max_risk_usd")
+        if max_risk_usd:
+            try:
+                max_risk_usd = float(max_risk_usd)
+            except ValueError:
+                return jsonify({"error": "max_risk_usd must be numeric"}), 400
+        else:
+            max_risk_usd = 200.0
+
+        import redis as _redis, hashlib
+        rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+        # Fold the MTF tuning config into the cache key so a Settings change
+        # (stop/proximity/R:R) busts the 60s cache immediately instead of
+        # lagging up to a minute.
+        from lumisignals import mtf_config as _mtfc
+        _cfgsig = json.dumps(_mtfc.get_config(), sort_keys=True)
+        cache_key = "swing_setup:" + hashlib.sha1(
+            f"{ticker}:{mode}:{max_risk_usd}:{_cfgsig}".encode()
+        ).hexdigest()[:16]
+        cached = rdb.get(cache_key)
+        if cached:
+            return jsonify(json.loads(cached))
+
+        try:
+            from lumisignals.swing_setup import compute_setup
+            setup = compute_setup(ticker, mode, max_risk_usd)
+        except Exception as e:
+            logger.error("swing_setup compute failed: %s", e)
+            return jsonify({"error": f"setup compute failed: {e}"}), 500
+
+        # Bundle the chart URL so mobile can render the WebView directly
+        # without re-deriving the params (entry/stop/target only present
+        # in the shares spec; for options we overlay strikes + breakeven).
+        chart_overlay = {}
+        if setup.get("options"):
+            opt = setup["options"]
+            chart_overlay = {
+                "long_strike": opt.get("long_strike"),
+                "short_strike": opt.get("short_strike"),
+                "breakeven": opt.get("breakeven"),
+                "trigger_level": setup.get("trigger_level"),
+            }
+        setup["chart_overlay"] = chart_overlay
+
+        # All-TF zones (D1/D2/S1/S2 per timeframe) — single source of truth
+        # for the Dashboard panel's zones bar. Uses the SAME find_untouched_levels
+        # call as the analyzer's trigger_level so chart entry == panel D1.
+        # The panel reads this from the swing-setup response instead of
+        # making a separate /api/mobile/compare/levels call.
+        zones_by_tf = {}
+        massive_key = os.environ.get("MASSIVE_API_KEY", "")
+        if massive_key:
+            try:
+                from lumisignals.massive_client import get_shared_client
+                from lumisignals.untouched_levels import (
+                    find_htf_levels, HTF_TF_LOOKBACK)
+                _massive = get_shared_client(massive_key)
+                INDEX_SYMBOLS = {"SPX", "NDX", "RUT", "VIX", "DJI", "XSP", "XND"}
+                is_forex = (len(ticker) == 6 and ticker[:3].isalpha()
+                            and ticker[3:].isalpha() and ticker not in ("GOOGL",))
+                if is_forex:
+                    poly_ticker = f"C:{ticker}"
+                elif ticker in INDEX_SYMBOLS:
+                    poly_ticker = f"I:{ticker}"
+                else:
+                    poly_ticker = ticker
+                # Deep per-TF lookback so the panel's zones match the Pine/TV
+                # levels (same find_htf_levels the compare SRV column uses).
+                tf_specs = [
+                    ("1mo", "M"),  ("1w",  "W"),
+                    ("1d",  "D"),  ("4h",  "4H"),
+                    ("1h",  "1H"), ("30m", "30M"),
+                    ("15m", "15M"),
+                ]
+                for tf_key, tf_label in tf_specs:
+                    try:
+                        lb = HTF_TF_LOOKBACK.get(tf_key, 50)
+                        candles = _massive.get_candles(poly_ticker, tf_key, lb + 5)
+                        if not candles or len(candles) < 3:
+                            continue
+                        price = candles[-1].close
+                        highs = [c.high for c in reversed(candles)]
+                        lows = [c.low for c in reversed(candles)]
+                        s1, s2, d1, d2 = find_htf_levels(
+                            highs, lows, price, lookback=lb)
+                        recent_highs = [c.high for c in candles[-12:]]
+                        recent_lows = [c.low for c in candles[-12:]]
+                        zones_by_tf[tf_label] = {
+                            "supply": s1, "supply2": s2,
+                            "demand": d1, "demand2": d2,
+                            "range_high": max(recent_highs) if recent_highs else None,
+                            "range_low": min(recent_lows) if recent_lows else None,
+                        }
+                    except Exception as _e:
+                        logger.debug("zones_by_tf err %s %s: %s", ticker, tf_key, _e)
+            except Exception as e:
+                logger.warning("zones_by_tf compute failed: %s", e)
+        # Critical: override the analyzer's top-TF entry in zones_by_tf
+        # with the EXACT zones the analyzer's _pick_trigger_level computed.
+        # Without this, the endpoint's separate Polygon fetch can return a
+        # slightly different last-bar low → different D1/D2 than what the
+        # chart's trigger_level was derived from. Observed 2026-06-02 on
+        # SCALP/SPY: chart entry 755.87 but panel 1H D1 757.73 / D2 756.78.
+        top_tf_key = setup.get("top_tf_key")
+        top_zones = setup.get("top_zones") or {}
+        tf_key_to_label = {
+            "3mo": "Q", "1mo": "M", "1w": "W", "1d": "D",
+            "4h": "4H", "1h": "1H", "30m": "30M", "15m": "15M", "5m": "5M",
+        }
+        if top_tf_key and top_zones.get("demand") is not None:
+            label = tf_key_to_label.get(top_tf_key, top_tf_key.upper())
+            existing = zones_by_tf.get(label, {})
+            zones_by_tf[label] = {
+                "supply":  top_zones.get("supply"),
+                "supply2": top_zones.get("supply2"),
+                "demand":  top_zones.get("demand"),
+                "demand2": top_zones.get("demand2"),
+                # Preserve range numbers if we'd computed them
+                "range_high": existing.get("range_high"),
+                "range_low":  existing.get("range_low"),
+            }
+        setup["zones_by_tf"] = zones_by_tf
+
+        rdb.setex(cache_key, 60, json.dumps(setup, default=str))
+        return jsonify(setup)
+
+    @app.route("/api/option-spread/order", methods=["POST"])
+    def api_option_spread_order():
+        """Place an atomic options debit spread via IB CPAPI combo.
+
+        Auth: X-Sync-Key header (matches /api/positions/close pattern;
+        mobile passes EXPO_PUBLIC_LUMI_SYNC_KEY env).
+
+        Body: {
+          ticker, direction ("BUY"|"SELL"), spread_type ("call_debit"|"put_debit"),
+          expiry ("YYYY-MM-DD"), long_strike, short_strike, contracts,
+          limit_price (net debit), max_risk_usd
+        }
+
+        Gated on Redis `equity:orders_enabled=1` (off by default).
+        Risk gates in order: reconcile_gate → kill_switch → runaway_guard
+        → cooldown. Then looks up conids, builds the combo, submits.
+        """
+        sync_key = request.headers.get("X-Sync-Key", "")
+        if sync_key != os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026"):
+            return jsonify({"error": "unauthorized"}), 401
+
+        import redis as _redis
+        rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+
+        # Feature flag
+        if not rdb.get("equity:orders_enabled"):
+            return jsonify({
+                "status": "skipped", "reason": "equity_orders_disabled",
+            }), 503
+
+        body = request.get_json(silent=True) or {}
+        ticker = (body.get("ticker") or "").upper()
+        direction = (body.get("direction") or "").upper()
+        spread_type = body.get("spread_type") or ""
+        expiry = body.get("expiry") or ""
+        long_strike = body.get("long_strike")
+        short_strike = body.get("short_strike")
+        contracts = int(body.get("contracts") or 0)
+        limit_price = body.get("limit_price")
+        max_risk_usd = float(body.get("max_risk_usd") or 200)
+        # Dashboard mode (scalp/intraday/mtf) — used to tag the strat_pos
+        # so the mobile reconciler shows the right bucket. Missing → empty.
+        mode = (body.get("mode") or "").lower()
+
+        missing = [k for k, v in (
+            ("ticker", ticker), ("direction", direction),
+            ("spread_type", spread_type), ("expiry", expiry),
+            ("long_strike", long_strike), ("short_strike", short_strike),
+            ("contracts", contracts), ("limit_price", limit_price),
+        ) if not v]
+        if missing:
+            return jsonify({"error": "missing fields: " + ",".join(missing)}), 400
+
+        # Risk gates (mirror ORB Phase 9 pattern; share state with futures)
+        try:
+            from lumisignals import reconcile_gate
+            if reconcile_gate.is_locked():
+                return jsonify({"status": "skipped",
+                                "reason": "reconcile_gate_locked"}), 503
+        except Exception as e:
+            logger.warning("reconcile_gate check failed (fail-closed): %s", e)
+            return jsonify({"status": "skipped",
+                            "reason": "reconcile_gate_check_failed"}), 503
+
+        try:
+            from lumisignals import kill_switch
+            if kill_switch.is_blocking_entry():
+                st = kill_switch.get_state()
+                return jsonify({
+                    "status": "skipped", "reason": "kill_switch_tripped",
+                    "day_pnl": round(st.get("day_pnl", 0.0), 2),
+                }), 200
+        except Exception as e:
+            logger.warning("kill switch check failed (fail-open): %s", e)
+
+        try:
+            from lumisignals import runaway_guard
+            if runaway_guard.is_blocking_entry("swing_setup"):
+                st = runaway_guard.get_state("swing_setup")
+                return jsonify({
+                    "status": "skipped", "reason": "runaway_guard_tripped",
+                    "trip_reason": st.get("trip_reason"),
+                }), 200
+        except Exception as e:
+            logger.warning("runaway_guard check failed (fail-open): %s", e)
+
+        try:
+            from lumisignals import cooldown
+            if cooldown.is_active("swing_setup", ticker):
+                return jsonify({
+                    "status": "skipped", "reason": "cooldown_active",
+                    "ttl_seconds": cooldown.ttl("swing_setup", ticker),
+                }), 200
+        except Exception as e:
+            logger.warning("cooldown check failed (fail-open): %s", e)
+
+        # Look up conids for both option legs via IB CPAPI
+        try:
+            from lumisignals.ibkr_cpapi import CPAPIClient
+            client = CPAPIClient()
+            client.ensure_session()
+        except Exception as e:
+            return jsonify({"error": f"CPAPI session failed: {e}"}), 503
+
+        right = "C" if spread_type == "call_debit" else "P"
+        long_conid = _lookup_option_conid_simple(client, ticker, expiry, long_strike, right)
+        short_conid = _lookup_option_conid_simple(client, ticker, expiry, short_strike, right)
+        if not (long_conid and short_conid):
+            return jsonify({
+                "error": "conid lookup failed",
+                "long_conid": long_conid, "short_conid": short_conid,
+            }), 502
+
+        # Build the atomic combo: long leg BUY +1, short leg SELL -1.
+        # Positive limit_price = pay debit.
+        import uuid as _uuid
+        coid = f"lumi_swing_{_uuid.uuid4().hex[:12]}"
+        payload = client.build_combo_order(
+            legs=[(long_conid, "BUY", 1), (short_conid, "SELL", 1)],
+            quantity=contracts,
+            limit_price=abs(float(limit_price)),
+            order_type="LMT", tif="DAY", coid=coid,
+        )
+
+        # Diary INTENT_OPEN per leg before submit (best-effort)
+        try:
+            from lumisignals import diary
+            for leg_label, conid, side, strike in (
+                ("long",  long_conid,  "BUY",  long_strike),
+                ("short", short_conid, "SELL", short_strike),
+            ):
+                diary.record_event(
+                    broker="ib", strategy_id="swing_setup", ticker=ticker,
+                    state=diary.State.INTENT_OPEN,
+                    client_intent_id=f"{coid}_{leg_label}",
+                    expected_qty=contracts,
+                    meta={"coid": coid, "leg": leg_label, "conid": conid,
+                          "strike": strike, "side": side,
+                          "expiry": expiry, "spread_type": spread_type},
+                )
+        except Exception as e:
+            logger.warning("diary INTENT_OPEN failed: %s", e)
+
+        try:
+            result = client.place_order(payload)
+            # Tag perm_id → strategy for reconciler labeling.
+            try:
+                from lumisignals.ibkr_sync_cpapi import record_strategy_for_perm
+                record_strategy_for_perm(result, "swing_setup")
+            except Exception as _e:
+                logger.debug("record_strategy_for_perm (swing combo) failed: %s", _e)
+            # Tag perm_id → model (scalp/intraday/mtf) so the reconciler
+            # can stash it on the strat_pos metadata when adopting. Mirrors
+            # record_strategy_for_perm — 24h TTL covers same-day adoption.
+            if mode:
+                try:
+                    import redis as _redis
+                    _rdb_m = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+                    perm_ids = []
+                    cands = result if isinstance(result, list) else [result]
+                    for c in cands:
+                        if isinstance(c, dict):
+                            oid = c.get("order_id") or c.get("orderId")
+                            if oid:
+                                perm_ids.append(str(oid))
+                    for pid in perm_ids:
+                        _rdb_m.setex(f"ibkr:model_by_perm:{pid}", 86400, mode)
+                except Exception as _e:
+                    logger.debug("model_by_perm setex failed: %s", _e)
+        except Exception as e:
+            logger.error("swing combo place_order error: %s", e)
+            return jsonify({"error": f"place_order failed: {e}",
+                            "payload": payload}), 502
+
+        # Extract order_id (combo single order, may need reply-walk)
+        order_id = None
+        if isinstance(result, list) and result:
+            row = result[0]
+            order_id = row.get("order_id") or row.get("orderId")
+        elif isinstance(result, dict):
+            order_id = result.get("order_id") or result.get("orderId")
+
+        if not order_id:
+            return jsonify({"status": "rejected",
+                            "response": result,
+                            "payload_coid": coid}), 502
+
+        # Per-strategy runaway counter (swing_setup has its own cap,
+        # so HTF FX losses don't bleed into it).
+        try:
+            runaway_guard.record_entry("swing_setup")
+        except Exception:
+            pass
+
+        return jsonify({
+            "status": "queued", "strategy": "swing_setup",
+            "ticker": ticker, "direction": direction,
+            "spread_type": spread_type,
+            "contracts": contracts,
+            "long_strike": long_strike, "short_strike": short_strike,
+            "limit_price": limit_price,
+            "expiry": expiry,
+            "order_id": str(order_id),
+            "coid": coid,
+        })
+
+    @app.route("/api/shares/order", methods=["POST"])
+    def api_shares_order():
+        """Place a market SHARES order with a protective stop, from the MTF
+        swing setup — same trigger as the options path, shares vehicle.
+
+        Buys/sells `quantity` shares at market, then attaches a STP at
+        stop_price. Swing-mode equities/ETFs only (cash indices can't trade
+        shares). Auth: X-Sync-Key. Gated on Redis equity:orders_enabled=1.
+
+        Body: { ticker, direction "BUY"|"SELL", quantity, stop_price,
+                target_price?, max_risk_usd?, mode, ref_price? }
+        """
+        sync_key = request.headers.get("X-Sync-Key", "")
+        if sync_key != os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026"):
+            return jsonify({"error": "unauthorized"}), 401
+
+        import redis as _redis
+        rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+        if not rdb.get("equity:orders_enabled"):
+            return jsonify({"status": "skipped", "reason": "equity_orders_disabled"}), 503
+
+        body = request.get_json(silent=True) or {}
+        ticker = (body.get("ticker") or "").upper()
+        direction = (body.get("direction") or "").upper()
+        quantity = int(body.get("quantity") or 0)
+        stop_price = body.get("stop_price")
+        target_price = body.get("target_price")
+        max_risk_usd = float(body.get("max_risk_usd") or 200)
+        mode = (body.get("mode") or "swing").lower()
+        ref_price = body.get("ref_price")
+
+        if mode != "swing":
+            return jsonify({"error": "shares trading is swing-only for now"}), 400
+        missing = [k for k, v in (("ticker", ticker), ("direction", direction),
+                                  ("quantity", quantity), ("stop_price", stop_price))
+                   if not v]
+        if missing:
+            return jsonify({"error": "missing fields: " + ",".join(missing)}), 400
+        if direction not in ("BUY", "SELL"):
+            return jsonify({"error": "direction must be BUY or SELL"}), 400
+
+        # Risk gates — identical order to the options path.
+        try:
+            from lumisignals import reconcile_gate
+            if reconcile_gate.is_locked():
+                return jsonify({"status": "skipped",
+                                "reason": "reconcile_gate_locked"}), 503
+        except Exception as e:
+            logger.warning("reconcile_gate check failed (fail-closed): %s", e)
+            return jsonify({"status": "skipped",
+                            "reason": "reconcile_gate_check_failed"}), 503
+        try:
+            from lumisignals import kill_switch
+            if kill_switch.is_blocking_entry():
+                st = kill_switch.get_state()
+                return jsonify({"status": "skipped", "reason": "kill_switch_tripped",
+                                "day_pnl": round(st.get("day_pnl", 0.0), 2)}), 200
+        except Exception as e:
+            logger.warning("kill switch check failed (fail-open): %s", e)
+        from lumisignals import runaway_guard
+        try:
+            if runaway_guard.is_blocking_entry("swing_setup"):
+                st = runaway_guard.get_state("swing_setup")
+                return jsonify({"status": "skipped", "reason": "runaway_guard_tripped",
+                                "trip_reason": st.get("trip_reason")}), 200
+        except Exception as e:
+            logger.warning("runaway_guard check failed (fail-open): %s", e)
+        try:
+            from lumisignals import cooldown
+            if cooldown.is_active("swing_setup", ticker):
+                return jsonify({"status": "skipped", "reason": "cooldown_active",
+                                "ttl_seconds": cooldown.ttl("swing_setup", ticker)}), 200
+        except Exception as e:
+            logger.warning("cooldown check failed (fail-open): %s", e)
+
+        # CPAPI session + stock conid (errors out for cash indices).
+        try:
+            from lumisignals.ibkr_cpapi import CPAPIClient
+            client = CPAPIClient()
+            client.ensure_session()
+        except Exception as e:
+            return jsonify({"error": f"CPAPI session failed: {e}"}), 503
+        try:
+            results = client.search_contract(ticker, "STK") or []
+            conid = results[0].get("conid") if results else None
+        except Exception as e:
+            return jsonify({"error": f"conid lookup failed: {e}"}), 502
+        if not conid:
+            return jsonify({"error": f"no shares contract for {ticker} "
+                                     f"(cash indices can't trade shares)"}), 422
+
+        import uuid as _uuid
+        coid = f"lumi_swing_setup_{_uuid.uuid4().hex[:10]}"
+
+        try:
+            from lumisignals import diary
+            diary.record_event(
+                broker="ib", strategy_id="swing_setup", ticker=ticker,
+                state=diary.State.INTENT_OPEN, client_intent_id=coid,
+                expected_qty=quantity,
+                meta={"coid": coid, "vehicle": "shares", "mode": mode,
+                      "stop_price": stop_price, "target_price": target_price})
+        except Exception as e:
+            logger.warning("diary INTENT_OPEN (shares) failed: %s", e)
+
+        # Atomic bracket: market entry + OCA stop/target. The SL and TP cancel
+        # each other (one fills → the other auto-cancels), and stay
+        # PreSubmitted until the parent fills, so the position is never
+        # unprotected and never leaves an orphan. GTC children persist across
+        # the swing hold; the parent is forced to DAY (fills now / next open).
+        payload = CPAPIClient.build_stock_bracket(
+            conid=int(conid), entry_side=direction, quantity=quantity,
+            stop_price=float(stop_price), entry_type="MKT",
+            target_price=(float(target_price) if target_price else None),
+            tif="GTC", entry_coid=coid)
+        payload["orders"][0]["tif"] = "DAY"
+        try:
+            result = client.place_order(payload)
+        except Exception as e:
+            return jsonify({"error": f"bracket place_order failed: {e}"}), 502
+
+        # Map returned ids to parent / sl / tp via local_order_id (the cOID).
+        by_coid = {}
+        rows = result if isinstance(result, list) else [result]
+        for row in rows:
+            if isinstance(row, dict):
+                lc = str(row.get("local_order_id") or row.get("cOID") or "")
+                oid = row.get("order_id") or row.get("orderId")
+                if lc and oid:
+                    by_coid[lc] = str(oid)
+        order_id = by_coid.get(coid)
+        if not order_id and rows and isinstance(rows[0], dict):
+            order_id = str(rows[0].get("order_id") or rows[0].get("orderId") or "")
+        stop_order_id = by_coid.get(coid + "sl", "")
+        target_order_id = by_coid.get(coid + "tp", "")
+        if not order_id:
+            return jsonify({"status": "rejected", "response": result,
+                            "coid": coid}), 502
+
+        try:
+            from lumisignals.ibkr_sync_cpapi import record_strategy_for_perm
+            record_strategy_for_perm(result, "swing_setup")
+            for pid in {order_id, stop_order_id, target_order_id}:
+                if pid:
+                    rdb.setex(f"ibkr:model_by_perm:{pid}", 86400, mode)
+        except Exception as _e:
+            logger.debug("shares perm tagging failed: %s", _e)
+
+        # strat_pos so the reconciler + check_stop_fills track + book it.
+        try:
+            from lumisignals.ibkr_sync_cpapi import save_strat_pos
+            save_strat_pos(
+                ticker=ticker, strategy="swing_setup", direction=direction,
+                contracts=quantity, entry_price=float(ref_price or 0),
+                perm_id=str(order_id), stop_order_id=stop_order_id,
+                stop_price=float(stop_price or 0),
+                target_order_id=target_order_id,
+                target_price=float(target_price or 0),
+                asset_type="stock", metadata={"model": mode},
+                caller="shares_order")
+        except Exception as _pe:
+            logger.warning("shares strat_pos save failed: %s", _pe)
+
+        try:
+            runaway_guard.record_entry("swing_setup")
+        except Exception:
+            pass
+
+        return jsonify({
+            "status": "queued", "strategy": "swing_setup", "vehicle": "shares",
+            "ticker": ticker, "direction": direction, "quantity": quantity,
+            "stop_price": stop_price, "stop_order_id": stop_order_id,
+            "target_price": target_price, "target_order_id": target_order_id,
+            "order_id": str(order_id), "coid": coid})
+
+    @app.route("/api/option-spread/close", methods=["POST"])
+    def api_option_spread_close():
+        """Close an open option spread at market via reverse combo.
+
+        Auth: X-Sync-Key header (matches the order endpoint).
+
+        Body: {
+          ticker, spread_type, expiry, long_strike, short_strike,
+          contracts, coid (original)
+        }
+        """
+        sync_key = request.headers.get("X-Sync-Key", "")
+        if sync_key != os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026"):
+            return jsonify({"error": "unauthorized"}), 401
+
+        body = request.get_json(silent=True) or {}
+        ticker = (body.get("ticker") or "").upper()
+        spread_type = body.get("spread_type") or ""
+        expiry = body.get("expiry") or ""
+        long_strike = body.get("long_strike")
+        short_strike = body.get("short_strike")
+        contracts = int(body.get("contracts") or 0)
+        orig_coid = body.get("coid") or ""
+
+        if not all([ticker, spread_type, expiry, long_strike, short_strike, contracts]):
+            return jsonify({"error": "missing fields"}), 400
+
+        try:
+            from lumisignals.ibkr_cpapi import CPAPIClient
+            client = CPAPIClient()
+            client.ensure_session()
+        except Exception as e:
+            return jsonify({"error": f"CPAPI session failed: {e}"}), 503
+
+        right = "C" if spread_type == "call_debit" else "P"
+        long_conid = _lookup_option_conid_simple(client, ticker, expiry, long_strike, right)
+        short_conid = _lookup_option_conid_simple(client, ticker, expiry, short_strike, right)
+        if not (long_conid and short_conid):
+            return jsonify({"error": "conid lookup failed for close"}), 502
+
+        # Reverse the legs (SELL the long, BUY the short) at MKT
+        import uuid as _uuid
+        close_coid = f"lumi_swing_close_{_uuid.uuid4().hex[:12]}"
+        payload = client.build_combo_order(
+            legs=[(long_conid, "SELL", 1), (short_conid, "BUY", 1)],
+            quantity=contracts, limit_price=0.0,
+            order_type="MKT", tif="DAY", coid=close_coid,
+        )
+
+        try:
+            from lumisignals import diary
+            diary.record_event(
+                broker="ib", strategy_id="swing_setup", ticker=ticker,
+                state=diary.State.INTENT_CLOSE,
+                client_intent_id=close_coid,
+                meta={"orig_coid": orig_coid, "expiry": expiry,
+                      "spread_type": spread_type, "contracts": contracts},
+            )
+        except Exception:
+            pass
+
+        try:
+            result = client.place_order(payload)
+        except Exception as e:
+            return jsonify({"error": f"close place_order failed: {e}"}), 502
+
+        order_id = None
+        if isinstance(result, list) and result:
+            order_id = result[0].get("order_id") or result[0].get("orderId")
+        elif isinstance(result, dict):
+            order_id = result.get("order_id") or result.get("orderId")
+
+        return jsonify({
+            "status": "queued" if order_id else "rejected",
+            "order_id": str(order_id) if order_id else None,
+            "coid": close_coid,
+            "response": result if not order_id else None,
+        })
+
+    def _lookup_option_conid_simple(client, ticker, expiry_iso, strike, right):
+        """Find an option conid via IB CPAPI /iserver/secdef/info.
+
+        expiry_iso: "YYYY-MM-DD". Prefers SPXW class for SPX (avoids the
+        AM-settled 3rd-Friday SPX). Returns int conid or None."""
+        try:
+            results = client.search_contract(ticker, "IND") or []
+        except Exception:
+            results = []
+        if not results:
+            results = client.search_contract(ticker, "STK") or []
+        if not results:
+            return None
+        underlying_conid = results[0].get("conid")
+        if not underlying_conid:
+            return None
+        expiry_compact = expiry_iso.replace("-", "")  # YYYYMMDD
+        month = expiry_compact[:6]
+        sec_def = client._request("GET", "/iserver/secdef/info", params={
+            "conid": underlying_conid, "sectype": "OPT",
+            "month": month, "strike": strike, "right": right,
+            "exchange": "SMART",
+        })
+        if not (isinstance(sec_def, list) and sec_def):
+            return None
+        preferred = "SPXW" if ticker == "SPX" else None
+        if preferred:
+            for opt in sec_def:
+                if (str(opt.get("maturityDate", "")).replace("-", "") == expiry_compact
+                        and float(opt.get("strike", 0)) == float(strike)
+                        and opt.get("tradingClass") == preferred):
+                    return opt.get("conid")
+        for opt in sec_def:
+            if (str(opt.get("maturityDate", "")).replace("-", "") == expiry_compact
+                    and float(opt.get("strike", 0)) == float(strike)):
+                return opt.get("conid")
+        return sec_def[0].get("conid")
+
     @app.route("/api/ibkr/analyze/status/<request_id>")
     @login_required
     def api_options_status(request_id):
@@ -1398,6 +2267,130 @@ def create_app():
             "position": 0,
             "avg_cost": 0,
             "last_synced": data.get("last_synced", ""),
+        })
+
+    @app.route("/api/ibkr/mes-2n20/source", methods=["GET", "POST"])
+    def api_mes_2n20_source():
+        """Read/set the native-vs-TradingView source for the MES 2n20 strategy,
+        and read the recent shadow-signal log. Sync-key authed.
+
+        GET  → {source, shadow: [recent signals]}
+        POST {source: tradingview|shadow|native|off} → sets the flag.
+        """
+        sync_key = request.headers.get("X-Sync-Key", "")
+        if sync_key != os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026"):
+            return jsonify({"error": "Invalid sync key"}), 403
+        import redis as _redis
+        rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+        if request.method == "POST":
+            new = (request.get_json(silent=True) or {}).get("source", "").strip().lower()
+            if new not in ("tradingview", "shadow", "native", "off"):
+                return jsonify({"error": "source must be tradingview|shadow|native|off"}), 400
+            rdb.set("ibkr:mes_2n20:source", new)
+            logger.info("MES 2n20 source set to %s", new)
+        cur = rdb.get("ibkr:mes_2n20:source")
+        signals = [json.loads(x) for x in rdb.lrange("ibkr:mes_2n20:native", 0, 49)]
+        return jsonify({
+            "source": cur.decode() if cur else "tradingview",
+            "signals": signals,
+        })
+
+    @app.route("/api/ibkr/mes-2n20/parity")
+    def api_mes_2n20_parity():
+        """Compare the native 2n20 signal stream against the TradingView alert
+        stream, aligned by bar (tolerant ±1 bar / same direction). Sync-key
+        authed. Shows agree / mismatch / native-only / tv-only so you can
+        confirm parity without eyeballing TradingView."""
+        sync_key = request.headers.get("X-Sync-Key", "")
+        if sync_key != os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026"):
+            return jsonify({"error": "Invalid sync key"}), 403
+        import redis as _redis
+        rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+        tv = [json.loads(x) for x in rdb.lrange("ibkr:mes_2n20:tv", 0, 99)]
+        native = [json.loads(x) for x in rdb.lrange("ibkr:mes_2n20:native", 0, 99)]
+
+        def _bt(rec):
+            try:
+                return int(rec.get("bar_time") or 0)
+            except (TypeError, ValueError):
+                return 0
+
+        TOL = 120  # one 2m bar of slack between the two streams' bar stamps
+        used = set()
+        rows = []
+        for n in native:
+            nbt, ndir = _bt(n), n.get("direction")
+            match = None
+            for i, t in enumerate(tv):
+                if i in used:
+                    continue
+                # same kind/direction within ±1 bar
+                same_dir = (t.get("direction") == ndir) or (
+                    n.get("kind") == "EXIT" and t.get("kind") == "EXIT")
+                if same_dir and abs(_bt(t) - nbt) <= TOL:
+                    match = i
+                    break
+            if match is not None:
+                used.add(match)
+            rows.append({
+                "bar_time": nbt, "kind": n.get("kind"), "native_dir": ndir,
+                "tv_dir": tv[match].get("direction") if match is not None else None,
+                "native_traded": n.get("traded"),
+                "status": "agree" if match is not None else "native_only",
+            })
+        # TV alerts with no native match
+        for i, t in enumerate(tv):
+            if i not in used:
+                rows.append({
+                    "bar_time": _bt(t), "kind": t.get("kind"),
+                    "native_dir": None, "tv_dir": t.get("direction"),
+                    "native_traded": False, "status": "tv_only",
+                })
+        rows.sort(key=lambda r: r["bar_time"], reverse=True)
+        agree = sum(1 for r in rows if r["status"] == "agree")
+        return jsonify({
+            "summary": {
+                "agree": agree, "native_only": sum(1 for r in rows if r["status"] == "native_only"),
+                "tv_only": sum(1 for r in rows if r["status"] == "tv_only"),
+                "native_total": len(native), "tv_total": len(tv),
+            },
+            "rows": rows[:60],
+        })
+
+    @app.route("/api/ibkr/orb/source", methods=["GET", "POST"])
+    def api_orb_source():
+        """Read/set the native-vs-TradingView source for ORB, and read the
+        recent native triggers. Sync-key authed."""
+        sync_key = request.headers.get("X-Sync-Key", "")
+        if sync_key != os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026"):
+            return jsonify({"error": "Invalid sync key"}), 403
+        import redis as _redis
+        rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+        if request.method == "POST":
+            new = (request.get_json(silent=True) or {}).get("source", "").strip().lower()
+            if new not in ("tradingview", "shadow", "native", "off"):
+                return jsonify({"error": "source must be tradingview|shadow|native|off"}), 400
+            rdb.set("ibkr:orb:source", new)
+            logger.info("ORB source set to %s", new)
+        cur = rdb.get("ibkr:orb:source")
+        native = [json.loads(x) for x in rdb.lrange("ibkr:orb:native", 0, 19)]
+        return jsonify({"source": cur.decode() if cur else "tradingview", "native": native})
+
+    @app.route("/api/ibkr/orb/parity")
+    def api_orb_parity():
+        """ORB native trigger stream vs the TradingView ORB alert stream.
+        ORB fires at most ~2x/day in the morning, so we just return both
+        streams (newest first) rather than bar-aligning. Sync-key authed."""
+        sync_key = request.headers.get("X-Sync-Key", "")
+        if sync_key != os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026"):
+            return jsonify({"error": "Invalid sync key"}), 403
+        import redis as _redis
+        rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+        native = [json.loads(x) for x in rdb.lrange("ibkr:orb:native", 0, 49)]
+        tv = [json.loads(x) for x in rdb.lrange("ibkr:orb:tv", 0, 49)]
+        return jsonify({
+            "summary": {"native_total": len(native), "tv_total": len(tv)},
+            "native": native, "tv": tv,
         })
 
     @app.route("/api/ibkr/exit-rules")
@@ -2035,6 +3028,16 @@ def create_app():
             import redis as _redis
             import uuid as _uuid
             rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+            # 30s dedup so rapid Close taps coalesce into a single queued close.
+            # First line of defence; the execution path (_close_spread) also caps
+            # to the held quantity, so even two queued closes can't reverse.
+            _dedup_key = (f"manual_close:opt:{instrument}:{data.get('right','')}:"
+                          f"{data.get('sell_strike') or 0}:{data.get('buy_strike') or 0}")
+            _existing = rdb.get(_dedup_key)
+            if _existing:
+                return jsonify({"status": "skipped",
+                                "reason": "An identical close was just queued",
+                                "order_id": _existing.decode() if isinstance(_existing, bytes) else _existing}), 200
             order_id = str(_uuid.uuid4())[:8]
             order = {
                 "order_id": order_id,
@@ -2053,6 +3056,7 @@ def create_app():
                 "status": "queued",
             }
             rdb.setex(f"ibkr:order:pending:{order_id}", 86400, json.dumps(order))
+            rdb.setex(_dedup_key, 30, order_id)
             return jsonify({"status": "queued", "broker": "ib",
                             "action": "options_close", "ticker": instrument,
                             "order_id": order_id})
@@ -2154,6 +3158,17 @@ def create_app():
                 "sec_type": "OPT",
                 "multiplier": 100.0,
                 "description": label,
+                # Structured fields for the mobile UI to render an IBKR-style
+                # vertical descriptor (e.g. "VERTICAL SPX 100 2 JUN 26 (0) 7610/7615 C")
+                "expiration": str(sp.get("expiration", "")),  # YYYYMMDD
+                "right": str(sp.get("right", "")),            # "C" or "P"
+                "long_strike": float(long_strike or 0),
+                "short_strike": float(short_strike or 0),
+                "spread_type": spread_type,
+                # Per-spread max profit + max risk (dollars). Mobile multiplies
+                # by qty to show "uPL +$X / $Y max" progress vs the target.
+                "max_profit": float(sp.get("max_profit", 0)),
+                "max_risk": float(sp.get("max_risk", 0)),
             }
 
         # Gather strat_pos coverage per symbol
@@ -2174,15 +3189,93 @@ def create_app():
                     "entry_price": float(sp.get("entry_price", 0)),
                     "perm_id": str(sp.get("perm_id", "")),
                     "opened_at": sp.get("opened_at", ""),
+                    # Model lets the mobile UI show whether a bot trade came
+                    # from Scalp / Intraday / Swing. Pine signals stash it in
+                    # metadata.model; manual + reconciler-adopted strat_pos
+                    # records don't have it and render no badge.
+                    "model": str((sp.get("metadata") or {}).get("model", "")),
                 })
         except Exception as e:
             logger.warning("audit strat_pos read failed: %s", e)
+
+        # Index filled_orders by symbol so we can attach the last
+        # handful of fills to any mismatch row. The sync's _collect_data
+        # already puts execution rows here with symbol/side/qty/price/
+        # time/order_id (which is order_ref when tagged, execution_id
+        # when not). Sort newest-first by time. Time comes in as a
+        # millisecond unix string in most cases — handle both.
+        def _fill_ts_ms(f):
+            t = f.get("time") or 0
+            try:
+                t = int(t)
+            except (TypeError, ValueError):
+                return 0
+            # Heuristic: > year-3000 in seconds means it's already ms
+            return t if t > 32000000000 else t * 1000
+        fills_by_symbol = {}
+        for f in ib.get("filled_orders", []) or []:
+            sym = f.get("symbol", "")
+            if not sym:
+                continue
+            fills_by_symbol.setdefault(sym, []).append(f)
+        for sym in fills_by_symbol:
+            fills_by_symbol[sym].sort(key=_fill_ts_ms, reverse=True)
+
+        def _classify_fill(ref):
+            """Tag each fill with its source for the mobile UI."""
+            if not ref or ref == 0 or ref == "0":
+                return "untagged"
+            ref_s = str(ref)
+            if ref_s.startswith("lumi_"):
+                # Bracket children carry the parent ref + "sl"/"tp" suffix
+                if ref_s.endswith("sl"):
+                    return "bracket_stop"
+                if ref_s.endswith("tp"):
+                    return "bracket_target"
+                # Strip "lumi_" prefix and trailing 8-hex coid → strategy slug
+                core = ref_s[5:]
+                if "_" in core:
+                    return f"bot:{core.rsplit('_', 1)[0]}"
+                return f"bot:{core}"
+            return "other"
 
         # Build the audit rows.
         # IB positions key on symbol (OPT keys differently); strat_pos
         # keys on ticker symbol. Join by symbol so OPT legs and tracked
         # futures positions both show up.
-        all_keys = set(ib_positions.keys()) | set(strat_by_symbol.keys())
+        #
+        # Dedup: when an OPT synthetic row already exists for a symbol
+        # (e.g. "AMZN OPT Put Debit Spread 250/255"), the corresponding
+        # bare-symbol strat_pos key ("AMZN") would otherwise emit a
+        # second row with no IB data and render as a misleading PHANTOM.
+        # Drop the bare-symbol key in that case — the OPT row's strats
+        # lookup will still find the strat_pos by symbol.
+        covered_by_opt_synthetic = {
+            v["symbol"] for v in ib_positions.values()
+            if v.get("sec_type") == "OPT"
+        }
+        all_keys = set(ib_positions.keys()) | (
+            set(strat_by_symbol.keys()) - covered_by_opt_synthetic
+        )
+
+        # Options reconcile per SYMBOL, not per spread-row. The bot tracks one
+        # coarse strat_pos per (symbol, strategy) while IB shows each spread/leg
+        # as its own row, so comparing that single strat_pos against every OPT
+        # row double-counted it and falsely flagged OVER-TRACKED on multi-leg
+        # books (e.g. a layered NVDA put structure). Distribute the symbol's
+        # tracked contracts greedily across its OPT rows — each row consumes up
+        # to its own ib_qty; any leftover lands on the symbol's last OPT row so
+        # a genuine over-track still surfaces once.
+        opt_tracked_remaining = {
+            sym: sum(sp["contracts"] for sp in sps)
+            for sym, sps in strat_by_symbol.items()
+        }
+        _opt_keys_by_sym = {}
+        for _k, _v in ib_positions.items():
+            if _v.get("sec_type") == "OPT" and _v.get("symbol"):
+                _opt_keys_by_sym.setdefault(_v["symbol"], []).append(_k)
+        _last_opt_key = {s: sorted(ks)[-1] for s, ks in _opt_keys_by_sym.items()}
+
         for key in sorted(all_keys):
             ib_data = ib_positions.get(key)
             # strats lookup uses the IB symbol field (or the key itself
@@ -2198,6 +3291,28 @@ def create_app():
             tracked_abs = sum(sp["contracts"] for sp in strats)
             orphan_qty = abs(ib_qty) - tracked_abs
 
+            # OPT spreads: the bot's "direction" field stores BIAS (SELL=
+            # bearish for a put debit, BUY=bullish for a put credit), not
+            # the position sign — but you always BUY the combo, so IB
+            # reports +N regardless. Skip the direction-mismatch check
+            # for OPT and compare by absolute contracts instead.
+            is_opt = bool(ib_data) and ib_data.get("sec_type") == "OPT"
+
+            # OPT: replace the per-row strat sum with the greedy per-symbol
+            # attribution so one strat_pos isn't counted against every spread row.
+            if is_opt:
+                _sym = ib_data["symbol"]
+                _avail = opt_tracked_remaining.get(_sym, 0)
+                if key == _last_opt_key.get(_sym):
+                    tracked_abs = _avail               # dump any remainder here
+                    opt_tracked_remaining[_sym] = 0
+                else:
+                    tracked_abs = min(_avail, abs(ib_qty))
+                    opt_tracked_remaining[_sym] = _avail - tracked_abs
+                # You always BUY the combo, so IB reports +N; mirror the sign.
+                tracked_signed = tracked_abs if ib_qty >= 0 else -tracked_abs
+                orphan_qty = abs(ib_qty) - tracked_abs
+
             # Classify
             if ib_qty == 0 and tracked_abs == 0:
                 status = "flat"; status_label = "FLAT"
@@ -2205,8 +3320,8 @@ def create_app():
                 status = "phantom"; status_label = "PHANTOM (bot thinks open, IB shows flat)"
             elif ib_qty != 0 and tracked_abs == 0:
                 status = "all_orphan"; status_label = "ALL ORPHAN (IB open, no strat_pos)"
-            elif tracked_signed * (1 if ib_qty > 0 else -1) <= 0 and ib_qty != 0:
-                # Tracked direction opposite to IB direction
+            elif (not is_opt) and tracked_signed * (1 if ib_qty > 0 else -1) <= 0 and ib_qty != 0:
+                # Tracked direction opposite to IB direction (non-OPT only)
                 status = "direction_mismatch"; status_label = "DIRECTION MISMATCH"
             elif orphan_qty > 0:
                 status = "partial_orphan"; status_label = f"PARTIAL ORPHAN ({orphan_qty} of {abs(ib_qty)} untracked)"
@@ -2215,11 +3330,38 @@ def create_app():
             else:
                 status = "matched"; status_label = "MATCHED"
 
+            # For mismatch rows, attach the last few IB fills for this
+            # symbol so the user can see what created the discrepancy
+            # (manual order vs bracket child vs another strategy).
+            recent_fills = []
+            if status not in ("matched", "flat"):
+                for f in (fills_by_symbol.get(lookup_sym, []) or [])[:6]:
+                    ref = f.get("order_id")
+                    recent_fills.append({
+                        "time_ms": _fill_ts_ms(f),
+                        "side": f.get("action") or "",
+                        "qty": f.get("quantity") or 0,
+                        "price": f.get("price") or 0,
+                        "order_ref": str(ref) if ref else None,
+                        "source": _classify_fill(ref),
+                    })
+
             rows.append({
                 "instrument": lookup_sym,
                 "display_key": key,
                 "asset_type": ib_data["sec_type"] if ib_data else "?",
                 "description": ib_data["description"] if ib_data else "",
+                # Structured option-spread fields (synthetic OPT rows only).
+                # Mobile uses these to render an IBKR-style vertical line:
+                #   "VERTICAL SPX 100 2 JUN 26 (0) 7610/7615 C"
+                "expiration": ib_data.get("expiration", "") if ib_data else "",
+                "right": ib_data.get("right", "") if ib_data else "",
+                "long_strike": ib_data.get("long_strike", 0) if ib_data else 0,
+                "short_strike": ib_data.get("short_strike", 0) if ib_data else 0,
+                "spread_type": ib_data.get("spread_type", "") if ib_data else "",
+                "multiplier": ib_data.get("multiplier", 0) if ib_data else 0,
+                "max_profit": ib_data.get("max_profit", 0) if ib_data else 0,
+                "max_risk": ib_data.get("max_risk", 0) if ib_data else 0,
                 "ib_qty": ib_qty,
                 "ib_avg": round(ib_data["avg_cost"], 4) if ib_data else None,
                 "ib_market_price": round(ib_data["market_price"], 4) if ib_data else None,
@@ -2230,6 +3372,7 @@ def create_app():
                 "strats": strats,
                 "status": status,
                 "status_label": status_label,
+                "recent_fills": recent_fills,
             })
 
         # Total exposure summary for the "you are flat" confirmation
@@ -2510,25 +3653,46 @@ def create_app():
         rows = query_events(strategy_id=strategy, ticker=ticker,
                             since=since, until=until, limit=limit)
 
-        # Enrich CLOSED rows with entry_time + entry_price from the matching
-        # OPEN event. Entries on overnight trades often happen outside the
-        # requested window, so a fresh query by broker_trade_id is needed.
+        # Enrich exit rows with entry_time + entry_price from the matching
+        # OPEN event. Both signal-closes (CLOSED) and stop-outs (STOP_FIRED)
+        # are exits, so the held-duration stamp applies to both. Entries on
+        # overnight trades often happen outside the requested window, so a
+        # fresh query by broker_trade_id is needed.
+        _EXIT_STATES = ("CLOSED", "STOP_FIRED")
+        # The entry side may be a clean OPEN or a reconciler-adopted fill
+        # (RECONCILE_ADOPTED) — most futures_2n20 entries are adopted, so a
+        # bare state="OPEN" lookup misses them (10/12 stops had no entry_time).
+        _ENTRY_STATES = ("OPEN", "RECONCILE_ADOPTED")
+        # An adopted entry is keyed "adopted:<order_id>" while its exit row is
+        # keyed "<order_id>" — same trade, different spelling. Normalize to the
+        # bare order id so they link, and query BOTH spellings so the fetch
+        # actually returns the adopted entry rows.
+        def _norm_btid(b):
+            return (b or "").rsplit(":", 1)[-1]
         closed_ids = [r.get("broker_trade_id") for r in rows
-                      if r.get("state") == "CLOSED" and r.get("broker_trade_id")]
+                      if r.get("state") in _EXIT_STATES and r.get("broker_trade_id")]
         if closed_ids:
-            opens = fetch_events_by_broker_ids(closed_ids, state="OPEN")
+            lookup_ids = set()
+            for cid in closed_ids:
+                base = _norm_btid(cid)
+                lookup_ids.update((cid, base, f"adopted:{base}"))
+            entry_events = [o for o in fetch_events_by_broker_ids(list(lookup_ids))
+                            if o.get("state") in _ENTRY_STATES and o.get("broker_trade_id")]
+            # Prefer a true OPEN over an adopted fill, then the earliest.
+            _rank = {"OPEN": 0, "RECONCILE_ADOPTED": 1}
+            entry_events.sort(key=lambda o: (_rank.get(o.get("state"), 9),
+                                             o.get("event_time") or ""))
             open_by_id: dict = {}
-            for o in opens:
-                tid = o.get("broker_trade_id")
-                if tid and tid not in open_by_id:
-                    open_by_id[tid] = o
+            for o in entry_events:
+                nid = _norm_btid(o.get("broker_trade_id"))
+                if nid and nid not in open_by_id:
+                    open_by_id[nid] = o
             for r in rows:
-                if r.get("state") == "CLOSED":
-                    tid = r.get("broker_trade_id")
-                    m = open_by_id.get(tid)
+                if r.get("state") in _EXIT_STATES:
+                    m = open_by_id.get(_norm_btid(r.get("broker_trade_id")))
                     if m:
                         r["entry_time"] = m.get("event_time")
-                        # If the CLOSED row didn't carry the entry price
+                        # If the exit row didn't carry the entry price
                         # itself, fall back to the OPEN's fill price.
                         if r.get("entry_price") is None and m.get("entry_price") is not None:
                             r["entry_price"] = m.get("entry_price")
@@ -3026,6 +4190,9 @@ def create_app():
         """Read or update the runaway guard (max-trades-per-day +
         consecutive-loss circuit breaker).
 
+        Query param `strategy` selects per-strategy state/config.
+        Omit it for the legacy global keys.
+
         GET  → { config, state }
         PUT  → body: any subset of { enabled, max_trades_per_day,
                                       max_consecutive_losses,
@@ -3036,12 +4203,14 @@ def create_app():
         if sync_key != os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026"):
             return jsonify({"error": "unauthorized"}), 401
         from lumisignals import runaway_guard
+        strategy = request.args.get("strategy") or None
         if request.method == "PUT":
             body = request.get_json(silent=True) or {}
-            cfg = runaway_guard.set_config(body)
+            cfg = runaway_guard.set_config(body, strategy=strategy)
         else:
-            cfg = runaway_guard.get_config()
-        return jsonify({"config": cfg, "state": runaway_guard.get_state()})
+            cfg = runaway_guard.get_config(strategy)
+        return jsonify({"config": cfg, "state": runaway_guard.get_state(strategy),
+                        "strategy": strategy})
 
     @app.route("/api/risk/runaway-guard/reset", methods=["POST"])
     def api_risk_runaway_guard_reset():
@@ -3049,8 +4218,32 @@ def create_app():
         if sync_key != os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026"):
             return jsonify({"error": "unauthorized"}), 401
         from lumisignals import runaway_guard
-        state = runaway_guard.manual_reset()
-        return jsonify({"state": state})
+        strategy = request.args.get("strategy") or None
+        state = runaway_guard.manual_reset(strategy)
+        return jsonify({"state": state, "strategy": strategy})
+
+    @app.route("/api/strategies/mtf-config", methods=["GET", "PUT"])
+    def api_strategies_mtf_config():
+        """Read or update the MTF / swing-setup tuning parameters used by
+        swing_setup.compute_setup (shares stop ×ATR, entry proximity ×ATR,
+        per-mode target R:R floors).
+
+        GET → { config }
+        PUT → body: any subset of { stop_atr_mult, proximity_atr_mult,
+                                    rr_floor_scalp, rr_floor_intraday,
+                                    rr_floor_swing }
+        Auth: X-Sync-Key header.
+        """
+        sync_key = request.headers.get("X-Sync-Key", "")
+        if sync_key != os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026"):
+            return jsonify({"error": "unauthorized"}), 401
+        from lumisignals import mtf_config
+        if request.method == "PUT":
+            body = request.get_json(silent=True) or {}
+            cfg = mtf_config.set_config(body)
+        else:
+            cfg = mtf_config.get_config()
+        return jsonify({"config": cfg, "defaults": mtf_config.DEFAULT_CONFIG})
 
     @app.route("/api/risk/position-guard", methods=["GET", "PUT"])
     def api_risk_position_guard():
@@ -3206,9 +4399,9 @@ def create_app():
         if not massive_key:
             return jsonify({"pair": pair, "tfs": out, "error": "no polygon key"}), 200
 
-        from lumisignals.massive_client import MassiveClient
+        from lumisignals.massive_client import get_shared_client
         from lumisignals.untouched_levels import calculate_trend_direction
-        massive = MassiveClient(massive_key)
+        massive = get_shared_client(massive_key)
         poly_ticker = f"C:{pair.replace('_', '')}"
 
         class _C:
@@ -3507,7 +4700,10 @@ def create_app():
             "trends": data.get("trends", {}),
             "updated_at": _dt.now(_tz.utc).isoformat(),
         }
-        rdb.setex(f"tv:levels:{ticker}", 86400, json.dumps(store))
+        # 7-day TTL so last-known levels survive weekends + holiday closes
+        # (markets can be dark ~65-90h). The compare page's staleness badge
+        # flags them as not-live; a fresh push overwrites this anyway.
+        rdb.setex(f"tv:levels:{ticker}", 604800, json.dumps(store))
         return jsonify({"status": "ok", "ticker": ticker})
 
     @app.route("/api/compare/levels")
@@ -3524,51 +4720,95 @@ def create_app():
         snr_api_key = current_user.lumitrade_api_key or os.environ.get("LUMITRADE_API_KEY", "")
 
         # SNR Frequency API interval names → display labels
-        interval_to_tf = {"3mo": "Q", "1mo": "M", "1w": "W", "1d": "D", "4h": "4H", "1h": "1H"}
-        snr_intervals = ["3mo", "1mo", "1w", "1d", "4h", "1h"]
-        # Trade-builder for trend data
-        freq_to_tf = {"quarterly": "Q", "monthly": "M", "weekly": "W", "daily": "D", "fourhour": "4H", "hourly": "1H"}
-        frequencies = ["quarterly", "monthly", "weekly", "daily", "fourhour", "hourly"]
+        interval_to_tf = {"3mo": "Q", "1mo": "M", "1w": "W", "1d": "D",
+                          "4h": "4H", "1h": "1H", "30m": "30M", "15m": "15M"}
+        snr_intervals = ["3mo", "1mo", "1w", "1d", "4h", "1h", "30m", "15m"]
+        # Trade-builder for trend data. LumiTrade exposes 30m/15m trends
+        # only under the spelled-out keys "thirtyminute"/"fifteenminute"
+        # ("30m"/"15m"/"30min" all return null). Mapped by label to the
+        # 30M/15M rows for consistency with the existing offset convention
+        # (LT's frequency names run one step coarser than the literal bar
+        # interval — e.g. LT "hourly" is computed on 4h bars).
+        freq_to_tf = {"quarterly": "Q", "monthly": "M", "weekly": "W", "daily": "D",
+                      "fourhour": "4H", "hourly": "1H",
+                      "thirtyminute": "30M", "fifteenminute": "15M"}
+        frequencies = ["quarterly", "monthly", "weekly", "daily", "fourhour", "hourly",
+                       "thirtyminute", "fifteenminute"]
 
         # Built-in Polygon levels (replaces LumiTrade API)
         massive_key = os.environ.get("MASSIVE_API_KEY", "")
         massive = None
         if massive_key:
-            from lumisignals.massive_client import MassiveClient
-            from lumisignals.untouched_levels import find_untouched_levels, calculate_adx_direction
-            massive = MassiveClient(massive_key)
+            from lumisignals.massive_client import get_shared_client
+            from lumisignals.untouched_levels import (
+                find_htf_levels, HTF_TF_LOOKBACK, calculate_adx_direction)
+            massive = get_shared_client(massive_key)
+
+        # Cash indexes need Polygon's "I:" prefix or they return 0 bars
+        INDEX_SYMBOLS = {"SPX", "NDX", "RUT", "VIX", "DJI", "XSP", "XND"}
+        # Crypto bases (BTC, ETH, ...) — same 6-char shape as forex but must
+        # route to Polygon "X:" not OANDA. Derived from the canonical list.
+        from lumisignals.massive_client import CRYPTO_TICKERS
+        CRYPTO_BASES = {t[2:] for t in CRYPTO_TICKERS}  # "X:BTCUSD" -> "BTCUSD"
 
         results = []
         for ticker in tickers:
             item = {"ticker": ticker, "server": {}, "tradingview": {}, "tv_trends": {}, "server_trends": {}, "tv_updated": ""}
 
             # Determine if ticker is forex (e.g. EURUSD, GBPUSD)
-            is_forex = len(ticker) == 6 and ticker[:3].isalpha() and ticker[3:].isalpha() and ticker not in ("GOOGL",)
+            is_crypto = ticker in CRYPTO_BASES
+            is_forex = (len(ticker) == 6 and ticker[:3].isalpha() and ticker[3:].isalpha()
+                        and ticker not in ("GOOGL",) and not is_crypto)
+            # Data source per asset class: forex → OANDA (matches TV-OANDA
+            # + the bot's trades); crypto + everything else → Polygon.
+            item["feed"] = "OANDA" if is_forex else "Polygon"
 
-            if massive:
-                if is_forex:
-                    poly_ticker = f"C:{ticker}"
+            if is_forex:
+                oc = _get_oanda_md_client()
+                if oc is not None:
+                    srv, trd, cp = _oanda_forex_levels(oc, ticker)
+                    item["server"] = srv
+                    item["server_trends"] = trd
+                    if cp is not None:
+                        item["current_price"] = cp
+                else:
+                    item["server"]["error"] = "OANDA creds not configured"
+                # Second comparison: Polygon-aligned forex (5pm-ET windows)
+                # — pairs with the LT (LumiTrade Polygon) column so you can
+                # validate LumiTrade's Polygon forex against ours.
+                if massive:
+                    psrv, ptrd, _pcp = _polygon_levels(massive, f"C:{ticker}")
+                    item["server_polygon"] = psrv
+                    item["server_polygon_trends"] = ptrd
+            elif massive:
+                if is_crypto:
+                    poly_ticker = f"X:{ticker}"   # crypto → Polygon X: feed (24/7, UTC-day bars)
+                elif ticker in INDEX_SYMBOLS:
+                    poly_ticker = f"I:{ticker}"
                 else:
                     poly_ticker = ticker
 
                 for tf, tf_label in interval_to_tf.items():
                     try:
-                        count = 30 if tf in ("3mo", "1mo", "1w") else 50
+                        # Deep per-TF lookback so the SRV levels match what
+                        # the Pine script draws (the TV column). Fetch a few
+                        # extra bars beyond the lookback for the current bar.
+                        lb = HTF_TF_LOOKBACK.get(tf, 50)
+                        count = lb + 5
                         candles = massive.get_candles(poly_ticker, tf, count)
                         if not candles or len(candles) < 3:
                             continue
                         price = candles[-1].close
                         highs = [c.high for c in reversed(candles)]
                         lows = [c.low for c in reversed(candles)]
-                        s1, s2, d1, d2 = find_untouched_levels(highs, lows, price, lookback=10)
+                        s1, s2, d1, d2 = find_htf_levels(highs, lows, price, lookback=lb)
                         item["server"][tf_label] = {
                             "supply": s1, "supply2": s2,
                             "demand": d1, "demand2": d2,
                         }
                         # ADX trend
-                        adx_dir = calculate_adx_direction(candles)
-                        if adx_dir:
-                            item["server_trends"][tf_label] = adx_dir.get("direction", "SIDE")
+                        direction, _adx = calculate_adx_direction(candles)
+                        item["server_trends"][tf_label] = direction
                     except Exception as e:
                         logger.debug("Compare level error %s %s: %s", ticker, tf, e)
             else:
@@ -3593,7 +4833,7 @@ def create_app():
                     resp = session.get(
                         f"{snr_base_url}/partners/technical-analysis/snr/frequency/",
                         params={"ticker": ticker, "intervals": ",".join(snr_intervals),
-                                "type": "forex" if is_forex else "stock", "days": 256},
+                                "type": "forex" if is_forex else ("indices" if ticker in INDEX_SYMBOLS else "stock"), "days": 256},
                         timeout=15,
                     )
                     if resp.status_code == 200:
@@ -3601,9 +4841,16 @@ def create_app():
                         for interval, tf_label in interval_to_tf.items():
                             tf_data = snr_data.get(interval, {})
                             if isinstance(tf_data, dict):
+                                # The API returns two levels each:
+                                # resistance_price1/2 (supply) and
+                                # support_price1/2 (demand). Fall back to the
+                                # singular convenience field for S1/D1 when the
+                                # numbered one is absent.
                                 item["lumitrade"][tf_label] = {
-                                    "supply": tf_data.get("resistance_price"),
-                                    "demand": tf_data.get("support_price"),
+                                    "supply": tf_data.get("resistance_price1", tf_data.get("resistance_price")),
+                                    "supply2": tf_data.get("resistance_price2"),
+                                    "demand": tf_data.get("support_price1", tf_data.get("support_price")),
+                                    "demand2": tf_data.get("support_price2"),
                                 }
                 except Exception as e:
                     item["lumitrade"]["error"] = str(e)
@@ -3612,7 +4859,7 @@ def create_app():
                     resp2 = session.get(
                         f"{snr_base_url}/partners/technical-analysis/trade-builder-setup",
                         params={"ticker": ticker, "period": 14,
-                                "market": "forex" if is_forex else "stock",
+                                "market": "forex" if is_forex else ("indices" if ticker in INDEX_SYMBOLS else "stock"),
                                 "frequency": ",".join(frequencies)},
                         timeout=15,
                     )
@@ -3640,45 +4887,100 @@ def create_app():
         import redis as _redis
         rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
 
-        tickers = request.args.get("tickers", "SPY,QQQ,XLF,EURUSD,GBPUSD,USDJPY").upper().split(",")
+        tickers = request.args.get("tickers", "SPY,QQQ,NVDA,SPX,NDX,XSP,RUT,EURUSD,GBPUSD,USDJPY").upper().split(",")
         tickers = [t.strip() for t in tickers if t.strip()]
 
         snr_base_url = "https://app.lumitrade.ai/api/v1"
         snr_api_key = os.environ.get("LUMITRADE_API_KEY", "")
 
-        interval_to_tf = {"3mo": "Q", "1mo": "M", "1w": "W", "1d": "D", "4h": "4H", "1h": "1H"}
-        snr_intervals = ["3mo", "1mo", "1w", "1d", "4h", "1h"]
-        freq_to_tf = {"quarterly": "Q", "monthly": "M", "weekly": "W", "daily": "D", "fourhour": "4H", "hourly": "1H"}
-        frequencies = ["quarterly", "monthly", "weekly", "daily", "fourhour", "hourly"]
+        interval_to_tf = {"3mo": "Q", "1mo": "M", "1w": "W", "1d": "D",
+                          "4h": "4H", "1h": "1H", "30m": "30M", "15m": "15M"}
+        snr_intervals = ["3mo", "1mo", "1w", "1d", "4h", "1h", "30m", "15m"]
+        # 30m/15m trends only under "thirtyminute"/"fifteenminute" keys.
+        freq_to_tf = {"quarterly": "Q", "monthly": "M", "weekly": "W", "daily": "D",
+                      "fourhour": "4H", "hourly": "1H",
+                      "thirtyminute": "30M", "fifteenminute": "15M"}
+        frequencies = ["quarterly", "monthly", "weekly", "daily", "fourhour", "hourly",
+                       "thirtyminute", "fifteenminute"]
 
         massive_key = os.environ.get("MASSIVE_API_KEY", "")
         massive = None
         if massive_key:
-            from lumisignals.massive_client import MassiveClient
-            from lumisignals.untouched_levels import find_untouched_levels, calculate_adx_direction
-            massive = MassiveClient(massive_key)
+            from lumisignals.massive_client import get_shared_client
+            from lumisignals.untouched_levels import (
+                find_htf_levels, HTF_TF_LOOKBACK, calculate_adx_direction)
+            massive = get_shared_client(massive_key)
+
+        # Cash indexes need Polygon's "I:" prefix or they return 0 bars
+        INDEX_SYMBOLS = {"SPX", "NDX", "RUT", "VIX", "DJI", "XSP", "XND"}
+        # Crypto bases (BTC, ETH, ...) — same 6-char shape as forex but must
+        # route to Polygon "X:" not OANDA. Derived from the canonical list.
+        from lumisignals.massive_client import CRYPTO_TICKERS
+        CRYPTO_BASES = {t[2:] for t in CRYPTO_TICKERS}  # "X:BTCUSD" -> "BTCUSD"
 
         results = []
         for ticker in tickers:
             item = {"ticker": ticker, "server": {}, "tradingview": {}, "tv_trends": {}, "server_trends": {}, "tv_updated": ""}
+            is_crypto = ticker in CRYPTO_BASES
             is_forex = (len(ticker) == 6 and ticker[:3].isalpha() and ticker[3:].isalpha()
-                        and ticker not in ("GOOGL",))
+                        and ticker not in ("GOOGL",) and not is_crypto)
+            # Forex → OANDA (matches TV-OANDA + the bot's trades); crypto +
+            # everything else → Polygon.
+            item["feed"] = "OANDA" if is_forex else "Polygon"
 
-            if massive:
-                poly_ticker = f"C:{ticker}" if is_forex else ticker
+            if is_forex:
+                oc = _get_oanda_md_client()
+                if oc is not None:
+                    srv, trd, cp = _oanda_forex_levels(oc, ticker)
+                    item["server"] = srv
+                    item["server_trends"] = trd
+                    if cp is not None:
+                        item["current_price"] = cp
+                else:
+                    item["server"]["error"] = "OANDA creds not configured"
+                # Second comparison: Polygon-aligned forex (5pm-ET windows)
+                # — pairs with the LT (LumiTrade Polygon) column so you can
+                # validate LumiTrade's Polygon forex against ours.
+                if massive:
+                    psrv, ptrd, _pcp = _polygon_levels(massive, f"C:{ticker}")
+                    item["server_polygon"] = psrv
+                    item["server_polygon_trends"] = ptrd
+            elif massive:
+                if is_crypto:
+                    poly_ticker = f"X:{ticker}"   # crypto → Polygon X: feed (24/7, UTC-day bars)
+                elif ticker in INDEX_SYMBOLS:
+                    poly_ticker = f"I:{ticker}"
+                else:
+                    poly_ticker = ticker
                 for tf, tf_label in interval_to_tf.items():
                     try:
-                        count = 30 if tf in ("3mo", "1mo", "1w") else 50
+                        # Deep per-TF lookback so SRV matches the Pine/TV
+                        # levels (find_htf_levels is the port of the Pine
+                        # algorithm). Fetch a few extra bars for the current.
+                        lb = HTF_TF_LOOKBACK.get(tf, 50)
+                        count = lb + 5
                         candles = massive.get_candles(poly_ticker, tf, count)
                         if not candles or len(candles) < 3:
                             continue
                         price = candles[-1].close
+                        # Track the freshest last-close across all TFs.
+                        # Lowest TF wins (most current).
+                        if (item.get("current_price") is None
+                            or tf in ("15m", "30m", "1h")):
+                            item["current_price"] = price
                         highs = [c.high for c in reversed(candles)]
                         lows = [c.low for c in reversed(candles)]
-                        s1, s2, d1, d2 = find_untouched_levels(highs, lows, price, lookback=10)
+                        s1, s2, d1, d2 = find_htf_levels(highs, lows, price, lookback=lb)
+                        # Range high/low for the position-bar visualization
+                        # on the Dashboard panel. Same lookback window as
+                        # the zones — 12 bars back from most-recent.
+                        recent_highs = [c.high for c in candles[-12:]]
+                        recent_lows = [c.low for c in candles[-12:]]
                         item["server"][tf_label] = {
                             "supply": s1, "supply2": s2,
                             "demand": d1, "demand2": d2,
+                            "range_high": max(recent_highs) if recent_highs else None,
+                            "range_low": min(recent_lows) if recent_lows else None,
                         }
                         direction, adx_val = calculate_adx_direction(candles, period=14)
                         item["server_trends"][tf_label] = direction
@@ -3704,7 +5006,7 @@ def create_app():
                     resp = session.get(
                         f"{snr_base_url}/partners/technical-analysis/snr/frequency/",
                         params={"ticker": ticker, "intervals": ",".join(snr_intervals),
-                                "type": "forex" if is_forex else "stock", "days": 256},
+                                "type": "forex" if is_forex else ("indices" if ticker in INDEX_SYMBOLS else "stock"), "days": 256},
                         timeout=15,
                     )
                     if resp.status_code == 200:
@@ -3712,9 +5014,16 @@ def create_app():
                         for interval, tf_label in interval_to_tf.items():
                             tf_data = snr_data.get(interval, {})
                             if isinstance(tf_data, dict):
+                                # The API returns two levels each:
+                                # resistance_price1/2 (supply) and
+                                # support_price1/2 (demand). Fall back to the
+                                # singular convenience field for S1/D1 when the
+                                # numbered one is absent.
                                 item["lumitrade"][tf_label] = {
-                                    "supply": tf_data.get("resistance_price"),
-                                    "demand": tf_data.get("support_price"),
+                                    "supply": tf_data.get("resistance_price1", tf_data.get("resistance_price")),
+                                    "supply2": tf_data.get("resistance_price2"),
+                                    "demand": tf_data.get("support_price1", tf_data.get("support_price")),
+                                    "demand2": tf_data.get("support_price2"),
                                 }
                 except Exception as e:
                     item["lumitrade"]["error"] = str(e)
@@ -3723,7 +5032,7 @@ def create_app():
                     resp2 = session.get(
                         f"{snr_base_url}/partners/technical-analysis/trade-builder-setup",
                         params={"ticker": ticker, "period": 14,
-                                "market": "forex" if is_forex else "stock",
+                                "market": "forex" if is_forex else ("indices" if ticker in INDEX_SYMBOLS else "stock"),
                                 "frequency": ",".join(frequencies)},
                         timeout=15,
                     )
@@ -3771,10 +5080,10 @@ def create_app():
         if not massive_key:
             return jsonify({"error": "No Massive API key configured"}), 400
 
-        from lumisignals.massive_client import MassiveClient, CORE_TICKERS, SWING_TICKERS, TICKER_NAMES
+        from lumisignals.massive_client import get_shared_client, CORE_TICKERS, SWING_TICKERS, TICKER_NAMES
         from lumisignals.untouched_levels import scan_universe, scan_ticker, TIMEFRAMES
 
-        client = MassiveClient(massive_key)
+        client = get_shared_client(massive_key)
         proximity = float(request.args.get("proximity", 2.0))
         tickers = request.args.get("tickers", "").upper().split(",")
         tickers = [t.strip() for t in tickers if t.strip()]
@@ -3906,10 +5215,10 @@ def create_app():
         if not massive_key:
             return jsonify({"error": "No Massive API key configured"}), 400
 
-        from lumisignals.massive_client import MassiveClient
+        from lumisignals.massive_client import get_shared_client
         from lumisignals.untouched_levels import scan_ticker
 
-        client = MassiveClient(massive_key)
+        client = get_shared_client(massive_key)
         candles = client.get_candles(ticker.upper(), "1d", 2)
         price = candles[-1].close if candles else 0
 
@@ -3937,10 +5246,10 @@ def create_app():
 
         dry_run = request.args.get("dry_run", "false").lower() == "true"
 
-        from lumisignals.massive_client import MassiveClient
+        from lumisignals.massive_client import get_shared_client
         from lumisignals.swing_scanner import run_swing_scan
 
-        client = MassiveClient(massive_key)
+        client = get_shared_client(massive_key)
         triggered = run_swing_scan(client, rdb, massive_key, dry_run=dry_run)
 
         return jsonify({
@@ -3981,7 +5290,18 @@ def create_app():
 
         ticker = data.get("ticker", "").upper().strip()
         direction = data.get("direction", "").upper().strip()
-        strategy = data.get("strategy", "tradingview")
+        # Canonicalize the strategy slug at the webhook boundary. Pine
+        # sends raw labels like "2n20" / "fx_2n20" / "tidewater_swing";
+        # the rest of the bot stores state and writes diary rows under
+        # the mapped slug (futures_2n20 / fx_4h_trend / etc.). Mapping
+        # here ensures strat_pos, the runaway_guard counter, the bracket
+        # coid, and the reconciler all agree on a single key — without
+        # this, the fills watcher used the raw slug while the
+        # reconciler decoded the mapped slug from the coid, producing
+        # two strat_pos rows per fill and duplicate Closed Trades rows.
+        raw_strategy = data.get("strategy", "tradingview")
+        from lumisignals import diary as _diary
+        strategy = _diary.strategy_slug(raw_strategy) or raw_strategy
 
         # Normalize Pine's exit-alert direction names. TradingView's 2n20
         # script emits X-LONG / X-SHORT / VWAP-X-L / VWAP-X-S on exits;
@@ -4046,7 +5366,10 @@ def create_app():
                 "trends": data.get("trends", {}),
                 "updated_at": _dt.now(_tz.utc).isoformat(),
             }
-            rdb.setex(f"tv:levels:{ticker}", 86400, json.dumps(store))
+            # 7-day TTL so last-known levels survive weekends + holiday closes
+            # (markets can be dark ~65-90h). The compare page's staleness badge
+            # flags them as not-live; a fresh push overwrites this anyway.
+            rdb.setex(f"tv:levels:{ticker}", 604800, json.dumps(store))
             return jsonify({"status": "ok", "action": "levels_sync", "ticker": ticker})
 
         trade_type = data.get("type", "options")  # "options" or "futures"
@@ -4054,11 +5377,53 @@ def create_app():
         override_contracts = data.get("contracts", 1)
         dte = data.get("dte", 0)
 
+        # Per-strategy contract cap from user settings. Pine may send any
+        # contracts value (default 1) but the user's settings define the
+        # hard cap per strategy. Webhook is single-tenant — user 1.
+        # Bug observed 2026-06-01: Pine fired 5+ separate 2n20 alerts that
+        # accumulated to +5 MES, despite settings showing Contracts/Entry=1.
+        # Pine sent 1 per signal (correct) but nothing was capping
+        # aggregate. The hard cap below clamps per-order contracts; the
+        # signal accumulation problem is separate (Pine-rate-limit).
+        if trade_type == "futures":
+            try:
+                _u = User.query.get(1)
+                if _u is not None:
+                    if strategy in ("orb_butterfly", "orb"):
+                        _cap = int(_u.orb_futures_contracts or 1)
+                    else:
+                        _cap = int(_u.futures_contracts or 1)
+                    if int(override_contracts) > _cap:
+                        logger.warning(
+                            "futures cap: %s clamped %s -> %s (user setting)",
+                            strategy, override_contracts, _cap)
+                        override_contracts = _cap
+            except Exception as _e:
+                logger.warning("futures cap lookup failed: %s", _e)
+
         # ─── ORB BUTTERFLY PATH (SPX 0DTE leg-in) ───
         # Pine alert carries the full butterfly plan (K1/K2/K3, debit/credit
         # targets, OR context, VIX, reversal flag). Hand off to the dedicated
         # state machine in orb_butterfly_handler.
         if strategy == "orb_butterfly":
+            # ORB source guard: when the native generator owns ORB, ignore TV's
+            # butterfly alert (record it first for parity). Mirrors futures_2n20.
+            try:
+                _ro = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+                _osrc = _ro.get("ibkr:orb:source")
+                _osrc = _osrc.decode().strip().lower() if _osrc else "tradingview"
+                _ro.lpush("ibkr:orb:tv", json.dumps({
+                    "leg": "butterfly", "direction": direction, "strategy": strategy,
+                    "spread_type": data.get("spread_type"),
+                    "received_at": datetime.now(timezone.utc).isoformat()}))
+                _ro.ltrim("ibkr:orb:tv", 0, 99)
+            except Exception:
+                _osrc = "tradingview"
+            if _osrc in ("native", "off"):
+                logger.info("orb_butterfly ignored — source=%s", _osrc)
+                return jsonify({"status": "skipped", "reason": f"orb_source_{_osrc}",
+                                "strategy": strategy}), 200
+
             # Hard #5 (audit): restart-safety gate. Refuse butterflies
             # until ibkr-sync has reconciled — same as the futures path.
             try:
@@ -4103,6 +5468,65 @@ def create_app():
         if trade_type == "futures":
             rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
             today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+            # Source guard: when the native MES 2n20 generator owns the signal
+            # (ibkr:mes_2n20:source = native/off), ignore TradingView's 2n20
+            # alerts entirely so the two can't double-trade or fight over the
+            # same position. Only 2n20 variants are gated — ORB et al. unaffected.
+            if strategy.startswith("futures_2n20"):
+                # Parity log — record EVERY TV 2n20 alert (acted on OR ignored)
+                # with the bar it fired on, so the native signal stream
+                # (ibkr:mes_2n20:native) can be diffed against TradingView.
+                try:
+                    _bt = None
+                    _braw = rdb.get(f"ibkr:bars:{ticker}:2m")
+                    if _braw:
+                        _bars = json.loads(_braw).get("bars", [])
+                        if _bars:
+                            _bt = _bars[-1].get("time")
+                    rdb.lpush("ibkr:mes_2n20:tv", json.dumps({
+                        "kind": "ENTRY" if direction in ("BUY", "SELL") else "EXIT",
+                        "direction": direction, "strategy": strategy, "bar_time": _bt,
+                        "received_at": datetime.now(timezone.utc).isoformat(),
+                    }))
+                    rdb.ltrim("ibkr:mes_2n20:tv", 0, 199)
+                except Exception:
+                    pass
+
+                try:
+                    _src = rdb.get("ibkr:mes_2n20:source")
+                    _src = _src.decode().strip().lower() if _src else "tradingview"
+                except Exception:
+                    _src = "tradingview"
+                if _src in ("native", "off"):
+                    logger.info("futures_2n20 %s %s ignored — source=%s",
+                                direction, ticker, _src)
+                    return jsonify({"status": "skipped",
+                                    "reason": f"source_{_src}",
+                                    "strategy": strategy, "ticker": ticker,
+                                    "direction": direction}), 200
+
+            # ORB source guard (MES breakout leg) — mirror of the butterfly
+            # guard above so native owns the whole ORB trigger. Record the TV
+            # alert for parity, then skip when native/off.
+            if strategy.startswith("orb"):
+                try:
+                    rdb.lpush("ibkr:orb:tv", json.dumps({
+                        "leg": "mes", "direction": direction, "strategy": strategy,
+                        "stop_price": data.get("stop_price"),
+                        "received_at": datetime.now(timezone.utc).isoformat()}))
+                    rdb.ltrim("ibkr:orb:tv", 0, 99)
+                    _osrc = rdb.get("ibkr:orb:source")
+                    _osrc = _osrc.decode().strip().lower() if _osrc else "tradingview"
+                except Exception:
+                    _osrc = "tradingview"
+                if _osrc in ("native", "off"):
+                    logger.info("%s %s %s ignored — source=%s",
+                                strategy, direction, ticker, _osrc)
+                    return jsonify({"status": "skipped",
+                                    "reason": f"orb_source_{_osrc}",
+                                    "strategy": strategy, "ticker": ticker,
+                                    "direction": direction}), 200
 
             # Restart-safety gate — refuse ALL futures signals (including
             # closes) until ibkr-sync has completed at least one reconcile
@@ -4193,12 +5617,12 @@ def create_app():
             if direction in ("BUY", "SELL"):
                 try:
                     from lumisignals import runaway_guard
-                    if runaway_guard.is_blocking_entry():
-                        st = runaway_guard.get_state()
-                        cfg = runaway_guard.get_config()
+                    if runaway_guard.is_blocking_entry(strategy):
+                        st = runaway_guard.get_state(strategy)
+                        cfg = runaway_guard.get_config(strategy)
                         logger.warning(
-                            "runaway_guard BLOCKED %s %s: %s",
-                            direction, ticker, st.get("trip_reason"),
+                            "runaway_guard[%s] BLOCKED %s %s: %s",
+                            strategy, direction, ticker, st.get("trip_reason"),
                         )
                         return jsonify({
                             "status": "skipped",
@@ -4349,7 +5773,7 @@ def create_app():
             # Pine fires too many signals.
             try:
                 from lumisignals import runaway_guard
-                runaway_guard.record_entry()
+                runaway_guard.record_entry(strategy)
             except Exception as _e:
                 logger.warning("runaway_guard record_entry failed: %s", _e)
             # 30s dedup — only protects against accidental webhook retries from TV

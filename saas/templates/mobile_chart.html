@@ -6,7 +6,7 @@
   <script src="/static/js/lightweight-charts.js"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { background: #1a1a2e; overflow: hidden; font-family: -apple-system, sans-serif; }
+    body { background: #fbf8ef; overflow: hidden; font-family: -apple-system, sans-serif; }
     #chart { width: 100vw; height: 100vh; position: relative; }
     #loading {
       position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
@@ -38,11 +38,50 @@
     }
     #contractBadge .sym { font-size: 10px; opacity: 0.95; }
     #contractBadge .cd  { font-size: 11px; font-variant-numeric: tabular-nums; margin-top: 1px; }
+
+    /* Upper-left legend chip: ticker | timeframe + entry/target/stop
+       dot palette + expand button. Sits above the chart canvas. */
+    #legend {
+      position: absolute; top: 10px; left: 10px; z-index: 12;
+      background: rgba(251, 248, 239, 0.88);
+      border: 1px solid #d4ccb3;
+      border-radius: 8px;
+      padding: 6px 9px;
+      font-size: 12px;
+      color: #2c2925;
+      pointer-events: auto;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    }
+    #legend .title { font-weight: 600; letter-spacing: 0.4px; font-size: 13px; }
+    #legend .row {
+      display: flex; align-items: center; gap: 6px; margin-top: 3px;
+    }
+    #legend .dot {
+      width: 9px; height: 9px; border-radius: 50%; display: inline-block;
+    }
+    #legend .dot-entry  { background: #c5a347; }
+    #legend .dot-target { background: #87b287; }
+    #legend .dot-stop   { background: #ce9590; }
+    #legend .eye {
+      cursor: pointer; padding: 1px 4px; margin-left: 4px;
+      border-radius: 4px; font-size: 14px; line-height: 1;
+      color: #5a5347;
+    }
+    #legend .eye:active { background: #e8e3d3; }
   </style>
 </head>
 <body>
   <div id="chart">
     <div id="contractBadge"><div class="sym"></div><div class="cd"></div></div>
+    <div id="legend">
+      <div class="title"><span id="legendTicker"></span> | <span id="legendTf"></span></div>
+      <div class="row">
+        <span class="dot dot-entry"></span>
+        <span class="dot dot-target"></span>
+        <span class="dot dot-stop"></span>
+        <span class="eye" id="legendEye" role="button" aria-label="Expand chart">⛶</span>
+      </div>
+    </div>
   </div>
   <div id="loading">Loading chart...</div>
   <div id="error"></div>
@@ -52,6 +91,26 @@
     const params = new URLSearchParams(window.location.search);
     const TICKER = params.get('ticker') || 'EUR_USD';
     const TIMESPAN = params.get('timespan') || '15m';
+
+    // ── Legend overlay (upper-left): ticker + readable TF + expand ──
+    const TF_LABELS_MAP = {
+      '1m': '1 MIN', '2m': '2 MIN', '5m': '5 MIN', '15m': '15 MIN',
+      '30m': '30 MIN', '1h': '1 HOUR', '4h': '4 HOUR',
+      '1d': 'DAILY', '1w': 'WEEKLY', '1mo': 'MONTHLY', '3mo': 'QUARTERLY',
+    };
+    document.getElementById('legendTicker').textContent =
+      TICKER.replace(/^[CIX]:/, '');   // strip Polygon prefix (I:/C:/X:)
+    document.getElementById('legendTf').textContent =
+      TF_LABELS_MAP[TIMESPAN] || TIMESPAN.toUpperCase();
+    document.getElementById('legendEye').addEventListener('click', function() {
+      // Notify React Native to toggle the WebView height between
+      // normal and fullscreen. RN side listens via onMessage.
+      try {
+        window.ReactNativeWebView &&
+          window.ReactNativeWebView.postMessage(
+            JSON.stringify({ type: 'chart:toggle-expand' }));
+      } catch (e) { /* silent */ }
+    });
     const COUNT = params.get('count') || '300';
     const LEVELS_TICKER = TICKER.replace('_', '');
 
@@ -62,6 +121,34 @@
     const UNITS = params.get('units') ? parseFloat(params.get('units')) : null;
     const DIRECTION = params.get('direction') || '';
     const STRATEGY = params.get('strategy') || '';
+    // Pass dashboard=0 to suppress the in-chart DASHBOARD overlay panel
+    // (Direction/Entry/Target/Stop/Risk/Reward/R:R table). The dashboard
+    // swing-trade panel duplicates that info above the chart, so the
+    // overlay covers candles without adding info. Other callers
+    // (positions tab, trades nav) keep the overlay by default.
+    const SHOW_DASHBOARD = params.get('dashboard') !== '0';
+
+    // Swing-trade-panel specific overlays (when strategy=swing_setup).
+    // The panel passes the option-spread spec via these params so the
+    // chart can render trade-aware lines + bands instead of the generic
+    // S/R clutter the HTF strategies use.
+    const LONG_STRIKE   = params.get('long_strike')   ? parseFloat(params.get('long_strike'))   : null;
+    const SHORT_STRIKE  = params.get('short_strike')  ? parseFloat(params.get('short_strike'))  : null;
+    const BREAKEVEN     = params.get('breakeven')     ? parseFloat(params.get('breakeven'))     : null;
+    const MAX_PROFIT    = params.get('max_profit')    ? parseFloat(params.get('max_profit'))    : null;
+    const MAX_LOSS      = params.get('max_loss')      ? parseFloat(params.get('max_loss'))      : null;
+    const TRIGGER_LEVEL = params.get('trigger_level') ? parseFloat(params.get('trigger_level')) : null;
+    const SPREAD_TYPE   = params.get('spread_type') || '';
+    // Shares-vehicle params (passed when vehicle=shares). When present
+    // the chart renders 3 simple lines — ENTRY / TARGET / STOP —
+    // instead of the option-spread overlay. Mode-dependent: the panel
+    // recomputes entry/stop/target per mode and the chart updates.
+    const VEHICLE      = params.get('vehicle') || '';
+    const SHARES_ENTRY  = params.get('entry')  ? parseFloat(params.get('entry'))  : null;
+    const SHARES_TARGET = params.get('target') ? parseFloat(params.get('target')) : null;
+    const SHARES_STOP   = params.get('stop')   ? parseFloat(params.get('stop'))   : null;
+    const IS_SWING_SETUP = STRATEGY === 'swing_setup';
+    const IS_SHARES_VIEW = IS_SWING_SETUP && VEHICLE === 'shares';
     // Watchlist zone "activated" timestamp (unix seconds). When set,
     // drops a triangle marker on the bar where price first entered the
     // zone band. Optional; ignored if not provided.
@@ -81,9 +168,17 @@
     // own zone overlay — and Polygon's published levels can disagree
     // (e.g. 1H S1 from Polygon vs the strategy's own untouched-supply
     // detector). Showing both is confusing. Suppress on H1Zone.
-    const SHOW_LEVELS = !IS_2N20 && !IS_ORB && !IS_H1_ZONE;
+    // Swing setup renders its own trade-aware lines + P&L bands and
+    // doesn't want the generic Polygon S/R clutter on top.
+    const SHOW_LEVELS = !IS_2N20 && !IS_ORB && !IS_H1_ZONE && !IS_SWING_SETUP;
     const SHOW_VWAP = IS_2N20;  // VWAP only for 2n20 strategy
-    const HAS_TRADE = ENTRY_PRICE !== null;  // Only show entry/exit/stop if it's an actual trade
+    // HAS_TRADE drives the legacy entry/exit/stop labels (Trades tab,
+    // Positions tab inline chart). In the swing-setup Shares view the
+    // ENTRY/TARGET/STOP labels are drawn by the IS_SHARES_VIEW block
+    // below — gate this off so we don't render both sets and end up
+    // with duplicate "Entry"/"ENTRY" + "SL"/"STOP" labels on the
+    // right axis.
+    const HAS_TRADE = ENTRY_PRICE !== null && !IS_SHARES_VIEW;
 
     // Filter levels by chart timeframe — don't show lower TF levels on higher TF charts
     const TF_RANK = { '1m': 1, '2m': 2, '5m': 3, '15m': 4, '30m': 5, '1h': 6, '4h': 7, '1d': 8, '1w': 9, '1mo': 10 };
@@ -124,23 +219,28 @@
         // Create chart
         const chart = LightweightCharts.createChart(document.getElementById('chart'), {
           layout: {
-            background: { color: '#1a1a2e' },
-            textColor: '#888',
+            background: { color: '#fbf8ef' },   // vanilla — matches the
+            textColor: '#5a5347',               // panel/zones card bg
           },
           grid: {
-            vertLines: { color: '#252547' },
-            horzLines: { color: '#252547' },
+            vertLines: { color: '#ede5cf' },    // subtle ivory grid
+            horzLines: { color: '#ede5cf' },
           },
           crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
-          rightPriceScale: { borderColor: '#333' },
+          rightPriceScale: { borderColor: '#d4ccb3' },
           // Show time-of-day only on intraday TFs. 1D/1W/1mo print as
           // dates, not "4:00 PM". timeVisible flips the right-edge time
           // chip; tickMarkFormatter formats the axis labels per TF.
           timeScale: {
-            borderColor: '#333',
+            borderColor: '#d4ccb3',
             timeVisible: ['1m','2m','5m','15m','30m','1h','4h'].indexOf(TIMESPAN) >= 0,
             secondsVisible: false,
             fixLeftEdge: true,
+            // Right padding is actually enforced by an explicit
+            // setVisibleLogicalRange() call after setData() — see the
+            // candleSeries.setData() block. rightOffset here is a
+            // fallback for any code path that doesn't hit that call.
+            rightOffset: 20,
             tickMarkFormatter: function(timestamp) {
               const d = new Date(timestamp * 1000);
               const opts = { timeZone: 'America/New_York' };
@@ -212,6 +312,21 @@
           }
         }
         candleSeries.setData(unique);
+
+        // Lock the visible window — show only the last ~30 candles +
+        // ~25 bars of empty space on the right. This overrides the
+        // chart's auto-fit (which was squishing 80+ candles into the
+        // viewport and ignoring rightOffset visually). Predictable
+        // layout regardless of how many bars were fetched or zoom.
+        try {
+          const N_VISIBLE_CANDLES = 30;
+          const N_RIGHT_PAD = 25;
+          const lastIdx = unique.length - 1;
+          chart.timeScale().setVisibleLogicalRange({
+            from: Math.max(0, lastIdx - N_VISIBLE_CANDLES),
+            to:   lastIdx + N_RIGHT_PAD,
+          });
+        } catch (_e) { /* fall through to auto-fit */ }
 
         // ── Auto-refresh of candles ────────────────────────────────
         // The chart fetches once on load — without polling, the last
@@ -319,7 +434,7 @@
             if (i >= N - 1) emaData.push({ time: unique[i].time, value: ema });
           }
           const emaSeries = chart.addLineSeries({
-            color: 'rgba(200, 200, 200, 0.85)',
+            color: 'rgba(110, 95, 70, 0.75)',   // muted brown for vanilla bg
             lineWidth: 2,
             title: 'EMA 20',
             priceLineVisible: false,
@@ -688,11 +803,14 @@
           }
 
           // ── Render ───────────────────────────────────────────────────
+          // Suppress per SHOW_DASHBOARD URL flag (?dashboard=0). Used by
+          // the dashboard swing-trade panel which shows the same info
+          // above the chart and doesn't want the in-chart overlay.
+          const oldDashCard = document.getElementById('adx-dashboard');
+          if (oldDashCard) oldDashCard.remove();
+          if (!SHOW_DASHBOARD) return;
           const panel = document.createElement('div');
           panel.id = 'adx-dashboard';
-          // Remove old panel if present (TF switches re-run this)
-          const old = document.getElementById('adx-dashboard');
-          if (old) old.remove();
           panel.style.cssText =
             'position:absolute;top:8px;right:8px;background:rgba(30,30,30,0.92);' +
             'padding:8px 10px;border-radius:8px;border:1px solid #555;' +
@@ -778,6 +896,155 @@
             axisLabelVisible: true,
             title: 'Entry',
           });
+        }
+
+        // ─── Swing-setup specific overlay ────────────────────────────
+        // ─── Shares-vehicle overlay ────────────────────────────────
+        // Three simple horizontal lines + right-axis labels: ENTRY
+        // (amber), TARGET (green), STOP (red). The panel recomputes
+        // these per mode (scalp/intraday/swing) and the chart picks
+        // up the new values via the URL params.
+        if (IS_SHARES_VIEW && SHARES_ENTRY != null) {
+          // Lumitrade palette: warm gold / sage / dusty coral, dashed,
+          // lowercase labels to match the brand aesthetic.
+          candleSeries.createPriceLine({
+            price: SHARES_ENTRY,
+            color: '#c5a347',              // warm mustard gold
+            lineWidth: 2,
+            lineStyle: LightweightCharts.LineStyle.Dashed,
+            axisLabelVisible: true,
+            axisLabelTextColor: '#fff',
+            title: 'entry ' + SHARES_ENTRY.toFixed(2),
+          });
+          if (SHARES_TARGET != null) {
+            candleSeries.createPriceLine({
+              price: SHARES_TARGET,
+              color: '#87b287',            // muted sage green
+              lineWidth: 2,
+              lineStyle: LightweightCharts.LineStyle.Dashed,
+              axisLabelVisible: true,
+              axisLabelTextColor: '#fff',
+              title: 'target ' + SHARES_TARGET.toFixed(2),
+            });
+          }
+          if (SHARES_STOP != null) {
+            candleSeries.createPriceLine({
+              price: SHARES_STOP,
+              color: '#ce9590',            // dusty coral / salmon
+              lineWidth: 2,
+              lineStyle: LightweightCharts.LineStyle.Dashed,
+              axisLabelVisible: true,
+              axisLabelTextColor: '#fff',
+              title: 'stop loss ' + SHARES_STOP.toFixed(2),
+            });
+          }
+        }
+
+        // Trade-aware lines + P&L bands for the options debit spread.
+        // Only renders when strategy=swing_setup AND the panel passed
+        // the option-spread params (long_strike / short_strike / etc).
+        if (IS_SWING_SETUP && !IS_SHARES_VIEW && LONG_STRIKE && SHORT_STRIKE) {
+          const isCall = SPREAD_TYPE === 'call_debit';
+          // Profit zone (green-tinted band):
+          //   call debit: between breakeven and short_strike
+          //   put  debit: between short_strike and breakeven
+          // Visual R:R: size max-profit and max-loss bands so their
+          // vertical extents on the chart are proportional to the $
+          // amounts, not the strike prices. The ratio of green height
+          // to red height then equals the actual reward:risk ratio.
+          // Anchor: larger of MAX_PROFIT/MAX_LOSS maps to 35% of the
+          // candle range; the smaller scales down by ratio.
+          const rrLows  = unique.map(b => b.low).filter(v => v != null);
+          const rrHighs = unique.map(b => b.high).filter(v => v != null);
+          const rrCandleMin = rrLows.length  ? Math.min(...rrLows)  : LONG_STRIKE * 0.95;
+          const rrCandleMax = rrHighs.length ? Math.max(...rrHighs) : SHORT_STRIKE * 1.05;
+          const rrCandleRange = rrCandleMax - rrCandleMin;
+          const rrMaxDollar = Math.max(MAX_PROFIT || 0, MAX_LOSS || 0);
+          const rrMaxBandPts = rrCandleRange * 0.35;
+          const ptsPerDollar = rrMaxDollar > 0 ? rrMaxBandPts / rrMaxDollar : 0;
+
+          // Profit-ramp zone (BE to SHORT). Real price width, not scaled
+          // by dollars: this is where P&L grows linearly from $0 to max.
+          if (BREAKEVEN && SHORT_STRIKE) {
+            const lo = Math.min(BREAKEVEN, SHORT_STRIKE);
+            const hi = Math.max(BREAKEVEN, SHORT_STRIKE);
+            drawBand(lo, hi, 'rgba(39, 174, 96, 0.13)', null);
+          }
+          // Max-loss zone (red-tinted band):
+          //   call debit: below long_strike (extends past chart bottom)
+          //   put  debit: above long_strike (extends past chart top)
+          // We compute chart extents from the actual candle data and
+          // extend the band past the visible range so there's no hard
+          // edge — max loss is the same anywhere past the long strike.
+          // Max-loss zone (red): from LONG_STRIKE outward, sized
+          // proportionally to MAX_LOSS dollars. Anything past the
+          // long strike at expiry = same max loss.
+          if (MAX_LOSS && ptsPerDollar > 0) {
+            const lossHeight = MAX_LOSS * ptsPerDollar;
+            const lo = isCall ? LONG_STRIKE - lossHeight : LONG_STRIKE;
+            const hi = isCall ? LONG_STRIKE              : LONG_STRIKE + lossHeight;
+            drawBand(lo, hi, 'rgba(192, 57, 43, 0.25)', null);
+          }
+          // Similarly extend the green profit band past the short strike
+          // — above the short strike (calls) the spread is also at max
+          // profit, so the green should continue, not stop at the line.
+          // Max-profit zone (bright green): from SHORT_STRIKE outward,
+          // sized proportionally to MAX_PROFIT dollars. Anything past
+          // the short strike at expiry = same max profit. The visual
+          // ratio of this band to the red band matches the R:R.
+          if (MAX_PROFIT && ptsPerDollar > 0) {
+            const profitHeight = MAX_PROFIT * ptsPerDollar;
+            const lo = isCall ? SHORT_STRIKE                : SHORT_STRIKE - profitHeight;
+            const hi = isCall ? SHORT_STRIKE + profitHeight : SHORT_STRIKE;
+            drawBand(lo, hi, 'rgba(39, 174, 96, 0.30)', null);
+          }
+          // LONG strike — bold gold line with $ label
+          candleSeries.createPriceLine({
+            price: LONG_STRIKE,
+            color: '#FFC107',     // bold amber
+            lineWidth: 3,
+            lineStyle: LightweightCharts.LineStyle.Solid,
+            axisLabelVisible: true,
+            axisLabelTextColor: '#000',
+            title: 'LONG ' + LONG_STRIKE.toFixed(0) +
+                   (MAX_LOSS ? ' · -$' + Math.round(MAX_LOSS) : ''),
+          });
+          // SHORT strike — bold teal/green for calls, red for puts
+          candleSeries.createPriceLine({
+            price: SHORT_STRIKE,
+            color: isCall ? '#3E7F6B' : '#C26A6A',
+            lineWidth: 3,
+            lineStyle: LightweightCharts.LineStyle.Solid,
+            axisLabelVisible: true,
+            axisLabelTextColor: '#fff',
+            title: 'SHORT ' + SHORT_STRIKE.toFixed(0) +
+                   (MAX_PROFIT ? ' · +$' + Math.round(MAX_PROFIT) : ''),
+          });
+          // Breakeven — dashed yellow
+          if (BREAKEVEN) {
+            candleSeries.createPriceLine({
+              price: BREAKEVEN,
+              color: '#FFEB3B',
+              lineWidth: 2,
+              lineStyle: LightweightCharts.LineStyle.Dashed,
+              axisLabelVisible: true,
+              axisLabelTextColor: '#000',
+              title: 'BE ' + BREAKEVEN.toFixed(2),
+            });
+          }
+          // Trigger level (the higher-TF zone we entered off) —
+          // dashed magenta, thinner. Different role from the strikes.
+          if (TRIGGER_LEVEL) {
+            candleSeries.createPriceLine({
+              price: TRIGGER_LEVEL,
+              color: '#E91E63',
+              lineWidth: 1,
+              lineStyle: LightweightCharts.LineStyle.Dotted,
+              axisLabelVisible: true,
+              axisLabelTextColor: '#fff',
+              title: 'TRIGGER ' + TRIGGER_LEVEL.toFixed(2),
+            });
+          }
         }
 
         // Target: solid line + one-sided shaded "meat" band on the ENTRY
@@ -1057,6 +1324,10 @@
           }
 
           const badge = document.getElementById('contractBadge');
+          // Suppress when dashboard=0 (the dashboard swing-trade panel
+          // sets this — it doesn't want any of the floating chart
+          // overlays since the same info is rendered in the panel above).
+          if (!SHOW_DASHBOARD) return;
           const symEl = badge.querySelector('.sym');
           const cdEl  = badge.querySelector('.cd');
 

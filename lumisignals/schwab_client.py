@@ -308,3 +308,22 @@ class SchwabMarketData:
         except Exception as e:
             logger.error("Schwab connection test failed: %s", e)
         return False
+
+
+def token_status(token_file: str = TOKEN_FILE) -> dict:
+    """Lightweight status of the saved token file, for the refresh cron's
+    log line. Returns {exists, saved_at, expires_in_s, has_refresh}."""
+    p = Path(token_file)
+    if not p.exists():
+        return {"exists": False}
+    try:
+        d = json.loads(p.read_text())
+    except Exception:
+        return {"exists": True, "readable": False}
+    exp = d.get("token_expiry", 0) or 0
+    return {
+        "exists": True,
+        "saved_at": d.get("saved_at"),
+        "expires_in_s": int(exp - time.time()) if exp else None,
+        "has_refresh": bool(d.get("refresh_token")),
+    }

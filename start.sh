@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Launch LumiSignals bot with 1Password secrets + venv activated.
-# Prerequisite: run `eval $(op signin)` in this shell first (lasts ~30 days).
+# Prerequisite: a valid op session. If stale, run `op-refresh` (NOT `eval $(op signin)` —
+# raw signin rotates the shared token and orphans other sessions; op-refresh is idempotent).
 set -e
 
 cd "$(dirname "$0")"

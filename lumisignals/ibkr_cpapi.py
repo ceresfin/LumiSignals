@@ -36,20 +36,41 @@ class CPAPIClient:
 
     def _request(self, method: str, path: str, json_data: dict = None,
                  params: dict = None) -> dict:
-        """Central request method with error handling."""
+        """Central request method with error handling.
+
+        Large responses (the 100+ order list on /iserver/account/orders) come
+        back from IBeam occasionally truncated mid-JSON. For GET (idempotent),
+        retry once on a parse failure so a transient truncation self-heals in
+        the same cycle instead of returning empty and skipping reconciliation.
+        Non-GET is never retried — re-POSTing an order would double-submit."""
         url = f"{self.base_url}{path}"
-        try:
-            resp = self.session.request(method, url, json=json_data, params=params, timeout=15)
-            if resp.status_code == 200:
-                return resp.json() if resp.text else {}
-            logger.warning("CPAPI %s %s → %d: %s", method, path, resp.status_code, resp.text[:200])
-            return {"error": resp.text[:200], "status_code": resp.status_code}
-        except requests.exceptions.ConnectionError:
-            logger.error("CPAPI connection failed — is the gateway running?")
-            return {"error": "Connection refused"}
-        except Exception as e:
-            logger.error("CPAPI request error: %s", e)
-            return {"error": str(e)}
+        is_get = method.upper() == "GET"
+        for attempt in range(2 if is_get else 1):
+            try:
+                resp = self.session.request(method, url, json=json_data,
+                                            params=params, timeout=15)
+                if resp.status_code == 200:
+                    if not resp.text:
+                        return {}
+                    try:
+                        return resp.json()
+                    except ValueError as je:
+                        if is_get and attempt == 0:
+                            logger.warning("CPAPI GET %s: JSON parse failed (%d bytes) — retrying: %s",
+                                           path, len(resp.text), je)
+                            time.sleep(0.3)
+                            continue
+                        logger.error("CPAPI %s %s: JSON parse failed: %s", method, path, je)
+                        return {"error": f"json parse: {je}"}
+                logger.warning("CPAPI %s %s → %d: %s", method, path, resp.status_code, resp.text[:200])
+                return {"error": resp.text[:200], "status_code": resp.status_code}
+            except requests.exceptions.ConnectionError:
+                logger.error("CPAPI connection failed — is the gateway running?")
+                return {"error": "Connection refused"}
+            except Exception as e:
+                logger.error("CPAPI request error: %s", e)
+                return {"error": str(e)}
+        return {"error": "json parse: retry exhausted"}
 
     # ─── AUTH / SESSION ─────────────────────────────────────────────────
 
@@ -626,49 +647,235 @@ class CPAPIClient:
         return {"orders": orders}
 
     @staticmethod
-    def build_spread_order(sell_conid: int, buy_conid: int, quantity: int,
-                           limit_price: float, is_credit: bool,
-                           tif: str = "GTC") -> dict:
-        """Build a vertical spread (combo) order payload.
+    def build_stock_order(conid: int, action: str, quantity: int,
+                          order_type: str = "LMT", price: float = None,
+                          tif: str = "DAY",
+                          parent_id: str = None,
+                          coid: str = None) -> dict:
+        """Build a single-leg equity order payload.
+
+        Mirrors build_futures_order — the CPAPI payload schema is
+        identical for stocks vs futures (IB infers secType from the
+        conid). Default TIF is DAY (vs GTC for futures) because swing
+        equity positions held overnight rely on the bracket SL for
+        gap protection rather than the order itself persisting.
 
         Args:
-            sell_conid: conId of the short leg
-            buy_conid: conId of the long leg
-            quantity: Number of spreads
-            limit_price: Absolute price (will be negated for credits)
-            is_credit: True for credit spreads
-            tif: Time in force
+            conid: Equity conid (e.g. SPY = 756733).
+            action: "BUY" or "SELL".
+            quantity: Number of shares.
+            order_type: "MKT" or "LMT" (STP also accepted but unusual
+                for equity entries; brackets are how we protect).
+            price: Required for LMT and STP.
+            tif: "DAY" (default) or "GTC".
+            parent_id: Optional parent cOID — makes this order a
+                bracket child (same OCA semantics as futures).
+            coid: Optional customer order id for reconciler tagging.
         """
-        price = -abs(limit_price) if is_credit else abs(limit_price)
-        return {
-            "orders": [{
-                "conidex": f"{sell_conid};;;{buy_conid}",
-                "orderType": "LMT",
-                "side": "BUY",
-                "quantity": quantity,
-                "price": round(price, 2),
-                "tif": tif,
-                "legs": [
-                    {"conid": sell_conid, "side": "SELL", "ratio": 1},
-                    {"conid": buy_conid, "side": "BUY", "ratio": 1},
-                ],
-            }]
+        order = {
+            "conid": conid,
+            "orderType": order_type,
+            "side": action,
+            "quantity": quantity,
+            "tif": tif,
         }
+        if price is not None and order_type in ("LMT", "STP"):
+            order["price"] = price
+        if parent_id:
+            order["parentId"] = str(parent_id)
+        if coid:
+            order["cOID"] = coid
+        return {"orders": [order]}
+
+    @staticmethod
+    def build_stock_bracket(conid: int, entry_side: str, quantity: int,
+                            stop_price: float,
+                            entry_type: str = "LMT",
+                            entry_price: float = None,
+                            target_price: float = None,
+                            tif: str = "DAY",
+                            entry_coid: str = None) -> dict:
+        """Atomic 3-order equity bracket (parent + SL + optional TP).
+
+        Same OCA semantics as build_futures_bracket — children stay
+        PreSubmitted until the parent fills, then activate as an OCA
+        group. Position is never unprotected.
+
+        Equity-specific notes vs the futures version:
+          - Default entry_type is LMT (not MKT). Swing equity setups
+            have a target entry price from the analyzer; we don't
+            market-chase. Pass entry_type="MKT" only if you've decided
+            slippage tolerance is high.
+          - Default TIF is DAY. Overnight equity gap risk is handled
+            by the SL child (IB triggers at next open if gapped
+            through), not by the order persisting GTC.
+          - No child_quantity flip-trick parameter — equity dashboard
+            entries are simple fresh positions, not close-and-reverse.
+
+        cOID naming follows the futures bracket convention so the
+        existing reconciler hash-stripping parser can decode the
+        strategy from any leg's fill: parent = lumi_<strategy>_<hash>,
+        sl = ...<hash>sl, tp = ...<hash>tp.
+
+        Args:
+            conid: Equity conid.
+            entry_side: "BUY" (going long) or "SELL" (going short).
+            quantity: Shares.
+            stop_price: Absolute price for the SL child.
+            entry_type: "LMT" (default) or "MKT".
+            entry_price: Required when entry_type=="LMT".
+            target_price: When > 0, include a TP child (LMT). None or
+                0 = no TP (rare for swing equity; usually you want one).
+            tif: TIF for all three orders.
+            entry_coid: Customer order id for the parent. Auto-
+                generated if omitted (format: lumi_<uuid12>).
+
+        Returns:
+            dict for place_order(): {"orders": [parent, sl, tp?]}.
+        """
+        import uuid as _uuid
+        if entry_coid is None:
+            entry_coid = f"lumi_{_uuid.uuid4().hex[:12]}"
+        exit_side = "SELL" if entry_side == "BUY" else "BUY"
+
+        sl_coid = f"{entry_coid}sl"
+        tp_coid = f"{entry_coid}tp"
+
+        parent = {
+            "cOID": entry_coid,
+            "conid": conid,
+            "orderType": entry_type,
+            "side": entry_side,
+            "quantity": quantity,
+            "tif": tif,
+        }
+        if entry_type == "LMT" and entry_price is not None:
+            parent["price"] = entry_price
+
+        sl = {
+            "cOID": sl_coid,
+            "parentId": entry_coid,
+            "conid": conid,
+            "orderType": "STP",
+            "side": exit_side,
+            "quantity": quantity,
+            "price": stop_price,
+            "tif": tif,
+        }
+
+        orders = [parent, sl]
+        if target_price and target_price > 0:
+            tp = {
+                "cOID": tp_coid,
+                "parentId": entry_coid,
+                "conid": conid,
+                "orderType": "LMT",
+                "side": exit_side,
+                "quantity": quantity,
+                "price": target_price,
+                "tif": tif,
+            }
+            orders.append(tp)
+
+        return {"orders": orders}
+
+    # CPAPI combo-order prefix conids per quote currency. Used as the
+    # leading segment of the conidex string when placing multi-leg
+    # orders. USD covers SPX/SPY/equity options. Extend as new
+    # currencies become relevant.
+    #
+    # Reference: ibind issue #110 (https://github.com/Voyz/ibind/issues/110),
+    # production user salsasepp's working SPXW butterfly payload
+    # confirmed atomic fill 2025-06-04. Same SPREAD_CONID table is in
+    # ibind/examples/rest_06_options_chain.py.
+    # Cherry-picked from orb-debug Phase 10a (commit b63a1ce) for the
+    # dashboard options-spread placement path.
+    SPREAD_CONID = {
+        "USD": "28812380", "GBP": "58666491", "JPY": "61227069",
+        "CAD": "61227082", "CHF": "61227087", "AUD": "61227077",
+        "HKD": "61227072", "SGD": "426116555", "CNH": "136000441",
+        "INR": "136000444", "KRW": "136000424", "MXN": "136000449",
+        "SEK": "136000429",
+    }
+
+    @staticmethod
+    def build_combo_order(legs, quantity: int, limit_price: float,
+                          order_type: str = "LMT", tif: str = "DAY",
+                          currency: str = "USD", coid: str = None,
+                          outside_rth: bool = False) -> dict:
+        """Build an N-leg combo (spread/butterfly/condor) order payload.
+
+        This is the correct CPAPI conidex format — the previous builders
+        in this file got it wrong on three counts (missing spread_conid
+        prefix, bare conid pairs separated by ';;;' instead of
+        comma-joined conid/ratio legs, and an extra 'legs' array that
+        confused the parser into returning 'Combo key is not complete').
+
+        Args:
+            legs: list of (conid, side, ratio). side is "BUY" or "SELL",
+                  ratio is a positive int (quantity multiplier per leg).
+            quantity: number of combos to place.
+            limit_price: net price of the combo. POSITIVE = pay debit
+                  (you're the buyer of the spread), NEGATIVE = receive
+                  credit (you're the seller). IB negates appropriately
+                  on the wire.
+            order_type: "LMT" or "MKT". Combos cannot be STP.
+            tif: "DAY" (recommended for 0DTE) or "GTC".
+            currency: selects the SPREAD_CONID prefix.
+            coid: optional customer order id for reconciler tagging.
+            outside_rth: include extended-hours fills.
+
+        Returns a {"orders": [...]} payload ready for place_order().
+
+        Format:
+          conidex = "{spread_conid};;;{conid1}/{±r1},{conid2}/{±r2}[,...]"
+          e.g. "28812380;;;783634289/+1,783941066/-2,783941086/+1"
+                for a 1x long K1, 2x short K2, 1x long K3 butterfly.
+        """
+        spread_conid = CPAPIClient.SPREAD_CONID[currency]
+        leg_parts = []
+        for conid, side, ratio in legs:
+            if side not in ("BUY", "SELL"):
+                raise ValueError(f"leg side must be BUY/SELL, got {side!r}")
+            signed = ratio if side == "BUY" else -ratio
+            leg_parts.append(f"{conid}/{signed:+d}")
+        conidex = f"{spread_conid};;;{','.join(leg_parts)}"
+
+        order = {
+            "conidex": conidex,        # mutually exclusive with `conid`
+            "orderType": order_type,
+            "side": "BUY",             # combos: always BUY; price sign = direction
+            "quantity": int(quantity),
+            "tif": tif,
+            "outsideRTH": bool(outside_rth),
+        }
+        if order_type == "LMT":
+            order["price"] = round(float(limit_price), 2)
+        if coid:
+            order["cOID"] = coid
+        return {"orders": [order]}
+
+    @staticmethod
+    def build_spread_order(sell_conid: int, buy_conid: int, quantity: int,
+                           limit_price: float, is_credit: bool,
+                           tif: str = "DAY", coid: str = None) -> dict:
+        """Vertical 2-leg spread. Wraps build_combo_order for backward
+        compatibility with older call sites that pass leg conids
+        positionally. limit_price is given as a positive number;
+        is_credit=True negates it on the wire."""
+        price = -abs(limit_price) if is_credit else abs(limit_price)
+        return CPAPIClient.build_combo_order(
+            legs=[(buy_conid, "BUY", 1), (sell_conid, "SELL", 1)],
+            quantity=quantity, limit_price=price,
+            order_type="LMT", tif=tif, coid=coid,
+        )
 
     @staticmethod
     def build_close_spread_order(long_conid: int, short_conid: int,
-                                  quantity: int) -> dict:
-        """Build a market order to close an existing spread."""
-        return {
-            "orders": [{
-                "conidex": f"{long_conid};;;{short_conid}",
-                "orderType": "MKT",
-                "side": "BUY",
-                "quantity": quantity,
-                "tif": "DAY",
-                "legs": [
-                    {"conid": long_conid, "side": "SELL", "ratio": 1},
-                    {"conid": short_conid, "side": "BUY", "ratio": 1},
-                ],
-            }]
-        }
+                                  quantity: int, coid: str = None) -> dict:
+        """Market close of an existing vertical spread. Reverses each leg."""
+        return CPAPIClient.build_combo_order(
+            legs=[(long_conid, "SELL", 1), (short_conid, "BUY", 1)],
+            quantity=quantity, limit_price=0.0,
+            order_type="MKT", tif="DAY", coid=coid,
+        )
