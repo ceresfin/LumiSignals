@@ -1107,7 +1107,9 @@ export default function Positions() {
                               // "Swing" for high-timeframe setups.
                               const isHTF = strat === 'htf_levels' || strat.startsWith('htf_');
                               const tag = bucket ? `${isHTF ? 'HTF ' : ''}${bucket}·` : '';
-                              return `${tag}${s.strategy}=${s.direction}${s.contracts}`;
+                              // Manual MTF trades read "MTF", not "manual".
+                              const stratName = strat.startsWith('manual') ? 'MTF' : s.strategy;
+                              return `${tag}${stratName}=${s.direction}${s.contracts}`;
                             }).join(', ')}]`
                           : '   (none)'}
                       </Text>
