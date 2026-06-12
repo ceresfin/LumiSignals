@@ -3239,6 +3239,25 @@ def create_app():
         all_keys = set(ib_positions.keys()) | (
             set(strat_by_symbol.keys()) - covered_by_opt_synthetic
         )
+
+        # Options reconcile per SYMBOL, not per spread-row. The bot tracks one
+        # coarse strat_pos per (symbol, strategy) while IB shows each spread/leg
+        # as its own row, so comparing that single strat_pos against every OPT
+        # row double-counted it and falsely flagged OVER-TRACKED on multi-leg
+        # books (e.g. a layered NVDA put structure). Distribute the symbol's
+        # tracked contracts greedily across its OPT rows — each row consumes up
+        # to its own ib_qty; any leftover lands on the symbol's last OPT row so
+        # a genuine over-track still surfaces once.
+        opt_tracked_remaining = {
+            sym: sum(sp["contracts"] for sp in sps)
+            for sym, sps in strat_by_symbol.items()
+        }
+        _opt_keys_by_sym = {}
+        for _k, _v in ib_positions.items():
+            if _v.get("sec_type") == "OPT" and _v.get("symbol"):
+                _opt_keys_by_sym.setdefault(_v["symbol"], []).append(_k)
+        _last_opt_key = {s: sorted(ks)[-1] for s, ks in _opt_keys_by_sym.items()}
+
         for key in sorted(all_keys):
             ib_data = ib_positions.get(key)
             # strats lookup uses the IB symbol field (or the key itself
@@ -3260,6 +3279,21 @@ def create_app():
             # reports +N regardless. Skip the direction-mismatch check
             # for OPT and compare by absolute contracts instead.
             is_opt = bool(ib_data) and ib_data.get("sec_type") == "OPT"
+
+            # OPT: replace the per-row strat sum with the greedy per-symbol
+            # attribution so one strat_pos isn't counted against every spread row.
+            if is_opt:
+                _sym = ib_data["symbol"]
+                _avail = opt_tracked_remaining.get(_sym, 0)
+                if key == _last_opt_key.get(_sym):
+                    tracked_abs = _avail               # dump any remainder here
+                    opt_tracked_remaining[_sym] = 0
+                else:
+                    tracked_abs = min(_avail, abs(ib_qty))
+                    opt_tracked_remaining[_sym] = _avail - tracked_abs
+                # You always BUY the combo, so IB reports +N; mirror the sign.
+                tracked_signed = tracked_abs if ib_qty >= 0 else -tracked_abs
+                orphan_qty = abs(ib_qty) - tracked_abs
 
             # Classify
             if ib_qty == 0 and tracked_abs == 0:
