@@ -265,7 +265,22 @@ def compute_setup(ticker: str, mode: str,
     prox_mult = mtf_config.proximity_mult(mode, mtf_cfg)
     prox_dist = abs(current_price - trigger_level)
     prox_threshold = prox_mult * atr_bot
-    if atr_bot > 0 and prox_dist > prox_threshold and prospective_reason is None:
+
+    # Swing only (for now): also watch 15m candles for a wick that pierced the
+    # monthly zone and bounced back out the same session. The daily/weekly
+    # close — and thus current_price — can miss that, so we'd skip a setup that
+    # actually traded into the zone. A fresh 15m touch makes it actionable even
+    # when price has left the zone.
+    zone_watch = None
+    if mode == "swing" and atr_bot > 0:
+        _side = "BUY" if direction_dir == "UP" else "SELL"
+        zone_watch = _zone_touch_15m(massive, poly_t, trigger_level,
+                                     prox_threshold, _side)
+    wick_triggered = bool(zone_watch and (zone_watch["in_zone_now"]
+                                          or zone_watch["triggered"]))
+
+    if (atr_bot > 0 and prox_dist > prox_threshold
+            and not wick_triggered and prospective_reason is None):
         prospective_reason = (
             f"price {prox_dist / atr_bot:.1f}× {bot_label} ATR from trigger "
             f"level; wait for closer approach (threshold {prox_mult:.1f}× ATR)"
@@ -318,6 +333,8 @@ def compute_setup(ticker: str, mode: str,
         "trends": trends,
         "trigger_level": round(trigger_level, 2),
         "underlying_price": round(current_price, 2),
+        # 15m wick-into-zone watch (swing only for now); None otherwise.
+        "zone_watch": zone_watch,
         "vehicle": "options",
         "options": options_spec,
         "shares": shares_spec,
@@ -824,6 +841,57 @@ def _atr14(bars) -> float:
         trs.append(max(c.high - c.low, abs(c.high - p.close),
                        abs(c.low - p.close)))
     return sum(trs) / len(trs) if trs else 0.0
+
+
+# How many trailing 15m candles count as a "fresh" touch (the setup just
+# triggered) vs merely "touched in the window" (context). ~1 RTH session.
+_ZONE_FRESH_15M = 26
+
+
+def _zone_touch_15m(massive, poly_t: str, level: float, half_width: float,
+                    side: str, count: int = 300):
+    """Scan recent 15m candles for a wick that pierced the entry zone band
+    [level ± half_width]. The daily/weekly close can miss a fast wick-and-
+    bounce, so we watch the finer TF: a 15m high/low inside the band is a
+    touch even if price has since left the zone.
+
+    side "BUY" → demand zone below, the LOW is the relevant wick; "SELL" →
+    supply zone above, the HIGH. Returns a dict (or None if no 15m data).
+    """
+    try:
+        candles = massive.get_candles(poly_t, "15m", count=count) or []
+    except Exception as e:
+        logger.debug("zone_touch 15m fetch failed for %s: %s", poly_t, e)
+        return None
+    if not candles:
+        return None
+    zlo, zhi = level - half_width, level + half_width
+    # Indices of candles whose [low, high] overlaps the zone band.
+    hits = [i for i, c in enumerate(candles) if c.low <= zhi and c.high >= zlo]
+    n = len(candles)
+    last_i = hits[-1] if hits else None
+    last_c = candles[last_i] if last_i is not None else None
+    extreme = last_at = None
+    if last_c is not None:
+        extreme = last_c.low if side == "BUY" else last_c.high
+        try:
+            from datetime import datetime as _dt, timezone as _tz
+            last_at = _dt.fromtimestamp(float(last_c.timestamp), _tz.utc).isoformat()
+        except Exception:
+            last_at = None
+    return {
+        "tf": "15m",
+        "zone_low": round(zlo, 2),
+        "zone_high": round(zhi, 2),
+        "in_zone_now": bool(last_i is not None and last_i == n - 1),
+        "touched": bool(hits),
+        # Fresh = wicked in within the last ~session → "just triggered".
+        "triggered": bool(last_i is not None and last_i >= n - _ZONE_FRESH_15M),
+        "touch_count": len(hits),
+        "last_touch_at": last_at,
+        "last_touch_extreme": round(extreme, 2) if extreme is not None else None,
+        "candles_scanned": n,
+    }
 
 
 def _pick_shares_plan(atr_bars, top_bars, current_price: float,
