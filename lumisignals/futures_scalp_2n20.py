@@ -42,6 +42,10 @@ MIN_BODY_PCT = 30.0
 AVG_BODY_MULT = 0.8
 LOOKBACK_BARS = 3
 SCAN_INTERVAL = 120  # Check every 2 minutes (aligned with candle close)
+# Grace after an entry before treating "broker flat" as a silent stop/target
+# fill (vs the entry simply not having filled yet). Long enough that the
+# queued order has filled; short enough to free up re-entry quickly.
+SILENT_STOP_GRACE_SEC = 20
 BAR_STALE_SECONDS = 180  # Skip scan if bars haven't been pushed within this window
 
 
@@ -215,6 +219,27 @@ class FuturesScalp2n20:
         now = datetime.now(timezone.utc)
         now_et = now.astimezone(et_tz)
         et_hour, et_minute, weekday = now_et.hour, now_et.minute, now_et.weekday()
+
+        # Silent-stop reconcile (every scan, before the per-bar gate): if we
+        # think we hold a position but the broker is FLAT — and the entry has
+        # had time to fill — the protective stop/target fired without us
+        # catching the close. Reset state now so the next signal can re-enter
+        # the continuation instead of sitting blocked. Native only (shadow has
+        # no broker). 2026-06-12: a short was stopped 16s after entry; state
+        # stayed "short" for 22 min and missed the 40pt drop.
+        if source == "native" and (st.in_long or st.in_short):
+            _bp = self._get_broker_position()
+            if (_bp is not None and _bp.get("connected")
+                    and int(_bp.get("position", 0) or 0) == 0):
+                _et = st.entry_time
+                if _et is None or (now - _et).total_seconds() >= SILENT_STOP_GRACE_SEC:
+                    logger.warning(
+                        "[2n20_MES] silent close: broker flat while state=%s "
+                        "(stop/target fired) — resetting state; re-entry enabled.",
+                        "long" if st.in_long else "short")
+                    st.in_long = False
+                    st.in_short = False
+                    st.entry_time = None
 
         # CME maintenance break: 17:00-18:00 ET daily
         if et_hour == 17:
