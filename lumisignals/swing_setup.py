@@ -41,6 +41,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Tuple
 
+from . import mtf_config
+
 logger = logging.getLogger(__name__)
 
 
@@ -253,12 +255,20 @@ def compute_setup(ticker: str, mode: str,
 
     # Proximity gate: if price is far from the entry zone, the trade
     # isn't tradeable now (limit at the zone wouldn't fill) — but we
-    # still surface the level for prospective view.
-    proximity_pct = abs(current_price - trigger_level) / current_price
-    if proximity_pct > TRIGGER_PROXIMITY_PCT and prospective_reason is None:
+    # still surface the level for prospective view. Distance is measured
+    # in bottom-TF ATRs (5m scalp / 15m intraday / daily swing) so it
+    # adapts to each symbol's volatility instead of a flat percentage.
+    # Threshold is Settings-tunable (mtf_config.proximity_atr_mult).
+    mtf_cfg = mtf_config.get_config()
+    atr_bot = _atr14(bars_bot)
+    bot_label = TF_LABELS.get(tf_bot, tf_bot)
+    prox_dist = abs(current_price - trigger_level)
+    prox_threshold = mtf_cfg["proximity_atr_mult"] * atr_bot
+    if atr_bot > 0 and prox_dist > prox_threshold and prospective_reason is None:
         prospective_reason = (
-            f"price {proximity_pct*100:.1f}% from trigger level; "
-            f"wait for closer approach (threshold {TRIGGER_PROXIMITY_PCT*100:.0f}%)"
+            f"price {prox_dist / atr_bot:.1f}× {bot_label} ATR from trigger "
+            f"level; wait for closer approach "
+            f"(threshold {mtf_cfg['proximity_atr_mult']:.1f}× ATR)"
         )
 
     # Translate direction to BUY/SELL + spread_type.
@@ -281,6 +291,8 @@ def compute_setup(ticker: str, mode: str,
     shares_spec = _pick_shares_plan(
         bars_bot, bars_top, current_price, trigger_level,
         direction, max_risk_usd, mode, lookback=top_lookback,
+        stop_mult=mtf_cfg["stop_atr_mult"],
+        rr=mtf_config.rr_floor(mode, mtf_cfg),
     )
     # Attach the bottom-TF label so the panel can render "4.5× ATR(5M)"
     # under the Stop Loss row.
@@ -801,10 +813,25 @@ def _fetch_schwab_chain(ticker: str, cfg: _ModeCfg,
     return flat, None
 
 
+def _atr14(bars) -> float:
+    """Simple 14-period ATR (mean of the last 14 true ranges) on `bars`.
+    Used for both the shares stop and the entry proximity gate so they
+    share one volatility measure for the bottom timeframe."""
+    trs = []
+    for i in range(1, min(15, len(bars))):
+        c = bars[-i]
+        p = bars[-(i + 1)]
+        trs.append(max(c.high - c.low, abs(c.high - p.close),
+                       abs(c.low - p.close)))
+    return sum(trs) / len(trs) if trs else 0.0
+
+
 def _pick_shares_plan(atr_bars, top_bars, current_price: float,
                       trigger_level: float, direction: str,
                       max_risk_usd: float, mode: str,
-                      lookback: int = 100) -> dict:
+                      lookback: int = 100,
+                      stop_mult: Optional[float] = None,
+                      rr: Optional[float] = None) -> dict:
     """Compute the shares-vehicle plan.
 
     Spec (per user 2026-06-01):
@@ -830,15 +857,12 @@ def _pick_shares_plan(atr_bars, top_bars, current_price: float,
       max_risk_usd: user cap from the panel input
       mode:         "scalp" | "intraday" | "swing" — selects R:R floor
     """
-    # ATR-14 on the bottom-TF bars.
-    atrs = []
-    for i in range(1, min(15, len(atr_bars))):
-        c = atr_bars[-i]
-        p = atr_bars[-(i + 1)]
-        tr = max(c.high - c.low, abs(c.high - p.close), abs(c.low - p.close))
-        atrs.append(tr)
-    atr = sum(atrs) / len(atrs) if atrs else 0
-    stop_buffer = SHARES_ATR_STOP_MULT * atr
+    # ATR-14 on the bottom-TF bars. Stop multiplier is Settings-tunable
+    # (mtf_config.stop_atr_mult); falls back to the code default.
+    if stop_mult is None:
+        stop_mult = SHARES_ATR_STOP_MULT
+    atr = _atr14(atr_bars)
+    stop_buffer = stop_mult * atr
 
     entry = trigger_level
     if direction == "BUY":
@@ -872,8 +896,10 @@ def _pick_shares_plan(atr_bars, top_bars, current_price: float,
 
     risk_per_share = abs(entry - stop)
     if target is None:
-        # Fallback: per-mode R:R floor (no opposite zone visible)
-        rr = SHARES_RR_FLOOR.get(mode, 2.0)
+        # Fallback: per-mode R:R floor (no opposite zone visible).
+        # Settings-tunable via mtf_config.rr_floor_<mode>.
+        if rr is None:
+            rr = SHARES_RR_FLOOR.get(mode, 2.0)
         if direction == "BUY":
             target = entry + rr * risk_per_share
         else:
@@ -899,7 +925,7 @@ def _pick_shares_plan(atr_bars, top_bars, current_price: float,
         "rr_ratio": round(rr_ratio, 2) if rr_ratio else None,
         "target_source": target_source,
         "atr": round(atr, 4),
-        "atr_multiplier": SHARES_ATR_STOP_MULT,
+        "atr_multiplier": stop_mult,
     }
 
 

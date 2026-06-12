@@ -1393,8 +1393,13 @@ def create_app():
 
         import redis as _redis, hashlib
         rdb = _redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+        # Fold the MTF tuning config into the cache key so a Settings change
+        # (stop/proximity/R:R) busts the 60s cache immediately instead of
+        # lagging up to a minute.
+        from lumisignals import mtf_config as _mtfc
+        _cfgsig = json.dumps(_mtfc.get_config(), sort_keys=True)
         cache_key = "swing_setup:" + hashlib.sha1(
-            f"{ticker}:{mode}:{max_risk_usd}".encode()
+            f"{ticker}:{mode}:{max_risk_usd}:{_cfgsig}".encode()
         ).hexdigest()[:16]
         cached = rdb.get(cache_key)
         if cached:
@@ -3989,6 +3994,29 @@ def create_app():
         strategy = request.args.get("strategy") or None
         state = runaway_guard.manual_reset(strategy)
         return jsonify({"state": state, "strategy": strategy})
+
+    @app.route("/api/strategies/mtf-config", methods=["GET", "PUT"])
+    def api_strategies_mtf_config():
+        """Read or update the MTF / swing-setup tuning parameters used by
+        swing_setup.compute_setup (shares stop ×ATR, entry proximity ×ATR,
+        per-mode target R:R floors).
+
+        GET → { config }
+        PUT → body: any subset of { stop_atr_mult, proximity_atr_mult,
+                                    rr_floor_scalp, rr_floor_intraday,
+                                    rr_floor_swing }
+        Auth: X-Sync-Key header.
+        """
+        sync_key = request.headers.get("X-Sync-Key", "")
+        if sync_key != os.environ.get("IBKR_SYNC_KEY", "ibkr_sync_2026"):
+            return jsonify({"error": "unauthorized"}), 401
+        from lumisignals import mtf_config
+        if request.method == "PUT":
+            body = request.get_json(silent=True) or {}
+            cfg = mtf_config.set_config(body)
+        else:
+            cfg = mtf_config.get_config()
+        return jsonify({"config": cfg, "defaults": mtf_config.DEFAULT_CONFIG})
 
     @app.route("/api/risk/position-guard", methods=["GET", "PUT"])
     def api_risk_position_guard():

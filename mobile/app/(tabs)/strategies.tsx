@@ -360,8 +360,9 @@ export default function Strategies() {
               <Text style={styles.ruleH}>4 · Entry = nearest untouched zone</Text>
               <Text style={styles.ruleP}>
                 On the top TF: nearest demand below (longs) or supply above
-                (shorts). Price must be within 3% of the zone to be tradeable —
-                otherwise it’s a watch.
+                (shorts). Price must be within ~1 ATR of the trigger TF (5m /
+                15m / daily) to be tradeable — otherwise it’s a watch. The stop
+                (2× ATR) and this proximity are tunable in Settings.
               </Text>
 
               <Text style={styles.ruleH}>5 · Vehicle</Text>

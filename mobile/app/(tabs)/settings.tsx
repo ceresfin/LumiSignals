@@ -31,6 +31,32 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
   );
 }
 
+// Decimal field with a local text buffer so partial input like "1." doesn't
+// snap back mid-typing. Commits a positive float on blur, else reverts.
+function DecimalField({ label, hint, value, onSave, editable = true }: {
+  label: string; hint?: string; value: number;
+  onSave: (n: number) => void; editable?: boolean;
+}) {
+  const [text, setText] = useState(String(value));
+  useEffect(() => { setText(String(value)); }, [value]);
+  return (
+    <Field label={label} hint={hint}>
+      <TextInput
+        style={styles.input}
+        value={text}
+        onChangeText={setText}
+        onEndEditing={() => {
+          const n = parseFloat(text);
+          if (!isNaN(n) && n > 0) onSave(n);
+          else setText(String(value));
+        }}
+        keyboardType="decimal-pad"
+        editable={editable}
+      />
+    </Field>
+  );
+}
+
 function NumberInput({ value, onChange, step = 1, min, max }: {
   value: number; onChange: (v: number) => void; step?: number; min?: number; max?: number;
 }) {
@@ -109,6 +135,13 @@ export default function Settings() {
     { key: 'fx_h1_zone_scalp', label: 'FX' },
   ];
   const [rgwStrategy, setRgwStrategy] = useState<string>('');
+  // MTF / swing-setup tuning (stop ×ATR, proximity ×ATR, target R:R floors).
+  const [mtfCfg, setMtfCfg] = useState<{
+    stop_atr_mult: number; proximity_atr_mult: number;
+    rr_floor_scalp: number; rr_floor_intraday: number; rr_floor_swing: number;
+  }>({ stop_atr_mult: 2, proximity_atr_mult: 1,
+       rr_floor_scalp: 1.5, rr_floor_intraday: 2, rr_floor_swing: 3 });
+  const [mtfSaving, setMtfSaving] = useState(false);
 
   const loadProfile = async () => {
     if (!user) return;
@@ -332,9 +365,44 @@ export default function Settings() {
     }
   };
 
+  const loadMtfConfig = async () => {
+    try {
+      const syncKey = process.env.EXPO_PUBLIC_LUMI_SYNC_KEY || '';
+      const r = await fetch('https://bot.lumitrade.ai/api/strategies/mtf-config', {
+        headers: { 'X-Sync-Key': syncKey },
+      });
+      if (!r.ok) return;
+      const d = await r.json();
+      if (d?.config) setMtfCfg(d.config);
+    } catch {
+      // best-effort
+    }
+  };
+
+  const saveMtfConfig = async (patch: Partial<typeof mtfCfg>) => {
+    setMtfSaving(true);
+    try {
+      setMtfCfg(prev => ({ ...prev, ...patch })); // optimistic
+      const syncKey = process.env.EXPO_PUBLIC_LUMI_SYNC_KEY || '';
+      const r = await fetch('https://bot.lumitrade.ai/api/strategies/mtf-config', {
+        method: 'PUT',
+        headers: { 'X-Sync-Key': syncKey, 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const d = await r.json();
+      if (d?.config) setMtfCfg(d.config);
+    } catch (e: any) {
+      Alert.alert('MTF config save failed', String(e?.message || e));
+    } finally {
+      setMtfSaving(false);
+    }
+  };
+
   useEffect(() => {
     loadProfile(); loadIbStatus(); loadKillSwitch();
     loadPositionGuard(); loadReconcileGate(); loadRunawayGuard();
+    loadMtfConfig();
   }, [user]);
   // Poll reconcile gate every 5s so the Settings screen reflects state quickly.
   useEffect(() => {
@@ -364,6 +432,7 @@ export default function Settings() {
     await Promise.all([
       loadProfile(), loadIbStatus(), loadKillSwitch(),
       loadPositionGuard(), loadReconcileGate(), loadRunawayGuard(),
+      loadMtfConfig(),
     ]);
     setRefreshing(false);
   };
@@ -856,6 +925,48 @@ export default function Settings() {
             triggers regardless of running P&L — designed to catch
             catastrophic Monday-open whipsaws.
           </Text>
+        </Section>
+
+        {/* MTF / Swing Setup tuning */}
+        <Section title="7c. MTF / Swing Setups">
+          <Text style={[styles.fieldHint, { marginTop: 0, marginBottom: 10 }]}>
+            Tunes the multi-timeframe scanner + swing panel. Distances are in
+            ATRs of the trigger timeframe (5m scalp / 15m intraday / daily
+            swing), so they scale to each symbol’s volatility.
+          </Text>
+          <DecimalField
+            label="Shares stop (× ATR)"
+            hint="Stop sits this many trigger-TF ATRs beyond the entry zone."
+            value={mtfCfg.stop_atr_mult}
+            onSave={n => saveMtfConfig({ stop_atr_mult: n })}
+            editable={!mtfSaving}
+          />
+          <DecimalField
+            label="Entry proximity (× ATR)"
+            hint="Tradeable only when price is within this many trigger-TF ATRs of the zone; farther = prospective (watch)."
+            value={mtfCfg.proximity_atr_mult}
+            onSave={n => saveMtfConfig({ proximity_atr_mult: n })}
+            editable={!mtfSaving}
+          />
+          <DecimalField
+            label="Target R:R — Scalp"
+            hint="Reward:risk floor used when no opposite zone is in view."
+            value={mtfCfg.rr_floor_scalp}
+            onSave={n => saveMtfConfig({ rr_floor_scalp: n })}
+            editable={!mtfSaving}
+          />
+          <DecimalField
+            label="Target R:R — Intraday"
+            value={mtfCfg.rr_floor_intraday}
+            onSave={n => saveMtfConfig({ rr_floor_intraday: n })}
+            editable={!mtfSaving}
+          />
+          <DecimalField
+            label="Target R:R — Swing"
+            value={mtfCfg.rr_floor_swing}
+            onSave={n => saveMtfConfig({ rr_floor_swing: n })}
+            editable={!mtfSaving}
+          />
         </Section>
 
         {/* Restart-Safety Gate */}
